@@ -280,8 +280,9 @@ fun OnlineOverlay() {
     io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
         Column(
             // Below the search box (T39), which is drawn after this overlay so its results cover it; T91: below its
-            // measured bottom, so the "Indexing places" line no longer runs into it.
-            Modifier.align(Alignment.TopStart).then(io.github.jasondorjeshort.dystopo.app.TopChips.onlineColumn()).widthIn(max = 260.dp).control("onlineIndicator") // T238
+            // measured bottom, so the "Indexing places" line no longer runs into it; T239: where the layout rule puts it
+            // (under the navigation card while navigating), the chip's card (T236) inside it.
+            Modifier.align(Alignment.TopStart).padding(start = 8.dp).widthIn(max = 260.dp).control("onlineIndicator") // T238
                 .onGloballyPositioned { io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsAt(it) }, // T57: catalog fits keep clear
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {

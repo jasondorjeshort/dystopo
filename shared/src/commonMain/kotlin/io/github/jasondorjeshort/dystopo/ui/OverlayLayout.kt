@@ -628,15 +628,18 @@ object OverlayLayout {
             warning?.takeIf { it.right > buttonX && it.left < safeR - MARGIN }?.let { it.bottom + GAP } ?: 0f,
         )
         fun rightFits(r: Rung) = r.buttons <= 0 || BUTTON * r.buttons + BUTTON_GAP * (r.buttons - 1) <= by - rightTop
-        fun drawsLeft(r: Rung) = (r.bar && i.scaleBar != null) || (r.entries > 0 && i.strip.isNotEmpty())
         val rightPossible = rightFits(Rung(1, false, 0))
-        val leftPossible = rungs.any { drawsLeft(it) && lineAt(it) != null }
+        // The left column at its least: the elevation alone; where not even that fits, the scale bar alone, which the ladder
+        // would take first but whose going frees nothing there.
+        val stripPossible = i.strip.isNotEmpty() && rungs.any { it.entries > 0 && lineAt(it) != null }
+        val barAlone = if (!stripPossible && i.scaleBar != null) lineAt(Rung(1, true, 0)) else null
+        val leftPossible = stripPossible || barAlone != null
         val none = Choice(Rung(0, false, 0), Line(0f, null, null, null), yb)
         val (buttons, pick) = when {
-            rightPossible && leftPossible -> rungs.first { rightFits(it) && lineAt(it) != null }.let { it.buttons to lineAt(it)!! }
-            leftPossible -> 0 to lineAt(rungs.first { lineAt(it) != null })!!
-            rightPossible -> rungs.first { rightFits(it) }.buttons to none
-            else -> 0 to none
+            stripPossible && rightPossible -> rungs.first { rightFits(it) && lineAt(it) != null }.let { it.buttons to lineAt(it)!! }
+            stripPossible -> 0 to lineAt(rungs.first { lineAt(it) != null })!!
+            rightPossible -> rungs.first { rightFits(it) }.buttons to (barAlone ?: none)
+            else -> 0 to (barAlone ?: none)
         }
 
         // Top down: the chips at the right, the online column at the left.
@@ -656,7 +659,7 @@ object OverlayLayout {
             } else hidden(id, if (k == 0 || !rightPossible) REASON_NO_ROOM else REASON_ORDER)
         }
         val ln = pick.line
-        val leftWhy = if (leftPossible) REASON_ORDER else REASON_NO_ROOM
+        val leftWhy = if (stripPossible) REASON_ORDER else REASON_NO_ROOM
         ln.bar?.let { b -> shown(OverlayIds.SCALE_BAR, OverlayRect(xA, yb - b.height, xA + b.width, yb)) }
         if (i.scaleBar != null && ln.bar == null) hidden(OverlayIds.SCALE_BAR, leftWhy)
         var entries = 0

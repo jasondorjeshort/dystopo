@@ -1,57 +1,19 @@
 package io.github.jasondorjeshort.dystopo.app
 
-import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** T137: the online indicator column starts below the navigation card while navigating ([TopChips.onlineTop]). */
+/**
+ * T137, T224: what is left of the chips' own arithmetic once the layout rule places them (T239: `MapLayoutTest` and
+ * `OverlayLayoutTest` hold the placement): the stack the navigation card's cap reads, the overlap test, the columns' ids.
+ */
 class TopChipsTest {
     @Test
-    fun belowTheSearchColumnWhenNotNavigating() {
-        assertEquals(124.dp, TopChips.onlineTop(searchBottom = 120.dp, navCardBottom = 0.dp))
-        assertNull(TopChips.onlineTop(0.dp, 0.dp))
-    }
-
-    @Test
-    fun belowTheNavCardWhileNavigating() {
-        // The card starts at the same height as the column did (60 dp under the status bar) and ends far below it.
-        assertEquals(326.dp, TopChips.onlineTop(searchBottom = 120.dp, navCardBottom = 320.dp))
-        // Measured before the search column: still below the card.
-        assertEquals(326.dp, TopChips.onlineTop(searchBottom = 0.dp, navCardBottom = 320.dp))
-        // A search column longer than the card (its results open): below both.
-        assertEquals(404.dp, TopChips.onlineTop(searchBottom = 400.dp, navCardBottom = 320.dp))
-    }
-
-    @Test
-    fun chipTopsFollowTheCardInPx() {
-        // T146: the tops the chip columns are measured at in the card's own layout pass (density 2.625, 6 dp = 16 px).
-        val d = 2.625f
-        val c = TopChips.Chip.ONLINE
-        assertEquals(240, TopChips.chipTopPx(c, navCardBottomPx = 0, searchBottomPx = 0, trackBottomPx = 0, fallbackPx = 240, density = d))
-        assertEquals(Math.round((300 / d + 4) * d), TopChips.chipTopPx(c, 0, 300, 0, 240, d), "below the search column")
-        assertEquals(Math.round((900 / d + 6) * d), TopChips.chipTopPx(c, 900, 300, 0, 240, d), "below the card while navigating")
-        assertEquals(916, TopChips.chipTopPx(TopChips.Chip.TRACKS, 900, 300, 0, 240, d))
-        assertEquals(240, TopChips.chipTopPx(TopChips.Chip.TRACKS, 0, 300, 0, 240, d), "under the status bar without a card")
-        assertEquals(1216, TopChips.chipTopPx(TopChips.Chip.ROUTES, 900, 300, 1200, 400, d), "below the track controls")
-        assertEquals(400, TopChips.chipTopPx(TopChips.Chip.ROUTES, 900, 300, 0, 400, d))
-        // A card that grows by a wrapped turn line moves both columns by the same amount.
-        val grow = 70
-        assertEquals(grow, TopChips.chipTopPx(TopChips.Chip.TRACKS, 900 + grow, 300, 0, 240, d) - TopChips.chipTopPx(TopChips.Chip.TRACKS, 900, 300, 0, 240, d))
-        assertTrue(TopChips.chipTopPx(c, 900 + grow, 300, 0, 240, d) >= 900 + grow)
-    }
-
-    @Test
-    fun theClampIsAgainstTheCreditLine() {
-        // T224: a window of 1000 px, the credit line 90 px from its bottom, a 16 px gap: 894 px down is the last row free.
-        assertEquals(894 - 700, TopChips.chipRoomPx(windowPx = 1000, creditFromBottomPx = 90, topPx = 700, gapPx = 16))
-        assertEquals(300, TopChips.chipRoomPx(1000, 0, 700, 16), "no credit line measured yet: down to the window's bottom")
-        assertTrue(TopChips.chipFits(roomPx = 100, ownPx = 100))
-        assertFalse(TopChips.chipFits(roomPx = 99, ownPx = 100), "it hides, it never goes under the line")
-        assertFalse(TopChips.chipFits(roomPx = -40, ownPx = 0), "a column that starts past the line")
-        assertFalse(TopChips.chipFits(roomPx = 0, ownPx = 0))
+    fun eachColumnIsAManifestControl() {
+        assertEquals(listOf("onlineIndicator", "waypointAndTracks", "routesChip"), TopChips.Chip.entries.map { it.control })
+        assertTrue(TopChips.Chip.entries.all { it.control in MapLayout.RULED }, "the rule places every chip column")
     }
 
     @Test

@@ -70,11 +70,11 @@ object ScaleBarSettings {
     /** T110: creates the Compose state now; call on the main thread from `Application.onCreate` (sync reads it from other threads). */
     fun prepare() {
         if (!loaded) load()
-        // T224: the measured plates and the chips' left edge are Compose state too, and their owners are otherwise first
-        // touched on a debug thread (`GET /scalebar`, `GET /readout`); T226's rule, `android-app.md`.
+        // T224: the measured plates are Compose state too, and their owners are otherwise first touched on a debug thread
+        // (`GET /scalebar`, `GET /readout`); T226's rule, `android-app.md`. T239: and the position column's count.
         ScaleBarLayout.plateHeightPx
         io.github.jasondorjeshort.dystopo.app.readout.StripLayout.elevationPlatePx
-        TopChips.rightColumnLeftPx
+        io.github.jasondorjeshort.dystopo.app.MapLayout.buttonsDrawn
     }
 
     /**
@@ -245,8 +245,10 @@ const val TILT_MIN_DEG = 0.5
  * T101: the scale bar, lower left on the map, above the credit line and above whatever bottom panel shows (the
  * route card, the track profile and waypoint panels: [BottomPanels]), so it moves up with them like the
  * recentre button on the right (T106: also above the trip card and the update offer, `MapInsets.bottomCardsTop`), but
- * never up to the search box and the online indicator at the top left (T115: it hides when no room is left below them,
- * `hiddenBecause: noRoomBelowTopLeft`, as the recentre button does below the top-right chips).
+ * never up to the search box and the online indicator at the top left (T115). T239: where the bar and the readout strip
+ * go is the layout rule's (`app/MapLayout.kt`): their control nodes draw them at the rule's rectangles, the strip beside
+ * the bar or above it, within the rule's width and with the rule's entries, or not at all when the rule's ladder takes
+ * them (`hiddenBecause` then gives the rule's reason).
  * The length is [UnitFormat.scaleBar] at the camera's zoom and centre latitude in the units preference;
  * with [ScaleBarSettings.bothUnits] it is a two-sided ruler, the user's units above the line and the other
  * system below. Follows the camera during gestures (a camera-move listener) and the units, the night style
@@ -298,11 +300,7 @@ fun ScaleBar() {
     val bars = listOfNotNull(primary, other)
     val ink = if (v.night) NightInk else Ink
     val plate = if (v.night) NightPlate else Plate
-    val panels = if (BottomPanels.trackPanelsTop > BottomPanels.trackPanelsBottom) BottomPanels.trackPanelsTop else 0.dp
-    val floor = maxOf(AttributionInsets.bottom, BottomPanels.routeCardTop, panels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop) // T106
     val density = LocalDensity.current
-    // T161: the bar's bottom padding as its modifier below applies it, so the readout strip's bottom sits level with the bar's.
-    val bottomPad = if (floor > 0.dp) floor + 6.dp else with(density) { WindowInsets.navigationBars.getBottom(density).toDp() } + 32.dp
     val labelStyle = TextStyle(color = ink, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     val widest = bars.maxOf { it.px }
     SideEffect {
@@ -315,21 +313,19 @@ fun ScaleBar() {
         ScaleBarLayout.night = v.night
         ScaleBarLayout.bars = bars
     }
-    // T115 (T110's follow-up): the recentre button's rule on the left. A tall bottom panel (the route card with its
-    // directions open at font scale 2.0) pushed the bar up to about 70 px under the online indicator; it now never
-    // reaches up to the top-left column (the search box and the online indicator): with no room left it hides.
+    // T115, T128, T212: the edges `GET /scalebar` reports the bar clear of (the rule keeps it below them, T239).
     val topLeftColumn = with(density) { maxOf(TopChips.searchBottom, TopChips.onlineBottomPx.toDp()) }
-    // T128 (T122's follow-up): and below the navigation card, which spans the top of the map. Above the card's 1.5 font
-    // scale cap a tall bottom panel pushed the bar up over the card, since only the top-left column bounded it.
     val navCard = TopChips.navCardBottom
-    // T212 (the verifier's note): and below the pressure warning's card, which with a planning card up at font scale 2.0 can
-    // leave the bar no room (it hides, `noRoomBelowWarningCard`, rather than being drawn under the card).
     val warnCard = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBottomPx?.let { with(density) { it.toDp() } } ?: 0.dp
-    val topLeft = maxOf(topLeftColumn, navCard, warnCard)
+    SideEffect {
+        ScaleBarLayout.topLeftBottomDp = topLeftColumn.value
+        ScaleBarLayout.navCardBottomDp = navCard.value
+        ScaleBarLayout.warningCardBottomDp = warnCard.value
+    }
     Layout(
         content = { Column(
-            Modifier
-                .let { m -> if (floor > 0.dp) m.padding(start = 8.dp, bottom = floor + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, bottom = 32.dp) }
+            // Where the bar sits before the rule's first pass; T239: drawn where the rule puts it.
+            Modifier.navigationBarsPadding().padding(start = 8.dp, bottom = 32.dp)
                 .control("scaleBar") // T238
                 .onGloballyPositioned { c ->
                     val b = c.boundsInRoot()
@@ -340,6 +336,13 @@ fun ScaleBar() {
                     if (c.size.height != ScaleBarLayout.plateHeightPx) ScaleBarLayout.plateHeightPx = c.size.height
                     ScaleBarLayout.windowHeightPx = r.size.height.toFloat()
                     ScaleBarLayout.density = density.density
+                    if (ScaleBarLayout.bars.isEmpty()) { // shown again by a layout pass alone (T239: the rule): the fit hide() dropped comes back
+                        ScaleBarLayout.zoom = v.zoom
+                        ScaleBarLayout.lat = v.lat
+                        ScaleBarLayout.tilt = v.tilt
+                        ScaleBarLayout.metersPerDp = mppDp
+                        ScaleBarLayout.bars = bars
+                    }
                     ScaleBarLayout.shown = true
                     ScaleBarLayout.hiddenBecause = null
                 }
@@ -377,93 +380,15 @@ fun ScaleBar() {
         },
         modifier = Modifier.fillMaxSize(),
     ) { measurables, constraints ->
-        val bar = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
-        val top = constraints.maxHeight - bar.height // the bar's top edge (its padding is below and to its left)
-        val room = topLeft <= 0.dp || top >= (topLeft + TOP_LEFT_GAP).roundToPx()
-        ScaleBarLayout.topLeftBottomDp = topLeftColumn.value
-        ScaleBarLayout.navCardBottomDp = navCard.value
-        ScaleBarLayout.warningCardBottomDp = warnCard.value // T212
-        // T161: the readout strip to the bar's right on its line, bottoms level, clear of the recentre button's column on
-        // the right; where the line leaves it less than STRIP_MIN_BESIDE it goes above the bar instead. Like the bar it
-        // never reaches up to the top-left column or the navigation card. T177: beside only when the whole bar fits on
-        // the line in one row (its width is fixed by its templates for the settings, so the choice never flips with the
-        // values), else above, wrapping upward only when even that is too narrow.
-        val strip = measurables.getOrNull(1)
-        var stripPlace: Triple<androidx.compose.ui.layout.Placeable, Int, Int>? = null
-        if (strip != null) {
-            val reserve = STRIP_RIGHT_RESERVE.roundToPx()
-            val gap = STRIP_GAP.roundToPx()
-            // A fixed left edge past the longest bar, so the strip does not slide as the bar's length changes with the zoom.
-            val x = maxOf(bar.width + gap, STRIP_BESIDE_X.roundToPx())
-            val besideMax = constraints.maxWidth - x - reserve
-            val bottomPx = bottomPad.roundToPx()
-            val cardCeiling = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBottomPx?.let { it.toInt() + TOP_LEFT_GAP.roundToPx() } ?: 0 // T204: below the pressure warning's card
-            val ceiling = maxOf(if (topLeft > 0.dp) (topLeft + TOP_LEFT_GAP).roundToPx() else 0, cardCeiling)
-            val noRoom = if (cardCeiling > 0 && cardCeiling >= (topLeft + TOP_LEFT_GAP).roundToPx()) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BELOW_WARNING_CARD else if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT
-            val natural = strip.maxIntrinsicWidth(constraints.maxHeight)
-            // T224 (the premises' item 12's third fix): the right-hand chips bound the strip as the top-left column does.
-            // Read in this measure, so a chip that moves re-places the strip.
-            val chipLeft = TopChips.rightColumnLeftPx.toInt()
-            val chipBottom = maxOf(TopChips.trackColumnBottom, TopChips.routesChipBottom).roundToPx()
-            val start = STRIP_START.roundToPx()
-            val aboveMax0 = (constraints.maxWidth - start - reserve).coerceAtLeast(0)
-            val elevationH = strip.minIntrinsicHeight(aboveMax0)
-            val elevationW = strip.minIntrinsicWidth(constraints.maxHeight)
-            val aboveRoom = StripBounds.room(start, top - gap, ceiling, aboveMax0, natural, elevationH, chipLeft, chipBottom, gap)
-            val besideRoom = StripBounds.room(x, constraints.maxHeight - bottomPx, ceiling, besideMax, natural, elevationH, chipLeft, chipBottom, gap)
-            val besideMaxNow = besideRoom.maxWidthPx
-            // T204: above while at least the elevation fits there (the strip leaves entries out); else beside with fewer
-            // (the strip's min intrinsic width and height are the elevation's alone).
-            val aboveFits = room && top - gap - aboveRoom.ceilingPx >= elevationH && elevationW <= aboveRoom.maxWidthPx
-            if (besideMaxNow >= STRIP_MIN_BESIDE.roundToPx() && (natural <= besideMaxNow || (!aboveFits && elevationW <= besideMaxNow))) {
-                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = besideMaxNow, maxHeight = (constraints.maxHeight - bottomPx - besideRoom.ceilingPx).coerceAtLeast(0))) // T204: the room it has
-                val y = constraints.maxHeight - bottomPx - p.height
-                if (y >= besideRoom.ceilingPx && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, x, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("beside", besideMaxNow, natural, besideMax) }
-                else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (besideRoom.byChips) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BESIDE_CHIPS else noRoom)
-            } else {
-                val aboveMax = aboveRoom.maxWidthPx
-                val p = strip.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = aboveMax, maxHeight = (top - gap - aboveRoom.ceilingPx).coerceAtLeast(0))) // T204: the strip leaves entries out to fit
-                val y = top - gap - p.height // the bar's top edge is its plate's (its padding is below)
-                if (room && y >= aboveRoom.ceilingPx && elevationW <= aboveMax && io.github.jasondorjeshort.dystopo.app.readout.StripLayout.fits) { stripPlace = Triple(p, start, y); io.github.jasondorjeshort.dystopo.app.readout.StripLayout.placed("above", aboveMax, natural, besideMax) }
-                else io.github.jasondorjeshort.dystopo.app.readout.StripLayout.hide(if (aboveRoom.byChips) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BESIDE_CHIPS else noRoom)
-            }
-        }
-        if (!room) ScaleBarLayout.hide(
-            if (warnCard > maxOf(topLeftColumn, navCard)) io.github.jasondorjeshort.dystopo.app.readout.StripLayout.NO_ROOM_BELOW_WARNING_CARD // T212
-            else if (navCard > topLeftColumn) NO_ROOM_BELOW_NAV_CARD else NO_ROOM_BELOW_TOP_LEFT,
-        )
-        else if (ScaleBarLayout.bars.isEmpty()) { // shown again by a layout pass alone: the fit hide() dropped comes back
-            ScaleBarLayout.zoom = v.zoom
-            ScaleBarLayout.lat = v.lat
-            ScaleBarLayout.tilt = v.tilt
-            ScaleBarLayout.metersPerDp = mppDp
-            ScaleBarLayout.bars = bars
-        }
+        // T239: the bar and the strip measured as they are and placed at the bottom left; their control nodes draw them where
+        // the layout rule puts them (the strip within the rule's width, with its entries), or not at all.
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val bar = measurables.first().measure(loose)
+        val strip = measurables.getOrNull(1)?.measure(loose)
         layout(constraints.maxWidth, constraints.maxHeight) {
-            if (room) bar.place(0, top)
-            stripPlace?.let { (p, x, y) -> p.place(x, y) }
+            bar.place(0, constraints.maxHeight - bar.height)
+            strip?.let { it.place(0, constraints.maxHeight - bar.height - it.height) }
         }
-    }
-}
-
-/**
- * T224 (pure, `StripBoundsTest`): the room the readout strip has once the right-hand chips (Waypoint and Tracks, Routes)
- * are counted. Px from the window's top left. A strip whose reach ([x] plus its [naturalWidthPx] in one row, at most
- * [maxWidthPx]) stays [gapPx] short of [chipLeftPx], or chips that end above its [ceilingPx], change nothing (the room to
- * its right is not the strip's width: on a phone on its side a short strip must not hide for chips it never reaches).
- * Otherwise it stays under the chips' bottom edge
- * while that leaves the elevation's height ([minHeightPx]) above [bottomPx], and else it keeps its ceiling and stops
- * [gapPx] short of the chips' left edge (no room there either: the width comes out too small and the strip hides).
- */
-internal object StripBounds {
-    class Room(val ceilingPx: Int, val maxWidthPx: Int, val byChips: Boolean)
-
-    fun room(x: Int, bottomPx: Int, ceilingPx: Int, maxWidthPx: Int, naturalWidthPx: Int, minHeightPx: Int, chipLeftPx: Int, chipBottomPx: Int, gapPx: Int): Room {
-        val noChips = chipBottomPx <= 0 || chipLeftPx <= 0 || x + minOf(maxWidthPx, naturalWidthPx) + gapPx <= chipLeftPx || chipBottomPx + gapPx <= ceilingPx
-        if (noChips) return Room(ceilingPx, maxWidthPx, false)
-        val under = chipBottomPx + gapPx
-        if (bottomPx - under >= minHeightPx) return Room(under, maxWidthPx, true)
-        return Room(ceilingPx, (chipLeftPx - gapPx - x).coerceAtLeast(0), true)
     }
 }
 
@@ -472,22 +397,6 @@ const val NO_ROOM_BELOW_TOP_LEFT = "noRoomBelowTopLeft"
 
 /** T128: why the bar is hidden when it would reach up to the navigation card. */
 const val NO_ROOM_BELOW_NAV_CARD = "noRoomBelowNavCard"
-
-/** T115: the least room kept between the bar and the top-left column (the recentre button keeps 8 dp below the chips). */
-private val TOP_LEFT_GAP = 8.dp
-
-/** T161: the readout strip keeps clear of the recentre button's column at the right (12 dp margin, 48 dp button, 8 dp gap). */
-private val STRIP_RIGHT_RESERVE = 68.dp
-
-/** T161: the gap between the bar and the strip, and the least width the strip takes beside the bar before it goes above. */
-private val STRIP_GAP = 6.dp
-private val STRIP_MIN_BESIDE = 120.dp
-
-/** T161: the strip's left edge beside the bar: past the longest bar (its start padding, length, stroke and plate padding) and the gap. */
-private val STRIP_BESIDE_X = (8 + SCALE_BAR_MAX_DP.toInt() + STROKE_DP.toInt() + 12).dp + STRIP_GAP
-
-/** T161: the strip's left edge when it goes above the bar (the bar's own start padding). */
-private val STRIP_START = 8.dp
 
 private fun read(m: MapLibreMap): ScaleView? {
     val c = m.cameraPosition

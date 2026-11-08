@@ -369,4 +369,25 @@ class OverlayLayoutTest {
             assertTrue(o.stripRoom >= strip.width - 0.01f, "the strip's rows wrap at its room")
         }
     }
+
+    @Test
+    fun whereNoEntryFitsTheScaleBarStaysAlone() {
+        // The emulator on its side at font scale 2.0 with a planning card drawn: the strip's entries are taller than the room
+        // above the card, the scale bar is not; the ladder would take the bar first, but its going frees nothing there.
+        val i = OverlayInput(
+            windowWidth = 914.3f, windowHeight = 411.4f, insetLeft = 48.8f, insetTop = 24f, insetBottom = 24f, fontScale = 2f,
+            search = OverlaySize(OverlayLayout.SEARCH_WIDTH, 40.8f), topRow = OverlaySize(236.6f, 38.1f), credit = OverlaySize(849f, 29.7f),
+            online = OverlaySize(200.4f, 32.4f), trackBar = OverlaySize(197.7f, 38.1f), routes = OverlaySize(86.9f, 38.1f),
+            scaleBar = OverlaySize(79.6f, 41.9f), strip = List(4) { OverlaySize(59.1f, 66.4f) }, buttons = 1,
+            planning = OverlayCard(300f, 140f, 44f, 420f, drawn = OverlayRect(247.2f, 170.3f, 667.4f, 345.5f)), cardsDrawn = true,
+        )
+        val o = OverlayLayout.place(i)
+        assertTrue(o.sideColumn)
+        assertEquals(emptyList(), o.overlaps())
+        assertTrue(o.isShown(OverlayIds.SCALE_BAR))
+        assertEquals(OverlayLayout.REASON_NO_ROOM, o[OverlayIds.STRIP]?.reason)
+        assertEquals(0, o.entriesDrawn)
+        assertTrue(o.isShown(OverlayIds.POSITION), "the card does not reach the chips' column, so the button keeps its corner")
+        assertTrue(o[OverlayIds.SCALE_BAR]!!.rect!!.bottom <= 170.3f - 6f + 0.01f)
+    }
 }

@@ -100,6 +100,36 @@ object RecenterLayout {
     /** The button order from the bottom up (T176): the position button, then the orientation button, then the lock. */
     val ORDER = listOf("position", "orientation", "lock")
 
+    /** T239: the buttons' manifest ids, by [ORDER]'s names. */
+    private val CONTROL_IDS = mapOf("positionButton" to "position", "orientationButton" to "orientation", "lockButton" to "lock")
+
+    /** T239: a button drawn at [b] (window px) where the layout rule put it; the column's bounds cover the buttons drawn. */
+    internal fun buttonPlaced(id: String, b: FloatArray, windowHeight: Float) {
+        buttonBounds[id] = b
+        windowHeightPx = windowHeight
+        union()
+    }
+
+    /** T239: the layout rule hides the button [control] (its manifest id) for [reason]: its bounds go, and the column's with the last. */
+    fun buttonHidden(control: String, reason: String?) {
+        CONTROL_IDS[control]?.let { buttonBounds.remove(it) }
+        union(reason ?: "noRoom")
+    }
+
+    /** The drawn buttons' bounds as one column ([boundsPx]); hidden for [reason] once none is drawn. */
+    internal fun union(reason: String = "noRoom") {
+        val all = buttonBounds.values.toList()
+        if (all.isEmpty()) {
+            shown = false
+            hiddenBecause = reason
+            boundsPx = null
+            return
+        }
+        boundsPx = floatArrayOf(all.minOf { it[0] }, all.minOf { it[1] }, all.maxOf { it[2] }, all.maxOf { it[3] })
+        shown = true
+        hiddenBecause = null
+    }
+
     fun json(): Map<String, Any?> {
         val b = boundsPx
         val d = density
@@ -153,6 +183,11 @@ object RecenterLayout {
  * little room below the top-right chips the lock goes first, then the orientation button, then the whole column; the
  * buttons left act as that layout. A long press on one or two buttons toggles the lock ("Lock orientation", also a
  * TalkBack action) with a short toast, and a small padlock on the orientation icon shows it.
+ *
+ * T239: the column's place and the buttons drawn are the layout rule's (`app/MapLayout.kt`, its ladder: the lock, then
+ * the orientation button, then the scale bar and the readout's entries, then the column, never while off centre): each
+ * button's `Modifier.control` node draws it at the rule's rectangle; with no room for one button under the chips (a
+ * card's own cap took it) the column hides alone (`noRoom`).
  */
 @Composable
 fun RecenterButton() {
@@ -162,6 +197,7 @@ fun RecenterButton() {
     LaunchedEffect(Unit) {
         while (true) {
             state = Recenter.state(app)
+            io.github.jasondorjeshort.dystopo.app.MapLayout.recheckOffCentre() // T239: a fix moves no camera
             io.github.jasondorjeshort.dystopo.app.Foreground.delay(500) // T150: paused in the background
         }
     }
@@ -169,8 +205,6 @@ fun RecenterButton() {
         app.map.onLocationPermissionChanged()
         state = Recenter.state(app)
     }
-    val panels = if (BottomPanels.trackPanelsTop > BottomPanels.trackPanelsBottom) BottomPanels.trackPanelsTop else 0.dp
-    val floor = maxOf(AttributionInsets.bottom, BottomPanels.routeCardTop, panels, io.github.jasondorjeshort.dystopo.app.MapInsets.bottomCardsTop) // T106: above the trip card and the update offer
     val density = LocalDensity.current
     val enabled = state == "recenter"
     val o = OrientationUi.state
@@ -185,28 +219,19 @@ fun RecenterButton() {
         else -> Ink
     }
     DisposableEffect(Unit) { onDispose { RecenterLayout.hide("notComposed") } }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        // T110 (T102's follow-up): a tall bottom panel (the route card with its directions open at font scale 2.0) pushed
-        // the button up over the Tracks chip. The column now never reaches up to the top-right chips (the track controls
-        // with their list, the Routes chip, the navigation card): T176 drops the extra buttons first, then hides.
-        val bottomGap = if (floor > 0.dp) floor + 8.dp else with(density) { WindowInsets.navigationBars.getBottom(density).toDp() } + 32.dp
-        // T212 (the verifier's note): and below the pressure warning's card where it reaches the button's column (with a
-        // planning card up the warning sits low enough at font scale 2.0 for the button to land on its Dismiss).
-        val warn = io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBottomPx
-            ?.takeIf { (io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.cardBoundsPx?.get(2) ?: 0f) > with(density) { (maxWidth - 68.dp).toPx() } }
-            ?.let { with(density) { it.toDp() } } ?: 0.dp
-        val ceiling = maxOf(TopChips.topRightBottom, warn)
-        SideEffect { RecenterLayout.warningCardBottomDp = warn.value }
-        val n = OrientationRules.shownButtons(o.layout) { k -> ceiling <= 0.dp || maxHeight - bottomGap - columnHeight(k) >= ceiling + CHIP_GAP }
-        if (n == 0) {
-            SideEffect { RecenterLayout.hide(if (warn > TopChips.topRightBottom) "noRoomBelowWarningCard" else "noRoomBelowChips") }
-            return@BoxWithConstraints
-        }
+    // T239: where the column goes and how many of its buttons show are the layout rule's (app/MapLayout.kt): above the
+    // credit line, the cards and the panels, under the top-right chips (T110, T212), the lock first, then the orientation
+    // button, then the column (T176). Each button's control node draws it at the rule's rectangle or not at all; the
+    // rule's count ([MapLayout.buttonsDrawn], a frame late) picks the icons and the long press.
+    val count = o.layout.coerceIn(1, 3)
+    val n = io.github.jasondorjeshort.dystopo.app.MapLayout.buttonsDrawn.coerceIn(1, count)
+    Box(Modifier.fillMaxSize()) {
         val badge = o.locked && n < 3 // the lock has no button of its own: the orientation icon carries the padlock
         val lockLabel = if (o.locked) "Unlock orientation" else "Lock orientation"
         SideEffect {
-            RecenterLayout.shownButtons = n
-            RecenterLayout.ORDER.drop(n).forEach { RecenterLayout.buttonBounds.remove(it) }
+            RecenterLayout.shownButtons = io.github.jasondorjeshort.dystopo.app.MapLayout.buttonsDrawn.coerceAtMost(count)
+            RecenterLayout.ORDER.drop(count).forEach { RecenterLayout.buttonBounds.remove(it) }
+            RecenterLayout.density = density.density
             // The bearing only means something on the free-rotate icon (its north pointer).
             RecenterLayout.icon = mapOf(
                 "orientation" to o.orientation.key, "look" to look, "bearing" to if (o.orientation == Orientation.FREE) o.bearing else null,
@@ -223,24 +248,16 @@ fun RecenterButton() {
         }
         fun record(id: String, c: LayoutCoordinates) {
             val b = c.boundsInRoot()
-            RecenterLayout.buttonBounds[id] = floatArrayOf(b.left, b.top, b.right, b.bottom)
+            var r = c
+            while (true) r = r.parentLayoutCoordinates ?: break
+            RecenterLayout.buttonPlaced(id, floatArrayOf(b.left, b.top, b.right, b.bottom), r.size.height.toFloat())
         }
         Column(
-            Modifier.align(Alignment.BottomEnd)
-                .let { m -> if (floor > 0.dp) m.padding(end = 12.dp, bottom = floor + 8.dp) else m.navigationBarsPadding().padding(end = 12.dp, bottom = 32.dp) }
-                .onGloballyPositioned { c ->
-                    val b = c.boundsInRoot()
-                    var r = c
-                    while (true) r = r.parentLayoutCoordinates ?: break
-                    RecenterLayout.boundsPx = floatArrayOf(b.left, b.top, b.right, b.bottom)
-                    RecenterLayout.windowHeightPx = r.size.height.toFloat()
-                    RecenterLayout.density = density.density
-                    RecenterLayout.shown = true
-                    RecenterLayout.hiddenBecause = null
-                },
+            // Where the buttons sit before the rule's first pass; T239: each is drawn where the rule puts it.
+            Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 12.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(GAP),
         ) {
-            if (n >= 3) {
+            if (count >= 3) {
                 RoundButton(
                     Modifier.control("lockButton").onGloballyPositioned { record("lock", it) } // T238: the tag
                         .semantics { contentDescription = "Orientation lock"; stateDescription = if (o.locked) "Locked" else "Unlocked"; role = Role.Button },
@@ -252,7 +269,7 @@ fun RecenterButton() {
                     },
                 ) { PadlockIcon(if (o.locked) Blue else Ink, closed = o.locked, Modifier.size(ICON)) }
             }
-            if (n >= 2) {
+            if (count >= 2) {
                 RoundButton(
                     Modifier.control("orientationButton").onGloballyPositioned { record("orientation", it) } // T238
                         .semantics {

@@ -1111,6 +1111,7 @@ def layout_read(server):
             "hidden": {e["id"]: e.get("reason") for e in lay.get("elements") or [] if e.get("state") == "hidden" and e.get("reason") not in ("notUp", "mapFacingNorth")},
             "compact": {e["id"]: e.get("reason") for e in lay.get("elements") or [] if e.get("state") == "compact"},
             "rects": {e["id"]: e.get("rectPx") for e in lay.get("elements") or [] if e.get("rectPx")},
+            "ruleRects": {e["id"]: e.get("rectPx") for e in rule.get("elements") or [] if e.get("rectPx")},
             "ruleOverlaps": rule.get("overlaps") or [], "ruleDiffers": rule.get("differs") or [], "ruleSideColumn": rule.get("sideColumn"), "ruleCardColumns": rule.get("cardColumns")}
 
 
@@ -1291,7 +1292,21 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         server.json("/route/clear", method="POST")
         lat0, lon0 = (float(x) for x in step["from"].split(","))
         server.json(f"/camera?lat={lat0 + 0.006}&lon={lon0 + 0.003}&zoom=14&bearing={step['bearing']}&tilt=0", method="POST")
-        planned = server.json(f"/route?from={step['from']}&to={step['to']}&mode=hike&wait=180000", method="POST", timeout=240)
+        # T239 (T236's card in the online column the rule places): the chip's card open at rest, `GET /layout` read with it.
+        try:
+            server.json("/online/chip?open=1", method="POST", timeout=30)
+            time.sleep(2)
+            rep["shots"]["onlineCard"] = screencap(exe, serial, f"{shot_stem}-cards-online{ext}")
+            lay_card = view_layout("onlineCard")
+            c["onlineCardShown"] = bool((lay_card.get("rects") or {}).get("onlineCard"))
+        except (urllib.error.URLError, OSError, ValueError, RuntimeError) as e:
+            rep["onlineCardError"] = str(e)[:200]
+        finally:
+            try:
+                server.json("/online/chip?open=0", method="POST", timeout=30)
+            except (urllib.error.URLError, OSError, ValueError, RuntimeError):
+                pass
+        planned =server.json(f"/route?from={step['from']}&to={step['to']}&mode=hike&wait=180000", method="POST", timeout=240)
         rep["planned"] = (planned.get("route") or {}).get("distanceM") is not None or planned.get("error") is None
         time.sleep(4)  # the water, terrain and past-effort lines arrive on their workers
         route = server.json("/route", timeout=60)

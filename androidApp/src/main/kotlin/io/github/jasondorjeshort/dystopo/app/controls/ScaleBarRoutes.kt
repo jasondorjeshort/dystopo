@@ -21,7 +21,8 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   `metersPerDp`), not the centre's Web Mercator rule (`centreMetersPerDp`), so the label is right where the bar is;
  *   `errorPct` (MapLibre's centre-latitude scale) then differs by the tilt's foreshortening and is meaningful untilted
  *   only. It also stays below the navigation card (`navCardBottomDp`, `clearOfNavCard`; hidden as
- *   `noRoomBelowNavCard` when no room is left).
+ *   `noRoomBelowNavCard` when no room is left). T239: the layout rule places the bar (`app/MapLayout.kt`), so a hidden bar gives
+ *   the rule's reason, `yieldOrder` (its ladder took it) or `noRoom`, in place of T115's and T128's.
  *   T110: only for a bar that is shown and fitted at the live camera (it refits every 500 ms; the route waits up to
  *   [FIT_WAIT_MS] for that); otherwise `readBack` is null and `readBackSkipped` says why (`hidden`, `fitBehindCamera`).
  *   Before, a hidden bar kept its last lengths and the read-back compared them with a camera that had moved.
@@ -29,8 +30,8 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   in `GET /sync/status` › `settingsSync`); answers like `GET` once the bar has redrawn. Anything else for `both` is a 400.
  *
  * T161, the live readout's strip on the bar's line ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout]):
- * - `GET /readout`: what the strip draws and why: `shown`, `hiddenBecause` (`notComposed`, `noRoomBelowNavCard`,
- *   `noRoomBelowTopLeft`, T177 `off` with the bar switch off; only every entry off leaves `drawn` empty), T177's `bar`
+ * - `GET /readout`: what the strip draws and why: `shown`, `hiddenBecause` (`notComposed`, T239 the layout rule's `yieldOrder` or
+ *   `noRoom`, T177 `off` with the bar switch off; only every entry off leaves `drawn` empty), T177's `bar`
  *   (`on`, `window` with `s` and `label`, `windowFilledS`, `bothUnits`, and `fields` in drawn order: `entry`, `state`
  *   `value`, `zero` or `dash`, `text` as drawn, `other` in both-units mode, `caption`, `dimmed`), the `activity`
  *   (T172's remembered one) and `units`, `options` per entry (`shown=1;pace=0;damping=medium;pm=0;knots=0`, `barometer`,

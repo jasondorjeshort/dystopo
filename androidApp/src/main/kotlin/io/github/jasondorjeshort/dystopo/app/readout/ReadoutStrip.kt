@@ -292,6 +292,10 @@ fun ReadoutStrip(night: Boolean) {
  * from the end of their order one by one ([entries]: the order the readout settings list them, elevation first) until
  * the rest fits; with only the elevation left and still too tall, [StripLayout.fits] is false and the scale bar's
  * layout hides the bar. The intrinsic width is every entry on one row (the scale bar's beside-or-above choice).
+ *
+ * T239: how many entries it draws is the layout rule's (`app/MapLayout.kt`, the readout's entries one rung each of its
+ * ladder, the elevation last): it starts from the rule's count, within the width the rule wrapped them at (its control
+ * node's limit), and drops more only if a height still cuts it; before the rule's first pass, every entry.
  */
 private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGap: Dp, val onDrawn: (Int) -> Unit = {}) : MeasurePolicy {
     override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
@@ -324,7 +328,7 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
         }
 
         fun height(r: List<IntArray>) = r.sumOf { it[2] } + gapY * (r.size - 1).coerceAtLeast(0)
-        var k = placeables.size
+        var k = io.github.jasondorjeshort.dystopo.app.MapLayout.controls.entriesFor("readoutStrip")?.takeIf { it >= 1 }?.coerceAtMost(placeables.size) ?: placeables.size
         var r = rows(k)
         while (k > 1 && height(r) > maxH) {
             k--

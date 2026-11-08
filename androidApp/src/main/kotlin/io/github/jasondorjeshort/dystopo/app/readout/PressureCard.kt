@@ -574,16 +574,35 @@ internal object WarningCardLayout {
  * T212: MapLibre's compass on the map (its own view, top right, shown while the map is turned from north): its bounds in
  * window pixels while it is drawn, else null. Read by the warning card's placement and `GET /camera` › `heading.compass`
  * `boundsPx` (`controls/Heading.compassJson`). Main thread; null off it.
+ *
+ * T239: finds the view and reads it; it sets nothing. Where the compass goes is the layout rule's: `MapController.attach`
+ * sets MapLibre's compass margins from `MapLayout.compassTarget`, and [sizePx] is what the rule fits.
  */
 object CompassView {
+    /** T239: the compass's size in px as MapLibre laid it out, faded or not (the last seen while it is not laid out). Main thread. */
+    fun sizePx(): IntArray? {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return lastSize
+        val map = runCatching { DystopoApp.instance.map.mapView }.getOrNull() ?: return lastSize
+        val v = find(map) ?: return lastSize
+        if (v.width > 0 && v.height > 0) lastSize = intArrayOf(v.width, v.height)
+        return lastSize
+    }
+
+    @Volatile private var lastSize: IntArray? = null
+
     fun boundsPx(): FloatArray? {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) return null
         val map = runCatching { DystopoApp.instance.map.mapView }.getOrNull() ?: return null
         val v = find(map) ?: return null
         if (!v.isShown || v.alpha <= 0f || v.width == 0) return null
+        // T239: the view's laid-out box (its parent's place and its own left and top), not getLocationInWindow of the view
+        // itself: MapLibre turns the compass with the bearing, and the turned view's corner lay up to a third of its size off
+        // its box (on the emulator 23 px left and 40 px down at 30 degrees). The round face fills the box at any bearing.
         val at = IntArray(2)
-        v.getLocationInWindow(at)
-        return floatArrayOf(at[0].toFloat(), at[1].toFloat(), (at[0] + v.width).toFloat(), (at[1] + v.height).toFloat())
+        (v.parent as? android.view.View)?.getLocationInWindow(at)
+        val x = at[0] + v.left
+        val y = at[1] + v.top
+        return floatArrayOf(x.toFloat(), y.toFloat(), (x + v.width).toFloat(), (y + v.height).toFloat())
     }
 
     /** The bounds from any thread (on the main thread through the map's handler, at most 2 s). */

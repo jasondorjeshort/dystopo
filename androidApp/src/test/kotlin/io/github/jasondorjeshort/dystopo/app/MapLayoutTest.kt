@@ -1,6 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app
 
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import io.github.jasondorjeshort.dystopo.ui.OverlayElement
 import io.github.jasondorjeshort.dystopo.ui.OverlayIds
@@ -14,7 +14,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/** T224: what `GET /layout` reports from the elements' rectangles ([MapLayout]); T241: the nodes' record ([MeasuredControls]). */
+/**
+ * T224: what `GET /layout` reports from the elements' rectangles ([MapLayout]); T241: the nodes' record ([MeasuredControls]);
+ * T239: the rule's targets through it, and what makes a placed node be placed or measured again in the same frame.
+ */
 class MapLayoutTest {
     private fun seen(id: String, vararg r: Float, state: String = "shown", within: String? = null) =
         MapLayout.Seen(id, if (r.isEmpty()) null else r, state, null, within)
@@ -86,8 +89,9 @@ class MapLayoutTest {
         c.placed(chips, floatArrayOf(0f, 0f, 1f, 1f))
         assertSame(second, c.placement())
         assertEquals(2, c.computed)
-        // Nothing moves until T239: every element stays where its own parent put it.
-        assertEquals(IntOffset.Zero, second.offset("planningCard"))
+        // With no rule (T239's ruler) nothing is placed by it: every element stays where its own parent put it.
+        assertNull(second.target("planningCard"))
+        assertNull(second.ruled)
     }
 
     @Test
@@ -169,5 +173,128 @@ class MapLayoutTest {
         assertEquals(listOf(1, false), listOf(items.getValue("onlineIndicator")["tagged"], items.getValue("onlineIndicator")["onScreen"]))
         assertEquals(false, items.getValue("tripCard")["onScreen"])
         assertFalse(items.values.filter { it.containsKey("row") }.any { it.containsKey("onScreen") }, "a settings row has no onScreen")
+    }
+
+    /** T239: a ruler that draws the chips under the card's bottom edge as the card is drawn, and gives the bar a room. */
+    private fun chipsUnderTheCard(c: MeasuredControls): MeasuredControls.Ruled {
+        val cardBottom = c.rectOf("navigationCard")?.get(3)?.toInt() ?: 300
+        val hide = c.sizeOf("routesChip")?.let { it.height > 500 } ?: false
+        return MeasuredControls.Ruled(
+            targets = mapOf(
+                "waypointAndTracks" to MeasuredControls.Target(780, cardBottom + 16, false),
+                "routesChip" to MeasuredControls.Target(830, cardBottom + 150, hide, if (hide) "noRoom" else null),
+            ),
+            limits = mapOf("waypointAndTracks" to MeasuredControls.Limit(maxHeightPx = 2000 - cardBottom)),
+        )
+    }
+
+    private class Node(val slot: MeasuredControls.Slot) {
+        var relayouts = 0
+        var remeasures = 0
+
+        init {
+            slot.relayout = { relayouts++ }
+            slot.remeasure = { remeasures++ }
+        }
+    }
+
+    @Test
+    fun theRuleSaysWhereAPlacedElementGoes() {
+        val c = MeasuredControls(::chipsUnderTheCard)
+        val chips = c.attach("waypointAndTracks", null)
+        val card = c.attach("navigationCard", null)
+        c.measured(chips, IntSize(280, 110))
+        c.measured(card, IntSize(1040, 300))
+        c.placed(card, floatArrayOf(20f, 150f, 1060f, 450f))
+        val p = c.placement()
+        assertEquals(MeasuredControls.Target(780, 466, false), p.target("waypointAndTracks"))
+        assertNull(p.target("navigationCard"), "a card places itself until Layout C")
+        // The limit is the bar's room, which its measure takes from then on.
+        val k = c.constrain(chips, Constraints(maxWidth = 1080, maxHeight = 2400))
+        assertEquals(2000 - 450, k.maxHeight)
+        assertEquals(1080, k.maxWidth)
+        assertEquals(Constraints(maxWidth = 1080, maxHeight = 2400), c.constrain(card, Constraints(maxWidth = 1080, maxHeight = 2400)))
+    }
+
+    @Test
+    fun aCardThatMovesHasThePlacedElementsPlacedAgainInTheSameFrame() {
+        // T146 through the rule: the card's turn text wraps, the card is drawn taller, and the chips under it follow in the
+        // same layout, where Compose re-places only the nodes it is asked to.
+        val c = MeasuredControls(::chipsUnderTheCard)
+        val chips = Node(c.attach("waypointAndTracks", null))
+        val card = c.attach("navigationCard", null)
+        c.measured(chips.slot, IntSize(280, 110))
+        c.measured(card, IntSize(1040, 300))
+        c.placed(card, floatArrayOf(20f, 150f, 1060f, 450f))
+        assertEquals(466, c.placement().target("waypointAndTracks")?.topPx)
+        assertEquals(1, chips.remeasures, "measured before the rule gave it a room: measured again within it")
+        val k = Constraints(maxWidth = 1080, maxHeight = 2400)
+        c.constrain(chips.slot, k) // the node's second measure, within the room
+        c.measured(chips.slot, IntSize(280, 110))
+        assertEquals(466, c.placement().target("waypointAndTracks")?.topPx)
+        assertEquals(1, chips.remeasures, "the same room: no third measure")
+        c.placed(chips.slot, floatArrayOf(780f, 466f, 1060f, 576f))
+        val before = chips.relayouts
+        c.measured(card, IntSize(1040, 360)) // the card grows: a new pass, the chips asked to be placed again
+        assertEquals(before + 1, chips.relayouts)
+        c.placed(card, floatArrayOf(20f, 150f, 1060f, 510f))
+        assertEquals(before + 1, chips.relayouts, "one ask per pass")
+        assertEquals(526, c.placement().target("waypointAndTracks")?.topPx)
+        // Its room changed, so the bar is measured again within the new one.
+        assertEquals(2, chips.remeasures)
+        assertEquals(2000 - 510, c.constrain(chips.slot, k).maxHeight)
+        // A card drawn where it was asks nothing.
+        c.placed(card, floatArrayOf(20f, 150f, 1060f, 510f))
+        assertEquals(before + 1, chips.relayouts)
+        // A move by itself (no new size) does: the warning card follows the chips a frame later and is drawn lower.
+        val warning = c.attach("warningCard", null)
+        c.measured(warning, IntSize(1000, 200))
+        c.placement()
+        c.placed(warning, floatArrayOf(40f, 600f, 1040f, 800f))
+        c.placement()
+        c.placed(warning, floatArrayOf(40f, 640f, 1040f, 840f))
+        assertTrue(chips.relayouts > before + 1)
+        // A change from outside the layout (the map turned: the compass comes up) asks too.
+        val n = chips.relayouts
+        c.placement()
+        c.invalidate()
+        assertEquals(n + 1, chips.relayouts)
+    }
+
+    @Test
+    fun anElementTheRuleHidesSaysWhyAndKeepsItsSize() {
+        val c = MeasuredControls(::chipsUnderTheCard)
+        val routes = c.attach("routesChip", null)
+        val hidden = ArrayList<Pair<String, String?>>()
+        val shown = ArrayList<String>()
+        c.onHidden = { id, why -> hidden += id to why }
+        c.onShown = { id -> shown += id }
+        c.measured(routes, IntSize(200, 600)) // too tall for its room in this ruler
+        val t = c.placement().target("routesChip")!!
+        assertTrue(t.hidden)
+        c.hidden(routes, t.reason)
+        c.hidden(routes, t.reason)
+        assertEquals<List<Pair<String, String?>>>(listOf("routesChip" to "noRoom"), hidden, "said once")
+        assertEquals("noRoom", routes.ruledOut)
+        assertFalse(routes.onScreen)
+        assertEquals(IntSize(200, 600), c.sizeOf("routesChip"))
+        c.measured(routes, IntSize(200, 100))
+        assertFalse(c.placement().target("routesChip")!!.hidden)
+        c.placed(routes, floatArrayOf(830f, 450f, 1030f, 550f))
+        assertEquals(listOf("routesChip"), shown)
+        assertNull(routes.ruledOut)
+        assertTrue(routes.onScreen)
+    }
+
+    @Test
+    fun theStripsEntriesAreTheRules() {
+        val c = MeasuredControls({ _: MeasuredControls -> MeasuredControls.Ruled(mapOf("readoutStrip" to MeasuredControls.Target(21, 1800, false)), mapOf("readoutStrip" to MeasuredControls.Limit(maxWidthPx = 600, entries = 2))) })
+        val strip = Node(c.attach("readoutStrip", null))
+        assertNull(c.entriesFor("readoutStrip"), "before the rule's first pass: every entry")
+        c.measured(strip.slot, IntSize(700, 190))
+        c.placement()
+        assertEquals(2, c.entriesFor("readoutStrip"))
+        assertEquals(1, strip.remeasures, "measured before the rule gave it a width: measured again within it")
+        assertEquals(600, c.constrain(strip.slot, Constraints(maxWidth = 1080, maxHeight = 2400)).maxWidth)
     }
 }
