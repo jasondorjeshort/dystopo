@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-08
+
+- T239: Layout B: the compass, the chips and the side columns read the rule
+
 ### 2026-11-07
 
 - T241: Layout A2: the measuring node, and `GET /layout` read from it
