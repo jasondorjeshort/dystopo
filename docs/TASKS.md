@@ -82,6 +82,7 @@ Planned 2026-11-07, the order left to the coordinator (the owner: "I leave prior
 **Goal:** T226's follow-up: a source-reading test under `androidApp/src/test` (as `HelpRegistryTest` reads sources) lists every `object` whose top level holds `mutableStateOf`, asserts each is prepared from `DystopoApp.onCreate` (directly, or through a `prepare()` the launch calls) or lives in a `*UiState` object, and carries an allow file naming today's unprepared ones with a reason each (the inventory counted about 27 of 42 objects; the report gives the count), so a new one fails `check` with a message naming the file and the two ways to pass; the rule's sentence in `docs/reference/android-app.md`, The UI thread and the watchdog. Moves nothing: an entry in the allow file is a follow-up, not this task's fix.
 **Owns:** new `ComposeStatePrepareTest` and its allow file under `androidApp/src/test` [no-check: new files], `docs/reference/android-app.md` (one sentence).
 **Done when:** `check` green with the test; the allow file's count in the report; a scratch object with `mutableStateOf` and no prepare fails the test by name (shown in the report, then removed).
+**Status: merged.** `ComposeStatePrepareTest` with its 28-line allow file and the rule's sentence; verifier MERGE, no notes. Follow-ups: the 28 allowed objects, each to be prepared or moved into a `*UiState` object, `RouteSession` and `DivergenceStore` first (read from route threads today) and `OnlineChip` next; the allow file's reasons are generic until each is audited.
 
 ## Owner actions pending (as of 2026-10-27)
 
