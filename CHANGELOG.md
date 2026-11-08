@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.24-alpha (2026-11-08)
+
 ### 2026-11-08
 
 - T243: The long-press card's "Route to here" node sat above its drawing after T239 (the control tag's modifier order)
