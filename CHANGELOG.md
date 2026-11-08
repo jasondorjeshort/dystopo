@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-07
+
+- T236: ADR 0056 B3: what the status chip says
+
 ## v0.1.23-alpha (2026-11-07)
 
 ### 2026-11-07
