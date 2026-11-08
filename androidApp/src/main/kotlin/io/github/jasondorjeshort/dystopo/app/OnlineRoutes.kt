@@ -1,6 +1,8 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.app.online.OnlineChip
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
+import io.github.jasondorjeshort.dystopo.app.online.OnlineUi
 import io.github.jasondorjeshort.dystopo.app.online.OnlineView
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 
@@ -15,6 +17,11 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
  *   `recovered`, `woken`, `settleMs`, `refreshes`, `lastSourceRefresh`; DEM also `canaries`, `sourcesAnswered`,
  *   `haloVariantsDropped`). `stationPressure` (T173): the live readout's weather station requests (`fetches`,
  *   `failures`, `bytes`), made only while the readout uses the barometer (`GET /readout` › `seaLevelPressure`).
+ * - T236 (ADR 0056 B3): `chip` in `GET /online`, the status chip as drawn: `text` ("Online · viewed earlier"), `word`, `source`,
+ *   `dot` (green, grey, red), `row` and `column` (the proposal's two tables), `open` (the card is up), `hidden`, `detail` (the
+ *   card's two sentences), `figure` (the cache's line: "Viewed earlier: 120 MB of 2 GB", or "Counting the map tiles" while the
+ *   cache indexes), `link` (its one link's words or null), `rectPx` (the card's rectangle while open). `view` gains `kept`.
+ *   `POST /online/chip?open=1|0` opens or closes the card as a tap on the chip does, answering `chip` (`409` while hidden).
  * - `POST /online/download[?bbox=w,s,e,n][&zooms=8-13][&name=][&profile=outdoors|openmaptiles]`: "Download this region" for the box
  *   (default: the visible map) through the server's `/build` and the pack downloader. `GET /online/download`:
  *   progress. `DELETE /online/download`: cancel.
@@ -29,7 +36,16 @@ object OnlineRoutes {
         return try {
             when (r.method to r.path) {
                 "GET" to "/online" -> OnlineView.current(app).let { v -> // T220: `offerDownload`, the region button's rule
-                    Response.json(s.json(v?.json()) + mapOf("offerDownload" to io.github.jasondorjeshort.dystopo.app.online.OnlineUi.make(s, app, v).offerDownload))
+                    val ui = OnlineUi.make(s, app, v) // T236: `chip`
+                    Response.json(s.json(v?.json()) + mapOf("offerDownload" to ui.offerDownload, "chip" to chip(ui)))
+                }
+                "POST" to "/online/chip" -> {
+                    val open = when (r.query["open"]) { "1" -> true; "0" -> false; else -> throw IllegalArgumentException("open must be 1 or 0") }
+                    val ui = OnlineUi.make(s, app, OnlineView.current(app))
+                    if (open && ui.hidden) throw IllegalStateException("the chip is hidden (no server and nothing downloading)")
+                    app.map.onMain { OnlineChip.open = open }
+                    Thread.sleep(400) // a frame or two, so `rectPx` is the drawn card's
+                    Response.json(mapOf("chip" to chip(ui)))
                 }
                 "GET" to "/online/download" -> Response.json(s.region.json())
                 "POST" to "/online/download" -> Response.json(startDownload(app, s, r), 202)
@@ -47,6 +63,10 @@ object OnlineRoutes {
             Response.json(mapOf("error" to e.message), 409)
         }
     }
+
+    /** T236: `chip` with the card's state and rectangle as drawn now. */
+    private fun chip(ui: OnlineUi): Map<String, Any?> =
+        ui.chipJson(OnlineChip.open) + mapOf("rectPx" to OnlineChip.cardPx?.map { Math.round(it) })
 
     /**
      * T106 (a T95 follow-up): `POST /online/cache/clear` empties the tile cache but the tiles of pinned offline areas, as

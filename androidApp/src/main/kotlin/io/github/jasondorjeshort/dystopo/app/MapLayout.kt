@@ -207,6 +207,7 @@ object MapLayout {
                 )
             },
             "overlaps" to overlaps(seen),
+            "onlineCard" to io.github.jasondorjeshort.dystopo.app.online.OnlineChip.layoutJson(), // T236: the chip's card, inside M8's column
             "rule" to linkedMapOf(
                 "sideColumn" to placed.sideColumn, "cardColumns" to placed.cardColumns, "buttonsDrawn" to placed.buttonsDrawn, "entriesDrawn" to placed.entriesDrawn,
                 "elements" to placed.elements.map { e ->

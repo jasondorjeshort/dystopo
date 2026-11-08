@@ -225,6 +225,28 @@ object Areas : VersionPins {
         return current.isPinned(key)
     }
 
+    /** T236: the covers of the tile areas on the one list, built again only when [list] changes ([isRecorded]). */
+    @Volatile private var recordedPins: Pair<List<Record>, AreaPins>? = null
+
+    /**
+     * T236 (ADR 0056 B3): true when the cache entry [key] is a tile of an offline map on the list (a tile area, kept or
+     * "May be cleared"), for the status chip's "on this phone". Unlike [isPinned] it asks the records' covers only, not
+     * navigation's transient pins, which have no row to link to. Takes no lock; any thread (the chip asks from a worker).
+     */
+    fun isRecorded(key: String): Boolean {
+        if (!loaded) runCatching { load() }
+        val all = list
+        val memo = recordedPins
+        val pins = if (memo != null && memo.first === all) memo.second else {
+            val tiles = all.filter { it.pack == null }
+            AreaPins(
+                tiles.map { r -> AreaPins.cover(if (r.opaque != null) opaquePinArea(r.area, AreaDownload.heapTiles()) else r.area) },
+                demTops = tiles.map { r -> r.area.demMaxZoom.takeIf { r.opaque == null } },
+            ).also { recordedPins = all to it }
+        }
+        return pins.isPinned(key)
+    }
+
     /** T95 ([VersionPins]): the pins with their versions, for the fetcher's lookups and version changes. */
     override fun pins(): AreaPins {
         if (!loaded) runCatching { load() }

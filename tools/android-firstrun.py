@@ -604,7 +604,7 @@ def run(args):
         while time.time() - t0 < args.timeout:
             nodes = dev.nodes()
             texts = dev.texts(nodes)
-            prog = [t for t in texts if re.match(r"^(Building on the server|Downloading|Finding your location|Download failed|Saved as pack)", t)]
+            prog = [t for t in texts if re.match(r"^(Building on the server|Downloading|Finding your location|Download failed|Saved as)", t)]
             for p in prog:
                 if not seen or seen[-1] != p:
                     seen.append(p)
@@ -613,7 +613,7 @@ def run(args):
                 return {"ok": False, "error": fail, "progress": seen[-12:], "png": dev.screencap("download-failed")[0]}
             if "No map on this phone yet" not in texts and not any(t.startswith(("Building", "Downloading")) for t in prog):
                 return {"progress": seen[-12:], "waitS": round(time.time() - t0, 1), "png": dev.screencap("downloaded")[0],
-                        "packLine": next((t for t in texts if t.startswith("Saved as pack")), None)}
+                        "packLine": next((t for t in texts if t.startswith("Saved as")), None)}
             time.sleep(2)
         return {"ok": False, "error": f"the card was still up after {args.timeout} s", "progress": seen[-12:], "png": dev.screencap("download-timeout")[0]}
 

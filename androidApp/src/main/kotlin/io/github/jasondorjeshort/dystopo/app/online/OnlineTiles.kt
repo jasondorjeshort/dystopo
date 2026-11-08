@@ -333,18 +333,20 @@ class OnlineTiles(
     /**
      * Where the view centred at [lat], [lon] at map zoom [zoom] gets its terrain: `pack`, `online`
      * (fetched this session), `cached` (from the online disk cache) or `none` (nothing loaded there yet).
+     * T236 (ADR 0056 B3): with the DEM tile it matched (z, x, y; null for `pack` and `none`), so the chip can ask whether that
+     * tile lies in an offline map on the list ([io.github.jasondorjeshort.dystopo.app.areas.Areas.isRecorded]).
      */
-    fun viewSource(lat: Double, lon: Double, zoom: Double): String {
+    fun viewSource(lat: Double, lon: Double, zoom: Double): Pair<String, Triple<Int, Int, Int>?> {
         // A 256-px DEM tile is requested one zoom deeper than the (512-px) map zoom.
         val zt = (floor(zoom).toInt() + 1).coerceIn(0, DEM_MAX_ZOOM)
         fun tile(z: Int) = Triple(z, WebMercator.lonToX(lon, z).toInt().coerceIn(0, (1 shl z) - 1), WebMercator.latToY(lat, z).toInt().coerceIn(0, (1 shl z) - 1))
         val (z0, x0, y0) = tile(zt)
-        if (packCoversDem(z0, x0, y0)) return PACK
+        if (packCoversDem(z0, x0, y0)) return PACK to null
         for (z in listOf(zt, zt - 1, zt + 1, zt - 2).filter { it in 0..DEM_MAX_ZOOM }) {
-            val (tz, tx, ty) = tile(z)
-            service.demSource(tz, tx, ty)?.let { return it }
+            val t = tile(z)
+            service.demSource(t.first, t.second, t.third)?.let { return it to t }
         }
-        return NONE
+        return NONE to null
     }
 
     companion object {
