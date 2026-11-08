@@ -18,7 +18,7 @@ class AreaBudgetTest {
     @Test
     fun aDownloadOverTheBudgetIsRefusedWithTheNumbers() {
         val e = assertNotNull(budgetError(pinnedBytes = 900 * mb, estimateBytes = 200 * mb, alreadyBytes = 0, budgetMb = 1024))
-        assertTrue("1100 MB" in e && "1 GB budget" in e && "Settings › Storage" in e, e) // T115: the budget as the Storage screen's chips say it
+        assertTrue("1100 MB" in e && "over its 1 GB" in e && "Settings › Storage" in e, e) // T115: the budget as the Storage screen's chips say it
     }
 
     @Test
@@ -32,7 +32,7 @@ class AreaBudgetTest {
         // The screen offers the large sizes, and a 128 GB budget reads as one.
         assertTrue(131072L in io.github.jasondorjeshort.dystopo.app.storage.Storage.BUDGET_CHOICES_MB)
         val e = assertNotNull(budgetError(pinnedBytes = 0, estimateBytes = 200L * 1024 * mb, alreadyBytes = 0, budgetMb = 131072))
-        assertTrue("over their 128 GB budget" in e, e)
+        assertTrue("over its 128 GB" in e, e)
         assertEquals("1.5 GB", io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(1536))
         assertEquals("512 MB", io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(512))
     }

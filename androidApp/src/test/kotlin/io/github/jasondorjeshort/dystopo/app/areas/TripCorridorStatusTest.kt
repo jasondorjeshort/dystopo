@@ -13,14 +13,14 @@ class TripCorridorStatusTest {
 
     @Test
     fun eachStateHasItsLineAndActions() {
-        assertEquals(CorridorStatus("kept", "Kept offline, ${km()} each side: 42 MB", listOf("stop")), corridorStatus(1000, false, false, null, rec("done"), null, m))
+        assertEquals(CorridorStatus("kept", "Downloaded, ${km()} each side: 42 MB", listOf("stop")), corridorStatus(1000, false, false, null, rec("done"), null, m))
         assertEquals("downloading", corridorStatus(1000, false, true, null, rec("downloading"), 12 to 900, m).state)
         assertTrue("12 of 900 tiles" in corridorStatus(1000, false, false, null, rec("downloading"), 12 to 900, m).text)
         assertEquals(listOf("retry", "stop"), corridorStatus(1000, false, false, null, rec("partial", error = "3 tiles could not be fetched"), null, m).actions)
-        assertEquals(CorridorStatus("queued", "Waiting to keep offline, ${km()} each side", listOf("stop")), corridorStatus(1000, false, true, null, null, null, m))
-        val over = corridorStatus(1000, false, false, "Offline areas would use about 2100 MB, over their 2 GB budget", null, null, m)
+        assertEquals(CorridorStatus("queued", "Waiting to download, ${km()} each side", listOf("stop")), corridorStatus(1000, false, true, null, null, null, m))
+        val over = corridorStatus(1000, false, false, "Offline maps in the budget would use about 2100 MB, over its 2 GB", null, null, m)
         assertEquals("refused", over.state)
-        assertTrue(over.text.startsWith("Not kept offline: Offline areas would use"))
+        assertTrue(over.text.startsWith("Not downloaded: Offline maps in the budget would use"))
         assertEquals(listOf("areas", "keep"), over.actions)
         assertEquals(CorridorStatus("notKept", CORRIDOR_NOT_KEPT, listOf("keep")), corridorStatus(1000, true, false, null, null, null, m))
         // Stopped, but its area is unpinned on the sheet: still not kept.

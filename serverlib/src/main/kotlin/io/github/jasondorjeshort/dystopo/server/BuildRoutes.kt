@@ -617,7 +617,7 @@ class BuildRoutes(
         val extract = try {
             overpass.extract(job.box)
         } catch (e: OverpassSource.Refused) {
-            job.warnings += "Overpass refused or failed (${e.message}); the vector pack was built from OpenFreeMap (OpenMapTiles schema, no outdoors layers) instead"
+            job.warnings += "Overpass refused or failed (${e.message}); the vector archive was built from OpenFreeMap (OpenMapTiles schema, no outdoors layers) instead"
             job.osmProfile = PROFILE_OPENMAPTILES
             job.osmSource = SOURCE_OPENFREEMAP
             job.overpassInfo = linkedMapOf("status" to e.status, "error" to e.message, "requests" to overpass.fetches)
@@ -814,7 +814,7 @@ class BuildRoutes(
                     val b = area.bounds
                     val outdoors = tilebuild.unavailable() == null
                     val profile = opts["profile"] ?: if (outdoors) PROFILE_OUTDOORS else PROFILE_OPENMAPTILES
-                    if (!outdoors && opts["profile"] == null) notes += "tilebuild is not installed here: the vector pack is OpenMapTiles from OpenFreeMap"
+                    if (!outdoors && opts["profile"] == null) notes += "tilebuild is not installed here: the vector archive is OpenMapTiles from OpenFreeMap"
                     val job = submit(
                         mapOf(
                             "name" to name, "bbox" to listOf(b.minLon, b.minLat, b.maxLon, b.maxLat).joinToString(",") { String.format(Locale.ROOT, "%.6f", it) },

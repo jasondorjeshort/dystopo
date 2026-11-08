@@ -347,7 +347,7 @@ object RouteSession {
         } catch (e: RoutePlanner.NotReady) {
             val s = e.state
             val why = when {
-                s == null -> "this pack has no trail data (no vector archive)"
+                s == null -> "this map has no trail data (no vector archive)"
                 s.status == "refused" -> GRAPH_TOO_LARGE // T149: the heap guard refused the build
                 s.status == "downloading" -> GRAPH_DOWNLOADING // T189: the graph shipped with the map is still arriving
                 s.status == "error" -> "the trail network could not be built: ${s.error}"

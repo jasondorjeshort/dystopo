@@ -1184,7 +1184,7 @@ def close_sheet(dev):
 
 
 def set_server(dev, url):
-    """Settings > Sources: type the server, Save; returns the result line ("Connected: N packs on ..." or the error)."""
+    """Settings > Sources: type the server, Save; returns the result line ("Connected: N maps on ...", "N packs" before T237, or the error)."""
     nodes = open_settings(dev)
     edit = find_edit_below(dev, "^Sources$", nodes)
     if not edit:
@@ -1195,7 +1195,7 @@ def set_server(dev, url):
         dev.shell("input", "keyevent", *(["KEYCODE_DEL"] * 40))
     type_text(dev, url)
     dev.tap_text("^Save$")
-    n, nodes = dev.wait_for(r"^(Connected: \d+ packs? on|Test failed|.*(refused|not allowed|failed).*)", 60)
+    n, nodes = dev.wait_for(r"^(Connected: \d+ (packs?|maps?) on|Test failed|.*(refused|not allowed|failed).*)", 60)
     line = n["text"] if n else None
     close_sheet(dev)
     return line
@@ -1994,7 +1994,7 @@ def part_network(args):
         if n:
             dev.tap_text("^Not now$")
         line = set_server(dev, args.server)
-        m = re.search(r"Connected: (\d+) pack", line or "")
+        m = re.search(r"Connected: (\d+) (pack|map)", line or "")
         ok = bool(m) and int(m.group(1)) >= 1
         return {"ok": ok, "settings": line, **({} if ok else {"error": f"the server's catalog needs a pack: {line}"})}
 

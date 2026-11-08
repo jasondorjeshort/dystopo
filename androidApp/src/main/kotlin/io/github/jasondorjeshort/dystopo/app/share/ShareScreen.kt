@@ -385,7 +385,7 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
     )
     Chip(if (busy) "Working..." else "Use its maps") {
         if (addr.isBlank()) { message = "Enter the other phone's address and code"; return@Chip }
-        run { PeerSources.add(addr, code).let { p -> "Connected to ${p.name}: ${counted((p.catalog?.packs?.size ?: 0).toLong(), "pack")}" } }
+        run { PeerSources.add(addr, code).let { p -> "Connected to ${p.name}: ${counted((p.catalog?.packs?.size ?: 0).toLong(), "map")}" } }
     }
     message?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Connected") || it.startsWith("Downloading") || it.startsWith("Forgot")) Accent else Bad, fontSize = 14.sp)) }
     peers.forEach { p ->
@@ -397,7 +397,7 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
             BasicText(peerSeenLine(p, System.currentTimeMillis()), style = TextStyle(color = Muted, fontSize = 12.sp))
             p.error?.takeIf { p.state == "error" }?.let { BasicText(it, style = TextStyle(color = Bad, fontSize = 12.sp)) }
             val packs = p.catalog?.packs.orEmpty()
-            if (packs.isEmpty()) BasicText("No packs on this phone", style = TextStyle(color = Muted, fontSize = 13.sp))
+            if (packs.isEmpty()) BasicText("No offline maps on this phone", style = TextStyle(color = Muted, fontSize = 13.sp))
             packs.forEach { pack ->
                 val job = shownJob(jobs[pack.name], p)
                 val state = job?.get("state") as? String
@@ -419,8 +419,8 @@ private fun PeerMapsSection(tick: Any?, addr: String, code: String) {
             }
             p.areas.forEach { a ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText("Area: ${a["name"]}", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 14.sp))
-                    Chip("Get") { run { PeerSources.area(p.addr, a["id"] as String); "Downloading the area ${a["name"]}" } }
+                    BasicText("${a["name"]}", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 14.sp))
+                    Chip("Get") { run { PeerSources.area(p.addr, a["id"] as String); "Downloading ${a["name"]}" } }
                 }
             }
         }

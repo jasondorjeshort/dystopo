@@ -128,7 +128,7 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
             LayerRow("Boundaries", o.boundaries) { change(mapOf("boundaries" to it)) }
         }
         // T174: the streams derived from the elevation grid, beside the layers; off unless turned on.
-        OptionRow("Drainage", "streams worked out from the terrain, where an offline area has them", help = "map.drainage") {
+        OptionRow("Drainage", "streams worked out from the terrain, where an offline map has them", help = "map.drainage") {
             OnOff(o.drainage) { change(mapOf("drainage" to if (it) "on" else "off")) }
         }
         // T230: airport gate numbers; on by default. In packs made before gates were added, the line says so.
@@ -328,9 +328,9 @@ private fun gatesHint(): String {
     val without = vectors.count { !MapOptions.hasGates(it.metadata) }
     return when {
         without == 0 -> "gate numbers at airports, when zoomed in close"
-        without < vectors.size -> "some of your offline areas were made before gates were added and show none until updated"
-        vectors.size == 1 -> "this offline area was made before gates were added and shows none until updated"
-        else -> "your offline areas were made before gates were added and show none until updated"
+        without < vectors.size -> "some of your offline maps were made before gates were added and show none until updated"
+        vectors.size == 1 -> "this offline map was made before gates were added and shows none until updated"
+        else -> "your offline maps were made before gates were added and show none until updated"
     }
 }
 
@@ -410,13 +410,13 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
                 "Boundaries: parks and wilderness. Roads, peaks, places and contours always show."
         },
         HelpText("map.drainage", "Drainage", "$place › Drainage", show = show) {
-            "Stream lines worked out from an offline area's elevation data, drawn lighter than and under the mapped " +
+            "Stream lines worked out from an offline map's elevation data, drawn lighter than and under the mapped " +
                 "streams: solid where water likely runs all year, dashed where part of the year, dots where likely dry. " +
                 "They come from the shape of the land alone, so a line may be dry or a stream missing."
         },
         HelpText("map.airportGates", "Airport gates", "$place › Airport gates", show = show) { // T230
             "Shows the gate numbers at airports, such as B12, when you zoom in close, from the map data. Search finds " +
-                "a gate by its number whether this is on or off. An offline area made before gates were added has " +
+                "a gate by its number whether this is on or off. An offline map made before gates were added has " +
                 "none until it is updated. A wrong or missing number is fixed in the map data, not in this app."
         },
         HelpText("map.night", "Night", "$place › Night", show = show) {

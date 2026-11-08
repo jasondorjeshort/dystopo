@@ -1,0 +1,25 @@
+# T237 (ADR 0056 B2): sentences RetiredNounsTest allows, one per line: path | a fragment of that sentence | reason.
+# The path is the end of the file's path from the repository root; the fragment is matched in the literal with its templates read as {}.
+app/TileService.kt | no DEM pack | developer-only: the JSON error of the decode benchmark's debug route
+app/areas/AreaDownload.kt | a box is a region pack, which holds one zoom range | developer-only: refuses POST /areas/download with a box and demMaxZoom; the picker never sends one
+app/areas/AreaDownload.kt | is tiles in the cache; the trail graph is built from vector packs | developer-only: a manifest item's note in GET /areas/plan
+app/areas/Areas.kt | is the pack {}: {} | developer-only: refuses POST /areas/pin on a pack's record; the list shows no toggle there (PACK_NOTE says why)
+app/areas/AreasScreen.kt | {} is not a pack | developer-only: refuses the Show first action on a row with no pack through POST /areas/rows/action; the row has no such button
+app/online/RegionDownload.kt | a region download is already running | developer-only: names the region job and its route (DELETE /online/download); the picker waits for the job instead
+app/online/RegionDownload.kt | invalid pack name | developer-only: the picker makes the name valid first (RegionDownload.packNameFrom), so only a route reaches it
+app/packs/PackCatalogClient.kt | the server has no pack | developer-only: a JSON reason in GET /packs/catalog's graph offer, read by the owner of a debug build
+app/packs/PackCatalogClient.kt | the server ships no graph with this pack | developer-only: a JSON reason in GET /packs/catalog's graph offer
+app/packs/ShippedGraphs.kt | a download of this pack without the graph is running | developer-only: a JSON reason in GET /route/status's graph source
+app/packs/ShippedGraphs.kt | no graph came with this pack | developer-only: a JSON reason in GET /route/status's graph source
+app/routing/RoutePlanner.kt | stale (pack changed) | developer-only: a graph state's reason in GET /route/status, the same words as the server's
+app/search/PlaceSearch.kt | stale (pack changed) | developer-only: a search index state's reason in GET /search/status
+app/share/PeerServe.kt | not a pack file | developer-only: the JSON error another phone's download reads (404), not shown
+app/share/PeerServe.kt | no such pack file | developer-only: the JSON error another phone's download reads (404), not shown
+app/share/PeerServe.kt | no DEM pack here | developer-only: the JSON error of the peer's tile route, not shown
+app/storage/Storage.kt | packs are removed in the pack list | developer-only: refuses POST /storage/clear for the offline maps' store; the screen has no Clear there
+dystopo/routing/GraphTiles.kt | one graph per pack, before T76 | developer-only: names a graph file format from before T76 in a rebuild error
+app/settings/SettingsPages.kt | from your region until you choose | region as a place on Earth: units are seeded by region (ADR 0022), not a downloaded map
+app/settings/SettingsPages.kt | region of your first map or GPS fix | region as a place on Earth: units are seeded by region (ADR 0022)
+tools/demo/index.html | reset to the region default | region as a place on Earth: the page's units seed (ADR 0022)
+tools/demo/index.html | By region: Letter in the US, A4 elsewhere | region as a place on Earth: the print sheet's paper follows the units' region
+tools/demo/index.html | by region | region as a place on Earth: the paper menu's default

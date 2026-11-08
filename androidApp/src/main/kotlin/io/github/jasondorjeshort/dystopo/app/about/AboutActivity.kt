@@ -85,14 +85,14 @@ private fun AboutScreen(credits: Credits, onBack: () -> Unit, open: (String) -> 
         BasicText("Map data and sources", style = TextStyle(color = Ink, fontSize = 22.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
         BasicText(credits.compact, style = TextStyle(color = Muted, fontSize = 13.sp))
 
-        Heading("Region pack")
-        if (credits.packs.isEmpty()) Body("No region pack is installed.")
+        Heading("Offline maps")
+        if (credits.packs.isEmpty()) Body("No offline map is on this phone.")
         for (p in credits.packs) {
             CardColumn {
                 BasicText("${if (p.role == "dem") "Elevation" else "Map data"}: ${p.name ?: p.file}", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
                 if (p.attribution.isNotEmpty()) Body(p.attribution)
                 p.license?.let { Small("License: $it") }
-                Small("Sources: " + p.registryIds.joinToString(", ").ifEmpty { "not recorded in the pack" })
+                Small("Sources: " + p.registryIds.joinToString(", ").ifEmpty { "not recorded in the map" })
                 if (p.unknownIds.isNotEmpty()) Small("Not in this app's registry: " + p.unknownIds.joinToString(", "))
             }
         }
@@ -106,7 +106,7 @@ private fun AboutScreen(credits: Credits, onBack: () -> Unit, open: (String) -> 
                 Body(s.attribution)
                 Link("License: ${s.licenseName}", s.licenseUrl, open)
                 AppCredits.homePage(s.attributionHtml)?.let { Link(it, it, open) }
-                Small("Used by: " + c.usedBy.joinToString(", ") { when (it) { "app" -> "map labels"; AppCredits.BUNDLED_USE -> "built-in boundaries"; AppCredits.READOUT_USE -> "elevation readout"; else -> "$it pack" } })
+                Small("Used by: " + c.usedBy.joinToString(", ") { when (it) { "app" -> "map labels"; AppCredits.BUNDLED_USE -> "built-in boundaries"; AppCredits.READOUT_USE -> "elevation readout"; else -> "$it map" } })
             }
         }
 

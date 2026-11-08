@@ -389,7 +389,7 @@ interface Router {
          * What drive mode does and does not do, in one sentence and one place (ADR 0032): the route card, the trip card,
          * the browser's trip card (the server's `notice`) and every drive route's description say this.
          */
-        const val DRIVE_NOTICE = "Drive routes are planned offline from the roads in the map packs, with their one-way streets " +
+        const val DRIVE_NOTICE = "Drive routes are planned offline from the roads in the maps, with their one-way streets " +
             "and speed limits; they do not know turn restrictions, traffic or seasonal closures."
 
         fun km(m: Double) = (m / 100).roundToLong() / 10.0
@@ -563,7 +563,7 @@ class TileRouter(
     ): RouteResult {
         // T108: crow is a straight line, never a search (no heights here: the editor and the phone pass their DEM to Crow).
         if (mode == TravelMode.CROW) return RouteResult.Found(Crow.plan(fromLat, fromLon, toLat, toLon, null, name, ids, units))
-        if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the pack has no trails or roads to route on")
+        if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the map has no trails or roads to route on")
         val model = CostModel(mode)
         val long = overlay != null && mode == TravelMode.DRIVE &&
             TrackStats.distanceM(fromLat, fromLon, toLat, toLon) >= DriveOverlay.MIN_DISTANCE_M
@@ -615,8 +615,8 @@ class TileRouter(
         return RouteResult.Failed(
             RouteFailure.NOT_CONNECTED,
             if (model.mode == TravelMode.DRIVE) {
-                "no road open to cars connects start and end: they are on separate road networks of the map packs " +
-                    "(the graph's component summary$inside; drive mode only knows the roads in the map packs)"
+                "no road open to cars connects start and end: they are on separate road networks of the maps " +
+                    "(the graph's component summary$inside; drive mode only knows the roads in the maps)"
             } else {
                 "no trail connects start and end: they are on separate networks (the graph's component summary$inside)"
             },
@@ -671,8 +671,8 @@ class TileRouter(
 
     private fun driveUnsupported(file: String) = RouteResult.Failed(
         RouteFailure.DRIVE_UNSUPPORTED,
-        "drive mode needs a map pack built with road data (one-way streets, roads closed to cars, speed limits); " +
-            "$file was built before it. Download or build the pack again to drive here; hiking and cycling work as before",
+        "drive mode needs a map built with road data (one-way streets, roads closed to cars, speed limits); " +
+            "$file was built before it. Download or build the map again to drive here; hiking and cycling work as before",
         linkedMapOf("file" to file),
     )
 
@@ -915,7 +915,7 @@ class TileRouter(
                         RouteFailure.SEARCH_LIMIT,
                         "no route found within the search limit ($maxSettled junctions settled, ${d(networkM[0])} of " +
                             (if (drive) "road" else "trail and road") + " around the start and ${d(networkM[1])} around the end); " +
-                            "the ends may not be connected in the map packs",
+                            "the ends may not be connected in the maps",
                         linkedMapOf("expanded" to expanded, "maxSettled" to maxSettled),
                     )
                 }
@@ -934,7 +934,7 @@ class TileRouter(
                     RouteFailure.NOT_CONNECTED,
                     if (drive) {
                         "no road open to cars connects start and end (one-way streets and roads closed to cars count; " +
-                            "drive mode only knows the roads in the map packs): $sAt of road reachable from the start, $eAt to the end"
+                            "drive mode only knows the roads in the maps): $sAt of road reachable from the start, $eAt to the end"
                     } else {
                         "no trail connects start and end: they are on separate networks " +
                             "($sAt of trail and road around the start, $eAt around the end)"

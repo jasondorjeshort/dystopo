@@ -76,9 +76,9 @@ object SearchUi {
         val building = states.filter { it.status == "building" }
         status = when {
             !want && states.none { it.busy } -> null // not asked for yet: nothing to say
-            states.isEmpty() -> "No map data in these packs to search"
+            states.isEmpty() -> "No map data here to search"
             building.isNotEmpty() -> "Indexing places" + building.sumOf { it.total }.let { t -> if (t > 0) " ${building.sumOf { it.done } * 100 / t}%" else "..." } +
-                if (building.size > 1) " (${building.size} packs)" else ""
+                if (building.size > 1) " (${building.size} maps)" else ""
             states.all { it.status == "error" } -> "Search index failed: ${states.first().error}"
             states.none { it.index != null } && states.any { it.status == "refused" } -> SEARCH_NO_MEMORY // T149
             states.none { it.index != null } -> "Loading search index..."

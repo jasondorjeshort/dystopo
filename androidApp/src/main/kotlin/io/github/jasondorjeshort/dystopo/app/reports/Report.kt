@@ -128,7 +128,7 @@ class Report(val id: String, val dump: MainWatchdog.Dump) {
         h["batterySaver"]?.let { phone += "battery saver " + if (it == "true") "on" else "off" }
         if (phone.isNotEmpty()) out += "Phone: " + phone.joinToString(", ")
         if (h["heapMaxMb"] != null) out += "Java heap at the first frame: ${h["heapUsedMb"] ?: "?"} MB of ${h["heapMaxMb"]} MB" + (h["gcCount"]?.let { ", GCs $it" } ?: "")
-        h["packs"]?.let { n -> out += "Packs: $n, ${(h["packBytes"]?.toLongOrNull() ?: 0L) / (1024 * 1024)} MB" }
+        h["packs"]?.let { n -> out += "Offline maps: $n, ${(h["packBytes"]?.toLongOrNull() ?: 0L) / (1024 * 1024)} MB" }
         h["startInfoReason"]?.let { r -> out += "System's start record: $r, ${h["startInfoType"] ?: "?"}" + (h["startInfoTimes"]?.let { t -> "; $t" } ?: "") }
         return out
     }

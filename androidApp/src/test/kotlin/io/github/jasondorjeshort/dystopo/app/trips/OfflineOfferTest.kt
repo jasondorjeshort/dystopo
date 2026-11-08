@@ -27,7 +27,7 @@ class OfflineOfferTest {
     fun theOfferAndTheBudgetMessageSayTheSameSize() { // the PR #99 verifier saw "about 28 MB" then "about 29 MB"
         val bytes = (28.3 * mb).toLong()
         val text = offlineOfferText(bytes, 233, budgetError(pinnedBytes = 0, estimateBytes = bytes, alreadyBytes = 0, budgetMb = 16))
-        assertTrue(text.startsWith("This route offline: about 28 MB (233 tiles). Offline areas would use about 28 MB, over their 16 MB budget"), text)
+        assertTrue(text.startsWith("This route offline: about 28 MB (233 tiles). Offline maps in the budget would use about 28 MB, over its 16 MB"), text)
         assertEquals("1223 MB", aboutMb(1_282_440_000))
         assertEquals("9.5 MB", aboutMb((9.5 * mb).toLong()))
     }
@@ -36,7 +36,7 @@ class OfflineOfferTest {
     fun overTheBudgetTheOfferSaysWhyAfterTheSize() {
         val refusal = assertNotNull(budgetError(pinnedBytes = 1900 * mb, estimateBytes = 400 * mb, alreadyBytes = 0, budgetMb = 2048))
         val text = offlineOfferText(400 * mb, 4_321, refusal)
-        assertTrue(text.startsWith("This route offline: about 400 MB (4,321 tiles). Offline areas would use about 2300 MB"), text)
+        assertTrue(text.startsWith("This route offline: about 400 MB (4,321 tiles). Offline maps in the budget would use about 2300 MB"), text)
         assertTrue(text.endsWith("Settings › Storage."), text)
     }
 

@@ -183,7 +183,7 @@ object Storage {
         val areas = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.all() }.getOrDefault(emptyList())
         val stores = linkedMapOf<String, Any?>(
             PACKS to linkedMapOf(
-                "label" to "Packs", "bytes" to packsWalk.apparentBytes, "budgetMb" to null, "clearable" to false,
+                "label" to STORE_OUTSIDE, "bytes" to packsWalk.apparentBytes, "budgetMb" to null, "clearable" to false,
                 "count" to packList.size,
                 "packs" to packList.map { p -> mapOf("name" to p.info.name, "bytes" to p.files.files.sumOf { it.length() }) },
                 "dirs" to dirsJson(PACKS),
@@ -197,7 +197,7 @@ object Storage {
                 "indexing" to !onlineReady, // T242
             ) + budgetFields(CacheKind.ONLINE, onlineFetchedBytes),
             PINNED to linkedMapOf(
-                "label" to "Offline areas (pinned)", "bytes" to pinned, "entries" to online.pinnedSize, "budgetMb" to AppSettings.pinnedCacheMb,
+                "label" to STORE_IN_BUDGET, "bytes" to pinned, "entries" to online.pinnedSize, "budgetMb" to AppSettings.pinnedCacheMb,
                 "setting" to "pinnedCacheMb", "clearable" to false, "areas" to areas.count { it.pinned && it.pack == null },
                 "holds" to if (onlineReady) onlineBreakdown(online, pinned = true) else null, // T95
                 "indexing" to !onlineReady, // T242

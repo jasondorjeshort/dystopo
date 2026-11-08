@@ -38,7 +38,7 @@ object Sources {
         "testing" -> "Testing ${t["server"]}..."
         "ok" -> {
             val n = (t["packs"] as? Number)?.toInt() ?: 0
-            "Connected: ${if (n == 1) "1 pack" else "$n packs"} on ${t["server"]}" + if (t["saved"] == false) " (not saved yet: tap Save)" else ""
+            "Connected: ${if (n == 1) "1 map" else "$n maps"} on ${t["server"]}" + if (t["saved"] == false) " (not saved yet: tap Save)" else ""
         }
         "failed" -> "Test failed: ${t["error"]}"
         else -> null

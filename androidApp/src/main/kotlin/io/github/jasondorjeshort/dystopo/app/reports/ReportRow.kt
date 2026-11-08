@@ -182,10 +182,10 @@ object ReportUi {
 const val INTRO = "Crashes, freezes and closes of the app on this phone, the last five kept, and the last three freezes at startup. Tap one to read it. Nothing leaves the phone unless you open an issue."
 const val NONE = "No problems recorded."
 const val NOTICE = "This report will be posted publicly on GitHub under your account. It contains the app version, your phone model, " +
-    "your Android version and the error details. Locations, place names and pack names have been removed. It does not contain " +
+    "your Android version and the error details. Locations, place names and map names have been removed. It does not contain " +
     "your maps, tracks or searches. Read it before you submit; nothing is sent until you do."
 const val NOTICE_STARTUP = "A startup report also lists how long each step of the start took, where the app was waiting, the recent starts' times, " +
-    "the phone's free memory, temperature state and battery saver, and how many packs you have and their total size, without their names."
+    "the phone's free memory, temperature state and battery saver, and how many offline maps you have and their total size, without their names."
 const val LAST_START = "Report the last start"
 const val OPEN_ISSUE = "Open GitHub issue"
 const val DELETE = "Delete"

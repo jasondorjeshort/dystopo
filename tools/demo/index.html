@@ -22,7 +22,7 @@
   window.DYSTOPO_LIVE; ?live=1 does the same from any page served by it). Hillshade, contours and OSM then come from the
   serve routes: packs in out/ where they have the tile, else DEM rendered on request from the cloud sources (best: 3DEP,
   Copernicus, EGM2008) and OpenFreeMap base tiles, both cached on disk. The bottom box says which source the visible
-  tiles came from (pack, live-3dep, live-swissalti, live-copernicus, openfreemap); "Build pack here" asks the server (POST /build) to make out/<name>-dem.pmtiles and
+  tiles came from (pack, live-3dep, live-swissalti, live-copernicus, openfreemap); "Build a map here" asks the server (POST /build) to make out/<name>-dem.pmtiles and
   out/<name>-outdoors.pmtiles (OpenFreeMap tiles, OpenMapTiles schema) for the current view and shows progress.
 
   The front door (T200, ADR 0052; live mode, which is also what the standalone server answers at /): the map is the page.
@@ -31,7 +31,7 @@
   8 s or an insecure origin, the last view this browser saved (localStorage dystopo.view, written on moveend), else Rainier.
   The fallback is silent and a remembered denial (dystopo.geolocation) is never prompted again on load; the locate-me
   control (top right) asks on a click. Units are seeded after that, from the opening place, and once more from the first
-  geolocated view while they are still a region seed (dystopo.unitsSeed). "Build a pack here" and the Server token field
+  geolocated view while they are still a region seed (dystopo.unitsSeed). "Build a map here" and the Server token field
   show only with a stored token (?token=...) or ?tools=1. Below 520 px (the one breakpoint) the panel starts collapsed to
   its title. window.dystopoStart says which view opened and why (hash, geolocation, saved, default).
 
@@ -110,17 +110,17 @@
   <div class="hint" id="hint">Scroll to zoom, drag to pan. Demo data covers Rainier NP and surroundings at z8–14; the blank beyond is simply ungenerated. <span id="dem-mode"></span></div>
   <div id="live-tools" hidden>
     <details id="build" open>
-      <summary>Build a pack here</summary>
-      <label>Pack name <input id="packname" size="14" placeholder="from the view"></label>
+      <summary>Build a map here</summary>
+      <label>Map name <input id="packname" size="14" placeholder="from the view"></label>
       <label>Zooms <input id="packmin" type="number" min="0" max="15" value="8" style="width:3.2em"> to <input id="packmax" type="number" min="6" max="15" value="13" style="width:3.2em"></label>
       <label>Vector <select id="packprofile"><option value="outdoors">outdoors profile (tilebuild)</option><option value="openmaptiles">OpenMapTiles (OpenFreeMap tiles)</option></select></label>
       <label>OSM from <select id="packsource"><option value="auto">auto: a server extract, else Overpass</option><option value="extract">an extract on the server</option><option value="overpass">Overpass (small boxes)</option></select></label>
       <button id="packsources" type="button">What would it use?</button>
-      <label><input type="checkbox" id="packreplace"> replace a pack of that name</label>
-      <button id="buildpack" type="button">Build pack here</button> <button id="buildcancel" type="button" hidden>Cancel</button>
+      <label><input type="checkbox" id="packreplace"> replace a map of that name</label>
+      <button id="buildpack" type="button">Build a map here</button> <button id="buildcancel" type="button" hidden>Cancel</button>
       <pre id="buildcmd" hidden></pre>
     </details>
-    <label id="token-row" title="The server's bearer token, when it has one: for building packs and for saving trips there (kept in this browser only)">Server token <input id="packtoken" type="password" size="12" autocomplete="off" placeholder="none"></label>
+    <label id="token-row" title="The server's bearer token, when it has one: for building maps and for saving trips there (kept in this browser only)">Server token <input id="packtoken" type="password" size="12" autocomplete="off" placeholder="none"></label>
   </div>
   <details id="print" hidden>
     <summary>Print a map sheet</summary>
@@ -795,7 +795,7 @@ if (LIVE) {
     return r;
   };
   map.on("idle", () => { window.dystopoLiveSources().catch(() => {}); });
-  // Build pack here: POST /build on the server for the current view (DEM from the live sources, OSM from
+  // Build a map here: POST /build on the server for the current view (DEM from the live sources, OSM from
   // Overpass + tilebuild's outdoors profile, or OpenFreeMap tiles with profile=openmaptiles), then poll GET /build/{id} for progress. The finished files are under /out/ and the server
   // serves the view from them at once (the source box then says pack). window.dystopoBuild has the last job.
   const pre = document.getElementById("buildcmd"), cancelBtn = document.getElementById("buildcancel");
@@ -811,7 +811,7 @@ if (LIVE) {
   }
   tokenInput.value = readToken();
   tokenInput.onchange = () => writeToken(tokenInput.value.trim());
-  // T200: "Build a pack here" and the Server token field are the operator's: shown only with a stored token (?token= sets
+  // T200: "Build a map here" and the Server token field are the operator's: shown only with a stored token (?token= sets
   // it) or ?tools=1, so a visitor to a public instance sees the map and its layers only.
   document.getElementById("live-tools").hidden = !(readToken() || new URLSearchParams(location.search).get("tools") === "1");
   const authed = (opts = {}) => { const t = tokenInput.value.trim(); return t ? { ...opts, headers: { ...(opts.headers || {}), Authorization: "Bearer " + t } } : opts; };

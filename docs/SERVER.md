@@ -1,8 +1,8 @@
 # Dystopo server
 
-The always-on peer as a program you can deploy: the routes of `devtool serve --live` (tiles from packs,
-else rendered live; pack builds; pack downloads; the sync peer; attribution) plus a config file, JSON
-logs, `/healthz`, a pack catalog, an optional bearer token, a CORS allowlist and a graceful shutdown.
+The always-on peer as a program you can deploy: the routes of `devtool serve --live` (tiles from offline maps,
+else rendered live; offline map builds; offline map downloads; the sync peer; attribution) plus a config file, JSON
+logs, `/healthz`, an offline map catalog, an optional bearer token, a CORS allowlist and a graceful shutdown.
 
 Code: `server/` (the program: `Main.kt`, `ServerConfig.kt`, `Gate.kt`, `JsonLog.kt`, `Metrics.kt`) over `serverlib/`
 (the routes and sources, shared with `devtool serve`: `LiveTiles`, `BuildRoutes`, `ServeStatic`,
@@ -51,7 +51,7 @@ docker run -d --name dystopo -p 8080:8080 \
   unprivileged user (uid 10001).
 - Working directory `/data`: the default `cache` and `out` are the two volumes. `/data/cache` grows with
   use (live DEM tiles, OpenFreeMap tiles, Copernicus and 3DEP downloads, Overpass extracts; gigabytes over
-  time); `/data/out` holds the packs, their `.sha256` sidecars and the sync replica (`out/sync/peer.db`).
+  time); `/data/out` holds the offline maps, their `.sha256` sidecars and the sync replica (`out/sync/peer.db`).
 - A config file mounted at `/opt/dystopo/config/server.json` is read without arguments
   (`-v ./server.json:/opt/dystopo/config/server.json:ro`).
 - `docker stop` sends SIGTERM; the start script `exec`s java, so the JVM is PID 1 and runs the graceful
@@ -63,16 +63,17 @@ docker run -d --name dystopo -p 8080:8080 \
   outdoors build downloads Planetiler's aux data (about 1.45 GB: water polygons, Natural Earth, Wikidata
   names) into the cache volume. tilebuild carries LGPL build tooling (GeoTools); the image ships those jars
   unmodified and separate, and they are never on the server's classpath.
-- CI builds and starts the image on every push and (T66) builds an outdoors pack inside it: the cache
+- CI builds and starts the image on every push and (T66) builds an outdoors offline map inside it: the cache
   volume is a host directory whose `planetiler/` aux files are kept in an Actions cache between runs
   (key `planetiler-aux-v1`), the config lists Geofabrik's Liechtenstein under `extractDownloads`, a box
   no extract covers must be a 422, and a small box inside it at z8 to z10 must come back `done` with
   `osmSource: extract`, `osmProfile: outdoors` and appear in `/catalog`. The `image` job also checks
   `/healthz`, the token, `/catalog` and that tilebuild is available.
 
-Packs built elsewhere (`tilebuild`, `devtool tiles --pmtiles`) go into the out volume as
-`<name>-dem.pmtiles` plus `<name>-outdoors.pmtiles`; the server picks up new files at startup, and packs
-made by `POST /build` immediately.
+Offline maps built elsewhere (`tilebuild`, `devtool tiles --pmtiles`) go into the out volume as
+`<name>-dem.pmtiles` plus `<name>-outdoors.pmtiles`; the server picks up new files at startup, and offline maps
+made by `POST /build` immediately. An offline map is two files, `<name>-dem.pmtiles` (the terrain archive) and
+`<name>-outdoors.pmtiles` (the vector archive).
 
 ## Behind a reverse proxy with TLS
 
@@ -108,14 +109,14 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_buffering off;          # pack downloads stream; ranges pass through
+        proxy_buffering off;          # map downloads stream; ranges pass through
     }
 }
 ```
 
-Range requests, `ETag` and `If-Range` on `/out/` pass through both, so interrupted pack downloads resume.
+Range requests, `ETag` and `If-Range` on `/out/` pass through both, so interrupted offline map downloads resume.
 A CDN in front of `/out/` and the tile routes works too (tiles do not change for a given URL, except that
-a `/build` of an existing pack name replaces its files).
+a `/build` of an existing offline map name replaces its files).
 
 ## Config file
 
@@ -129,8 +130,8 @@ key with its default.
 | `port` | `8080` | Port (0 picks a free one; the `started` log line says which). |
 | `publicUrl` | `null` | Base URL for the absolute URLs in `/style.json`, e.g. `"https://maps.example.org"`. Null: from each request's `X-Forwarded-*` / `Host` headers. |
 | `cacheDir` | `"cache"` | Downloads and generated tiles (`live/`, `openfreemap/`, `derived/`, `copernicus30/`, `3dep13/`, `3dep1m/`, `overpass/`, `glyphs/`, ...). The tile stores are capped (`cache.*`); the source downloads have a byte budget (`sources.*`). |
-| `outDir` | `"out"` | Region packs: served as packs, under `/out/`, listed by `/catalog`, written by `/build`. |
-| `buildGraphs` | `true` | T202: at startup and on `POST /catalog/refresh`, build the routing graph of every pack in `outDir` that lacks a current one (The pack's routing graph, below). `false` for a server too small for its packs. |
+| `outDir` | `"out"` | The offline maps the server holds: served under `/out/`, listed by `/catalog`, written by `/build`. |
+| `buildGraphs` | `true` | T202: at startup and on `POST /catalog/refresh`, build the routing graph of every offline map in `outDir` that lacks a current one (The offline map's routing graph, below). `false` for a server too small for its offline maps. |
 | `glyphsDir` | `null` | Glyph PBFs (`<font>/<range>.pbf`); null: `<cacheDir>/glyphs`. |
 | `fetchGlyphs` | `true` | At startup, download the glyph ranges the style uses (Noto Sans, SIL OFL) when missing. |
 | `glyphsUrl` | protomaps basemaps-assets | Where those glyphs come from. |
@@ -150,7 +151,7 @@ key with its default.
 | `overpass.maxAreaSqDeg` | `0.05` | Largest box sent to Overpass (square degrees). A larger box needs an extract; without one it is a 422 (413 with `source=overpass`), or OpenFreeMap with `fallback=1`. |
 | `overpass.timeoutSeconds` | `90` | Overpass query timeout (10..900). |
 | `tilebuildHome` | `null` | A `./gradlew :tilebuild:installDist` install for `profile=outdoors` builds; null: `DYSTOPO_TILEBUILD_HOME` (`/opt/tilebuild` in the Docker image), else `tilebuild/build/install/tilebuild`. Without one, outdoors builds answer 503 and `profile=openmaptiles` builds work. |
-| `extracts` | `[]` | OSM extracts for outdoors packs bigger than Overpass serves (below): `[{"path": "data/washington-261008.osm.pbf", "bbox": [w, s, e, n], "name": "washington"}]`; `bbox` and `name` are optional. |
+| `extracts` | `[]` | OSM extracts for outdoors offline maps bigger than Overpass serves (below): `[{"path": "data/washington-261008.osm.pbf", "bbox": [w, s, e, n], "name": "washington"}]`; `bbox` and `name` are optional. |
 | `extractsDir` | `null` | Directory scanned for more `*.osm.pbf` extracts at every build; null: `<cacheDir>/extracts`; `""` turns scanning off. |
 | `relay.enabled` | `true` | The encrypted sync relay at `/sync/relay` (below, The relay); `false` answers 404. |
 | `relay.ttlSeconds` | `900` | A relayed blob is dropped this long after its last write. |
@@ -183,7 +184,7 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
 
 - `/` browser map, `/phone` phone style page, `/style.json?units=ft|m` (or `?lat=&lon=`), `/live/info`,
   `/live/units`, `/live/sources?bbox=&dz=&oz=` (sources and attribution of a view), `/stats`.
-- `/dem/{z}/{x}/{y}.png`, `/contours/{z}/{x}/{y}.pbf?units=`, `/osm/{z}/{x}/{y}.pbf`: packs first, else
+- `/dem/{z}/{x}/{y}.png`, `/contours/{z}/{x}/{y}.pbf?units=`, `/osm/{z}/{x}/{y}.pbf`: offline maps first, else
   live (`X-Dystopo-Source` says which; live OpenFreeMap tiles below z10 come without glacier polygons, which
   OpenMapTiles cuts at tile edges there, T66). `/glyphs/{fontstack}/{range}.pbf`, `/sprite*.json|png`.
   T74: an unknown `units=` is a 400 (it fell back to the default before). A glyph range is the file, a valid
@@ -191,19 +192,19 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   failed load and never reports the map loaded), or a 404 (another font, a range that is not a 256-codepoint
   block); never an empty 200. Contour and shade tiles are kept in `derived/` (below, Tile caches).
 - `GET /version` (T74): the content version per route a phone keys its cached tiles on: `dem` (the live
-  rendering version and the DEM packs, `best-v2.<hash>`; a `/build` pack changes it), `osm` (the OpenFreeMap
-  planet build and the vector packs) and `assets` (the asset manifest's version). `/dem` and `/osm` tiles
+  rendering version and the terrain archives, `best-v2.<hash>`; a `/build` offline map changes it), `osm` (the OpenFreeMap
+  planet build and the vector archives) and `assets` (the asset manifest's version). `/dem` and `/osm` tiles
   carry theirs in an `X-Dystopo-Version` header, and `/live/info` lists `versions` too.
 - `GET /assets/manifest.json` (T74): the style assets with their SHA-256: every glyph range of the style's
   fonts present in `glyphsDir` and the four sprite files, as `{"version", "files": [{"path", "url",
   "sha256", "bytes"}]}`. A phone fetches every file whose hash differs from its copy, so a changed sprite
   sheet or glyph range reaches installs that already had the old one.
-- `/out/{file}`: static pack downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
+- `/out/{file}`: static offline map downloads with byte ranges, `ETag`, `If-Range`, `?kbps=` throttle.
 - `POST /build?name=&bbox=w,s,e,n&minZoom=&maxZoom=[&profile=outdoors][&source=auto|extract|overpass][&fallback=1][&overwrite=1][&graph=0]`,
   `GET /build`, `GET|DELETE /build/{id}`, `GET /build/sources?bbox=` (`BuildRoutes.kt`; outdoors sources below). Token-protected.
-  T189 (ADR 0049's B): after `publish`, a pack with a vector archive goes through a `graph` phase (below, The pack's
+  T189 (ADR 0049's B): after `publish`, an offline map with a vector archive goes through a `graph` phase (below, The offline map's
   routing graph); `graph=0` skips it.
-- `POST /area` (T75): the manifest of an area of interest, a box (a pack built through `/build`), a route
+- `POST /area` (T75): the manifest of an area of interest, a box (an offline map built through `/build`), a route
   corridor or (T140) a polygon (tile lists); T157: `demMaxZoom` or `detail=full|medium|less` caps the elevation
   below the vector tiles; `GET /area` for the parameters, the shapes read, the zoom caps and the manifest
   version. Below, Areas of interest. Token-protected.
@@ -214,7 +215,7 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   the page writes (below, Route planning). Token-protected.
 - `POST /sync/relay?slot=&side=[&after=][&forget=1]`, `GET /sync/relay/status`: the encrypted relay
   between phones (below). Open, without the token.
-- `GET /catalog` (also `/catalog.json`): the pack catalog, below. `POST /catalog/refresh`: rehash every
+- `GET /catalog` (also `/catalog.json`): the offline map catalog, below. `POST /catalog/refresh`: rehash every
   file (token-protected).
 - `GET /metrics` (T82; `?format=prometheus` for the Prometheus text format): what to watch on a long-running
   server, open like `/healthz` (no secrets, no user ids). Below, Operations.
@@ -224,17 +225,17 @@ The same as `devtool serve --live` (`LiveTiles.kt` documents each), plus three:
   `graphs`, the graph pass's counts, below),
   `users`, `routeGate` (T92: `/route*` needs a token, true while users are configured), `replicas`, `shareLinks`.
 
-## Outdoors packs: extracts, Overpass, fallback
+## Outdoors maps: extracts, Overpass, fallback
 
-`profile=outdoors` builds the vector pack with tilebuild's outdoors profile (wilderness, cliffs with
+`profile=outdoors` builds the vector archive with tilebuild's outdoors profile (wilderness, cliffs with
 ticks, alpine routes, huts). The OSM data for it comes from, in order (`source=auto`, the default):
 
 1. **A regional extract** on the server's disk that holds the whole box: the smallest of the configured
    `extracts` and the `*.osm.pbf` files in `extractsDir` (`<cacheDir>/extracts` by default, rescanned per
    build, so dropping a file in is enough). tilebuild runs Planetiler on the whole file with the box as
    bounds. No network and no area cap beyond `build.maxSpanDegrees` and `build.maxTiles`: this is how
-   whole-park packs get the outdoors layers. A Mount Rainier National Park box (-122.05,46.6,-121.4,47.1,
-   z8 to z14) from the Washington file (364 MB) builds its vector pack in about 20 s (Planetiler passes 1
+   whole-park offline maps get the outdoors layers. A Mount Rainier National Park box (-122.05,46.6,-121.4,47.1,
+   z8 to z14) from the Washington file (364 MB) builds its vector archive in about 20 s (Planetiler passes 1
    and 2 read the whole state); the DEM half takes longer than that when its tiles are not cached.
 2. **Overpass** for a box under `overpass.maxAreaSqDeg` (one request per box, cached).
 3. **A configured Geofabrik region, downloaded on demand** (T66): the smallest of `extractDownloads.urls`
@@ -243,7 +244,7 @@ ticks, alpine routes, huts). The OSM data for it comes from, in order (`source=a
    a build needs it. The job's phase is then `osm-download` and its `download` has `name`, `url`, `bytes`
    and `total`; one region downloads once at a time, and afterwards the file is an ordinary extract (step
    1) with its `.poly` beside it. Measured: Liechtenstein (3.5 MB) downloaded in 2.1 s and built its
-   z8 to z12 outdoors pack in 6.9 s.
+   z8 to z12 outdoors offline map in 6.9 s.
 4. **OpenFreeMap** (OpenMapTiles schema, no outdoors layers) with `fallback=1` and a warning in the job.
    Without it the request is refused with a message that names the ways out: **422** when no extract
    covers the box (the request is valid, the server has no data for it), **413** only for
@@ -282,12 +283,12 @@ auxiliary data in the cache the first time (any tilebuild run downloads it); the
 
 ## The catalog
 
-`GET /catalog` lists every pack in `outDir` a client can download: a `<name>-dem.pmtiles` plus its
+`GET /catalog` lists every offline map in `outDir` a client can download: a `<name>-dem.pmtiles` plus its
 optional `<name>-outdoors.pmtiles` (or `-osm`). Files being written (`*.building`) are not listed. Every
 other `.pmtiles` file (a vector archive without its DEM, an `-osm` archive next to an `-outdoors` one, a
-tilebuild output such as `liechtenstein.pmtiles`) is a single-file pack: `id` and `name` are the file name
+tilebuild output such as `liechtenstein.pmtiles`) is a single-file offline map: `id` and `name` are the file name
 without `.pmtiles`, `"single": true`, and its one file's role comes from the tile type (`mvt` is
-`outdoors`, anything else `dem`). The phone lists only packs with a DEM, so it skips vector-only entries.
+`outdoors`, anything else `dem`). The phone lists only offline maps with a DEM, so it skips vector-only entries.
 
 ```
 {"version": 1, "generatedAt": "2026-10-10T09:41:43Z", "packs": [
@@ -302,18 +303,18 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
      {"role": "outdoors", "file": "rainier-outdoors.pmtiles", ...}]}]}
 ```
 
-- `id`: the pack name. Stable across rebuilds and unique on one server; the content hash is what changes.
-- `bounds` / `center`: the union of the pack's archives, `[west, south, east, north]`. `minZoom`/`maxZoom`:
+- `id`: the offline map name. Stable across rebuilds and unique on one server; the content hash is what changes.
+- `bounds` / `center`: the union of the offline map's archives, `[west, south, east, north]`. `minZoom`/`maxZoom`:
   the DEM's; each file has its own.
 - `profile`: the vector archive's `dystopo:profile` (`outdoors`: tilebuild's outdoors profile;
   `openmaptiles`: built from OpenFreeMap tiles); archives from before that key count as `outdoors` when
-  they have the `outdoor_poi` layer. Null for a DEM-only pack.
-- `builtAt`: the newest file's modification time (when the pack was published in `out/`).
+  they have the `outdoor_poi` layer. Null for a DEM-only offline map.
+- `builtAt`: the newest file's modification time (when the offline map was published in `out/`).
 - `provenance`, `attribution`, `license`: from the archives' metadata through the source registry.
 - `sha256` per file: SHA-256 of the whole file, computed once and cached next to it as
   `<file>.sha256` in `sha256sum` format (so `sha256sum -c rainier-dem.pmtiles.sha256` checks a download).
   The sidecar carries its file's modification time; one whose time differs from the file's is stale and
-  recomputed, and `/build` deletes the sidecars of the files it replaces, so a rebuilt pack gets a new
+  recomputed, and `/build` deletes the sidecars of the files it replaces, so a rebuilt offline map gets a new
   hash. Bytes changed in place under the same size and time (disk corruption, a hand edit that restores
   the time) are found only by `POST /catalog/refresh`, which rehashes every file ignoring the sidecars and
   answers the catalog plus `refresh` (`files`, `changed`: the files whose hash differed, `ms`, and T202's
@@ -322,8 +323,8 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
 - `contentHash`: `sha256:` + SHA-256 of the lines `<role>:<file sha256>\n` (dem first). A client compares
   it with the one it installed to offer an update; it verifies each file against `sha256` after download.
 
-- `derived` (T189, ADR 0049's B; only when the pack has one): files made from the pack's archives and shipped beside
-  them, never one of them. Today one kind, the routing graph (below, The pack's routing graph):
+- `derived` (T189, ADR 0049's B; only when the offline map has one): files made from the offline map's archives and shipped beside
+  them, never one of them. Today one kind, the routing graph (below, The offline map's routing graph):
   `{"kind": "graph", "file": "rainier-outdoors-graph.idx", "url": "/out/rainier-outdoors-graph.idx", "bytes": 512345,
   "sha256": "<64 hex>", "sidecar": "rainier-outdoors-graph.idx.sha256", "format": "DYSG", "version": 6,
   "key": {"tileZoom": 11, "fingerprint": "v1:...", "demFingerprint": "v1:..."}}`. Field by field: `kind` (what the file
@@ -333,10 +334,10 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
   too), `sidecar` (the sidecar's file name), `format` (`DYSG`, the graph file's magic) and `version` (6), and under
   `key` the kind's match keys: `tileZoom` (11, the zoom of the graph tiles every reader requires), `fingerprint` and
   `demFingerprint` (the vector and DEM archive headers' fingerprints the graph was built from, `v1:` tuples, a wire
-  value since T189; `demFingerprint` is empty for a pack without a DEM). The catalog lists a graph only when the file
-  opens as a version 6 graph at tile zoom 11 whose fingerprints match the archives beside it; a stale graph (the pack
+  value since T189; `demFingerprint` is empty for an offline map without a DEM). The catalog lists a graph only when the file
+  opens as a version 6 graph at tile zoom 11 whose fingerprints match the archives beside it; a stale graph (the offline map
   rebuilt since) or an unreadable one is left out. `derived` is outside `files`, `bytes`, `builtAt` and `contentHash`,
-  so a rebuilt graph is not a new pack and a pack's hash is the same with or without one. Readers before T189
+  so a rebuilt graph is not a new offline map and an offline map's hash is the same with or without one. Readers before T189
   (v0.1.14 and older) ignore the key and build the graph on the phone; a reader that knows it fetches the graph only
   when `format`, `version`, `tileZoom` and both fingerprints match what it holds, and builds otherwise (ADR 0033 §2:
   derived data is rebuilt, never refused). The phone's peer catalog (T78) lists its own graph the same way when it
@@ -344,38 +345,38 @@ without `.pmtiles`, `"single": true`, and its one file's role comes from the til
 
 `devtool serve` (both modes) answers `/catalog` and `/catalog/refresh` too (no token there).
 
-### The pack's routing graph (T189, ADR 0049's B)
+### The offline map's routing graph (T189, ADR 0049's B)
 
-**Every pack gets its graph at start and on refresh (T202).** Packs that reach `outDir` without a build (copied
-from `tilebuild` or `devtool tiles`, or a pack whose archives changed) get theirs from the catalog's **graph
+**Every offline map gets its graph at start and on refresh (T202).** Offline maps that reach `outDir` without a build (copied
+from `tilebuild` or `devtool tiles`, or an offline map whose archives changed) get theirs from the catalog's **graph
 pass**: after the startup hash pass, and after each `POST /catalog/refresh` (which answers without waiting for it),
-every pack pair (a DEM plus its vector archive) whose graph is missing or stale is built through the same route
-planner, one pack at a time, newest pack first, and hashed; the catalog lists it as soon as the file is in place
+every offline map (a terrain archive plus its vector archive) whose graph is missing or stale is built through the same route
+planner, one offline map at a time, newest offline map first, and hashed; the catalog lists it as soon as the file is in place
 (the Rainier pair: 312,356 bytes, listed about 5 s after a cold start, the build 1.2 to 2.3 s). A route arriving
 meanwhile waits on the same lock and reuses the graph. A failure (an unreadable archive, an `OutOfMemoryError`) is
-recorded per pack and not retried until the next start or refresh. Opening a graph also queues its drive-overlay
-warm-up (Route planning, below), so a start now warms every pack's overlay cells too (Rainier: 68 ms). The config key
+recorded per offline map and not retried until the next start or refresh. Opening a graph also queues its drive-overlay
+warm-up (Route planning, below), so a start now warms every offline map's overlay cells too (Rainier: 68 ms). The config key
 `buildGraphs` (default `true`; `devtool serve --live --no-build-graphs`) turns the pass off for a server too small for
-its packs; graphs then come only from the build phase or a route. The pass is `/stats` `graphs`: `enabled`, `state`
+its offline maps; graphs then come only from the build phase or a route. The pass is `/stats` `graphs`: `enabled`, `state`
 (`off`, `idle`, `running`, `done`), `trigger` (`start`, `refresh`), the last pass's `built`, `failed`, `skipped`
-(current already), `pending` and `ms`, `totalBuilt` and `totalFailed` since start, and `packs` (each pack's
+(current already), `pending` and `ms`, `totalBuilt` and `totalFailed` since start, and `packs` (each offline map's
 `state` `pending`, `building`, `built`, `current` or `failed`, the `reason` it was built, `ms`, `buildMs`,
 `bytes`, `sha256`, `error`, and `overlay`, its warm-up); `/healthz` and `/metrics` carry the same counts under
 `catalog.graphs`, without `packs`.
 
-A pack built through `POST /build` or `POST /area` ends with a `graph` phase after `publish`: the server's route
-planner (the one `/route` uses, so a route and the phase never build one graph twice) builds the pack's routing
+An offline map built through `POST /build` or `POST /area` ends with a `graph` phase after `publish`: the server's route
+planner (the one `/route` uses, so a route and the phase never build one graph twice) builds the offline map's routing
 graph from the published vector archive with elevations from its DEM, in one pass, and writes
 `out/<name>-outdoors-graph.idx` (the version 6 tiled graph file every reader opens beside a vector archive) and
 hashes it into `<name>-outdoors-graph.idx.sha256`; the catalog then lists it under `derived` and `POST /area`'s
-manifest on its `graph` item, and phones download it with the pack instead of building it. When a matching graph is
+manifest on its `graph` item, and phones download it with the offline map instead of building it. When a matching graph is
 already there (an identical rebuild, a route that ran first) it is reused (`action` `loaded` or `cached`).
 
 - The job's `graph` (in `GET /build/{id}`): `state` `building`, `done`, `failed` or `skipped`; when done, `action`
   (`built`, `loaded`, `cached`), `file`, `url`, `bytes`, `sha256`, `sidecar`, `version`, `tileZoom`, `tiles`, `nodes`,
   `edges`, `buildMs`, `listed` (the catalog lists it) and `problem` (why not, when it does not); when failed, `error`
-  and `note`; when skipped, `reason` (`graph=0`, `cancelled`, or a terrain-only pack). `timings.graphMs` is the phase.
-- The phase never fails the pack: the archives are published before it starts, and a failure (an
+  and `note`; when skipped, `reason` (`graph=0`, `cancelled`, or a terrain-only offline map). `timings.graphMs` is the phase.
+- The phase never fails the offline map: the archives are published before it starts, and a failure (an
   `OutOfMemoryError` on a server whose heap is too small for the box included) leaves `graph.state` `failed` with
   the error; the catalog lists no graph and phones build their own, as before T189. The job stays `running`, with
   phase `graph`, until the phase ends either way, so a phone polling `POST /area` gets the manifest with the graph.
@@ -383,7 +384,7 @@ already there (an identical rebuild, a route that ran first) it is reused (`acti
   for garbage), and the encoder the whole file once more. `devtool serve` runs with the JVM's default heap (a quarter
   of the machine's memory); the server image takes 60 percent of its container's (`server/Dockerfile`). A 3 degree
   box needs about 2.25 GB at the least and builds in 8 to 19 minutes depending on the heap (T149's series).
-- A graph rewritten later (by the next graph pass or the first route after the pack changed)
+- A graph rewritten later (by the next graph pass or the first route after the offline map changed)
   gets a new modification time, so its sidecar is stale and recomputed on the next catalog read.
 
 ## Areas of interest (T75)
@@ -415,21 +416,21 @@ no `shapes` as reading box and corridor only), `maxAreaTiles`, and (T157) `zoomC
 a phone asks a server without it for no capped manifest, and takes a server's manifest only when its `id` is the
 area's) and `details` (`full`, `medium`, `less`, each `minZoom`, `maxZoom`, `demMaxZoom`).
 
-- **A box** (or `pack=1`) is a region pack built through the same jobs as `POST /build` (name: `name`, else
-  the area's name when it is a valid pack name, else `area-<12 hex digits of the id>`; the outdoors profile
+- **A box** (or `pack=1`) is an offline map built through the same jobs as `POST /build` (name: `name`, else
+  the area's name when it is a valid offline map name, else `area-<12 hex digits of the id>`; the outdoors profile
   with `fallback=1` when tilebuild is installed, else OpenMapTiles). While the job runs the answer is
   **202** with `status: building` and the job under `build`; poll `GET /build/{id}` and ask again when it is
   done; then **200** with each archive as a `pack` item (URL, bytes, SHA-256 from the catalog's sidecar). A
-  finished pack of that name is answered at once, without a build. A failed build answers 200 with
+  finished offline map of that name is answered at once, without a build. A failed build answers 200 with
   `status: failed` and the reason in `notes` until asked again with `retry=1`.
 - **A corridor** (or `pack=0`) is the DEM and vector tiles within the buffer, listed per zoom, with
   estimated sizes, answered at once (200). DEM tiles start at z6 whatever `minZoom` is (contour tiles sample
   zooms coarser than they show) and stop at z15; vector tiles run from `minZoom` to z14; one tile of margin
   around the corridor at every zoom (contour tiles sample past their edges). At most `DYSTOPO_AREA_MAX_TILES`
-  (200000) tiles, else 413 with what to change. A corridor does not build a pack: the tiles come from the
-  same `/dem` and `/osm` routes as the map's (packs on the server first, else live), so a corridor needs no
+  (200000) tiles, else 413 with what to change. A corridor does not build an offline map: the tiles come from the
+  same `/dem` and `/osm` routes as the map's (offline maps on the server first, else live), so a corridor needs no
   build time and costs only the tiles it touches; it has no trail graph or search index (those are built from
-  vector packs; download a box for them).
+  vector archives; download a box for them).
 - **A polygon** (T140, ADR 0041) is tiles like a corridor: the tiles whose square lies within `bufferM` of a ring
   edge (with no buffer, the tiles an edge crosses) or whose centre is inside the rings by the even-odd rule, with
   the same zooms and margin, as a **version 2** manifest. `pack=1` on one is a 400, "a pack is a box; download a
@@ -479,8 +480,8 @@ area's) and `details` (`full`, `medium`, `less`, each `minZoom`, `maxZoom`, `dem
   1e-6 degrees, the buffer) and the zoom range (T157: `:dem<z>` after the zooms when `demMaxZoom` is set, so the
   medium, less and full areas of one shape have three ids and no earlier id changed). The name is not part of it, so the same area asked twice (or by
   two phones) has the same id; the phone keys its area records by it.
-- `name`: the area's name, else the pack name (box) or the id.
-- `status`: `ready` (every item can be fetched now), `building` (HTTP 202: a pack is being built; `build`
+- `name`: the area's name, else the offline map name (box) or the id.
+- `status`: `ready` (every item can be fetched now), `building` (HTTP 202: an offline map is being built; `build`
   is the `/build` job, ask again when it is done) or `failed` (`notes` says why).
 - `source`: who made the manifest when it is not the server answering (`phone`, `phone (public sources)`;
   a phone publishing to another phone puts its address here). Null from the server.
@@ -507,9 +508,9 @@ area's) and `details` (`full`, `medium`, `less`, each `minZoom`, `maxZoom`, `dem
     `url` the template relative to the source, `ext` the file extension, `zooms` the first and last zoom,
     `count` and `perZoom` the tile counts, `tiles` the tiles themselves: per zoom a list of rows
     `[y, x0, x1]` meaning tiles x0 to x1 (inclusive) of row y, sorted. `bytes` is an estimate
-    (`estimated: true`) from typical tile sizes (DEM 160 kB, the Rainier pack's mountain average; vector
+    (`estimated: true`) from typical tile sizes (DEM 160 kB, the Rainier offline map's mountain average; vector
     800 kB at z7 and below falling to 10 kB at z13 and z14) until a client fills `fetchedBytes`.
-  - `pack`: one archive of a region pack: `role` (`dem` or `outdoors`, the vector half), `pack` (the pack
+  - `pack`: one archive of an offline map: `role` (`dem` or `outdoors`, the vector half), `pack` (the offline map
     name), `file`, `url` (relative to the source, or absolute), `bytes`, `sha256` (64 lowercase hex digits;
     the client refuses a file whose hash differs), `tileType`, `minZoom`, `maxZoom`, `bounds`.
   - `glyphs`, `sprite`: style assets: `url` template, `files`, `fileBytes` on the source, `bundled` (the app
@@ -517,7 +518,7 @@ area's) and `details` (`full`, `medium`, `less`, each `minZoom`, `maxZoom`, `dem
     `names` (font stacks, or sprite files).
   - `contours`, `graph`, `search`: products the client makes itself (`onDevice: true`) from `from` (the DEM
     route, or the vector archive); `available: false` when this area cannot have one (a corridor has no
-    trail graph: graphs come from vector packs), with the reason in `note`.
+    trail graph: graphs come from vector archives), with the reason in `note`.
     T189 (ADR 0049's B): a box's `graph` item, once the build's `graph` phase wrote a graph matching the archives,
     also carries it, with the fields of a catalog `derived` entry (`file`, `url`, `bytes`, `sha256`, `sidecar`,
     `format`, `version`, `key`) and `onDevice: false`: `{"kind": "graph", "onDevice": false, "from":
@@ -530,7 +531,7 @@ area's) and `details` (`full`, `medium`, `less`, each `minZoom`, `maxZoom`, `dem
     the whole manifest).
 - `build`: the `/build` job (as `GET /build/{id}` answers it) while `status` is `building` or `failed`.
 - `notes`: plain sentences about choices made (fallbacks, the DEM start zoom).
-- `pack` (server, box only): the pack name, so a client can find it in `/catalog` later.
+- `pack` (server, box only): the offline map name, so a client can find it in `/catalog` later.
 
 Measured (T75, 2026-10-12, emulator against `devtool serve --live` on the same host): the Paradise to Panorama
 Point trip (the route of `skyline-loop.gpx`, 2.5 km, 550 m buffer, z8 to z15) is 236 tiles estimated at 29.6 MB;
@@ -538,7 +539,7 @@ the phone fetched 180 of them (18.1 MB, 56 were already cached) in 19 s.
 
 How the phone uses it: docs/reference/android-debug-routes.md (Areas of interest); in short, `pack` items go through the
 catalog downloader (resumable, SHA-256 checked, installed only when every archive verifies), `tiles` items
-through the online tile fetcher into the tile cache (tiles already cached or in a pack are skipped, so a
+through the online tile fetcher into the tile cache (tiles already cached or in an offline map are skipped, so a
 second run resumes; a DEM tile that is not a PNG is dropped and counted), and the area's tiles are pinned
 there until the user unpins it.
 
@@ -582,58 +583,58 @@ Norway's coverage box, in the background after the stores are indexed, and write
 ## Route planning (T68)
 
 The browser map plans routes on the server with the phone's shared code (`RouteRoutes.kt`: T45's router, T60's
-route editor and trip summary), so a route planned on the desktop has the numbers the phone shows. Each pack in
+route editor and trip summary), so a route planned on the desktop has the numbers the phone shows. Each offline map in
 `outDir` with a vector archive gets a trail graph on first use (T189: or at the end of its build, the `graph` phase
-above; T202: a pack pair usually has it before, from the catalog's graph pass at start and on refresh), written next to it as
+above; T202: an offline map usually has it before, from the catalog's graph pass at start and on refresh), written next to it as
 `<vector archive>-graph.idx` (the phone's and `devtool route`'s file name, e.g. `rainier-outdoors-graph.idx`;
 reused while both archives and the file are unchanged, so a deleted file is rebuilt; the Rainier graph builds in about 2 s). Since T76 the file holds z11
-graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), and a route runs over every pack
-whose box comes within 5 km of its points, so it crosses from one pack into the next (docs/PLANNING.md ›
+graph tiles that load on demand into one LRU (`GET /route/status` `tileCache`), and a route runs over every offline map
+whose box comes within 5 km of its points, so it crosses from one offline map into the next (docs/PLANNING.md ›
 Routing). T89: the file is `DYSG` version 5 (bridge and tunnel levels, component labels); a file of an older
 version is rebuilt on the next route, and the reply's `graph.rebuildReason` says why (`missing`, `stale (pack
-changed)`, or the older version's message). The routes read packs and write nothing but the graph files and the
+changed)`, or the older version's message). The routes read offline maps and write nothing but the graph files and the
 overlay cell files (below). T92: they are open while the server has
 no users; once `users` are configured they need a known token like `/build` (any user's, the admin's or the T52
-`token`; `routeGate` in `/healthz`), since a route costs CPU and opens every pack's graph. The browser page
+`token`; `routeGate` in `/healthz`), since a route costs CPU and opens every offline map's graph. The browser page
 sends its Token field with them.
 
 **Long drives (T77).** Drives whose ends are 40 km or more apart search the tiles away from their ends through a
-drive overlay (per graph tile of one pack: the border crossings of tertiary and larger roads and the cheapest
-in-tile drive between them), then expand it back into the pack's edges, so a drive across several packs plans in
-well under a second once the graphs are open (Seattle to Yakima over three Washington packs, 232 km: 0.66 s on a
+drive overlay (per graph tile of one offline map: the border crossings of tertiary and larger roads and the cheapest
+in-tile drive between them), then expand it back into the offline map's edges, so a drive across several offline maps plans in
+well under a second once the graphs are open (Seattle to Yakima over three Washington offline maps, 232 km: 0.66 s on a
 fresh server with the graph files on disk, 0.2 to 0.4 s warm; numbers in docs/PLANNING.md › Routing). Cells are
-built when a drive first reaches them, and every tile of a pack is built in the background once its graph opens
+built when a drive first reaches them, and every tile of an offline map is built in the background once its graph opens
 (`GET /route/status` `driveOverlay`, `warm`); they are kept in memory, up to 65,536 cells. A phone with this
-server set asks it for routes whose ends lie beyond its own packs (the same `GET /route`), keeps the answer as a
+server set asks it for routes whose ends lie beyond its own offline maps (the same `GET /route`), keeps the answer as a
 trip and downloads its corridor (`POST /area`, below) to navigate offline.
 
 **Overlay cell files (T89, ADR 0029).** A second level (z8 cells, each over the 64 graph tiles below it: the crossings of a
 z8 tile and the cheapest drive between them through its level-1 cells) lets a long drive search mostly z8 cells;
 only the server builds it (the phone stays on level 1), in the warm-up and never inside a search. When the
-warm-up has built both levels for every tile of a pack it writes them to `<vector archive>-overlay.idx` beside
+warm-up has built both levels for every tile of an offline map it writes them to `<vector archive>-overlay.idx` beside
 `<vector archive>-graph.idx` (`DYSO` version 1, each cell with its own checksum; `rainier-outdoors-overlay.idx` is
 1,549 bytes: 15 level-1 and 2 level-2 cells, a warm-up of 0.1 to 0.2 s). A restarted server reads that
-file instead of building (cells on demand through ranged reads): the pack's `warm` entry says `loaded` with
+file instead of building (cells on demand through ranged reads): the offline map's `warm` entry says `loaded` with
 `cells`, `bytes` and `ms` (1 to 2 ms for Rainier) and `built` and `level2Built` stay 0. The file is valid for
 the one graph build it names (the graph file's source name, fingerprints and build time) and the overlay's zooms; a
-rebuilt graph (the pack changed, an older `DYSG` version, the graph file deleted) makes it stale, and the
+rebuilt graph (the offline map changed, an older `DYSG` version, the graph file deleted) makes it stale, and the
 warm-up then builds again and overwrites it, as it does for a file that cannot be read (a truncated one, say).
 Delete it to force a rebuild; nothing else reads it. It is not written when the cells no longer all fit in
-memory (a pack with more than 65,536 of them; `file` and `bytes` are null in its `warm` entry), and a pack
-without drive data (outdoors profile 1) has neither a cell file nor a `warm` entry. T107: a pack file replaced
+memory (an offline map with more than 65,536 of them; `file` and `bytes` are null in its `warm` entry), and an offline map
+without drive data (outdoors profile 1) has neither a cell file nor a `warm` entry. T107: a file of an offline map replaced
 while the server runs (a new modification time or size) reopens its graph on the next route that uses it, and the
 warm-up runs again for the new open: when the content is unchanged the graph file is reused and its cell file
 registered again (`warm` says `loaded`, the vector archive is back in `cellFiles`); when it changed, the graph is
-rebuilt and the cells are built and written again (`done`). Each pack keeps one `warm` entry, the current open's.
+rebuilt and the cells are built and written again (`done`). Each offline map keeps one `warm` entry, the current open's.
 Before T107 the old entry stayed, so a reused graph lost its cell file (`cellFiles` empty, level-2 cells unused)
 until a restart.
 
 - `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
   metres (default 300, as on the phone); legs follow trails, and are straight where no trail connects (DEM
-  elevation every 25 m, from the packs or else the live `best` source). The reported pack is `pack=` (a catalog
-  id; 400 when unknown), else the first pack holding both ends, else the start; the route uses it and every other
-  pack near the points; outside every pack the route is straight (`notes: ["no_graph"]`). `overlay=0` plans a
+  elevation every 25 m, from the offline maps or else the live `best` source). The reported offline map is `pack=` (a catalog
+  id; 400 when unknown), else the first offline map holding both ends, else the start; the route uses it and every other
+  offline map near the points; outside every offline map the route is straight (`notes: ["no_graph"]`). `overlay=0` plans a
   long drive without the T77 overlay (for comparing).
 - `POST /route/edit` with JSON `{"path", "op", "index", "lat", "lon", "mode", "pack"}`: `op` is `move`, `insert`,
   `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
@@ -642,18 +643,18 @@ until a restart.
   `via`, `legs` (`kind` trail/straight/fixed, `points`, `coordinates` as `[lon, lat, ele]`), `summary` (`mode`,
   `distanceM`, `ascentM`, `descentM`, `minEleM`, `maxEleM`, `timeS` and `time` (the hike or bike model; for a drive
   the router's sum of each road's time), `points`, `viaPoints`, `legs`, `straightM`, `waypoints`, and `profile`, 100
-  samples), `notes` (why a leg is straight, one code each: `no_graph` (no pack's graph near the points),
+  samples), `notes` (why a leg is straight, one code each: `no_graph` (no offline map's graph near the points),
   `empty_graph`, `start_off_network` and `end_off_network` (no trail, or for a drive no road open to cars, within
   `snap` of that end), `not_connected` (both ends on the network but no way between them), `drive_unsupported` (a
-  pack built before the road data; rebuild it), `search_limit` (the search gave up at its node budget, which is no
+  offline map built before the road data; rebuild it), `search_limit` (the search gave up at its node budget, which is no
   proof there is no way)), `messages` (T73: the router's sentence for each note, e.g. "no road open to cars within
-  300 m of the end point (the nearest is 3192 m away)"), `notice` (for `mode=drive`: it follows the packs' roads and
+  300 m of the end point (the nearest is 3192 m away)"), `notice` (for `mode=drive`: it follows the offline maps' roads and
   is not a road navigator, the one sentence `Router.DRIVE_NOTICE`, ADR 0032; T111: for `mode=crow` the phone's line
   under its mode picker, `TravelMode.CROW_NOTICE`; null otherwise), `waypointsValue` (the empty `waypoints` value a page saves with a new
   trip), `directionsValue` (T116: the turn directions below as the route's `directions` field value, keyed to this
-  `path` as the phone's Keep writes them, ADR 0033, for the page to save with the trip; null when no pack's graph
+  `path` as the phone's Keep writes them, ADR 0033, for the page to save with the trip; null when no offline map's graph
   was open and the path has a trail or fixed leg, since its directions would be only the frame and a phone with the
-  pack makes better ones when it opens the trip, and when longer than the field's 64 KiB), `graph` (`action` `built`, `loaded` or `cached` and `file`, the reported pack's; every pack used under
+  offline map makes better ones when it opens the trip, and when longer than the field's 64 KiB), `graph` (`action` `built`, `loaded` or `cached` and `file`, the reported offline map's; every offline map used under
   `graphs` with its `pack` and `action`; T77: `searches`, one per leg searched, with `ms`, `found`, `tiles`,
   `graphBytes`, `searchBytes`, `searchNodes`, `expanded`, and `overlayTiles` and T89 `level2Tiles` (the z8 cells it
   went through) when it used the overlay) and `ms`. Bad input is a 400 with `error`. T102: `instructions`, the turn directions
@@ -671,21 +672,21 @@ until a restart.
 - `POST /route/bundle` with `{"device", "ops"}`: the page's own route operations (put, set field, delete; one
   device, HLC-stamped) as a gzipped sync bundle, for `POST /sync/push` or a `.dsync` file. A `path`, `waypoints`
   or (T116) `directions` value must decode, else a 400.
-- `GET /route/packs` (packs and graph state), `GET /route/status` (below), and
+- `GET /route/packs` (offline maps and graph state), `GET /route/status` (below), and
   `GET /trips.js`, the page's editor script (`tools/demo/trips.js` next to the served page).
-- `GET /route/status` answers, since the server started (a pack's graph opens on its first route, so a fresh
+- `GET /route/status` answers, since the server started (an offline map's graph opens on its first route, so a fresh
   server has empty `graphs` and `warm`):
-  - `outDir`, `requests` (counts by kind), `errors`, `lastMs`, `building` (packs whose graph is being built),
-    `graphs` (per open pack, how its graph was opened: `action` `built` or `loaded`, `file`, `bytes`, `buildMs` or
+  - `outDir`, `requests` (counts by kind), `errors`, `lastMs`, `building` (offline maps whose graph is being built),
+    `graphs` (per open offline map, how its graph was opened: `action` `built` or `loaded`, `file`, `bytes`, `buildMs` or
     `loadMs`, `rebuildReason` after a build, `nodes` after a build, `tiles`, and after a build `demTilesDecoded`,
-    the DEM pack's tiles decoded to sample the graph's elevations, null when the pack has no DEM);
+    the terrain archive's tiles decoded to sample the graph's elevations, null when the offline map has no DEM);
   - `tileCache`: graph tiles in memory (`tiles`, `bytes` of `maxBytes`, `loads`, `hits`, `evictions`) and, T89,
     `loadErrors` (tiles that failed their checksum or were cut short), `corruptTiles` (how many are remembered)
     and `corruptHits` (lookups answered from that memory without reading the file again);
   - `lastRouteMemory`: the last route's `tiles`, `graphBytes`, `searchBytes` and `searchNodes`, and
     `overlayTiles` and `level2Tiles` when its search used the overlay;
   - `corruptGraphTiles` (T89): `[]`, or one `{file, x, y, error}` per remembered corrupt graph tile (`file` is the
-    pack's vector archive name, `x` and `y` the z11 tile). Such a tile is skipped for the life of the process, so
+    offline map's vector archive name, `x` and `y` the z11 tile). Such a tile is skipped for the life of the process, so
     a route that needs it behaves as if the roads there were missing (`start_off_network`, `end_off_network` or
     `not_connected` notes, not an error). The list lives in memory only: a restart starts it empty and the next route that
     reaches the tile finds it again. To repair, stop the server, delete `<vector archive>-graph.idx` (and the
@@ -696,7 +697,7 @@ until a restart.
     `borderNodes` and `shortcuts` (totals of those built), `minClass` (`tertiary`: the smallest road class that
     crosses a cell border), T89 `level2Zoom` (8; null when level 2 is off), `level2Built`, `level2Used` (level-2
     cells handed to searches), `loadedFromFiles` (cells read from cell files), `cellFiles` (the vector archive
-    name of each graph with a registered cell file) and `warm`: one entry per pack and graph build, `state`
+    name of each graph with a registered cell file) and `warm`: one entry per offline map and graph build, `state`
     `queued` (while the warm-up runs), `done` (`tiles`, `cells`, `level2Cells`, `ms`, `level1Ms`, `level2Ms`,
     `file`, `bytes`), `loaded` (`file`, `cells`, `bytes`, `ms`) or `failed` (`error`).
 
@@ -705,7 +706,7 @@ until a restart.
 phone's store writes; T116: and `directions`, the reply's `directionsValue`, after each `path` it writes, on the
 first save and whenever the path changed, so the phone opens a browser-saved trip with its directions and no
 graph; a trip saved by a page from before T116 has no `directions` op, and the phone makes them when the trip is
-opened with packs covering it (T108's migration, `POST /routes/{id}/open?wait=1`), then syncs them back: T125 saw
+opened with offline maps covering it (T108's migration, `POST /routes/{id}/open?wait=1`), then syncs them back: T125 saw
 `directions.saved` go from false to true with the same 8 directions as a T116 save of the same hike, and
 `/sync/routes?full=1` count 8 for it after the phone's next sync). Saving appends operations there, then sends the whole log through `/route/bundle` to
 `POST /sync/push`, with the page's Token field as the bearer token when it is set; so on a server with
@@ -762,7 +763,7 @@ relay, `/sync/relay`) need `Authorization: Bearer <token>`; anything else (tiles
 missing or wrong token is a 401 with `WWW-Authenticate: Bearer`, logged at `warn`. The comparison is
 constant-time. CORS preflights are answered without the token. `POST /catalog/refresh` needs it too.
 
-The browser page sends the token with "Build pack here" (and its progress polls and cancel) when it has
+The browser page sends the token with "Build a map here" (and its progress polls and cancel) when it has
 one: open it once as `https://maps.example.org/?token=<token>` (the page stores it in the browser's
 localStorage as `dystopo.token` and removes it from the address bar) or type it in the Token field next to
 the button; an empty field sends none. The build box and the Token field show only with a stored token or
@@ -784,7 +785,7 @@ the catalog, builds, tiles and `/out/` stay shared. Code: `serverlib/.../Users.k
 (`users`), one per person, each opening that person's own replica and share links; the admin token
 (`adminToken`), which manages users and can look into any replica as that user but is not a sync user itself;
 and the single T52 `token`, which reaches the default replica `peer.db` (a one-person server, or one configured
-before T67). Everything else is shared by everyone the server lets in: packs, the catalog, builds, tiles, `/out/`
+before T67). Everything else is shared by everyone the server lets in: offline maps, the catalog, builds, tiles, `/out/`
 and, once users exist, route planning (`/route*` needs any known token then). With no token of any kind the
 server is open and everyone is one anonymous user on `peer.db` (how `devtool serve` runs). Tokens are compared in
 constant time against every configured token, never logged (paths only, share links redacted; a test checks the
@@ -877,7 +878,7 @@ to the clipboard (debug: `POST /routes/{id}/share`, `GET|DELETE /routes/{id}/sha
 One JSON object per line on stdout: `ts` (ISO-8601 UTC), `level` (`info`, `warn`, `error`), `event`, then
 fields.
 
-- `started`: bind, port, config file, directories, packs found, whether a token is set (never the token),
+- `started`: bind, port, config file, directories, offline maps found, whether a token is set (never the token),
   CORS origins, whether tilebuild is available.
 - `request`: `method`, `path` (no query string), `status`, `ms`, `bytes`, `remote` (`X-Forwarded-For`
   first), `source` for tile routes (`pack`, `live-3dep`, `live-copernicus`, `openfreemap`, ...), `outcome`
@@ -1005,7 +1006,7 @@ over the cap is a 413 before anything is read, a chunked body is cut at the cap 
 | Sync replicas (users' tracks, routes, settings) | `out/sync/*.db` (`syncDb`'s directory) | SQLite files: `sqlite3 out/sync/alice.db ".backup '/backup/alice.db'"` is safe while the server runs (the online backup API); a plain `cp` is safe only with the server stopped. |
 | Share links | `out/sync/shares.json` | A small JSON file, rewritten whole on each change: copy it. |
 | Config and tokens | `server.json` (and `DYSTOPO_*_TOKEN` in the environment file) | With the replicas: a replica without its user's token cannot be reached. `/admin/users` writes the file when it adds or removes a user. |
-| Packs | `out/*.pmtiles` | Optional: they can be rebuilt (`/build`) or re-copied; their `.sha256` sidecars are recomputed when missing. |
+| Offline maps | `out/*.pmtiles` | Optional: they can be rebuilt (`/build`) or re-copied; their `.sha256` sidecars are recomputed when missing. |
 | Cache | `cacheDir` | Never: everything in it is downloaded or rendered again on demand. |
 
 Restore with the server stopped: put the files back, start it. A replica restored from an older backup
@@ -1024,7 +1025,7 @@ users keep their data on their devices and push it again.
   route exceptions. `status.none` counts requests that were never answered (the client went away first); T111:
   a body still arriving at `http.maxRequestSeconds` is answered 408 and counted under `4xx` and `requestTimeouts`
   (`dystopo_request_timeouts_total`), so a rising `none` means clients giving up on slow answers.
-- `requests.<route>.p95Ms` for `dem`, `osm`, `contours`, `shade`: pack tiles answer in tens of
+- `requests.<route>.p95Ms` for `dem`, `osm`, `contours`, `shade`: offline map tiles answer in tens of
   milliseconds; live tiles of a place nobody viewed take seconds (10 to 30 s at worst).
 - `disk.freeBytes`, and the growth of `disk.cacheDir.bytes` (per directory under `children`): the tile
   stores stay under `cache.*` (T74; `/stats` `caches`), the source downloads still grow with every new
@@ -1032,9 +1033,9 @@ users keep their data on their devices and push it again.
 - `jvm.openFiles` (Linux) or the process handle count (Windows), `jvm.threads`: flat under steady load.
 - `log.writeErrors` (the log file could not be written: disk full) and `log.rotations`.
 - `relay.bytes` and `relay.refused` (`full`, `rateLimited`) for the relay.
-- `catalog.graphs` (T202): `failed` above 0 means a pack ships without its graph and phones build their own
+- `catalog.graphs` (T202): `failed` above 0 means an offline map ships without its graph and phones build their own
   (`/stats` `graphs.packs` has the error; an `OutOfMemoryError` wants a larger heap or `buildGraphs: false`);
-  `state` `running` for long after a start is a large pack building, one at a time.
+  `state` `running` for long after a start is a large offline map building, one at a time.
 
 Prometheus, scraping through the private address (the proxy need not expose `/metrics`):
 
@@ -1081,11 +1082,11 @@ declared and chunked bodies over the cap, a gzip bomb to `/sync/push` (413 since
 and glyph ranges (400 and 404, strict since T74), `/version` and the asset manifest, non-HTTP bytes, a slow header drip,
 a 64-connection slowloris and 300 idle connections, and checks `/healthz` after each. The soak starts its
 own server (own cache and out directories under `-Root`, ports 9090 to 9099, stopped by its PID), walks the
-pack's tiles at z8 to z14 with styles, glyphs, `/out/` ranges, routes, sync, relay posts, a trip saved
+offline map's tiles at z8 to z14 with styles, glyphs, `/out/` ranges, routes, sync, relay posts, a trip saved
 every 10 minutes, a build every hour, the quick probe every hour and a new live tile column every two
 minutes, samples `/metrics`, the OS process and a class histogram (a full GC, so the live heap is exact)
 every 10 minutes into `soak.jsonl`, and ends with the full probe, `soak.svg` and `summary.json`. The
-nightly workflow runs a 20-minute version (`server-soak` job) on a pack it builds itself. T107: each sample
+nightly workflow runs a 20-minute version (`server-soak` job) on an offline map it builds itself. T107: each sample
 also carries `/stats` `sourceDownloads` (the elevation readers' downloads under the T92 budget), which the chart
 draws in its own panel (downloaded since start, in the last hour, the largest one) and `summary.json` summarises
 (`sourceMb`, `sourceRequests`, `sourceLastHourMb`, `sourceRefusedRequestCap`, `sourceRefusedHourCap`); each URL of
@@ -1120,14 +1121,14 @@ server without users); run it once against each kind of server.
 ### Measured (T82 and T92, October 2026)
 
 Two soaks of the standalone server on one Windows machine (JDK 21, 32 logical CPUs, `-Xmx2g`), each with the
-Rainier pack and the load above: about 2.4 requests a second (12 pack tiles of each kind per 20-second round, the
+Rainier offline map and the load above: about 2.4 requests a second (12 offline map tiles of each kind per 20-second round, the
 rest of the mix, a new live tile column every two minutes), sampled every 10 minutes. The first (T82c, 11 October,
 after the T80 fixes) ran the full 12 hours: 102,792 requests and 1 failed (a cold live render), live heap after a
 full GC 6 to 174 MB (+0.22 MB/h over the second half), working set 121 MB at the start, 1.69 GB at its peak and
 0.99 GB at the end, threads 22 to 114, handles 621 to 1,371, cache 2.8 GB. The second (T92, 13 October, with the
 tile caps and the source budget) is below. The first soaks of T82 found two defects that are fixed: an unbounded
-geoid-offset cache (2.2 GB of live heap on a US pack) and a gzip bomb to `/sync/push` that was an
-`OutOfMemoryError` behind a valid token (a 413 since T74); away from the US (the Mont Blanc pack, no live column)
+geoid-offset cache (2.2 GB of live heap on a US offline map) and a gzip bomb to `/sync/push` that was an
+`OutOfMemoryError` behind a valid token (a 413 since T74); away from the US (the Mont Blanc offline map, no live column)
 that soak held a live heap of about 145 MB and 81 threads.
 
 **T92: 6.34 of 12 hours, the end was not the server.** The Windows session that ran the soak was signed out at
@@ -1143,7 +1144,7 @@ judged the 39 samples (21:24 to 03:44 UTC): PASS on all five checks of a partial
   unexpected, and left 14 `connection_lost` warnings, `live.errors` 14 and 7 `/route/edit` requests of 60.9 s
   with no status (the probe's short-body case, cut at `http.maxRequestSeconds`; they are the `route` maximum;
   answered 408 since T111).
-  The hourly rebuild of a small pack finished 7 of 7.
+  The hourly rebuild of a small offline map finished 7 of 7.
 - **Heap: flat after warm-up, a slow drift.** Live heap after a full GC went from 6 MB to 181 MB in the first 10
   minutes (97 MB of float arrays that never change after that, 66 MB of byte arrays) and then stayed between 172
   and 189 MB: median 174.5 MB at 1 to 2.5 hours, 179.4 MB at 4.8 to 6.3 hours. The summary's least-squares fit
@@ -1159,7 +1160,7 @@ judged the 39 samples (21:24 to 03:44 UTC): PASS on all five checks of a partial
   down from 1.69 GB. Handles 633, then 1,330 to 1,414 from the first half hour on (the first T82 soak had 3,300 on
   the same kind of load), JVM threads 18, then 101 to 114 (it had up to 407), classes loaded constant at about
   6,290.
-- **Disk.** `cache/` went from 0 to 1.4 GB in the first hour (the first pass over the pack's edge), 2.60 GB and 37,013
+- **Disk.** `cache/` went from 0 to 1.4 GB in the first hour (the first pass over the offline map's edge), 2.60 GB and 37,013
   files at 6.3 hours, +233 MB/h over the second half: `3dep1m/` +101 MB/h (980 MB), `derived/` +66 MB/h (413
   MB), `3dep13/` +59 MB/h (680 MB), `live/` +7 MB/h (510 MB); Copernicus 15 MB, OpenFreeMap 2.4 MB. No cap was
   reached (`live/` 510 of 4,096 MB, `derived/` 413 of 1,024, OpenFreeMap 2.4 of 2,048), so eviction was not
@@ -1168,8 +1169,8 @@ judged the 39 samples (21:24 to 03:44 UTC): PASS on all five checks of a partial
   keeps viewing the same places should stop growing. `/stats` `sourceDownloads` was not sampled (the soak reads
   `/metrics`), so the budget's counters are not in this run; no request failed, so nothing shows it refusing a
   tile. `out/` 144 to 146 MB (replicas, the hourly rebuild).
-- **Latency.** Client p95 per interval, pack tiles: 7.2 s in the first interval (the first pass renders contours
-  and shades at the pack's edge), then 83 to 138 ms (median 115). Live tiles: 1.2 to 7.8 s (median 2.6 s) from
+- **Latency.** Client p95 per interval, offline map tiles: 7.2 s in the first interval (the first pass renders contours
+  and shades at the offline map's edge), then 83 to 138 ms (median 115). Live tiles: 1.2 to 7.8 s (median 2.6 s) from
   about 20 requests an interval, no trend. Other routes 13 to 30 ms. Over the run the server's own histogram has
   contours p50 at most 50 ms and p95 at most 250 ms (bucket bounds), the slowest 18.0 s; slowest `dem` 8.8 s, `shade`
   9.4 s; `/metrics` p50 at most 250 ms, slowest 2.7 s.
@@ -1200,7 +1201,7 @@ Finding `docs/findings/2026-10-16-soak-route-requests-without-status.md`.
 - `/build` limits are per job (`build.*`); there is no per-client quota beyond the token.
 - The token is a shared secret, not per-user accounts; sync has no signatures yet (peer-to-peer plan in
   docs/PLANNING.md).
-- Packs added to `outDir` by hand are picked up at the next start (`/build` packs immediately); removing a
-  pack's files while serving needs a restart.
+- Offline maps added to `outDir` by hand are picked up at the next start (`/build` offline maps immediately); removing the
+  files of an offline map while serving needs a restart.
 - On Windows, Ctrl+C in the console runs the graceful shutdown; killing the process (Task Manager,
   `Stop-Process`) skips it.

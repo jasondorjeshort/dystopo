@@ -299,10 +299,10 @@ private fun TripCorridorLine(p: io.github.jasondorjeshort.dystopo.model.RoutePla
 }
 
 /** T130: the corridor line's actions. */
-internal const val CORRIDOR_STOP = "Stop keeping"
-internal const val CORRIDOR_KEEP = "Keep offline"
+internal const val CORRIDOR_STOP = "Remove offline map"
+internal const val CORRIDOR_KEEP = "Download for offline"
 internal const val CORRIDOR_RETRY = "Retry"
-internal const val CORRIDOR_AREAS = "Offline areas"
+internal const val CORRIDOR_AREAS = "Offline maps"
 
 /**
  * T108: the directions saved with the trip: "Show N directions" opening their list (the default detail level, each with

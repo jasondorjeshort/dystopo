@@ -116,13 +116,13 @@ first start has no map yet and says so, with ways to get one, all in the app:
   builds the pack) or "Choose from server" (its catalog). Plain `http://` works only for home-network addresses
   (10.x, 172.16-31.x, 192.168.x, 169.254.x, `.local` names); a server reachable from the internet needs `https://`
   (TLS in front of it: docs/SERVER.md).
-- **Import pack files.** Copy `<name>-dem.pmtiles` (and `<name>-outdoors.pmtiles`, the trails and names) to the
-  phone, tap "Import pack files" and pick both.
+- **Import.** Copy `<name>-dem.pmtiles` (and `<name>-outdoors.pmtiles`, the trails and names) to the
+  phone, tap "Import" and pick both.
 - **Push from a computer** (developers): `tools\android-release.ps1 -Serial <serial> -Name <pack>` installs the
   release build and pushes `out\<pack>-dem.pmtiles` and its glyphs and sprites; `tools\android-push-pack.ps1` does
   the same for the debug build.
 
-Build packs with the live viewer's "Build pack here", the server's `/build`, or `devtool tiles` and `tilebuild`
+Build offline maps with the live viewer's "Build a map here", the server's `/build`, or `devtool tiles` and `tilebuild`
 (see [docs/reference/](docs/reference/README.md)). `tools\android-emu.ps1 -Build` boots a headless emulator, installs the debug app and pushes the
 Rainier pack in one step.
 

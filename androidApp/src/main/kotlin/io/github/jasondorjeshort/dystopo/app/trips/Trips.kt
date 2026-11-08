@@ -616,10 +616,10 @@ internal fun driveTimeEstimated(units: io.github.jasondorjeshort.dystopo.render.
 }
 
 /** T108: the trip card's line when a trip has no saved directions and no graph here to make them (pure text, tested). */
-internal const val DIRECTIONS_NOT_SAVED = "Directions were not saved with this route. Open it with its map pack on this phone to add them."
+internal const val DIRECTIONS_NOT_SAVED = "Directions were not saved with this route. Open it with its offline map on this phone to add them."
 
 /** T108: the trip card's line while [Trips.open] makes the directions of a trip saved without them. */
-internal const val DIRECTIONS_WORKING = "Making the directions from the map pack…"
+internal const val DIRECTIONS_WORKING = "Making the directions from the offline map…"
 
 /** T108: the trip card's directions action: "Show N directions", one in the singular (pure, tested). */
 internal fun showDirectionsLabel(n: Int): String = if (n == 1) "Show 1 direction" else "Show $n directions"

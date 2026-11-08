@@ -9,7 +9,7 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
  * the first thing on the page; the first-run card's Settings link opens [DATA] at once.
  */
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
-    DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline areas, storage"), // T115: titles from Screens
+    DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage"), // T115: titles from Screens
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements"), // T223: names what the page holds
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate"), // T223: names what the page holds

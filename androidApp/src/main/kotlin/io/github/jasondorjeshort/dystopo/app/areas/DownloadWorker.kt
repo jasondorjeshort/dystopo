@@ -292,7 +292,7 @@ class DownloadCancelReceiver : BroadcastReceiver() {
 }
 
 /** T156: the notification channel's name (Settings › Notifications). */
-internal const val CHANNEL_NAME = "Area downloads"
+internal const val CHANNEL_NAME = "Map downloads"
 
 /** T156: the notification's action. */
 internal const val CANCEL_LABEL = "Cancel"

@@ -149,7 +149,7 @@ fun UpdateOverlay() {
                         s.phase == Updater.Phase.INSTALLING -> "Opening the installer..."
                         waiting -> "Installs when navigation ends."
                         navigating -> "Installing closes the map and ends navigation."
-                        else -> "Downloaded and checked (signature and checksum). Your tracks, trips, packs and settings stay."
+                        else -> "Downloaded and checked (signature and checksum). Your tracks, trips, maps and settings stay."
                     },
                     style = TextStyle(color = Muted, fontSize = 12.sp),
                 )
