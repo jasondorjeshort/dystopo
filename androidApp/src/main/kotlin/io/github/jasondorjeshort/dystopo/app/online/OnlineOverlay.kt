@@ -92,14 +92,18 @@ class OnlineUi(
      * The chip's state (T85: not green while mobile data is off for it or the session limit is reached). T192: red only for a
      * server the user set that does not answer; with no server set (the public sources read directly) being offline is the
      * plain state of an offline-first map, grey. T236: "Server offline" when the phone has a network and the server does not
-     * answer, "Offline" (still red) without one; a fetcher of nearby phones alone takes the grey row.
+     * answer, "Offline" (still red) without one; a fetcher of nearby phones alone takes the grey row. With no network the
+     * state is never Online: the phone's own source reader answers its probe without one (seen on the emulator with Wi-Fi
+     * and data off), and nothing can be reached then.
      */
     val row: Row get() = when (state) {
-        "online" -> if (notice != null) Row.PAUSED else Row.ONLINE
-        "offline" -> if (!serverSet) Row.OFFLINE_GREY else if (network) Row.SERVER_OFFLINE else Row.OFFLINE_RED
+        "online" -> if (!network) offlineRow else if (notice != null) Row.PAUSED else Row.ONLINE
+        "offline" -> offlineRow
         "none" -> Row.NO_SERVER
         else -> Row.CONNECTING
     }
+
+    private val offlineRow: Row get() = if (!serverSet) Row.OFFLINE_GREY else if (network) Row.SERVER_OFFLINE else Row.OFFLINE_RED
 
     /** The chip's state word and its dot. */
     val label: Pair<String, Dot> get() = row.word to row.dot
@@ -182,8 +186,8 @@ class OnlineUi(
         return String.format(Locale.US, "%s %s%s: %.0f%%", phase, download["name"], kind, pct)
     }
 
-    /** "Download this area" is offered: online, a view, not all pack, nothing running; T220: not while the first-run card is up (its first choice is the same thing). */
-    val offerDownload: Boolean get() = !running && state == "online" && view != null && view.source != OnlineTiles.PACK && !firstRunCard
+    /** "Download this area" is offered: online (T236: with a network), a view, not all pack, nothing running; T220: not while the first-run card is up (its first choice is the same thing). */
+    val offerDownload: Boolean get() = !running && state == "online" && network && view != null && view.source != OnlineTiles.PACK && !firstRunCard
 
     /** The line after a finished or failed download, or null. T236: "Saved as an offline map: <name>" (ADR 0056). */
     val result: Pair<String, Dot?>? get() = when (download["state"]) {

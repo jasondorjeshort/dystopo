@@ -43,8 +43,12 @@ class OnlineView(val lat: Double, val lon: Double, val zoom: Double, val bounds:
         fun resolve(app: DystopoApp, view: OnlineView): OnlineView {
             val tiles = app.tiles
             val online = tiles.online?.viewSource(view.lat, view.lon, view.zoom)
-            val source = online?.first ?: if (tiles.packs.dem != null) OnlineTiles.PACK else OnlineTiles.NONE
-            val kept = online?.second?.let { (z, x, y) -> recorded(app, z, x, y) } ?: false
+            val keys = online?.second?.let { (z, x, y) -> keys(app, z, x, y) }.orEmpty()
+            // T236: a memo of a tile no longer in the cache under any current source (the server changed, the cache was
+            // cleared) is not "viewed earlier": nothing on the phone holds it.
+            val gone = online?.second != null && keys.isNotEmpty() && keys.none { k -> runCatching { OnlineService.get(app).cache.contains(k) }.getOrDefault(true) }
+            val source = if (gone) OnlineTiles.NONE else online?.first ?: if (tiles.packs.dem != null) OnlineTiles.PACK else OnlineTiles.NONE
+            val kept = !gone && keys.any { k -> runCatching { Areas.isRecorded(k) }.getOrDefault(false) }
             lastSource = source
             lastKept = kept
             return view.withSource(source, kept)
@@ -53,11 +57,10 @@ class OnlineView(val lat: Double, val lon: Double, val zoom: Double, val bounds:
         /** T144: where [view]'s terrain comes from (pack, online, cached, none), published for [currentOnMain]. Not on the UI thread. */
         fun sourceFor(app: DystopoApp, view: OnlineView): String = resolve(app, view).source
 
-        /** T236: the DEM tile z/x/y under the first source's versioned prefix is a tile of a recorded area ([Areas.isRecorded]). */
-        private fun recorded(app: DystopoApp, z: Int, x: Int, y: Int): Boolean = runCatching {
-            val prefix = OnlineService.get(app).fetcher?.sourceList?.firstOrNull()?.prefix("dem") ?: return false
-            Areas.isRecorded("$prefix/$z/$x/$y.png")
-        }.getOrDefault(false)
+        /** T236: the cache keys of DEM tile z/x/y under each current source's versioned prefix, as the fetcher looks it up. */
+        private fun keys(app: DystopoApp, z: Int, x: Int, y: Int): List<String> = runCatching {
+            OnlineService.get(app).fetcher?.sourceList?.map { "${it.prefix("dem")}/$z/$x/$y.png" }.orEmpty()
+        }.getOrDefault(emptyList())
 
         /** The current view with its source worked out on the calling thread; from any thread but the UI one. */
         fun current(app: DystopoApp): OnlineView? =

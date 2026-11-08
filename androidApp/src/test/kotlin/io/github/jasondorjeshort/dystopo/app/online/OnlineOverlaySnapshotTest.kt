@@ -97,6 +97,11 @@ class OnlineOverlaySnapshotTest {
         val peers = OnlineUi("offline", view(OnlineService.ONLINE), emptyMap(), false, direct = false, serverSet = false)
         assertEquals("Offline · viewed earlier" to OnlineUi.Dot.GREY, peers.text to peers.label.second)
         assertEquals("Online · from a nearby phone", OnlineUi("online", view(OnlineService.ONLINE), emptyMap(), false, serverSet = false).text)
+        // With no network the state is never Online (the phone's own reader answers its probe without one), and no download is offered.
+        val noNet = OnlineUi("online", view(OnlineService.CACHED), mapOf("state" to "idle"), false, direct = true, network = false)
+        assertEquals("Offline · viewed earlier" to OnlineUi.Dot.GREY, noNet.text to noNet.label.second)
+        assertFalse(noNet.offerDownload)
+        assertEquals(OnlineUi.Row.OFFLINE_RED, OnlineUi("online", null, emptyMap(), false, network = false).row)
         // ADR 0023: Paused (the session limit or mobile data off) and Connecting keep their words and grey.
         assertEquals("Paused" to OnlineUi.Dot.GREY, OnlineUi("online", view(OnlineService.ONLINE), emptyMap(), false, notice = "limit", direct = true).label)
         assertEquals("Connecting" to OnlineUi.Dot.GREY, OnlineUi("unknown", null, emptyMap(), false).label)
