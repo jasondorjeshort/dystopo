@@ -65,8 +65,15 @@ import kotlin.math.ceil
  * the rule's rectangle, wherever its own parent put the node, or not drawn when the rule hides it (its size kept); every
  * other element stays where its parent put it. A change of size, or of a card's rectangle, starts the next pass and asks
  * the placed elements to be placed again in the same frame, so a card that wraps moves the chips with it (T146).
+ *
+ * T243: the node comes first and the tag after it, and so does every semantics and pointer modifier of the element (its
+ * description, `clickable`, `pointerInput`): what lies outside the node stays where the parent put the node, so a tag
+ * outside it left the element's whole semantics node there, the scale bar's and the strip's under the long-press card
+ * after T239 moved their drawing up, and the card's "Route to here" node was cut to a sliver above its text.
+ * `MapLayoutTest` reads this order and every call site; `GET /layout` `semanticsAway` lists an element whose semantics
+ * node is not where it is drawn.
  */
-fun Modifier.control(id: String): Modifier = this.testTag(id).then(ControlElement(id))
+fun Modifier.control(id: String): Modifier = this.then(ControlElement(id)).testTag(id)
 
 /**
  * T239: on the part of a control the rule fits it by (the track bar's chip row): measured free of the height its column
@@ -383,6 +390,20 @@ class MeasuredControls(private val ruler: ((MeasuredControls) -> Ruled?)? = null
     fun onScreen(laidOut: Set<String>? = null): Set<String> =
         slots.filter { it.onScreen && (laidOut == null || it.id in laidOut) }.mapTo(LinkedHashSet()) { it.id }
 
+    /**
+     * T243: the elements on screen whose semantics node is not where they are drawn: none of the rectangles [semantics]
+     * gives for its tag (unclipped, px from the window's top left) within [slackPx] of its own on every side. An element
+     * with no semantics rectangle is not judged. What accessibility services and `uiautomator` read is that node, and
+     * Compose cuts the bounds of every node under it by its bounds, so one left behind takes a card's action from its text.
+     */
+    fun semanticsAway(semantics: Map<String, List<FloatArray>>, laidOut: Set<String>? = null, slackPx: Float = 1.5f): List<Map<String, Any?>> =
+        slots.filter { it.onScreen && (laidOut == null || it.id in laidOut) }.mapNotNull { s ->
+            val drawn = s.rectPx ?: return@mapNotNull null
+            val found = semantics[s.id]?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            if (found.any { r -> (0..3).all { i -> kotlin.math.abs(r[i] - drawn[i]) <= slackPx } }) null
+            else linkedMapOf("id" to s.id, "rectPx" to drawn.map { Math.round(it) }, "semanticsPx" to found.map { r -> r.map { Math.round(it) } })
+        }
+
     companion object {
         /** T239: the cards, drawn by their own code until Layout C: the rule reads their rectangles, so a move starts a pass. */
         val FIXED = setOf("navigationCard", "warningCard", "planningCard", "tripCard", "updateCard")
@@ -667,16 +688,24 @@ object MapLayout {
      * T241: the window's Compose semantics now: how many nodes carry each test tag ([counts]), and the tags of the nodes
      * whose layout node is placed ([laidOut]; a parent that stops placing a child marks it so).
      */
-    class TagsInWindow(val counts: Map<String, Int>, val laidOut: Set<String>)
+    class TagsInWindow(val counts: Map<String, Int>, val laidOut: Set<String>, val bounds: Map<String, List<FloatArray>> = emptyMap())
 
-    /** T241 (T238's walk, from `ControlsRoutes`): every Compose root of the map's window. Main thread. */
+    /**
+     * T241 (T238's walk, from `ControlsRoutes`): every Compose root of the map's window. Main thread. T243: and where each
+     * laid-out tagged node's semantics are ([TagsInWindow.bounds], unclipped, px), for [MeasuredControls.semanticsAway].
+     */
     fun tagsInWindow(): TagsInWindow {
         val counts = HashMap<String, Int>()
         val laidOut = HashSet<String>()
+        val bounds = HashMap<String, MutableList<FloatArray>>()
         fun walk(n: SemanticsNode) {
             n.config.getOrNull(SemanticsProperties.TestTag)?.let { tag ->
                 counts[tag] = (counts[tag] ?: 0) + 1
-                if (generateSequence(n.layoutInfo) { it.parentInfo }.all { it.isPlaced }) laidOut += tag
+                if (generateSequence(n.layoutInfo) { it.parentInfo }.all { it.isPlaced }) {
+                    laidOut += tag
+                    val p = n.positionInRoot
+                    bounds.getOrPut(tag) { ArrayList() } += floatArrayOf(p.x, p.y, p.x + n.size.width, p.y + n.size.height)
+                }
             }
             n.children.forEach(::walk)
         }
@@ -685,7 +714,7 @@ object MapLayout {
             if (v is ViewGroup) for (i in 0 until v.childCount) views(v.getChildAt(i))
         }
         DystopoApp.instance.map.mapView?.rootView?.let(::views)
-        return TagsInWindow(counts, laidOut)
+        return TagsInWindow(counts, laidOut, bounds)
     }
 
     /** What the elements draw now, read from their [control] nodes (T241) and laid out ([TagsInWindow.laidOut]). Main thread. */
@@ -763,7 +792,8 @@ object MapLayout {
         val d = res.displayMetrics.density
         val root = rootSize()
         val ins = insetsPx()
-        val laidOut = tagsInWindow().laidOut
+        val tags = tagsInWindow()
+        val laidOut = tags.laidOut
         val seen = observed(laidOut)
         val i = input()
         val placed = controls.lastRuled?.placement ?: i?.let { OverlayLayout.place(it, latch) }
@@ -784,6 +814,7 @@ object MapLayout {
                 ).apply { if (s.within != null) put("within", s.within) }
             },
             "overlaps" to overlaps(seen),
+            "semanticsAway" to controls.semanticsAway(tags.bounds, laidOut), // T243: a semantics node not where its element is drawn
             // T236: the chip's card, inside M8's column; T241: its rectangle read from its node, as in `elements`.
             "onlineCard" to linkedMapOf("open" to io.github.jasondorjeshort.dystopo.app.online.OnlineChip.open, "rectPx" to rectJson(read(ONLINE_CARD, laidOut))),
             "measure" to linkedMapOf("pass" to controls.pass, "placements" to controls.computed, "ruleErrors" to ruleErrors, "lastRuleError" to lastRuleError), // T241, T239

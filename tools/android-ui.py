@@ -17,7 +17,7 @@ Parts:
   features     the release feature pass (R8 has never seen these paths in a test): with the Rainier pack pushed,
                search (type, pick a hit), routing (long-press start and end, the card, T219: its Export GPX through the
                system's save dialog, Save (Keep before T217) as a trip, the Routes list under the route's place names; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
-               "From: Your location"), a waypoint with no recording (long-press, Waypoint here,
+               "From: Your location"; T243: tapped at its node's centre, no other element's node inside the card), a waypoint with no recording (long-press, Waypoint here,
                the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Stop, the Tracks sheet, T219: a row's Export GPX through the save dialog, the file listed with `adb shell ls`), the sync sheet
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
@@ -1089,9 +1089,40 @@ def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None, export=False):
     return line, via
 
 
+# T243: the long-press card's first line, its coordinates ("46.80241, -121.72892"); its nodes run from it to Cancel.
+CARD_COORDS = r"^-?\d+\.\d{5}, -?\d+\.\d{5}$"
+
+
+def card_intruders(nodes):
+    """T243: the long-press card's action nodes ({label: bounds}) and the nodes of other elements inside the card
+    ([text or description, bounds] each): a node of the app outside the card's run in the dump (its coordinate line to
+    the first Cancel after it) whose bounds share a whole pixel each way with the card's and do not hold all of it (the
+    window, the map). On 478deae5 the strip's and the scale bar's semantics nodes lay there, drawn elsewhere, and cut the
+    card's Route to here node to a sliver above its text, where a tap at the node's centre did nothing."""
+    first = next((i for i, n in enumerate(nodes) if re.match(CARD_COORDS, n["text"] or "")), None)
+    last = next((i for i in range(first, len(nodes)) if nodes[i]["text"] == "Cancel"), None) if first is not None else None
+    if last is None:
+        return {}, []
+    card = [n for n in nodes[first:last + 1] if n["bounds"]]
+    box = [min(n["bounds"][0] for n in card), min(n["bounds"][1] for n in card), max(n["bounds"][2] for n in card), max(n["bounds"][3] for n in card)]
+    actions = {n["text"]: n["bounds"] for n in card if n["clickable"] and n["text"] and not re.match(CARD_COORDS, n["text"])}
+    intruders = []
+    for i, n in enumerate(nodes):
+        b = n["bounds"]
+        if first <= i <= last or not b or not n["pkg"].startswith(PACKAGE):
+            continue
+        if b[0] <= box[0] and b[1] <= box[1] and b[2] >= box[2] and b[3] >= box[3]:
+            continue  # holds the whole card: the window, the map
+        if min(b[2], box[2]) - max(b[0], box[0]) >= 1 and min(b[3], box[3]) - max(b[1], box[1]) >= 1:
+            intruders.append([n["text"] or n["desc"] or n["cls"], b])
+    return actions, intruders
+
+
 def route_to_here(dev, a=PARADISE, b=PANORAMA, z=13):
     """T114: the GPS fix at a (`adb emu geo fix`), one long-press at b, one tap on Route to here; returns the route
-    card's texts (numbers line, From, To), the route line's samples and the screenshot, then taps Clear."""
+    card's texts (numbers line, From, To), the route line's samples and the screenshot, then taps Clear. T243: the tap
+    is at the centre of the Route to here node, as TalkBack activates it; the card's action nodes are reported
+    (`actions`) and another element's node inside the card fails the step (`intruders`, card_intruders)."""
     dev.adb("emu", "geo", "fix", str(a[1]), str(a[0]), check_ok=False)  # a fresh fix: one older than 2 min would show its age on From
     c = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
     open_map(dev, *c, z)
@@ -1101,17 +1132,24 @@ def route_to_here(dev, a=PARADISE, b=PANORAMA, z=13):
     to, nodes = dev.wait_for("^Route to here$", 10)
     if not to:
         return {"ok": False, "error": "no Route to here on the long-press card", "texts": dev.texts(nodes)[:20]}
+    time.sleep(1)  # T243: the card settled (its sun line comes a moment later and raises it)
+    nodes = dev.nodes()
+    to = dev.find("^Route to here$", nodes) or to
+    actions, intruders = card_intruders(nodes)
+    tap_at = [(to["bounds"][0] + to["bounds"][2]) // 2, (to["bounds"][1] + to["bounds"][3]) // 2]
     dev.tap(to)
     card, nodes = dev.wait_for(CARD, 60)
     texts = dev.texts(nodes)
     frm = next((t for t in texts if t.startswith("From: ")), None)
     dest = next((t for t in texts if t.startswith("To: ")), None)
     png, px = line_frame(dev, "route-to", ROUTE_LINE)
-    ok = bool(card) and frm == "From: Your location" and px >= 150
+    ok = bool(card) and frm == "From: Your location" and px >= 150 and not intruders
     if dev.find("^Clear$"):
         dev.tap_text("^Clear$")
     return {"ok": ok, "card": card and card["text"], "from": frm, "to": dest, "routeLinePx": px, "png": png,
-            **({} if ok else {"error": f"route to here: card {bool(card)}, {frm!r}, line {px} samples"})}
+            "tapAt": tap_at, "actions": actions, "intruders": intruders,
+            **({} if ok else {"error": f"route to here (tapped at its node's centre {tap_at}): card {bool(card)}, {frm!r}, line {px} samples"
+                              + (f"; another element's node inside the long-press card: {intruders}" if intruders else "")})}
 
 
 def route_rows(texts):
