@@ -412,7 +412,7 @@ private fun holdsLine(key: String, s: Map<String, Any?>): String? {
     val holds = s["holds"] as? Map<String, Map<String, Any?>>
     val kinds = holds?.entries?.joinToString(", ") { (k, v) -> "$k ${mb(v["bytes"])}" }
     // T95: what the pinned tiles are, as for the online row (which counts its unpinned tiles only).
-    if (key == Storage.PINNED) return "${s["areas"]} saved" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; outside the cache budget, kept until removed"
+    if (key == Storage.PINNED) return "${s["areas"]} saved" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; in their own budget, apart from the cache budget, kept until removed"
     if (holds == null) return null
     if (holds.isEmpty()) return "Empty"
     return kinds
