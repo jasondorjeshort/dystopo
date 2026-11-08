@@ -143,8 +143,8 @@ export function install({ map, base, units, panel, token }) {
   const box = document.createElement("details");
   box.id = "trips";
   box.innerHTML = `<summary data-control="routesChip">Trips</summary>
-    <div class="row"><button id="trip-plan" type="button" aria-pressed="false" data-control="planningCard">Plan a route</button>
-      <label>Mode <select id="trip-mode" data-control="flow:planningCard"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option><option value="crow">Crow</option></select></label></div>
+    <div class="row" data-control="flow:planningCard"><button id="trip-plan" type="button" aria-pressed="false" data-control="planningCard">Plan a route</button>
+      <label>Mode <select id="trip-mode"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option><option value="crow">Crow</option></select></label></div>
     <div class="hint" id="trip-mode-note" hidden>${CROW_NOTICE}</div>
     <div class="hint">Click the start, then the end. Click again to add a stop; drag a numbered point to move it, right-click it to remove it.</div>
     <div id="trip-status" role="status"></div>
