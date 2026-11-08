@@ -97,6 +97,9 @@ T224, T241: every view and card step reads GET /layout (`layout`: the rectangles
 published as it was placed, the pairs that overlap, what is hidden and why). --layout-baseline <earlier stem>.json
 compares those rectangles place by place with an earlier run, such as the same tour on the fork's build, and reports the
 ones that moved more than --layout-tolerance-px (1) in `layoutBaseline` and one stderr line; never a failure.
+T243: a view or card step fails when `GET /layout` `semanticsAway` lists an element (`layoutSemanticsWhereDrawn`): its
+semantics node, which TalkBack and `uiautomator` read and which cuts the bounds of the nodes under it, is not where its
+node drew it (a tag outside the control node left the strip's under the long-press card). A build before the field passes.
 
 Writes <out stem>-<i>.png per view, <out stem>-sheet.png (a contact sheet, red/green bar per view) and
 <out stem>.json (the summary, also printed to stdout); a table goes to stderr. Exit 1 if any check fails,
@@ -1112,7 +1115,8 @@ def layout_read(server):
             "compact": {e["id"]: e.get("reason") for e in lay.get("elements") or [] if e.get("state") == "compact"},
             "rects": {e["id"]: e.get("rectPx") for e in lay.get("elements") or [] if e.get("rectPx")},
             "ruleRects": {e["id"]: e.get("rectPx") for e in rule.get("elements") or [] if e.get("rectPx")},
-            "ruleOverlaps": rule.get("overlaps") or [], "ruleDiffers": rule.get("differs") or [], "ruleSideColumn": rule.get("sideColumn"), "ruleCardColumns": rule.get("cardColumns")}
+            "ruleOverlaps": rule.get("overlaps") or [], "ruleDiffers": rule.get("differs") or [], "ruleSideColumn": rule.get("sideColumn"), "ruleCardColumns": rule.get("cardColumns"),
+            "semanticsAway": lay.get("semanticsAway") or []}  # T243
 
 
 def pair_names(overlap_list):
@@ -1264,6 +1268,7 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
         c[f"layout{name[0].upper()}{name[1:]}Answers"] = "error" not in lay and bool(lay.get("window"))
         c[f"layout{name[0].upper()}{name[1:]}NoForbiddenPair"] = not layout_forbidden(lay.get("overlaps"))
         c[f"layout{name[0].upper()}{name[1:]}RuleClear"] = not lay.get("ruleOverlaps")
+        c[f"layout{name[0].upper()}{name[1:]}SemanticsWhereDrawn"] = not lay.get("semanticsAway")  # T243
         return lay
 
     _, before_scale = adb(exe, serial, "shell", "settings get system font_scale", timeout=30)
@@ -1831,6 +1836,7 @@ def main():
         rep["overlapPairs"] = pair_names(rep["layout"].get("overlaps"))
         c["layoutAnswers"] = "error" not in rep["layout"]
         c["layoutNoForbiddenPair"] = not layout_forbidden(rep["layout"].get("overlaps"))
+        c["layoutSemanticsWhereDrawn"] = not rep["layout"].get("semanticsAway")  # T243: each element's semantics node where it is drawn
         rep["failed"] = [k for k, ok in c.items() if not ok]
         rep["ok"] = not rep["failed"]
         reports.append(rep)
