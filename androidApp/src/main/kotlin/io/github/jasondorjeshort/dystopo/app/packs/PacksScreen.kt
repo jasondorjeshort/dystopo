@@ -155,7 +155,6 @@ fun PacksOverlay() {
                     Row(
                         Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp).control("settingsAndPacks").onGloballyPositioned { c -> // T238: the tag
                             with(density) { c.positionInRoot().x.toDp() }.let { if (it != io.github.jasondorjeshort.dystopo.app.TopChips.topRowLeft) io.github.jasondorjeshort.dystopo.app.TopChips.topRowLeft = it }
-                            io.github.jasondorjeshort.dystopo.app.TopChips.topRowPx = io.github.jasondorjeshort.dystopo.app.TopChips.px(c) // T224: GET /layout
                         },
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {

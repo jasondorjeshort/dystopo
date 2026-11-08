@@ -77,7 +77,6 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
                 // The line sits at the bottom-left; its top edge measured from the window bottom is what panels must clear.
                 val fromBottom: Dp = with(density) { (rootHeight(c) - c.positionInRoot().y).toDp() }
                 if (fromBottom != AttributionInsets.bottom) AttributionInsets.bottom = fromBottom
-                io.github.jasondorjeshort.dystopo.app.MapInsets.creditPx = io.github.jasondorjeshort.dystopo.app.TopChips.px(c) // T224: GET /layout
             }
             .background(Color(0xCCF6F1E4), RoundedCornerShape(4.dp))
             .clickable { context.startActivity(Intent(context, AboutActivity::class.java)) }
