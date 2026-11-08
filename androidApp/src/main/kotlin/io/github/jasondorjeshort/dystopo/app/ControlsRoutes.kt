@@ -14,8 +14,9 @@ import io.github.jasondorjeshort.dystopo.controls.Platform
  *   nodes carry its `Modifier.control` tag in the window's Compose semantics now (composed, on screen or not: a card
  *   that is down reads 0; the compass is MapLibre's own view and always reads 0). `strayTags`: tags in the window that
  *   name no manifest item. T241: `onScreen` beside `tagged`, whether the element is drawn in the window now (its
- *   `Modifier.control` node placed since its last measure, inside a parent control that is on screen, with an area; the
- *   compass while MapLibre draws it): `tagged` counts a card that is composed but not placed, `onScreen` does not.
+ *   `Modifier.control` node placed since its last measure, its layout node placed as its semantics say, inside a parent
+ *   control that is on screen, with an area; the compass while MapLibre draws it): `tagged` counts a chip column that is
+ *   composed but not placed, `onScreen` does not.
  */
 object ControlsRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
