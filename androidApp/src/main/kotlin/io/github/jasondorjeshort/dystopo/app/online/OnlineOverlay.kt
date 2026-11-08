@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.app.storage.Storage
 import kotlinx.coroutines.Dispatchers
@@ -280,7 +281,7 @@ fun OnlineOverlay() {
         Column(
             // Below the search box (T39), which is drawn after this overlay so its results cover it; T91: below its
             // measured bottom, so the "Indexing places" line no longer runs into it.
-            Modifier.align(Alignment.TopStart).then(io.github.jasondorjeshort.dystopo.app.TopChips.onlineColumn()).widthIn(max = 260.dp)
+            Modifier.align(Alignment.TopStart).then(io.github.jasondorjeshort.dystopo.app.TopChips.onlineColumn()).widthIn(max = 260.dp).control("onlineIndicator") // T238
                 .onGloballyPositioned { io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsAt(it) }, // T57: catalog fits keep clear
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -333,7 +334,7 @@ fun OnlineOverlay() {
 @Composable
 private fun ChipCard(u: OnlineUi) {
     Column(
-        Modifier.background(Chip, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp))
+        Modifier.control("onlineCard").background(Chip, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)) // T238: the tag
             .clickable { OnlineChip.open = false } // a tap on the card closes it too, as on the chip; the link has its own
             .onGloballyPositioned { c -> val b = c.boundsInRoot(); OnlineChip.cardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) }
             .padding(horizontal = 10.dp, vertical = 8.dp),

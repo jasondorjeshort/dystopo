@@ -2,9 +2,12 @@ package io.github.jasondorjeshort.dystopo.controls
 
 /**
  * ADR 0053: one definition of the controls two clients share (the registry, option C2) and where each client puts
- * them (the placement manifest, P1). Build step 1 (T208) holds the map options ([MapControls]); step 2 adds the rest
- * of the shared surface (units, text scale, the scale bar's both units, position and orientation, print, the trip
- * flow's entry points) and places every item of both clients. An item enters only when a second client gains it.
+ * them (the placement manifest, P1). Build step 1 (T208) holds the map options ([MapControls]); step 2 (T238) adds the
+ * rest of the shared surface ([SharedControls]: units, text scale, the scale bar, position and orientation, the credit
+ * line, print, the trip flow's entry points) and places every item of one client too: the phone's settings rows and
+ * the elements of its map screen ([AndroidControls]), the web page's own controls ([PageControls]). A registry item
+ * (one carrying values: type, choices, default, range) enters only when a second client gains it; an item of one
+ * client records only its id, kind and placement.
  *
  * [ControlsDocument] writes the registry as `tools/demo/controls.json`, the contract the web page and a later iOS app
  * read; a devtool test fails when the committed file differs (`./gradlew updateGoldens` refreshes it).
@@ -42,8 +45,11 @@ data class Category(val id: String, val title: String, val order: Int)
 /**
  * Where one client puts an item: its [category], its [order] within the category on that client, its [zone] (one of
  * [Platform.zones]) and what names it there: on the web the ids of the page elements that carry
- * `data-control="<item id>"` ([elements]); on Android the settings sheet row that draws it ([row], a `SettingsRow.id`)
- * for zone `settings`.
+ * `data-control="<item id>"` ([elements]; `maplibregl.X` for a control the page adds with `addControl(new
+ * maplibregl.X)`; an element without an id, such as a section's `<summary>`, carries the attribute and is not listed);
+ * on Android the settings sheet row that draws it ([row], a `SettingsRow.id`) for zone `settings`, and elsewhere the
+ * element's tag (`Modifier.control("<item id>")` in `app/MapLayout.kt`). [inventory]: the rows of ADR 0053's controls
+ * inventory the element holds, as `GET /layout` lists them (`OverlayIds.CONTROLS`).
  */
 data class Placement(
     val category: String,
@@ -51,7 +57,16 @@ data class Placement(
     val zone: String,
     val elements: List<String> = emptyList(),
     val row: String? = null,
+    val inventory: List<String> = emptyList(),
 )
+
+/** A phone placement ([Placement] on [Platform.ANDROID]). */
+internal fun onAndroid(category: String, order: Int, zone: String, row: String? = null, inventory: List<String>? = null): Pair<Platform, Placement> =
+    Platform.ANDROID to Placement(category, order, zone, row = row, inventory = inventory.orEmpty())
+
+/** A web placement ([Placement] on [Platform.WEB]). */
+internal fun onWeb(category: String, order: Int, zone: String, vararg elements: String): Pair<Platform, Placement> =
+    Platform.WEB to Placement(category, order, zone, elements = elements.toList())
 
 /**
  * One shared control. [default] is a [String] for a choice, a [Boolean] or a [Double]. [choicesByUnits] holds a
@@ -88,10 +103,28 @@ object Controls {
         Category("about", "About and advanced", 6),
     )
 
-    /** Every item, in document order. */
-    val items: List<ControlItem> get() = MapControls.items
+    /** The manifest's source files, under [DIR], each with the items it declares (refusal messages name the file). */
+    const val DIR = "shared/src/commonMain/kotlin/io/github/jasondorjeshort/dystopo/controls"
+
+    private val sources: List<Pair<String, List<ControlItem>>> by lazy {
+        listOf(
+            "MapControls.kt" to MapControls.items,
+            "SharedControls.kt" to SharedControls.items,
+            "AndroidControls.kt" to AndroidControls.items,
+            "PageControls.kt" to PageControls.items,
+        )
+    }
+
+    /** Every item, in document order: the map options, the rest of the shared surface, the phone's, the page's. */
+    val items: List<ControlItem> by lazy { sources.flatMap { it.second } }
 
     fun item(id: String): ControlItem? = items.firstOrNull { it.id == id }
+
+    /** The file under [DIR] that declares [id], or the directory when no file does (a refusal names where to add it). */
+    fun sourceOf(id: String): String = sources.firstOrNull { (_, l) -> l.any { it.id == id } }?.let { "$DIR/${it.first}" } ?: "$DIR/"
+
+    /** The items [platform] places, in document order. */
+    fun placedOn(platform: Platform): List<ControlItem> = items.filter { platform in it.placements }
 
     fun category(id: String): Category? = categories.firstOrNull { it.id == id }
 

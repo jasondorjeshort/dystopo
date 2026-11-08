@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.Foreground
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.controls.RecenterLayout
 import io.github.jasondorjeshort.dystopo.app.controls.ScaleBarLayout
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
@@ -238,6 +239,7 @@ fun ReadoutStrip(night: Boolean) {
     val description = StripText.line(items.take(drawn), markLabel) ?: "" // T210
     Layout(
         modifier = Modifier
+            .control("readoutStrip") // T238
             .onGloballyPositioned { c ->
                 val b = c.boundsInRoot()
                 var r = c

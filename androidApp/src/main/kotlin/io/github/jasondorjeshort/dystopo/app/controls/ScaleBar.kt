@@ -39,6 +39,7 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.TopChips
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.ScaleLength
@@ -329,6 +330,7 @@ fun ScaleBar() {
         content = { Column(
             Modifier
                 .let { m -> if (floor > 0.dp) m.padding(start = 8.dp, bottom = floor + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, bottom = 32.dp) }
+                .control("scaleBar") // T238
                 .onGloballyPositioned { c ->
                     val b = c.boundsInRoot()
                     var r = c

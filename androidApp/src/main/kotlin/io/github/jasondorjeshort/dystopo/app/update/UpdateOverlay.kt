@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
+import io.github.jasondorjeshort.dystopo.app.control
 import kotlin.concurrent.thread
 
 /**
@@ -126,6 +127,7 @@ fun UpdateOverlay() {
         Column(
             Modifier.align(Alignment.BottomCenter).padding(start = 12.dp, end = 12.dp, bottom = bottom).widthIn(max = 420.dp)
                 .heightIn(max = room)
+                .control("updateCard") // T238
                 .onGloballyPositioned { c ->
                     MapInsets.topFromWindowBottom(c, density).let { if (it != MapInsets.updateCardTop) MapInsets.updateCardTop = it }
                     UpdateOverlayLayout.topDp = with(density) { c.positionInRoot().y.toDp().value }

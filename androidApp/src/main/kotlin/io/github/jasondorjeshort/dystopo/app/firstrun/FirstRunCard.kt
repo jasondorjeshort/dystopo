@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
@@ -113,6 +114,7 @@ fun FirstRunCard(fallback: String?) {
                 .let { m -> io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom.let { top -> if (top > 0.dp) m.padding(top = top + 4.dp) else m.statusBarsPadding() } }
                 .let { m -> if (above > 0.dp) m.padding(start = 12.dp, end = 12.dp, bottom = above + 8.dp) else m.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 36.dp) }
                 .widthIn(max = 460.dp).fillMaxWidth()
+                .control("firstRunCard") // T238
                 .background(Paper, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp))
                 .pointerInput(Unit) { detectTapGestures { } } // T220: a touch on its paper stays out of the map
                 .padding(16.dp),

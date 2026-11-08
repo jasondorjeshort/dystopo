@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.gpx.ProfileSample
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.model.WaypointAt
@@ -91,7 +92,7 @@ fun TripControls() {
         if (Trips.editing == null) {
             io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale
                 Box(Modifier.fillMaxSize()) {
-                    Chip("Routes", Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.routesChip())) { // T65: below the track controls
+                    Chip("Routes", Modifier.align(Alignment.TopEnd).then(io.github.jasondorjeshort.dystopo.app.TopChips.routesChip()).control("routesChip")) { // T238 // T65: below the track controls
                         Trips.listOpen = true
                         Trips.background { Trips.refresh() }
                     }
@@ -183,6 +184,7 @@ private fun TripCard(modifier: Modifier) {
     Column(
         modifier.let { m -> if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp) }
             .widthIn(max = 440.dp)
+            .control("tripCard") // T238
             .onGloballyPositioned { c -> io.github.jasondorjeshort.dystopo.app.MapInsets.let { i -> i.topFromWindowBottom(c, density).let { if (it != i.tripCardTop) i.tripCardTop = it } } }
             .background(Paper, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),

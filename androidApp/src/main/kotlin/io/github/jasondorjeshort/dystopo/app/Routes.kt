@@ -178,6 +178,9 @@ class Routes(private val app: DystopoApp) {
         // T224
         LayoutRoutes.handle(app, r)?.let { return it } // GET /layout
         // end T224
+        // T238
+        ControlsRoutes.handle(app, r)?.let { return it } // GET /controls
+        // end T238
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

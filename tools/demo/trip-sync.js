@@ -69,11 +69,12 @@ export function install({ map, base, panel, token, units }) {
   const wbox = document.createElement("div");
   wbox.id = "trip-waypoints";
   wbox.innerHTML = `<h4>Waypoints <span id="wpt-trip"></span></h4>
-    <div class="row"><button id="wpt-add" type="button" aria-pressed="false" disabled title="Then click the map where the waypoint goes">Add waypoint</button>
+    <div class="row" data-control="flow:planningCard"><button id="wpt-add" type="button" aria-pressed="false" disabled title="Then click the map where the waypoint goes">Add waypoint</button>
       <input id="wpt-name" placeholder="Name (optional)" aria-label="Waypoint name"></div>
     <ul id="wpt-list"></ul>`;
   const pullBtn = document.createElement("button");
   pullBtn.id = "sync-pull";
+  pullBtn.dataset.control = "flow:routesChip";
   pullBtn.type = "button";
   pullBtn.title = "Trips saved on a phone or in another browser, from this server";
   pullBtn.textContent = "Get from server";
@@ -88,7 +89,7 @@ export function install({ map, base, panel, token, units }) {
   } else {
     const box = document.createElement("details");
     box.open = true;
-    box.innerHTML = "<summary>Trips on the server and waypoints</summary>";
+    box.innerHTML = "<summary data-control='routesChip'>Trips on the server and waypoints</summary>";
     box.append(pullBtn, wbox, status);
     (panel || document.body).appendChild(box);
   }
@@ -111,8 +112,8 @@ export function install({ map, base, panel, token, units }) {
       const li = document.createElement("li");
       const label = document.createElement("span");
       label.textContent = trip.name + " · " + fmtDist(trip.distanceM || 0) + (trip.pulled ? " (from the server)" : "");
-      const open = document.createElement("button"); open.type = "button"; open.textContent = "Open"; open.onclick = () => t.load(trip.id);
-      const del = document.createElement("button"); del.type = "button"; del.textContent = "Delete"; del.onclick = () => t.del(trip.id);
+      const open = document.createElement("button"); open.type = "button"; open.dataset.control = "flow:routesChip"; open.textContent = "Open"; open.onclick = () => t.load(trip.id);
+      const del = document.createElement("button"); del.type = "button"; del.dataset.control = "flow:routesChip"; del.textContent = "Delete"; del.onclick = () => t.del(trip.id);
       li.append(label, open, del);
       ul.appendChild(li);
     }
@@ -192,10 +193,10 @@ export function install({ map, base, panel, token, units }) {
     ul.innerHTML = "";
     for (const w of id ? listOf(id) : []) {
       const li = document.createElement("li");
-      const name = document.createElement("input"); name.value = w.name; name.dataset.id = w.id;
+      const name = document.createElement("input"); name.value = w.name; name.dataset.id = w.id; name.dataset.control = "flow:planningCard";
       name.onchange = () => api.rename(w.id, name.value);
-      const go = document.createElement("button"); go.type = "button"; go.textContent = "Show"; go.onclick = () => map.easeTo({ center: [w.lon, w.lat], duration: 300 });
-      const del = document.createElement("button"); del.type = "button"; del.textContent = "Remove"; del.onclick = () => api.remove(w.id);
+      const go = document.createElement("button"); go.type = "button"; go.dataset.control = "flow:planningCard"; go.textContent = "Show"; go.onclick = () => map.easeTo({ center: [w.lon, w.lat], duration: 300 });
+      const del = document.createElement("button"); del.type = "button"; del.dataset.control = "flow:planningCard"; del.textContent = "Remove"; del.onclick = () => api.remove(w.id);
       li.append(name, go, del);
       ul.appendChild(li);
     }

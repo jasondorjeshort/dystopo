@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.controls.MapOrientation
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
@@ -182,6 +183,7 @@ private fun NavCard(u: NavSession.Ui, chips: io.github.jasondorjeshort.dystopo.a
             modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = topPad)
                 .widthIn(max = 520.dp).fillMaxWidth()
                 .navCardEdge() // T146: the chips below it move in the same layout pass (TopChips.followNavCard)
+                .control("navigationCard") // T238
                 .onGloballyPositioned { c ->
                     chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
                     c.boundsInRoot().let { b -> chips.navCardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) } // T137: `GET /nav` `layout.navCardPx`
@@ -329,6 +331,7 @@ private fun WayBackCard(w: WayBackClock.Ui, chips: io.github.jasondorjeshort.dys
             modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(start = 8.dp, end = 8.dp, top = topPad)
                 .widthIn(max = 520.dp).fillMaxWidth()
                 .navCardEdge()
+                .control("navigationCard") // T238: the way-back card stands in the navigation card's place
                 .onGloballyPositioned { c ->
                     chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
                     c.boundsInRoot().let { b -> floatArrayOf(b.left, b.top, b.right, b.bottom).let { px -> chips.navCardPx = px; WayBackLayout.boundsPx = px } }
