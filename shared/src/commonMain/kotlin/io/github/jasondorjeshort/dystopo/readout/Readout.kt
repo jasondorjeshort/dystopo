@@ -477,7 +477,7 @@ class ReadoutEstimator(
         climbShown = false
         climbResolves = false
         // T192's gap rule still holds: in a gap the climb is held from here, not the new offset's live value (T250: "?").
-        climbAtFix = climbAtFix?.takeIf { it.state != ValueState.HIDDEN }?.let { ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = it.source, reason = "filling") } ?: climbAtFix
+        climbAtFix = climbAtFix?.takeIf { it.state != ValueState.HIDDEN && !contradicted }?.let { ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = it.source, reason = "filling") } ?: climbAtFix
         clearClimbWindow()
     }
 
