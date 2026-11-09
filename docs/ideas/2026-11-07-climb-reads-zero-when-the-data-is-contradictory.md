@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: bug
-related: [2026-11-07-self-marker-stops-while-the-track-records.md]
+related: [2026-11-07-blue-dots-on-the-map-unexplained.md]
 ---
 
 # Climb reads 0 for long stretches in the air, even while descending; show "?" or a dash instead

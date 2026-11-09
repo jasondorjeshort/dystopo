@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: feature
-related: [2026-11-07-fix-lost-for-five-minutes-in-the-air.md]
+related: [2026-11-07-blue-dots-on-the-map-unexplained.md]
 ---
 
 # A gap in a recorded track is bridged with a dashed line so its direction can be read
