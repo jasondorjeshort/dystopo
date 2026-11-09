@@ -241,6 +241,8 @@ object AreaDownload {
         val heapTiles: Long = Long.MAX_VALUE,
         /** T152: milliseconds the manifest took to make (the covers filled row by row); null for a server's. */
         val manifestMs: Long? = null,
+        /** T249: [pinnedBytes] is what the tile cache's index had counted so far (planned on the main thread while it is built). */
+        val pinnedPartial: Boolean = false,
     ) {
         val bytes: Long get() = manifest.bytes
         val tiles: Int get() = manifest.tileCount
@@ -255,6 +257,7 @@ object AreaDownload {
             "zooms" to listOf(area.minZoom, area.maxZoom), "demMaxZoom" to area.demMaxZoom, "detail" to AreaDetail.of(area)?.key, // T157
             "bufferM" to bufferOf(area), "lengthM" to area.lengthM,
             "manifestFrom" to manifestFrom, "manifestMs" to manifestMs, "pinnedBytes" to pinnedBytes, "alreadyBytes" to alreadyBytes, "budgetMb" to budgetMb,
+            "pinnedPartial" to pinnedPartial, // T249
             "fits" to (refusal == null), "refusal" to refusal, "refused" to (refusal != null),
             // T152: past the tile cache index's comfortable size the download still proceeds (ADR 0041 §3's T152 note).
             "pastHeapLimit" to pastHeapLimit, "heapTiles" to heapTiles.takeIf { it != Long.MAX_VALUE },
@@ -281,12 +284,16 @@ object AreaDownload {
     /**
      * What downloading [area] (a corridor, a disc or a polygon) would take, before anything starts. T140: a drawn area
      * or a disc is planned on the phone (the server is asked once, at Download). T152: at any size (the covers are rows),
-     * with [Plan.pastHeapLimit] for an area past the tile cache index's comfortable size.
+     * with [Plan.pastHeapLimit] for an area past the tile cache index's comfortable size. T249: the pinned bytes are the
+     * whole index's: off the main thread it waits for the index (the planner's thread); on the main thread, or when the
+     * index stalls, the plan says [Plan.pinnedPartial] (the download's own check waits again before it starts).
      */
     fun plan(area: AreaOfInterest, withLessDetail: Boolean = true): Plan {
         require(area.shape !is AreaShape.Box) { "a plan is for a corridor or a polygon; a box downloads as an offline map with routing (Download this area)" }
         val fetcher = OnlineService.get(app).fetcher ?: throw IllegalStateException(NO_SOURCE)
-        val pinned = OnlineService.get(app).cache.pinnedBytes
+        val cache = OnlineService.get(app).cache
+        val pinnedPartial = !cache.ready && (onMainThread() || runCatching { cache.awaitReady("AreaDownload.plan") }.isFailure)
+        val pinned = cache.pinnedBytes
         val own = pinnedOwn(Areas.get(area.id))
         val speed = downloadSpeed(recent.toList(), Areas.all())
         val less = if (withLessDetail && userShape(area) && area.maxZoom > LESS_DETAIL_MAX_ZOOM && area.minZoom <= LESS_DETAIL_MAX_ZOOM) {
@@ -301,9 +308,12 @@ object AreaDownload {
         val m = fromServer ?: localManifest(area, fetcher.server)
         return Plan(
             area, m, if (fromServer != null) "server" else "phone", pinned, own, AppSettings.pinnedCacheMb, bytesPerMs = speed, lessDetail = less, mediumDetail = medium,
-            heapTiles = heapTiles(), manifestMs = if (fromServer == null) System.currentTimeMillis() - t0 else null,
+            heapTiles = heapTiles(), manifestMs = if (fromServer == null) System.currentTimeMillis() - t0 else null, pinnedPartial = pinnedPartial,
         )
     }
+
+    /** T249: whether this is the UI thread (false on the JVM, where `Looper` is a stub). */
+    private fun onMainThread(): Boolean = runCatching { android.os.Looper.getMainLooper()?.thread === Thread.currentThread() }.getOrDefault(false)
 
     /** T106: the bytes of [r] already counted as pinned (none while it is unpinned: they are not in the pinned total). */
     private fun pinnedOwn(r: Areas.Record?): Long = r?.takeIf { it.pinned }?.bytes ?: 0L

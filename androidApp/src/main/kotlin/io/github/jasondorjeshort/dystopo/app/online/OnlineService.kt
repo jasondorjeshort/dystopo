@@ -20,6 +20,7 @@ import io.github.jasondorjeshort.dystopo.app.TileService
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
+import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -44,6 +45,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
     val cache = TileCache(
         File(app.cacheDir, "online/tiles"), AppSettings.onlineCacheMb * 1024 * 1024,
         walkHook = if (io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG_ENDPOINTS) indexHold(app) else null, // T242: POST /debug/cache/hold
+        snapshot = true, // T249: online/tiles.index beside the tiles
     )
     init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: after TileCache") } // T228
 
@@ -108,6 +110,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
     private val prefetchPool = Executors.newFixedThreadPool(6) { r -> Thread(r, "online-prefetch").apply { isDaemon = true } }
     private val probeThread = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "online-probe").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
 
+    /** T249: the thread that writes the tile index's snapshot. */
+    private val snapshotThread = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "tile-index-snapshot").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+
     init {
         configure(AppSettings.server)
         probeThread.schedule(::probeLoop, 1, TimeUnit.SECONDS)
@@ -115,7 +120,19 @@ class OnlineService private constructor(private val app: DystopoApp) {
         probeThread.scheduleWithFixedDelay(::retryStalled, 2, 2, TimeUnit.SECONDS) // T138; T155: and DEM tiles
         app.map.onCameraIdle = ::onViewChanged // T41
         app.map.onMapIdle = ::onMapIdle // T110
+        // T249: the index kept on disk: written when it changed, every SNAPSHOT_EVERY_MIN minutes and when the app goes to
+        // the background (the cache's own thread writes it after a walk), on a thread of its own.
+        snapshotThread.scheduleWithFixedDelay({ saveIndex("interval") }, SNAPSHOT_EVERY_MIN, SNAPSHOT_EVERY_MIN, TimeUnit.MINUTES)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default).launch {
+            io.github.jasondorjeshort.dystopo.app.Foreground.flow.collect { fg -> if (!fg) snapshotThread.execute { saveIndex("stop") } }
+        }
     }
+
+    /** T249: writes the online cache's index to its snapshot when it changed ([TileCache.saveSnapshot]); [reason] for the report. */
+    fun saveIndex(reason: String, force: Boolean = false): String =
+        runCatching { cache.saveSnapshot(reason, force) }.getOrElse { "error: ${it.message}" }.also {
+            if (it == "written") Log.i(TAG, "tile index snapshot ($reason): ${cache.lastSave}")
+        }
 
 
     /**
@@ -798,6 +815,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
 
         /** T242, debug builds: the file holding the next launch's index walk at its first file ([holdNextIndex]). */
         private const val INDEX_HOLD_FILE = ".cache-index-hold"
+
+        /** T249: minutes between writes of the tile index's snapshot (when it changed). */
+        const val SNAPSHOT_EVERY_MIN = 5L
 
         /** T242, debug builds: holds the next launch's index walk [ms] at its first file (0 forgets it), once, so the window is seen. */
         fun holdNextIndex(app: DystopoApp, ms: Long) {
