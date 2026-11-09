@@ -77,13 +77,13 @@ fun UpdateRow() {
             BasicText(it, style = TextStyle(color = if (bad) Red else Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium))
         }
         val failure = s.failure.takeIf { s.phase == Updater.Phase.FAILED }
-        DisposableEffect(Unit) { onDispose { UpdateUi.foldOpen = false } } // collapsed again the next time the row opens
+        DisposableEffect(Unit) { onDispose { Updater.foldOpen = false } } // collapsed again the next time the row opens
         if (failure != null) {
-            val open = UpdateUi.foldOpen
+            val open = Updater.foldOpen
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                BasicText("Technical details", Modifier.clickable { UpdateUi.foldOpen = !open }.padding(vertical = 4.dp),
+                BasicText("Technical details", Modifier.clickable { Updater.foldOpen = !open }.padding(vertical = 4.dp),
                     style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
-                BasicText(if (open) "Hide" else "Show", Modifier.clickable { UpdateUi.foldOpen = !open }.padding(vertical = 4.dp),
+                BasicText(if (open) "Hide" else "Show", Modifier.clickable { Updater.foldOpen = !open }.padding(vertical = 4.dp),
                     style = TextStyle(color = LinkBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium))
             }
             if (open) for (l in failure.technical(s.attempts)) BasicText(l, style = TextStyle(color = Muted, fontSize = 12.sp))
@@ -91,10 +91,6 @@ fun UpdateRow() {
     }
 }
 
-/** T247: whether the failed check's "Technical details" fold is open (`GET /update` `technicalDetailsOpen`, `POST /update/fold`). Main thread. */
-object UpdateUi {
-    var foldOpen by mutableStateOf(false)
-}
 
 /** T223: the Updates row's version text (pure, unit-tested). `GET /update`'s `message` is what the row shows. */
 internal object UpdateText {

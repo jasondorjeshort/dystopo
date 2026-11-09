@@ -46,7 +46,7 @@ object UpdateRoutes {
             "POST" to "/update/dismiss" -> { Updater.decline(); Response.json(Updater.json()) }
             "POST" to "/update/ack" -> { Updater.acknowledge(); Response.json(Updater.json()) }
             "POST" to "/update/reset" -> { Updater.reset(); Response.json(Updater.json()) }
-            "POST" to "/update/fold" -> { UpdateUi.foldOpen = r.query["open"]?.toString() != "0"; Response.json(Updater.json()) }
+            "POST" to "/update/fold" -> { Updater.foldOpen = r.query["open"]?.toString() != "0"; Response.json(Updater.json()) }
             else -> Response.notFound()
         }
     }

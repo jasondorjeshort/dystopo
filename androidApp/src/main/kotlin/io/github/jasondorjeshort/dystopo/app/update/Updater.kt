@@ -81,6 +81,9 @@ object Updater {
     var state by mutableStateOf(State())
         private set
 
+    /** T247: whether the Updates row's "Technical details" fold of a failed check is open (`POST /update/fold`). */
+    var foldOpen by mutableStateOf(false)
+
     /** The verified APK of a [Phase.READY] state. */
     @Volatile var readyFile: File? = null
         private set
@@ -211,7 +214,7 @@ object Updater {
     private fun doCheck(manual: Boolean) {
         val p = prefs()
         attempted()
-        set(State(Phase.CHECKING, manual = manual, message = "Checking for updates"))
+        set(State(Phase.CHECKING, manual = manual, message = "Checking for updates", attempts = lastAttempts))
         val (api, _) = api()
         val releases = UpdateFeed.parseReleases(fetchText(api, json = true))
         val release = UpdateFeed.pick(releases)
@@ -441,7 +444,7 @@ object Updater {
             "waitingForNavigation" to waitingForNavigation, "installsAfterNavigation" to installWait.waitedInstalls,
             "navigating" to io.github.jasondorjeshort.dystopo.app.nav.NavSession.active, "overlay" to UpdateOverlayLayout.json(),
             // T247: the failed check's Technical details fold on the Updates row, and what it shows
-            "technicalDetailsOpen" to UpdateUi.foldOpen, "technicalDetails" to state.failure?.technical(state.attempts),
+            "technicalDetailsOpen" to foldOpen, "technicalDetails" to state.failure?.technical(state.attempts),
         )
     }
 
