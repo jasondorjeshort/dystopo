@@ -56,6 +56,9 @@ internal class TileIndex {
     private val buckets = java.util.TreeMap<Int, Bucket>()
     private var nowMinute = Int.MIN_VALUE
     private var nowBucket: Bucket? = null
+    // T249: the bucket used last, for a run of entries of an older minute (a snapshot's, filed by minute).
+    private var lastMinute = Int.MIN_VALUE
+    private var lastBucket: Bucket? = null
 
     val groups: Int get() = groupPrefix.size
     val stringKeys: Int get() = stringSlots.size
@@ -117,6 +120,40 @@ internal class TileIndex {
         if (pinned) flags[s] = (flags[s].toInt() or PINNED).toByte() else link(s, minute)
         count++
         return s
+    }
+
+    /**
+     * T249: files a snapshot's packed entries `order[from until to]` (indices into [keys] and its companions, sorted by
+     * minute by the caller, so each minute's bucket is looked up once), their groups mapped by [groupMap] (none -1); skips a
+     * key held already and one [skip] refuses; tells [added] each new slot. Adds to [totals]: entries, bytes, pinned
+     * entries, pinned bytes. One call per chunk under the cache's lock: the loop stays in this class.
+     */
+    fun addLoaded(
+        keys: LongArray, sizes: IntArray, minutes: IntArray, pinned: BooleanArray, order: IntArray, from: Int, to: Int,
+        groupMap: IntArray, skip: ((Long) -> Boolean)?, added: ((Int) -> Unit)?, totals: LongArray,
+    ) {
+        for (o in from until to) {
+            val j = order[o]
+            val k = withGroup(keys[j], groupMap[groupOfKey(keys[j])])
+            if (findPacked(k) != NONE) continue
+            if (skip != null && skip(k)) continue
+            val b = sizes[j]
+            val s = addPacked(k, b, minutes[j], pinned[j])
+            totals[0]++
+            totals[1] += b
+            if (pinned[j]) {
+                totals[2]++
+                totals[3] += b
+            }
+            added?.invoke(s)
+        }
+    }
+
+    /** T249: the key a packed long names (its group made already). */
+    fun keyOfPacked(k: Long): String {
+        val g = groupOfKey(k)
+        return StringBuilder(groupPrefix[g].length + 24).append(groupPrefix[g]).append('/').append(zOf(k)).append('/')
+            .append(xOf(k)).append('/').append(yOf(k)).append('.').append(groupExt[g]).toString()
     }
 
     /** The slot of [key], or [NONE]. */
@@ -265,7 +302,10 @@ internal class TileIndex {
 
     private fun bucketFor(minute: Int): Bucket {
         if (minute == nowMinute) nowBucket?.let { return it }
+        if (minute == lastMinute) lastBucket?.let { return it }
         val b = buckets[minute] ?: Bucket().also { buckets[minute] = it }
+        lastMinute = minute
+        lastBucket = b
         if (minute >= nowMinute) {
             nowMinute = minute
             nowBucket = b
@@ -293,6 +333,7 @@ internal class TileIndex {
         if (b.head == NONE) {
             buckets.remove(m)
             if (m == nowMinute) nowBucket = null
+            if (m == lastMinute) lastBucket = null
         }
     }
 
@@ -467,7 +508,7 @@ internal class TileIndex {
 internal object TileIndexSnapshot {
     const val MAGIC = "DYSTOPO-TILE-INDEX"
     const val FORMAT = 1
-    const val LAYOUT = "varint groups, each (UTF prefix, UTF ext); varint directories, each (UTF path, varint n, n entries: " +
+    const val LAYOUT = "UTF: a 2-byte length, then UTF-8; varint groups, each (UTF prefix, UTF ext); varint directories, each (UTF path, varint n, n entries: " +
         "varint tag (0: UTF name; g+1: tile of group g, then varint y), varint bytes, zigzag varint minute, byte flags (1 pinned)); " +
         "then the CRC-32 of all bytes before it as a long"
 
@@ -502,8 +543,9 @@ internal object TileIndexSnapshot {
     class Corrupt(message: String) : java.io.IOException(message)
 
     /**
-     * Writes [e] to [out] (sorted by key in place, a key listed twice once). [midway] runs once, after half the
-     * directories (a debug hold, so a kill mid-write can be tried). Returns the entries written.
+     * Writes [e] to [out] (sorted by key in place, a key listed twice once), made in memory first and its checksum taken in
+     * one pass. [midway] runs once, after half the bytes are written (a debug hold, so a kill mid-write can be tried).
+     * Returns the entries written.
      */
     fun write(out: java.io.OutputStream, e: Entries, writtenAt: Long, root: String, midway: (() -> Unit)? = null): Int {
         sortPacked(e)
@@ -532,8 +574,7 @@ internal object TileIndexSnapshot {
             stringRuns += i
             i = j
         }
-        val crc = java.util.zip.CRC32()
-        val d = java.io.DataOutputStream(java.util.zip.CheckedOutputStream(out, crc))
+        val d = Buf(64 + e.total * 12 + e.groups.size * 64)
         val header = buildString {
             append(MAGIC).append('\n')
             append("format: ").append(FORMAT).append('\n')
@@ -546,55 +587,64 @@ internal object TileIndexSnapshot {
             append("layout: ").append(LAYOUT).append('\n')
             append('\n')
         }
-        d.write(header.toByteArray(Charsets.UTF_8))
-        varint(d, e.groups.size.toLong())
+        d.bytes(header.toByteArray(Charsets.UTF_8))
+        d.varint(e.groups.size.toLong())
         for ((p, x) in e.groups) {
-            d.writeUTF(p)
-            d.writeUTF(x)
+            d.utf(p)
+            d.utf(x)
         }
-        varint(d, (packedRuns.size + stringRuns.size).toLong())
-        val half = (packedRuns.size + stringRuns.size) / 2
-        var records = 0
-        if (half == 0) midway?.invoke()
+        d.varint((packedRuns.size + stringRuns.size).toLong())
         for ((r, start) in packedRuns.withIndex()) {
             val end = if (r + 1 < packedRuns.size) packedRuns[r + 1] else e.count
             val k = e.keys[start]
-            d.writeUTF("${e.groups[TileIndex.groupOfKey(k)].first}/${TileIndex.zOf(k)}/${TileIndex.xOf(k)}")
-            varint(d, (end - start).toLong())
+            d.utf("${e.groups[TileIndex.groupOfKey(k)].first}/${TileIndex.zOf(k)}/${TileIndex.xOf(k)}")
+            d.varint((end - start).toLong())
             for (s in start until end) {
-                varint(d, TileIndex.groupOfKey(e.keys[s]) + 1L)
-                varint(d, TileIndex.yOf(e.keys[s]).toLong())
-                entryTail(d, e.sizes[s], e.minutes[s], e.pinned[s])
+                d.varint(TileIndex.groupOfKey(e.keys[s]) + 1L)
+                d.varint(TileIndex.yOf(e.keys[s]).toLong())
+                d.entryTail(e.sizes[s], e.minutes[s], e.pinned[s])
             }
-            if (++records == half) midway?.invoke()
         }
         for ((r, start) in stringRuns.withIndex()) {
             val end = if (r + 1 < stringRuns.size) stringRuns[r + 1] else e.strings.size
-            d.writeUTF(parentOf(e.strings[start].key))
-            varint(d, (end - start).toLong())
+            d.utf(parentOf(e.strings[start].key))
+            d.varint((end - start).toLong())
             for (s in start until end) {
                 val en = e.strings[s]
-                varint(d, 0)
-                d.writeUTF(en.key.substringAfterLast('/'))
-                entryTail(d, en.bytes, en.minute, en.pinned)
+                d.varint(0)
+                d.utf(en.key.substringAfterLast('/'))
+                d.entryTail(en.bytes, en.minute, en.pinned)
             }
-            if (++records == half) midway?.invoke()
         }
-        d.flush()
-        java.io.DataOutputStream(out).writeLong(crc.value)
+        val crc = java.util.zip.CRC32()
+        crc.update(d.b, 0, d.n)
+        val sum = crc.value
+        for (i in 7 downTo 0) d.byte((sum ushr (i * 8)).toInt())
+        val half = d.n / 2
+        out.write(d.b, 0, half)
+        if (midway != null) {
+            out.flush()
+            midway()
+        }
+        out.write(d.b, half, d.n - half)
         out.flush()
         return e.total
     }
 
-    /** Reads a snapshot [input] (buffered by the caller) whole; a [Corrupt] says why it is refused. */
-    fun read(input: java.io.InputStream): Read {
-        val crc = java.util.zip.CRC32()
-        val d = java.io.DataInputStream(java.util.zip.CheckedInputStream(input, crc))
+    /** Reads a snapshot from [input] whole; a [Corrupt] says why it is refused. */
+    fun read(input: java.io.InputStream): Read = read(input.readBytes())
+
+    /**
+     * Reads a snapshot from [bytes] (the whole file, read in one call): parsed from the array, then the checksum over it in
+     * one pass (a stream read byte by byte cost 0.4 s for 50,000 entries on the emulator).
+     */
+    fun read(bytes: ByteArray): Read {
+        val c = Cursor(bytes)
         try {
-            if (line(d) != MAGIC) throw Corrupt("not a tile index")
+            if (c.line() != MAGIC) throw Corrupt("not a tile index")
             val header = LinkedHashMap<String, String>()
             while (true) {
-                val l = line(d)
+                val l = c.line()
                 if (l.isEmpty()) break
                 if (header.size > 64) throw Corrupt("header too long")
                 header[l.substringBefore(": ")] = l.substringAfter(": ", "")
@@ -602,9 +652,9 @@ internal object TileIndexSnapshot {
             val format = header["format"]?.toIntOrNull()
             if (format != FORMAT) throw Corrupt("format $format, this build reads $FORMAT")
             val total = header["entries"]?.toLongOrNull()?.takeIf { it in 0..MAX_ENTRIES } ?: throw Corrupt("entries ${header["entries"]}")
-            val g = readCount(d, TileIndex.MAX_GROUPS.toLong(), "groups")
+            val g = c.count(TileIndex.MAX_GROUPS.toLong(), "groups")
             val groups = ArrayList<Pair<String, String>>(g)
-            repeat(g) { groups += d.readUTF() to d.readUTF() }
+            repeat(g) { groups += c.utf() to c.utf() }
             val n = total.toInt()
             val keys = LongArray(n)
             val sizes = IntArray(n)
@@ -613,22 +663,21 @@ internal object TileIndexSnapshot {
             var count = 0
             val strings = ArrayList<StringEntry>()
             val dirs = HashMap<String, Int>()
-            val records = readCount(d, MAX_ENTRIES, "directories")
+            val records = c.count(MAX_ENTRIES, "directories")
             repeat(records) {
-                val path = d.readUTF()
-                val m = readCount(d, MAX_ENTRIES, "a directory's entries")
+                val path = c.utf()
+                val m = c.count(MAX_ENTRIES, "a directory's entries")
                 if (count + strings.size + m > n) throw Corrupt("more entries than the header's $n")
                 dirs[path] = (dirs[path] ?: 0) + m
-                var z = -1
-                var x = -1
+                var zx = -1L
                 var prefix: String? = null
-                repeat(m) {
-                    val tag = readCount(d, TileIndex.MAX_GROUPS.toLong() + 1, "a tag")
+                for (e in 0 until m) {
+                    val tag = c.count(TileIndex.MAX_GROUPS.toLong() + 1, "a tag")
                     if (tag == 0) {
-                        val name = d.readUTF()
-                        val b = readCount(d, Int.MAX_VALUE.toLong(), "bytes")
-                        val minute = unzigzag(readVarint(d)).toInt()
-                        val flags = d.readByte().toInt()
+                        val name = c.utf()
+                        val b = c.count(Int.MAX_VALUE.toLong(), "bytes")
+                        val minute = unzigzag(c.varint()).toInt()
+                        val flags = c.byte()
                         strings += StringEntry(if (path.isEmpty()) name else "$path/$name", b, minute, flags and 1 != 0)
                     } else {
                         val gi = tag - 1
@@ -637,36 +686,75 @@ internal object TileIndexSnapshot {
                             val s3 = path.lastIndexOf('/')
                             val s2 = if (s3 > 0) path.lastIndexOf('/', s3 - 1) else -1
                             if (s2 <= 0) throw Corrupt("tile directory '$path'")
-                            x = TileIndex.numberOf(path, s3 + 1, path.length)
-                            z = TileIndex.numberOf(path, s2 + 1, s3)
+                            val x = TileIndex.numberOf(path, s3 + 1, path.length)
+                            val z = TileIndex.numberOf(path, s2 + 1, s3)
                             if (x !in 0 until TileIndex.MAX_COORD || z !in 0..TileIndex.MAX_Z) throw Corrupt("tile directory '$path'")
                             prefix = path.substring(0, s2)
+                            zx = TileIndex.packedOf(0, z, x, 0)
                         }
                         if (groups[gi].first != prefix) throw Corrupt("group $gi in '$path'")
-                        val y = readCount(d, TileIndex.MAX_COORD - 1L, "y")
-                        val b = readCount(d, Int.MAX_VALUE.toLong(), "bytes")
-                        val minute = unzigzag(readVarint(d)).toInt()
-                        val flags = d.readByte().toInt()
-                        keys[count] = TileIndex.packedOf(gi, z, x, y)
-                        sizes[count] = b
-                        minutes[count] = minute
-                        pinned[count] = flags and 1 != 0
+                        val y = c.count(TileIndex.MAX_COORD - 1L, "y")
+                        sizes[count] = c.count(Int.MAX_VALUE.toLong(), "bytes")
+                        minutes[count] = unzigzag(c.varint()).toInt()
+                        pinned[count] = c.byte() and 1 != 0
+                        keys[count] = zx or (gi.toLong() shl 53) or y.toLong()
                         count++
                     }
                 }
             }
             if (count + strings.size != n) throw Corrupt("${count + strings.size} entries, the header says $n")
-            val sum = crc.value
-            val trailer = java.io.DataInputStream(input).readLong()
-            if (trailer != sum) throw Corrupt("bad checksum")
-            if (input.read() != -1) throw Corrupt("bytes after the checksum")
+            val end = c.at
+            if (bytes.size - end < 8) throw Corrupt("ends early")
+            if (bytes.size - end > 8) throw Corrupt("bytes after the checksum")
+            val crc = java.util.zip.CRC32()
+            crc.update(bytes, 0, end)
+            var trailer = 0L
+            for (i in end until end + 8) trailer = (trailer shl 8) or (bytes[i].toLong() and 0xff)
+            if (trailer != crc.value) throw Corrupt("bad checksum")
             return Read(header, Entries(groups, keys, sizes, minutes, pinned, count, strings), dirs)
-        } catch (c: Corrupt) {
-            throw c
-        } catch (e: java.io.EOFException) {
+        } catch (e: IndexOutOfBoundsException) {
             throw Corrupt("ends early")
-        } catch (e: java.io.UTFDataFormatException) {
-            throw Corrupt("a bad name")
+        }
+    }
+
+    /** A reading position in a snapshot's bytes: varints, `writeUTF` strings (2-byte length, then the bytes) and header lines. */
+    private class Cursor(val b: ByteArray) {
+        var at = 0
+
+        fun byte(): Int = b[at++].toInt() and 0xff
+
+        fun varint(): Long {
+            var v = 0L
+            var shift = 0
+            while (true) {
+                val x = b[at++].toInt()
+                v = v or ((x and 0x7f).toLong() shl shift)
+                if (x and 0x80 == 0) return v
+                shift += 7
+                if (shift > 63) throw Corrupt("a bad number")
+            }
+        }
+
+        fun count(max: Long, what: String): Int {
+            val v = varint()
+            if (v < 0 || v > max) throw Corrupt("$what $v")
+            return v.toInt()
+        }
+
+        fun utf(): String {
+            val n = ((b[at].toInt() and 0xff) shl 8) or (b[at + 1].toInt() and 0xff)
+            at += 2
+            if (at + n > b.size) throw IndexOutOfBoundsException()
+            return String(b, at, n, Charsets.UTF_8).also { at += n } // tile keys hold no NUL and no surrogates: UTF-8 as written
+        }
+
+        fun line(): String {
+            val from = at
+            while (b[at] != '\n'.code.toByte()) {
+                if (at - from >= 4096) throw Corrupt("a header line too long")
+                at++
+            }
+            return String(b, from, at++ - from, Charsets.UTF_8)
         }
     }
 
@@ -723,7 +811,7 @@ internal object TileIndexSnapshot {
             val budget = intArrayOf(64)
             if (others.all { emptyTree(java.io.File(at, it), budget) }) return null
         }
-        return "the directory '$path' holds ${others.size} files, the snapshot $files"
+        return "the directory '$path' holds ${others.size} names besides its directories, the snapshot $files files"
     }
 
     /** Whether [f] is a directory with no file in it (`.tmp` aside), looking at no more than [budget] directories. */
@@ -737,50 +825,51 @@ internal object TileIndexSnapshot {
 
     private fun parentOf(key: String): String = key.substringBeforeLast('/', "")
 
-    private fun entryTail(d: java.io.DataOutputStream, bytes: Int, minute: Int, pinned: Boolean) {
-        varint(d, bytes.toLong())
-        varint(d, zigzag(minute.toLong()))
-        d.writeByte(if (pinned) 1 else 0)
-    }
-
     private fun zigzag(v: Long): Long = (v shl 1) xor (v shr 63)
     private fun unzigzag(v: Long): Long = (v ushr 1) xor -(v and 1)
 
-    private fun varint(d: java.io.DataOutputStream, value: Long) {
-        var v = value
-        while (v and 0x7fL.inv() != 0L) {
-            d.writeByte(((v and 0x7f) or 0x80).toInt())
-            v = v ushr 7
+    /** A growable byte buffer the writer fills: varints, `writeUTF`'s strings (2-byte length, then UTF-8) and raw bytes. */
+    private class Buf(size: Int) {
+        var b = ByteArray(maxOf(size, 64))
+        var n = 0
+
+        private fun room(k: Int) {
+            if (n + k > b.size) b = b.copyOf(maxOf(b.size * 2, n + k))
         }
-        d.writeByte(v.toInt())
-    }
 
-    private fun readVarint(d: java.io.DataInputStream): Long {
-        var v = 0L
-        var shift = 0
-        while (true) {
-            val b = d.readUnsignedByte()
-            v = v or ((b and 0x7f).toLong() shl shift)
-            if (b and 0x80 == 0) return v
-            shift += 7
-            if (shift > 63) throw Corrupt("a bad number")
+        fun byte(v: Int) {
+            room(1)
+            b[n++] = v.toByte()
         }
-    }
 
-    private fun readCount(d: java.io.DataInputStream, max: Long, what: String): Int {
-        val v = readVarint(d)
-        if (v < 0 || v > max) throw Corrupt("$what $v")
-        return v.toInt()
-    }
+        fun bytes(a: ByteArray) {
+            room(a.size)
+            System.arraycopy(a, 0, b, n, a.size)
+            n += a.size
+        }
 
-    /** A header line (UTF-8, to its newline). */
-    private fun line(d: java.io.DataInputStream): String {
-        val b = java.io.ByteArrayOutputStream()
-        while (true) {
-            val c = d.readUnsignedByte()
-            if (c == '\n'.code) return b.toString("UTF-8")
-            if (b.size() >= 4096) throw Corrupt("a header line too long")
-            b.write(c)
+        fun varint(value: Long) {
+            room(10)
+            var v = value
+            while (v and 0x7fL.inv() != 0L) {
+                b[n++] = ((v and 0x7f) or 0x80).toByte()
+                v = v ushr 7
+            }
+            b[n++] = v.toByte()
+        }
+
+        fun utf(s: String) {
+            val a = s.toByteArray(Charsets.UTF_8)
+            require(a.size <= 0xffff) { "a name of ${a.size} bytes" }
+            byte(a.size ushr 8)
+            byte(a.size and 0xff)
+            bytes(a)
+        }
+
+        fun entryTail(bytes: Int, minute: Int, pinned: Boolean) {
+            varint(bytes.toLong())
+            varint(zigzag(minute.toLong()))
+            byte(if (pinned) 1 else 0)
         }
     }
 

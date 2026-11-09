@@ -167,14 +167,14 @@ class TileIndexSnapshotTest {
         File(dir, "s_1/dem@v1/12/651/1410.png").writeBytes(ByteArray(3))
         val b = cache()
         assertFalse(b.fromSnapshot)
-        assertTrue((b.snapshotLoad?.get("why") as String).startsWith("disagrees with the directory: the directory 's_1/dem@v1/12/651' holds 6 files"), "${b.snapshotLoad}")
+        assertTrue((b.snapshotLoad?.get("why") as String).startsWith("disagrees with the directory: the directory 's_1/dem@v1/12/651' holds 6 names besides its directories, the snapshot 5 files"), "${b.snapshotLoad}")
         assertTrue(b.contains("s_1/dem@v1/12/651/1410.png"))
 
         assertTrue(waitFor { b.lastSave?.get("reason") == "walk" })
         File(dir, "other_9/dem/3/1/2.png").apply { parentFile.mkdirs() }.writeBytes(ByteArray(4)) // a new directory
         val c = cache()
         assertFalse(c.fromSnapshot)
-        assertTrue((c.snapshotLoad?.get("why") as String).contains("the directory '' holds 2 files, the snapshot 1"), "${c.snapshotLoad}")
+        assertTrue((c.snapshotLoad?.get("why") as String).contains("the directory '' holds 2 names besides its directories, the snapshot 1 files"), "${c.snapshotLoad}")
 
         assertTrue(waitFor { c.lastSave?.get("reason") == "walk" })
         File(dir, "s_1/osm@o1/12/650/1401.pbf").writeBytes(ByteArray(5)) // a size changed

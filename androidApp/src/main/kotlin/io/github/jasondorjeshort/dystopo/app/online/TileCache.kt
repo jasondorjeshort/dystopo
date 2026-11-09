@@ -1,9 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.online
 
-import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.FileVisitResult
@@ -384,7 +382,7 @@ class TileCache(
         if (interrupted) return "a write of it was interrupted".also { snap.delete() }
         if (dirty) return "the last run changed the index after its last write".also { snap.delete() }
         val read = try {
-            BufferedInputStream(FileInputStream(snap), 1 shl 16).use { TileIndexSnapshot.read(it) }
+            TileIndexSnapshot.read(snap.readBytes()) // one read of the whole file
         } catch (c: TileIndexSnapshot.Corrupt) {
             snap.delete()
             return "corrupt: ${c.message}"
@@ -405,32 +403,45 @@ class TileCache(
         return null
     }
 
-    /** T249: files [e] (read from the snapshot) in chunks under the lock, skipping keys held or removed meanwhile; not a change. */
+    /**
+     * T249: files [e] (read from the snapshot) in chunks under the lock, skipping keys held or removed meanwhile; not a
+     * change. The entries go in by minute ([TileIndex.addLoaded]), so each bucket is found once.
+     */
     private fun fileSnapshot(e: TileIndexSnapshot.Entries) {
         val groups = IntArray(e.groups.size)
         synchronized(lock) { for ((g, pe) in e.groups.withIndex()) groups[g] = index.internGroup(pe.first, pe.second) }
+        val byMinute = LongArray(e.count) { (e.minutes[it].toLong() shl 32) or it.toLong() }
+        byMinute.sort()
+        val order = IntArray(e.count) { byMinute[it].toInt() }
+        val full = groups.any { it < 0 } // more groups than a key packs: those entries go in one by one, as strings
+        val totals = LongArray(4)
         var i = 0
         while (i < e.count) {
             val to = minOf(e.count, i + SCAN_CHUNK)
             synchronized(lock) {
                 val gone = removed?.takeIf { it.isNotEmpty() }
-                for (j in i until to) {
-                    val g = groups[TileIndex.groupOfKey(e.keys[j])]
-                    if (g < 0 || gone != null) { // the groups are full (a string key), or removals to check against
+                val tell = onIndex
+                if (full) {
+                    for (o in i until to) {
+                        val j = order[o]
                         val key = e.keyOf(j)
                         if (gone?.contains(key) == true || index.find(key) != TileIndex.NONE) continue
-                        if (g < 0) {
-                            index.add(key, e.sizes[j], e.minutes[j], e.pinned[j])
-                            counted(e.sizes[j], e.pinned[j])
-                            onIndex?.invoke(key, true)
-                            continue
-                        }
+                        index.add(key, e.sizes[j], e.minutes[j], e.pinned[j])
+                        counted(e.sizes[j], e.pinned[j])
+                        tell?.invoke(key, true)
                     }
-                    val k = TileIndex.withGroup(e.keys[j], g)
-                    if (index.findPackedKey(k) != TileIndex.NONE) continue // a get or a put while reading filed it, fresher
-                    val s = index.addPacked(k, e.sizes[j], e.minutes[j], e.pinned[j])
-                    counted(e.sizes[j], e.pinned[j])
-                    onIndex?.let { it(index.keyOf(s), true) }
+                } else {
+                    totals.fill(0)
+                    index.addLoaded(
+                        e.keys, e.sizes, e.minutes, e.pinned, order, i, to, groups,
+                        skip = gone?.let { g -> { k -> index.keyOfPacked(k) in g } },
+                        added = tell?.let { t -> { s -> t(index.keyOf(s), true) } },
+                        totals = totals,
+                    )
+                    total += totals[1]
+                    entries += totals[0].toInt()
+                    pinnedTotal += totals[3]
+                    pinnedCount += totals[2].toInt()
                 }
             }
             i = to

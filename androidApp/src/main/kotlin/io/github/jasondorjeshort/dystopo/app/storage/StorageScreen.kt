@@ -119,7 +119,9 @@ fun StorageScreen() {
                 BasicText("Measuring...", style = TextStyle(color = Muted, fontSize = 13.sp))
             } else {
                 BasicText(
-                    "Using ${mb(i["totalBytes"])} in all; ${mb(i["freeBytes"])} free on the device.",
+                    // T249: while the tile index is built the total is partial: no figure for it
+                    if ((i["stores"] as? Map<*, *>)?.values?.any { (it as? Map<*, *>)?.get("indexing") == true } == true) "${io.github.jasondorjeshort.dystopo.app.online.TileCache.INDEXING_LINE}; ${mb(i["freeBytes"])} free on the device."
+                    else "Using ${mb(i["totalBytes"])} in all; ${mb(i["freeBytes"])} free on the device.",
                     style = TextStyle(color = Muted, fontSize = 12.sp),
                 )
                 @Suppress("UNCHECKED_CAST")
@@ -287,7 +289,7 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
                 "${pct(s["share"])} of the budget. Never cut below its floor of ${mb(s["floorBytes"])} (the mark) to make room for the others.",
                 style = TextStyle(color = Muted, fontSize = 11.sp),
             )
-        } else if (budget != null) {
+        } else if (budget != null && s["indexing"] != true) { // T249: no share while the index is built
             val share = (bytes.toDouble() / (budget * 1024.0 * 1024.0)).coerceIn(0.0, 1.0).toFloat()
             Box(Modifier.fillMaxWidth().height(6.dp).background(Line, RoundedCornerShape(3.dp))) {
                 Box(Modifier.fillMaxWidth(share).height(6.dp).background(Accent, RoundedCornerShape(3.dp)))
