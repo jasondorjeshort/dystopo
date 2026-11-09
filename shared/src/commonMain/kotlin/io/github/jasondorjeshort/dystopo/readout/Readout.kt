@@ -43,13 +43,24 @@ enum class ValueState(val code: String) {
     SHOWN("shown"),
 
     /**
-     * A dash in place of the number: standing still (speed; T177: climb near zero while standing), or the climb's
-     * window not yet filled (`filling`).
+     * A dash in place of the number: standing still (speed). T250: the climb's dash means only that the sources
+     * contradict and the barometer is out for it (`contradiction`); before T250 it also stood for standing still and
+     * the window filling, which read [UNKNOWN] or [ZERO] now.
      */
     DASH("dash"),
 
-    /** T177: "0" in place of the number: a climb rate inside the near-zero band while moving ([ReadoutValue.value] keeps the small figure). */
+    /**
+     * T177: "0" in place of the number: a climb rate inside the near-zero band ([ReadoutValue.value] keeps the small
+     * figure). T250: only when the estimate could have told a climb at the band ([ReadoutTuning.CLIMB_RESOLVE_SIGMAS]),
+     * moving (`near zero`) or standing (`still`); a climb too uncertain to tell is [UNKNOWN].
+     */
     ZERO("zero"),
+
+    /**
+     * T250: "?" in place of the number: the data is insufficient, the climb's window filling (`filling`), its
+     * uncertainty too large to tell a climb from level (`uncertain`), or no fix for longer than the hold (`no fix`).
+     */
+    UNKNOWN("unknown"),
 
     /** Not drawn by the estimator's own rule: switched off or no data yet ([ReadoutValue.reason] says which; the phone's bar draws a dash unless off). */
     HIDDEN("hidden"),
@@ -81,7 +92,11 @@ data class ReadoutValue(
     )
 }
 
-/** The barometer's part ([ReadoutEstimator.readout]): `off` (switched off, or road, rail, air), `none` (no samples), `calibrating`, `in use`, `suspect`. */
+/**
+ * The barometer's part ([ReadoutEstimator.readout]): `off` (the mode Never, or Automatic in road, rail, air), `none` (no
+ * samples; T250: or silent past [ElevationFilter.BARO_FRESH_MS], the height from the GNSS and the DEM), `calibrating`,
+ * `in use`, `suspect` (out for a while: [BarometerStatus.reason]).
+ */
 enum class BarometerState(val code: String) {
     OFF("off"),
     NONE("none"),
@@ -109,11 +124,19 @@ data class BarometerStatus(
     val pinnable: Boolean = false,
     /** Why the last pin ended (`sigma`, `barometer`, `disagreement`, `replaced`), null before any or while one holds. */
     val pinEnd: String? = null,
+    /** T250: the mode ([BarometerMode.code]: `auto`, `always`, `never`). */
+    val mode: String = BarometerMode.AUTO.code,
+    /**
+     * T250: why the barometer does not feed the elevation and the climb now, null while it does (or calibrates):
+     * `setting` (Never), `activity` (Automatic and an activity whose air does not follow the height: flying, road,
+     * rail), `disagreement`, `speed`, `jitter` (out for a while, [reason]), `no samples`, `silent`.
+     */
+    val out: String? = null,
 ) {
     val pinned: Boolean get() = pinnedAt != null
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "state" to state.code, "reason" to reason, "offsetM" to offsetM?.let { r3(it) },
+        "state" to state.code, "mode" to mode, "out" to out, "reason" to reason, "offsetM" to offsetM?.let { r3(it) },
         "offsetSigmaM" to offsetSigmaM?.let { r3(it) }, "pressureHPa" to pressureHPa?.let { r3(it) },
         // T197
         "pinned" to pinned, "pinnedAt" to pinnedAt, "pinnedName" to pinnedName, "pinnedSigmaM" to pinnedSigmaM?.let { r3(it) },
@@ -189,12 +212,16 @@ data class Readout(
  *   distance along the route over a long window ([ReadoutTuning.routeWindowS]), source `route`. A speed over the
  *   profile's bound and the first speed after a gap are dropped (the reacquisition spike).
  * - **Standing still** ([ReadoutTuning.still], hysteresis): speed is a dash, the course is frozen at the last moving one.
- * - **Elevation and climb** come from [ElevationFilter]: the barometer when the profile's elevation is `fused` (foot,
- *   bike, boat; never road, rail or air) and [ReadoutOptions.barometer] is on; GNSS gated and decimated; the DEM on
- *   foot (slope under 20°, no structure near, one update per 150 m moved); a weather station's pressure as a prior
- *   ([onStationPressure]). The barometer is dropped while suspect: GNSS speed over 7 m/s; its 60 s climb and the GNSS
- *   one differing by over 1 m/s in two windows in a row; jitter over 1.5 m peak to peak (0.75 m RMS about a line) in
- *   10 s on foot. It reopens 60 s after the last trigger, its offset taken afresh from the height.
+ * - **Elevation and climb** come from [ElevationFilter]: the barometer by [ReadoutOptions.barometer] (T250's
+ *   [BarometerMode]: Automatic when the profile's elevation is `fused`, foot, bike, boat, never road, rail or air;
+ *   Always whatever the activity and with none of the rules below; Never not at all); GNSS gated and decimated; the DEM
+ *   on foot (slope under 20°, no structure near, one update per 150 m moved); a weather station's pressure as a prior
+ *   ([onStationPressure]). In Automatic the barometer is dropped while suspect: GNSS speed over 7 m/s or jitter over
+ *   1.5 m peak to peak (0.75 m RMS about a line) in 10 s on foot, reopening 60 s after the last trigger; T250: its
+ *   60 s climb and the GNSS one differing by over 1 m/s in one window ([ReadoutTuning.DISAGREE_MPS]) puts it out
+ *   until the two agree within [ReadoutTuning.AGREE_MPS] for [ReadoutTuning.AGREE_WINDOWS] windows in a row, the
+ *   vertical speed loosened so the GNSS takes it over at once and the climb a dash (`contradiction`) meanwhile. It
+ *   reopens with its offset taken afresh from the height.
  * - **A new barometer offset** (T204): a pressure step between consecutive samples larger than the activity's climb
  *   cap allows ([ReadoutTuning.climbCapMps] times the interval, at most [ReadoutTuning.STEP_MAX_DT_S], plus
  *   [ReadoutTuning.STEP_MARGIN_M]), or a change of the sample's [PressureSample.source] (a replay's column ending and the
@@ -207,10 +234,13 @@ data class Readout(
  * - **The climb rate** (T177) on the ground is the filter's vertical speed averaged over the climb window
  *   ([ReadoutOptions.climbWindowS], 30 s to 10 min, 1 min by default; a dash `filling` until
  *   [ReadoutTuning.CLIMB_MIN_FILL_S] or the window is covered, then the mean over what is held); in the air it is
- *   lagged 5 to 10 s ([ReadoutTuning.climbLagS]). Near zero ([ReadoutTuning.climbGate], its band and the uncertainty
- *   test scaled with the window) it reads 0 while moving ([ValueState.ZERO]) and a dash while standing still. In a gap
- *   of the fixes (T192) it holds the value of the last fix, dimmed and `frozen`, and is a dash (`no fix`) once the
- *   climb window (the air: the gap rule) has passed since that fix, whatever the barometer reads meanwhile.
+ *   lagged 5 to 10 s ([ReadoutTuning.climbLagS]). T250, what it says it knows: a figure when the estimate is sure of
+ *   one; near zero ([ReadoutTuning.climbGate], its band and the uncertainty test scaled with the window) 0
+ *   ([ValueState.ZERO]) only when the estimate could have told a climb at the band, moving or standing, else "?"
+ *   ([ValueState.UNKNOWN], `uncertain`); "?" while the window fills; a dash only while the sources contradict and the
+ *   barometer is out for it. In a gap of the fixes (T192) it holds the value of the last fix, dimmed and `frozen`, and
+ *   is "?" (`no fix`) once the climb window (the air: the gap rule) has passed since that fix, whatever the barometer
+ *   reads meanwhile.
  * - **A gap** in the fixes (over 5 s or three intervals) dims the values and [Readout.gapS] counts it.
  * - **A known height** (T197, [pin]): a summit, a saddle or a sign the user stands at replaces the elevation; with the
  *   barometer fused it holds as a pin ([BarometerStatus.pinnedAt]) until the offset's own random walk has doubled its
@@ -231,7 +261,21 @@ class ReadoutEstimator(
 
     var profile: ActivityProfile = profile
         private set
+
+    /** The options; T250: a change of the barometer's mode takes effect at once (a disagreement's hold ends with it). */
     var options: ReadoutOptions = options
+        set(v) {
+            val modeChanged = v.barometer != field.barometer
+            field = v
+            if (modeChanged) {
+                endContradiction()
+                suspectUntilMs = null
+                suspectReason = null
+                windowStart = null
+                disagreeRun = 0
+                applyBarometerSwitch(null)
+            }
+        }
     val activity: Activity get() = profile.activity
 
     private var filter = ElevationFilter(profile.activity)
@@ -257,7 +301,11 @@ class ReadoutEstimator(
     private var suspectReason: String? = null
     private var windowStart: Triple<Long, Double, Double>? = null
     private var disagreeRun = 0
+    // T250: out for a disagreement with the GNSS (Automatic): held until AGREE_WINDOWS windows agree in a row.
+    private var contradicted = false
+    private var agreeRun = 0
     private var climbShown = false
+    private var climbResolves = false // T250: the estimate could tell a climb at the band (0 is a value, not "?")
     private var climbAtFix: ReadoutValue? = null // T192: the climb at the last fix, held through a gap
     // T204: the last pressure sample (its time, pressure altitude and source), for the new-offset rule.
     private var lastSampleMs: Long? = null
@@ -279,6 +327,7 @@ class ReadoutEstimator(
         "fixes" to 0L, "pressureSamples" to 0L, "lateInputs" to 0L, "spikesDropped" to 0L,
         "suspects" to 0L, "reopens" to 0L, "demTries" to 0L, "clockResets" to 0L,
         "newOffsets" to 0L, "newOffsetsSource" to 0L, "newOffsetsStep" to 0L, // T204
+        "disagreements" to 0L, "agreements" to 0L, // T250: out for a disagreement, back after agreeing
     )
 
     init {
@@ -294,10 +343,21 @@ class ReadoutEstimator(
         moving = false
         lastCourse = null
         climbAtFix = null
+        endContradiction() // T250: the windows restart with the activity
+        windowStart = null
+        disagreeRun = 0
         applyBarometerSwitch(null)
     }
 
-    private val baroAllowed: Boolean get() = options.barometer && profile.elevation == ElevationSource.FUSED
+    /** T250: the mode and the activity let the barometer feed the estimate (Automatic: the profile fuses it). */
+    private val baroAllowed: Boolean get() = when (options.barometer) {
+        BarometerMode.NEVER -> false
+        BarometerMode.ALWAYS -> true
+        BarometerMode.AUTO -> profile.elevation == ElevationSource.FUSED
+    }
+
+    /** T250: the suspect rules (speed, jitter, disagreement) apply: Automatic only; Always uses it whatever they say. */
+    private val baroRules: Boolean get() = options.barometer == BarometerMode.AUTO
 
     private fun applyBarometerSwitch(tMs: Long?) {
         val until = suspectUntilMs
@@ -310,7 +370,8 @@ class ReadoutEstimator(
     }
 
     private fun suspect(reason: String, tMs: Long) {
-        if (!baroAllowed) return
+        if (!baroAllowed || !baroRules) return
+        if (contradicted) return // T250: already out until the sources agree; the agreement windows carry on
         if (suspectUntilMs == null) bump("suspects")
         suspectUntilMs = max(suspectUntilMs ?: 0L, tMs + SUSPECT_HOLD_MS)
         suspectReason = reason
@@ -412,9 +473,11 @@ class ReadoutEstimator(
         baro.clear()
         windowStart = null
         disagreeRun = 0
+        agreeRun = 0 // T250: the agreement windows restart too
         climbShown = false
-        // T192's gap rule still holds: in a gap the climb is a dash held from here, not the new offset's live value.
-        climbAtFix = climbAtFix?.takeIf { it.state != ValueState.HIDDEN }?.let { ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, source = it.source, reason = "filling") } ?: climbAtFix
+        climbResolves = false
+        // T192's gap rule still holds: in a gap the climb is held from here, not the new offset's live value (T250: "?").
+        climbAtFix = climbAtFix?.takeIf { it.state != ValueState.HIDDEN }?.let { ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = it.source, reason = "filling") } ?: climbAtFix
         clearClimbWindow()
     }
 
@@ -504,21 +567,25 @@ class ReadoutEstimator(
         // the climb window has passed since that fix; it never decays toward zero on inputs that are not fixes.
         val climb = when {
             gap == null || last == null || held == null || !options.climb.shown || held.state == ValueState.HIDDEN -> climbValue(nowMs, heightDim)
-            nowMs - last.t > climbHoldMs -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, source = held.source, dimmed = true, reason = "no fix")
+            nowMs - last.t > climbHoldMs -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = held.source, dimmed = true, reason = "no fix") // T250: "?", not a dash
             else -> held.copy(dimmed = true, frozen = true, reason = held.reason ?: "held")
         }
 
+        val mode = options.barometer.code
         val baroState = when {
-            !baroAllowed -> BarometerStatus(BarometerState.OFF)
-            suspectUntilMs != null -> BarometerStatus(BarometerState.SUSPECT, suspectReason, pressureHPa = lastPressureHPa)
-            filter.lastBaroMs == null -> BarometerStatus(BarometerState.NONE)
+            !baroAllowed -> BarometerStatus(BarometerState.OFF, out = if (options.barometer == BarometerMode.NEVER) "setting" else "activity")
+            suspectUntilMs != null -> BarometerStatus(BarometerState.SUSPECT, suspectReason, pressureHPa = lastPressureHPa, out = suspectReason)
+            filter.lastBaroMs == null -> BarometerStatus(BarometerState.NONE, out = "no samples")
+            // T250 (T204's follow-up): silent past its staleness window, the height comes from the GNSS and the DEM: not "in use".
+            filter.lastBaroMs?.let { nowMs - it > ElevationFilter.BARO_FRESH_MS } == true ->
+                BarometerStatus(BarometerState.NONE, pressureHPa = lastPressureHPa, out = "silent")
             !filter.offsetKnown || filter.offsetSigmaM > CALIBRATED_SIGMA_M ->
                 BarometerStatus(BarometerState.CALIBRATING, offsetM = filter.offsetM.takeIf { filter.offsetKnown }, offsetSigmaM = filter.offsetSigmaM.takeIf { filter.offsetKnown }, pressureHPa = lastPressureHPa)
             else -> BarometerStatus(BarometerState.IN_USE, offsetM = filter.offsetM, offsetSigmaM = filter.offsetSigmaM, pressureHPa = lastPressureHPa)
         }.let { b ->
             // T197: the pin while it holds at nowMs (the offset's sigma grown to now), else why the last one ended.
             val pn = filter.pin?.takeIf { filter.pinHolds(nowMs) }
-            b.copy(pinnedAt = pn?.tMs, pinnedName = pn?.name, pinnedSigmaM = pn?.sigmaM, pinnedEleM = pn?.eleM, pinnable = fused,
+            b.copy(mode = mode, pinnedAt = pn?.tMs, pinnedName = pn?.name, pinnedSigmaM = pn?.sigmaM, pinnedEleM = pn?.eleM, pinnable = fused,
                 pinEnd = if (pn != null) null else if (filter.pin != null) (if (fused) "sigma" else "barometer") else filter.pinEnd)
         }
         val heights = ReadoutHeights(
@@ -552,14 +619,18 @@ class ReadoutEstimator(
         val windowed = climbWindowed
         val climbV = if (windowed) climbMeanMps else smoothV
         val climbSigma = if (windowed) climbSigmaMps ?: filter.verticalSigmaMps else filter.verticalSigmaMps
+        // T250: a figure when sure, 0 only for a near zero the estimate could tell, "?" for too little data, a dash
+        // only while the barometer and the GNSS contradict and the barometer is out for it.
         return when {
             !options.climb.shown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "off")
             !filter.heightKnown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "no height yet")
+            contradicted -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, source = climbSource, dimmed = heightDim, reason = "contradiction")
             windowed && climbSpanS < minOf(ReadoutTuning.CLIMB_MIN_FILL_S, options.climbWindowS.toDouble()) ->
-                ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "filling")
+                ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, climbV, climbSigma, climbSource, heightDim, reason = "filling")
             climbShown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.SHOWN, climbV, climbSigma, climbSource, heightDim)
+            !climbResolves -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, climbV, climbSigma, climbSource, heightDim, reason = "uncertain")
             moving -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = "near zero")
-            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, climbV, climbSigma, climbSource, heightDim, reason = "still")
+            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = "still")
         }
     }
 
@@ -666,22 +737,70 @@ class ReadoutEstimator(
         lastCourseSource = "positions"
     }
 
-    /** The disagreement rule: barometer and GNSS climb over 60 s windows. */
+    /**
+     * The disagreement rule: barometer and GNSS climb over 60 s windows ([ReadoutTuning.DISAGREE_WINDOW_S]). T250, in
+     * Automatic only: one window apart by more than [ReadoutTuning.DISAGREE_MPS] puts the barometer out at once
+     * ([contradict]); while out the pressure altitude (still read, not applied) and the GNSS keep being compared, and
+     * [ReadoutTuning.AGREE_WINDOWS] windows in a row within [ReadoutTuning.AGREE_MPS] bring it back ([agree]). A
+     * barometer silent past its staleness window is not compared (its frozen altitude is not a rate).
+     */
     private fun disagreement(tMs: Long, ele: Double, vAcc: Double) {
         val baroAlt = filter.lastBaroAltM
-        if (!filter.baroOpen || baroAlt == null || vAcc > DISAGREE_MAX_VACC_M) return
+        val fresh = lastSampleMs?.let { tMs - it <= ElevationFilter.BARO_FRESH_MS } == true
+        if (!baroAllowed || !baroRules || !(filter.baroOpen || contradicted) || baroAlt == null || !fresh || vAcc > ReadoutTuning.DISAGREE_MAX_VACC_M) return
         val w = windowStart
         if (w == null) { windowStart = Triple(tMs, baroAlt, ele); return }
         val span = (tMs - w.first) / 1000.0
-        if (span < DISAGREE_WINDOW_S) return
+        if (span < ReadoutTuning.DISAGREE_WINDOW_S) return
         val rb = (baroAlt - w.second) / span
         val rg = (ele - w.third) / span
         windowStart = Triple(tMs, baroAlt, ele)
-        if (abs(rb - rg) > DISAGREE_MPS) {
-            if (++disagreeRun >= 2) suspect("disagreement", tMs)
+        val d = abs(rb - rg)
+        if (!contradicted) {
+            if (d > ReadoutTuning.DISAGREE_MPS) contradict(tMs) else disagreeRun = 0
+        } else if (d <= ReadoutTuning.AGREE_MPS) {
+            if (++agreeRun >= ReadoutTuning.AGREE_WINDOWS) agree(tMs)
         } else {
-            disagreeRun = 0
+            agreeRun = 0
         }
+    }
+
+    /**
+     * T250: the barometer and the GNSS disagree: the barometer is out at once (no blending; the owner, 2026-11-07),
+     * the vertical speed it carried loosened so the GNSS sets it, the climb's window restarted and the climb a dash
+     * while they contradict.
+     */
+    private fun contradict(tMs: Long) {
+        if (suspectUntilMs == null) bump("suspects")
+        bump("disagreements")
+        contradicted = true
+        agreeRun = 0
+        disagreeRun = 0
+        suspectUntilMs = Long.MAX_VALUE
+        suspectReason = "disagreement"
+        filter.closeBarometer()
+        filter.loosenVertical()
+        climbShown = false
+        climbResolves = false
+        clearClimbWindow()
+    }
+
+    /** T250: the two have agreed long enough: the barometer returns, its offset taken afresh from the height. */
+    private fun agree(tMs: Long) {
+        bump("agreements")
+        endContradiction()
+        suspectUntilMs = null
+        suspectReason = null
+        bump("reopens")
+        windowStart = null
+        clearClimbWindow()
+        applyBarometerSwitch(tMs)
+    }
+
+    private fun endContradiction() {
+        if (contradicted && suspectReason == "disagreement") { suspectUntilMs = null; suspectReason = null }
+        contradicted = false
+        agreeRun = 0
     }
 
     /** The jitter rule on foot: the RMS of the barometer heights about a line over 10 s. */
@@ -761,6 +880,9 @@ class ReadoutEstimator(
         lastSampleSource = null
         suspectUntilMs = null
         suspectReason = null
+        contradicted = false // T250
+        agreeRun = 0
+        climbResolves = false
         filter = ElevationFilter(activity)
         applyBarometerSwitch(tMs)
     }
@@ -794,6 +916,7 @@ class ReadoutEstimator(
             if (climbHist.isEmpty() || tMs - climbHist.last().first >= 1_000) climbHist.addLast(tMs to climbIntegralM)
             while (climbHist.size > 2 && tMs - climbHist[1].first >= ReadoutTuning.CLIMB_KEEP_MS) climbHist.removeFirst()
         }
+        if (climbHist.isEmpty()) climbHist.addLast(tMs to climbIntegralM) // T250: a window cleared at this input's own time
         // The window mean: the integral now less the integral at the last entry at least the window back (else the first).
         val windowMs = options.climbWindowS * 1000L
         var start = climbHist.first()
@@ -807,8 +930,13 @@ class ReadoutEstimator(
         val windowed = climbWindowed
         val gate = ReadoutTuning.climbGate(activity, if (windowed) options.climbWindowS else null)
         val a = abs(if (windowed) climbMeanMps else smoothV)
-        val sure = a >= 2 * (if (windowed) sigmaW else filter.verticalSigmaMps)
+        val sigma = if (windowed) sigmaW else filter.verticalSigmaMps
+        val sure = a >= 2 * sigma
         climbShown = if (climbShown) a >= gate.hideMps && sure else a > gate.showMps && sure
+        // T250: 0 is a value only when a climb at the band could have been told; on the ground the band of the span the
+        // mean covers so far (a long window partly filled is judged by what it holds, as its mean is).
+        val resolveGate = if (windowed) ReadoutTuning.climbGate(activity, minOf(options.climbWindowS, maxOf(climbSpanS, ReadoutTuning.CLIMB_MIN_FILL_S).toInt())) else gate
+        climbResolves = ReadoutTuning.CLIMB_RESOLVE_SIGMAS * sigma <= resolveGate.showMps
     }
 
     companion object {
@@ -821,9 +949,6 @@ class ReadoutEstimator(
         /** The barometer reopens this long after the last suspect trigger. */
         const val SUSPECT_HOLD_MS = 60_000L
 
-        const val DISAGREE_WINDOW_S = 60.0
-        const val DISAGREE_MPS = 1.0
-        const val DISAGREE_MAX_VACC_M = 10.0
         const val JITTER_WINDOW_MS = 10_000L
         const val JITTER_RMS_M = 0.75
 
