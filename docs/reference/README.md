@@ -26,4 +26,5 @@ them, on the same branch.
 | `android-battery.md` | `tools/android-battery.py`: the app's battery use per scenario (tracking screen off, navigation, idle map) from `dumpsys batterystats`, how to run it on a phone, the report's fields, results | 2026-10-23 |
 | `android-release.md` | The release build and signing, deep links, `android-release.ps1` | 2026-10-12 |
 | `home-site.md` | The home site: `tools/site/install.ps1` and `status.ps1`, the server and Caddy as scheduled tasks (S4U needs elevation once), the folder and token, `-Update`, port 80, the owner's three steps, the always-on cost | 2026-11-01 |
+| `verifying-a-task.md` | `tools/verify-task.ps1`, the verifier's mechanical half: its arguments, steps, summary and fixture test, and what the agent keeps | 2026-11-09 |
 | `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps, the sweep's device parts, its sheet and the before-and-after sheet (`sweep-diff.py`) | 2026-11-09 |

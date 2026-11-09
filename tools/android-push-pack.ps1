@@ -133,7 +133,8 @@ if (-not $NoSprites) {
     New-Item -ItemType Directory -Force $runDir | Out-Null
     $spriteLog = Join-Path $runDir 'sprite.log'
     Write-Host "making the sprite sheet (devtool sprite into $runName)"
-    $p = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':devtool:run', "--args=sprite --out $runName", '--console=plain', '-q') $spriteLog
+    # T246 (T210's follow-up): --no-daemon, as android-emu.ps1's build: no Gradle daemon outlives the sprite step.
+    $p = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':devtool:run', "--args=sprite --out $runName", '--console=plain', '-q', '--no-daemon') $spriteLog
     $p.WaitForExit()
     if ($p.ExitCode -ne 0) { throw "devtool sprite failed (exit $($p.ExitCode)); see $spriteLog" }
     foreach ($f in $spriteFiles) { if (-not (Test-Path (Join-Path $runDir $f))) { throw "devtool sprite wrote no $f; see $spriteLog" } }
