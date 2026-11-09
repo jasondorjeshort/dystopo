@@ -536,6 +536,29 @@ def png_size(path):
     return None, None
 
 
+def changes(d):
+    """T259: the before-and-after sheet's `changes` entry from changes.json (tools/sweep-diff.py), or None: the count of
+    changed pairs, the pairs compared, the timing pairs, the added and removed shots, the previous sweep's folder name,
+    the changed paths and the paths of changes.png and changes.json (relative to the checkout when on its drive)."""
+    r = load(os.path.join(d, "changes.json"))
+    if not isinstance(r, dict) or "count" not in r:
+        return None
+
+    def rel(name):
+        p = os.path.join(d, name)
+        if not os.path.exists(p):
+            return None
+        same = os.path.splitdrive(p)[0].lower() == os.path.splitdrive(REPO)[0].lower()
+        return (os.path.relpath(p, REPO) if same else p).replace(os.sep, "/")
+
+    return {"count": r["count"], "paired": r.get("paired"), "timing": len(r.get("timing") or []),
+            "added": len(r.get("added") or []), "removed": len(r.get("removed") or []),
+            "prev": os.path.basename(os.path.normpath(r.get("prev") or "")),
+            "changed": [c.get("path") for c in r.get("changed") or []][:40],
+            "first": [c.get("path") for c in r.get("changed") or [] if c.get("first")],
+            "png": rel("changes.png"), "json": rel("changes.json")}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dir")
@@ -582,6 +605,9 @@ def main():
     if sheet:
         rel = os.path.relpath(sheet, REPO) if os.path.splitdrive(sheet)[0].lower() == os.path.splitdrive(REPO)[0].lower() else sheet
         summary["sheet"] = rel.replace(os.sep, "/")
+    ch = changes(d)  # T259: kept when the summary is written again after sweep-diff.py
+    if ch:
+        summary["changes"] = ch
     with open(os.path.join(d, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))
