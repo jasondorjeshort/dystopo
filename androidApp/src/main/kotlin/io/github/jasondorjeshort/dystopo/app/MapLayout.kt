@@ -768,6 +768,24 @@ object MapLayout {
         if (root[0] <= 0f) null else inputFrom(controls, res.displayMetrics.density, root, insetsPx(), res.configuration.fontScale)
     }
 
+    /**
+     * T261: the elements across the top of the map as drawn now (the settings row, Search, the online column with its
+     * card, the track bar with its panel, the Routes chip, the navigation card; the rule's hidden ones left out) and the
+     * status bar as a band the window's width, dp from the window's top left (left, top, right, bottom); null before
+     * Search was placed. The warning card starts under the ones across its own span (`CardBands.warningTop`): on a phone
+     * on its side the chips stand in their own column beside it, so their bottom no longer sets its top. Main thread.
+     */
+    fun topChromeDp(density: Float): List<List<Float>>? {
+        val ids = listOf(OverlayIds.SETTINGS_ROW, OverlayIds.SEARCH, OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.NAV_CARD)
+        val rects = ids.map { controls.lastRectOf(nameOf(it)) }
+        if (rects[1] == null) return null
+        return topChrome(rects.filterNotNull(), rootSize()[0], insetsPx()[1], density)
+    }
+
+    /** T261 (pure, `MapLayoutTest`): [rects] (px) and the status bar's band ([insetTopPx] tall, [widthPx] wide), in dp; empty rectangles left out. */
+    fun topChrome(rects: List<FloatArray>, widthPx: Float, insetTopPx: Float, density: Float): List<List<Float>> =
+        (rects.filter { it[2] > it[0] && it[3] > it[1] } + floatArrayOf(0f, 0f, widthPx, insetTopPx)).map { r -> r.map { it / density } }
+
     private fun mapView(): View? = DystopoApp.instance.map.mapView
 
     /** The window: the map view's root, px. */

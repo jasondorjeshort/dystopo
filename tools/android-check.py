@@ -1257,7 +1257,11 @@ def cards_step(server, exe, serial, step, shot_stem, ext):
     why, what the pure rule would change), fails a view whose `overlaps` names a chip column under the credit line or the
     strip reaching a right-hand chip, checks the strip's rectangle against its drawn plate within 1 px, and runs in
     `rotation=1` too: T212's checks written for the upright phone are then reported in `landscapeNotes`, not failed, since
-    `overlaps` is the record there. T210's glance step: opens the glance view while navigating, checks `legible`, closes it."""
+    `overlaps` is the record there. T210's glance step: opens the glance view while navigating, checks `legible`, closes it.
+
+    T261: the rule's own pairs (`layout<View>RuleClear`) stay failures in landscape too, since the credit line is never to be
+    covered: on this PC's pixel_6 AVD a pack credited to two elevation sources wraps the credit line to two lines at 2.0, and
+    the warning card, then started under the chips' column beside it, reached 13 dp over it (fixed in the card, not noted)."""
     rep = {"scale": step["scale"], "rotation": step.get("rotation", "0"), "route": f"{step['from']};{step['to']}", "checks": {}, "shots": {}, "layout": {}}
     c = rep["checks"]
     landscape = str(step.get("rotation", "0")) != "0"
