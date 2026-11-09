@@ -64,6 +64,9 @@
 # second build overwrites androidApp\build\outputs\apk\release.
 # and writes out\sweep-<date>\: steps.tsv, each part's log and JSON, summary.json and sheet.png (a contact
 # sheet of the contact sheets) through tools/sweep-summary.py. Exit 1 when any part failed.
+# T259: with -Prev <previous sweep folder>, then tools/sweep-diff.py: changes.png (the changed screenshots before and
+# after, with the differing pixels in red; -First <screen names> puts the owner's first) and changes.json, and the
+# count in summary.json's `changes`. -SummaryOnly -Out <existing sweep folder> -Prev <folder> redoes just those steps.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1                     # everything
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDevice           # no emulator on this machine
@@ -146,6 +149,13 @@ param(
     [string]$InjectHang = '',
     # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
     [string]$Known = '', # T91: overlap:search/Settings fixed (the map chips cap their font scale at 1.3)
+    # T259: the previous sweep's folder (relative to the checkout, or absolute: it is only read). After the summary,
+    # tools/sweep-diff.py pairs every screenshot with its namesake there and writes changes.png and changes.json into
+    # -Out; summary.json gets `changes` (the count and the paths). -First names the screens the merge bodies flag for
+    # the owner (shown first). -SummaryOnly runs only the summary and the diff over an existing -Out: no part, no build.
+    [string]$Prev = '',
+    [string[]]$First = @(),
+    [switch]$SummaryOnly,
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
     [string]$Channel = 'chrome',
     # T105: the server the debug build's device parts use, set in the app before its first start (android-emu.ps1 -Server)
@@ -233,6 +243,28 @@ if (-not $Out) { $Out = Join-Path 'out' "sweep-$Date" }
 if ([IO.Path]::IsPathRooted($Out)) { throw "-Out must be relative to the checkout (such as out\sweep-w21), not '$Out'" }
 $Out = [IO.Path]::GetFullPath((Join-Path $repo $Out))
 if (-not $Out.StartsWith($repo.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "-Out must stay inside the checkout ($repo), not '$Out'" }
+# T259: the summary (sweep-summary.py), then with -Prev the before-and-after sheet (sweep-diff.py, which adds `changes`
+# to summary.json); the sweep's exit code is the summary's, never the diff's.
+$First = @($First | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+if ($Prev) {
+    $Prev = if ([IO.Path]::IsPathRooted($Prev)) { [IO.Path]::GetFullPath($Prev) } else { [IO.Path]::GetFullPath((Join-Path $repo $Prev)) }
+    if (-not (Test-Path -LiteralPath $Prev -PathType Container)) { throw "-Prev is not a folder: '$Prev'" }
+}
+function Write-Summary {
+    & python -I (Join-Path $repo 'tools\sweep-summary.py') $Out --channel $Channel | Out-Host
+    $code = $LASTEXITCODE
+    if ($Prev) {
+        $diffArgs = @('-I', (Join-Path $repo 'tools\sweep-diff.py'), $Prev, $Out, '--channel', $Channel)
+        if ($First.Count) { $diffArgs += @('--first', ($First -join ',')) }
+        & python @diffArgs | Out-Host
+        if ($LASTEXITCODE -ne 0) { Write-Host "[sweep] sweep-diff.py failed (exit $LASTEXITCODE); no changes.png" }
+    }
+    $code
+}
+if ($SummaryOnly) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Out 'steps.tsv'))) { throw "-SummaryOnly needs an existing sweep folder as -Out (no steps.tsv in '$Out')" }
+    exit (Write-Summary)
+}
 New-Item -ItemType Directory -Force $Out | Out-Null
 $steps = Join-Path $Out 'steps.tsv'
 # T99: steps.tsv is written through Write-Steps (below), never Add-Content: Add-Content opens the file without read
@@ -1167,5 +1199,4 @@ if ($script:stepsBehind -and -not (Write-Steps $script:stepLines.ToArray() -Rewr
     Write-Host "[sweep] steps.tsv is still held by another process; the summary will miss steps:"
     $script:stepLines | ForEach-Object { Write-Host "[sweep]   $_" }
 }
-& $py -I (Join-Path $repo 'tools\sweep-summary.py') $Out --channel $Channel
-exit $LASTEXITCODE
+exit (Write-Summary)

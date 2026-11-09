@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-09
+
+- T259: The before-and-after sheet (no Gradle; alongside)
+
 ## v0.1.24-alpha (2026-11-08)
 
 ### 2026-11-08
