@@ -86,7 +86,8 @@ and settings added or missing against ADR 0044. Answer every objection by editin
 1. As each implementer reports, launch a verifier (Sonnet-class, `brief` skill, `verifier.md`) with
    the report in its brief. It rebases onto `main` if `main` moved, runs `check`, repeats the report's
    key runs, views the PNGs and returns
-   MERGE, MERGE WITH NOTES or FIX with specifics.
+   MERGE, MERGE WITH NOTES or FIX with specifics. Its mechanical half is `tools/verify-task.ps1` (T246,
+   `docs/reference/verifying-a-task.md`): the brief gives it the machine facts, the agent reads the summary.
 2. FIX goes back to the implementer (the verifier may message it directly for a small fix-up; scope
    changes go through the coordinator), then a verifier again on the delta.
 3. Read the report, not the diff. Spot-check the delta after a fix round.
