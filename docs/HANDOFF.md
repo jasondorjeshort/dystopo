@@ -2,8 +2,7 @@
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
 Updated: 2026-11-09, by main session (wave 31 planned, critic taken, first five agents launched)
-Resume: this file, `docs/reference/machines.md` (the owner's PC, 128 GB), the `wave` skill, `docs/TASKS.md` › Wave 31
-(the lane order and the ownership paragraph), `out/wave31-research/` [no-check: gitignored] (five surveys, the critic).
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 31, `out/wave31-research/` [no-check: gitignored].
 
 ## Now
 
@@ -22,20 +21,18 @@ Resume: this file, `docs/reference/machines.md` (the owner's PC, 128 GB), the `w
 
 1. As T244 and T245 report `under review`: brief a critic each (the `proposal` skill's `brief-critic.md`, most
    capable model), then message the implementer to revise; the coordinator decides; the ADRs are wave 32's.
-2. As T246 or T248 reports: a Sonnet-class verifier (`brief` skill, `verifier.md`; once T246 has merged, its
-   script and `docs/reference/verifying-a-task.md` go in every verifier brief); merge by the `wave` skill's
+2. As T246 or T248 reports: a Sonnet-class verifier (`brief` skill, `verifier.md`; once T246 has merged, its script
+   and its reference page go in every verifier brief [no-check: T246 writes the page]); merge by the `wave` skill's
    sequence; then the lane's next implementer (T247 in A, T249 in B), whose brief lists what merged.
-3. At T253 and T255 merged: the `sweep` skill, then the `release` skill (ADR 0024). At the wave's end: close by
-   the `wave` skill (the meter reading against 53, the figure revised if five points off), then plan wave 32 from
-   the Not-taken list (Layout C after the owner's Menu choice, the tracks manager, the launch budget, the world
-   basemap, T240's objects, the accessibility sweep, the owner's phone in the sweep) and the two ADRs.
+3. At T253 and T255 merged: the `sweep` skill, then the `release` skill (ADR 0024). At the wave's end: close by the
+   `wave` skill (the meter against 53; the figure revised if five points off), then plan wave 32 from the wave
+   paragraph's Not-taken list and the two ADRs.
 
 ## Waiting on user
 
 - The Menu choice for the top row (Layout C's step 8, wave 32); T220's location prompt; proposals 0054 and 0055.
 - On v0.1.24-alpha: whether the start stays quick over the large download; a Startup freeze report if not.
-- For your eye (ADR 0031): the T239 landscape and warning-card cases, T235's one-row landscape list, T237's
-  wordings, the long-press card's 28.5 dp actions; this wave's strings arrive in the merge bodies.
+- For your eye (ADR 0031): the wave 30 items listed in `docs/tasks/wave-30.md`'s Status lines (T239, T235, T237, T243).
 
 ## Open findings
 
