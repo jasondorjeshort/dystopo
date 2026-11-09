@@ -377,4 +377,41 @@ class MapLayoutTest {
         assertTrue(calls >= 15, "the reader found $calls .control( calls (19 at T243)")
         assertTrue(bad.isEmpty(), bad.joinToString("\n"))
     }
+
+    /**
+     * T261: the API 35 pixel_6 AVD (1080 x 2400 px at 420 dpi, 914 x 411 dp on its side) at font scale 2.0 with a
+     * warning up, as `GET /layout` read it: the chips' column at the right ended 162 dp down and set the card's top at
+     * 170 dp; the card keeps its title, advice and actions (169 dp) and reached 13 dp over the credit line, which a pack
+     * credited to two elevation sources wraps to two lines (top at 855 px). Under the elements across its own span only
+     * (the online column), it starts at 120 dp and ends 37 dp above the credit line. Upright the chips cross it, as before.
+     */
+    @Test
+    fun theWarningStartsUnderWhatIsAboveItNotUnderTheChipsBesideIt() {
+        val d = 2.625f
+        val bands = listOf(floatArrayOf(1747f, 95f, 2368f, 195f), floatArrayOf(21f, 84f, 599f, 191f))
+        val landscape = MapLayout.topChrome(
+            bands,
+            listOf(floatArrayOf(149f, 210f, 675f, 295f), floatArrayOf(1860f, 210f, 2379f, 310f), floatArrayOf(2151f, 326f, 2379f, 426f), floatArrayOf(0f, 0f, 0f, 0f)),
+            2400f, 63f, d,
+        )
+        assertEquals(6, landscape.size, "the empty one left out, the status bar in")
+        val left = (914.3f - 420f) / 2
+        val chromeTop = 426f / d + 8f // the old top: under the Routes chip
+        val compass = floatArrayOf(2253f / d, 442f / d, 2379f / d, 568f / d)
+        val top = io.github.jasondorjeshort.dystopo.app.routing.CardBands.warningTop(chromeTop, compass, left, left + 420f, 191.4f, over = landscape)
+        assertEquals(295f / d + 8f, top, 0.01f)
+        assertTrue(top + 443f / d <= 855f / d - 6f, "the card's least ends above the credit line")
+        // At 1.0 the online column ends left of the card: Search's and the settings row's bands still hold it under them
+        // (the rule's frame), never up beside Search; with no element read it keeps the old top.
+        val narrowOnline = MapLayout.topChrome(bands, listOf(floatArrayOf(149f, 195f, 569f, 267f), floatArrayOf(1954f, 195f, 2379f, 280f)), 2400f, 63f, d)
+        assertEquals(195f / d + 8f, io.github.jasondorjeshort.dystopo.app.routing.CardBands.warningTop(chromeTop, null, left, left + 420f, 191.4f, over = narrowOnline), 0.01f)
+        assertEquals(63f / d + 8f, io.github.jasondorjeshort.dystopo.app.routing.CardBands.warningTop(chromeTop, null, left, left + 420f, 191.4f, over = MapLayout.topChrome(emptyList(), emptyList(), 2400f, 63f, d)), 0.01f)
+        assertEquals(chromeTop, io.github.jasondorjeshort.dystopo.app.routing.CardBands.warningTop(chromeTop, null, left, left + 420f, 191.4f), 0.01f)
+        // Upright (411 dp wide): the card spans the window, the chips cross it and set its top as they did.
+        val upright = MapLayout.topChrome(
+            listOf(floatArrayOf(21f, 84f, 700f, 280f), floatArrayOf(760f, 95f, 1059f, 195f)), listOf(floatArrayOf(700f, 300f, 1059f, 520f)),
+            1080f, 63f, d,
+        )
+        assertEquals(520f / d + 8f, io.github.jasondorjeshort.dystopo.app.routing.CardBands.warningTop(520f / d + 8f, null, 12f, 399f, 700f, over = upright), 0.01f)
+    }
 }
