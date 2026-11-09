@@ -120,7 +120,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             Setting(row.label, "how far a route's start or end may be from a trail or road", help = "settings.routeSnap") {
                 for (m in SNAP_CHOICES) {
                     Option(io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(m.toDouble(), units), snap == m) {
-                        change(SettingsRoutes.Parsed.Ok(null, false, null, null, routeSnapM = m))
+                        change(SettingsRoutes.Parsed.Ok.of(AppSettings.ROUTE_SNAP_M, m))
                     }
                 }
             }
@@ -129,20 +129,20 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             // T126: spoken turn directions (nav/NavSpeech), off by default.
             val on = AppSettings.navSpeech
             Setting(row.label, "says each turn aloud as the card shows it", help = "settings.navSpeech") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navSpeech = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.NAV_SPEECH, it)) }
             }
         }
         SettingsRow.NAV_STALE -> {
             // T91: the navigation thresholds (T65's constants).
             val stale = AppSettings.navStaleS
             Setting(row.label, "an older fix is not used, and the bar says the fix is lost", help = "settings.navStale") {
-                for (s in STALE_CHOICES) Option("$s s", stale == s) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navStaleS = s)) }
+                for (s in STALE_CHOICES) Option("$s s", stale == s) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.NAV_STALE_S, s)) }
             }
         }
         SettingsRow.NAV_SNOOZE -> {
             val snoozeMin = AppSettings.navSnoozeMin
             Setting(row.label, "how long the off-route banner's Snooze holds the alert", help = "settings.navSnooze") {
-                for (m in SNOOZE_CHOICES) Option("$m min", snoozeMin == m) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, navSnoozeMin = m)) }
+                for (m in SNOOZE_CHOICES) Option("$m min", snoozeMin == m) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.NAV_SNOOZE_MIN, m)) }
             }
         }
         // T163: the turn-around clock's deadline and margin (ADR 0044: the researched defaults, sunset and 30 minutes).
@@ -171,11 +171,11 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val margin = AppSettings.turnMarginMin
             val presets = io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_PRESETS
             Setting(row.label, "how long before the deadline to be back out", help = "settings.turnMargin") {
-                for (m in presets) Option("$m min", margin == m) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnMarginMin = m)) }
+                for (m in presets) Option("$m min", margin == m) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.TURN_MARGIN_MIN, m)) }
                 TypedValue(if (margin in presets) "" else margin.toString(), "other", KeyboardType.Number, suffix = "min") { raw ->
                     val r = io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE
                     val v = raw.trim().toIntOrNull()?.takeIf { it in r } ?: return@TypedValue "${r.first} to ${r.last} minutes"
-                    change(SettingsRoutes.Parsed.Ok(null, false, null, null, turnMarginMin = v))
+                    change(SettingsRoutes.Parsed.Ok.of(AppSettings.TURN_MARGIN_MIN, v))
                     null
                 }
             }
@@ -212,8 +212,8 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val standard = AppSettings.paceStandard
             val pace = io.github.jasondorjeshort.dystopo.app.routing.PaceSettings
             Setting(row.label, pace.rowText(units), help = "settings.pace") {
-                Option(pace.YOUR_PACE, !standard) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, paceStandard = false)) }
-                Option(pace.USE_STANDARD, standard) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, paceStandard = true)) }
+                Option(pace.YOUR_PACE, !standard) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.PACE_STANDARD, false)) }
+                Option(pace.USE_STANDARD, standard) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.PACE_STANDARD, true)) }
                 Option(pace.RESET, false) { Thread { pace.reset(app) }.start() }
             }
         }
@@ -221,7 +221,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         SettingsRow.TRACK_ACTIVITY -> {
             val a = AppSettings.trackActivity
             Setting(row.label, "what Record starts with, and the activity the rows below set", help = "settings.trackActivity") {
-                for (x in Activity.entries) Option(RecordingProfiles.label(x), a == x) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, trackActivity = x)) }
+                for (x in Activity.entries) Option(RecordingProfiles.label(x), a == x) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.TRACK_ACTIVITY, x)) }
             }
         }
         SettingsRow.TRACK_ACCURACY -> {
@@ -275,7 +275,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val on = AppSettings.readoutBarometer
             val present = remember { io.github.jasondorjeshort.dystopo.app.readout.Barometer.present }
             Setting(row.label, if (present) "steadies the elevation and the climb on foot, by bike and by boat" else "this phone has no barometer: the elevation comes from GPS and the map", help = "settings.readoutBarometer") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutBarometer = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.READOUT_BAROMETER, it)) }
             }
         }
         // T176: the position button (controls/RecenterButton): its layout, its close zoom and the orientation lock.
@@ -284,7 +284,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val n = AppSettings.mapControls
             Setting(row.label, "one button that centres and turns the map; two add an orientation button; three add a lock", help = "settings.mapControls") {
                 for (k in io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS) {
-                    Option(if (k == 1) "1 button" else "$k buttons", n == k) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, mapControls = k)) }
+                    Option(if (k == 1) "1 button" else "$k buttons", n == k) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.MAP_CONTROLS, k)) }
                 }
             }
         }
@@ -293,7 +293,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val z = AppSettings.recenterZoom
             Setting(row.label, "how close a tap brings the map to you; higher is closer, and a tap never zooms out", help = "settings.recenterZoom") {
                 for (k in io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_CHOICES) {
-                    Option("$k", z == k) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, recenterZoom = k)) }
+                    Option("$k", z == k) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.RECENTER_ZOOM, k)) }
                 }
             }
         }
@@ -301,7 +301,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.orientationLock
             Setting(row.label, "two-finger turns no longer rotate the map", help = "settings.orientationLock") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, orientationLock = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.ORIENTATION_LOCK, it)) }
             }
         }
         // T177: the readout bar's switch and the climb window.
@@ -309,7 +309,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.readoutBar
             Setting(row.label, "elevation and climb beside the scale bar, always shown", help = "settings.readoutBar") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutBar = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.READOUT_BAR, it)) }
             }
         }
         SettingsRow.CLIMB_WINDOW -> {
@@ -317,7 +317,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val w = AppSettings.climbWindowS
             Setting(row.label, "the climb is your average over this long; longer is steadier but slower to follow", help = "settings.climbWindow") {
                 for (s in io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.CLIMB_WINDOWS_S) {
-                    Option(io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.windowLabel(s), w == s) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, climbWindow = s)) }
+                    Option(io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.windowLabel(s), w == s) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.CLIMB_WINDOW, s)) }
                 }
             }
         }
@@ -327,7 +327,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val w = AppSettings.pressureFallWarning
             Setting(row.label, "a card and a spoken line when the barometer falls fast while you record", help = "settings.pressureFallWarning") {
                 for (o in io.github.jasondorjeshort.dystopo.readout.FallWarning.entries) {
-                    Option(o.label, w == o) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, pressureFallWarning = o)) }
+                    Option(o.label, w == o) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.PRESSURE_FALL_WARNING, o)) }
                 }
             }
         }
@@ -336,14 +336,14 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.waterAlongRoute
             Setting(row.label, "streams, springs and lakes on a route's card, the map and the navigation card", help = "settings.waterAlongRoute") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, waterAlongRoute = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.WATER_ALONG_ROUTE, it)) }
             }
         }
         SettingsRow.WATER_SPOKEN -> {
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.waterSpoken
             Setting(row.label, "says the last water before a long stretch without any", help = "settings.waterSpoken") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, waterSpoken = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.WATER_SPOKEN, it)) }
             }
         }
         // T182: how far "What can I see from here" looks (viewshed/ViewshedSession).
@@ -353,7 +353,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             Setting(row.label, "how far to look when you ask what you can see; farther takes longer", help = "settings.viewRange") {
                 for (k in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM) {
                     Option(io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.range(k, AppSettings.units), km == k) {
-                        change(SettingsRoutes.Parsed.Ok(null, false, null, null, viewRange = k))
+                        change(SettingsRoutes.Parsed.Ok.of(AppSettings.VIEW_RANGE, k))
                     }
                 }
             }
@@ -375,8 +375,8 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val form = AppSettings.timeEstimateForm
             Setting(row.label, "a route's time as a range from your recorded hikes, or one number", help = "settings.timeEstimateForm") {
-                Option(TIME_FORM_RANGE, form == AppSettings.TIME_RANGE) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, timeEstimateForm = AppSettings.TIME_RANGE)) }
-                Option(TIME_FORM_ONE, form == AppSettings.TIME_ONE) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, timeEstimateForm = AppSettings.TIME_ONE)) }
+                Option(TIME_FORM_RANGE, form == AppSettings.TIME_RANGE) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.TIME_ESTIMATE_FORM, AppSettings.TIME_RANGE)) }
+                Option(TIME_FORM_ONE, form == AppSettings.TIME_ONE) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.TIME_ESTIMATE_FORM, AppSettings.TIME_ONE)) }
             }
         }
         // T194: the spoken terrain shade line (ADR 0044: three choices, the default On hot days).
@@ -385,7 +385,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             val v = AppSettings.shadeSpoken
             Setting(row.label, "says when terrain shade ends before a long sunny stretch while you navigate", help = "settings.shadeSpoken") {
                 for (o in io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.entries) {
-                    Option(o.label, v == o) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, shadeSpoken = o)) }
+                    Option(o.label, v == o) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.SHADE_SPOKEN, o)) }
                 }
             }
         }
@@ -408,7 +408,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.estimatePosition
             Setting(row.label, ESTIMATE_POSITION_LINE, help = "settings.estimatePosition") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, estimatePosition = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.ESTIMATE_POSITION, it)) }
             }
         }
         // end T203
@@ -417,7 +417,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.showDivergence
             Setting(row.label, SHOW_DIVERGENCE_LINE, help = "settings.showDivergence") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok(null, false, null, null, showDivergence = it)) }
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.SHOW_DIVERGENCE, it)) }
             }
         }
         // end T213

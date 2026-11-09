@@ -30,7 +30,7 @@ class DivergenceSettingTest {
         assertEquals(true, AppSettings.json()["showDivergence"])
         assertTrue(AppSettings.KEY_SHOW_DIVERGENCE in SettingsRoutes.KEYS)
         val plan = SettingsSync.plan(mapOf("app.showDivergence" to "off"), emptyMap(), SettingsRoutes.KEYS)
-        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params)).showDivergence)
+        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[io.github.jasondorjeshort.dystopo.app.AppSettings.SHOW_DIVERGENCE])
     }
 
     @Test

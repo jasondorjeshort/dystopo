@@ -70,10 +70,10 @@ class SettingsRoutesTest {
     @Test
     fun navThresholdsAreWholeNumbersInRange() { // T91
         val p = ok("navStaleS" to "60", "navStartM" to 5000, "navSnoozeMin" to "20")
-        assertEquals(60, p.navStaleS)
-        assertEquals(5000, p.navStartM)
-        assertEquals(20, p.navSnoozeMin)
-        assertEquals(null, ok("units" to "m").navStaleS)
+        assertEquals(60, p[AppSettings.NAV_STALE_S])
+        assertEquals(5000, p[AppSettings.NAV_START_M])
+        assertEquals(20, p[AppSettings.NAV_SNOOZE_MIN])
+        assertEquals(null, ok("units" to "m")[AppSettings.NAV_STALE_S])
         bad("navStaleS" to "2")
         bad("navStaleS" to "abc")
         bad("navStartM" to 60_000)
@@ -83,26 +83,26 @@ class SettingsRoutesTest {
 
     @Test
     fun spokenDirectionsAreAFlag() { // T126
-        assertEquals(true, ok("navSpeech" to "1").navSpeech)
-        assertEquals(false, ok("navSpeech" to "off").navSpeech)
-        assertEquals(true, ok("navSpeech" to "on").navSpeech, "the synced value (on or off) parses too")
-        assertNull(ok("units" to "m").navSpeech)
+        assertEquals(true, ok("navSpeech" to "1")[AppSettings.NAV_SPEECH])
+        assertEquals(false, ok("navSpeech" to "off")[AppSettings.NAV_SPEECH])
+        assertEquals(true, ok("navSpeech" to "on")[AppSettings.NAV_SPEECH], "the synced value (on or off) parses too")
+        assertNull(ok("units" to "m")[AppSettings.NAV_SPEECH])
         assertTrue(bad("navSpeech" to "loud").message.contains("navSpeech"))
     }
 
     @Test
     fun paceKeysAreAFlagAFitAndAnInstant() { // T164
-        assertEquals(true, ok("paceStandard" to "on").paceStandard)
-        assertEquals(false, ok("paceStandard" to "0").paceStandard)
+        assertEquals(true, ok("paceStandard" to "on")[AppSettings.PACE_STANDARD])
+        assertEquals(false, ok("paceStandard" to "0")[AppSettings.PACE_STANDARD])
         val fit = "1;hike:1.0734,2.8029,-0.0575,5,22788,0.057"
-        assertEquals(fit, ok("paceFit" to fit).paceFit)
-        assertEquals("", ok("paceFit" to "").paceFit, "a reset clears it")
+        assertEquals(fit, ok("paceFit" to fit)[AppSettings.PACE_FIT])
+        assertEquals("", ok("paceFit" to "")[AppSettings.PACE_FIT], "a reset clears it")
         assertTrue(bad("paceFit" to "2;hike:1,2,0,5,30000,0").message.contains("paceFit"), "another version is refused, so a pull skips it")
         bad("paceFit" to "1;hike:fast")
-        assertEquals(1_790_000_000_000L, ok("paceSince" to "1790000000000").paceSince)
+        assertEquals(1_790_000_000_000L, ok("paceSince" to "1790000000000")[AppSettings.PACE_SINCE])
         bad("paceSince" to "-1")
         bad("paceSince" to "yesterday")
-        assertNull(ok("units" to "m").paceFit)
+        assertNull(ok("units" to "m")[AppSettings.PACE_FIT])
     }
 
     @Test
@@ -113,9 +113,9 @@ class SettingsRoutesTest {
         assertNull(ok("units" to "m").turnDeadline)
         assertTrue(bad("turnDeadline" to "off").message.contains("turnDeadline"), "the clock cannot be switched off")
         bad("turnDeadline" to "25:00")
-        assertEquals(30, ok("turnMarginMin" to "30").turnMarginMin)
-        assertEquals(0, ok("turnMarginMin" to 0).turnMarginMin)
-        assertEquals(45, ok("turnMarginMin" to "45").turnMarginMin, "a typed value outside the presets")
+        assertEquals(30, ok("turnMarginMin" to "30")[AppSettings.TURN_MARGIN_MIN])
+        assertEquals(0, ok("turnMarginMin" to 0)[AppSettings.TURN_MARGIN_MIN])
+        assertEquals(45, ok("turnMarginMin" to "45")[AppSettings.TURN_MARGIN_MIN], "a typed value outside the presets")
         bad("turnMarginMin" to "-5")
         bad("turnMarginMin" to "241")
         bad("turnMarginMin" to "soon")
@@ -126,9 +126,9 @@ class SettingsRoutesTest {
         assertEquals("shown=0;pace=1;damping=medium;pm=0;knots=0", ok("readout.foot.speed" to "pace=1").readoutValues["readout.foot.speed"]) // T177: speed is off by default on foot (the bar shows elevation and climb)
         assertEquals("shown=0;pace=0;damping=high;pm=1;knots=0", ok("readout.air.climb" to "shown=0;damping=high;pm=1").readoutValues["readout.air.climb"])
         assertEquals(mapOf(io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE to "shown=0"), ok("readout.course" to "shown=0").readoutEdits)
-        assertEquals(false, ok("readoutBarometer" to "0").readoutBarometer)
-        assertEquals(true, ok("readoutBarometer" to "on").readoutBarometer, "the synced value is on or off")
-        assertNull(ok("units" to "m").readoutBarometer)
+        assertEquals(false, ok("readoutBarometer" to "0")[AppSettings.READOUT_BAROMETER])
+        assertEquals(true, ok("readoutBarometer" to "on")[AppSettings.READOUT_BAROMETER], "the synced value is on or off")
+        assertNull(ok("units" to "m")[AppSettings.READOUT_BAROMETER])
         assertTrue(ok("units" to "m").readoutEdits.isEmpty())
         assertTrue(bad("readout.foot.speed" to "damping=wild").message.contains("readout.foot.speed"))
         bad("readout.speed" to "shown=2")
@@ -139,15 +139,15 @@ class SettingsRoutesTest {
 
     @Test
     fun thePositionButtonSettings() { // T176: the layout 1, 2 or 3; the close zoom in whole levels; the lock, synced as on or off
-        assertEquals(2, ok("mapControls" to "2").mapControls)
-        assertEquals(3, ok("mapControls" to 3).mapControls)
-        assertEquals(15, ok("recenterZoom" to "15").recenterZoom)
-        assertEquals(true, ok("orientationLock" to "1").orientationLock)
-        assertEquals(false, ok("orientationLock" to "off").orientationLock, "the synced value is on or off")
+        assertEquals(2, ok("mapControls" to "2")[AppSettings.MAP_CONTROLS])
+        assertEquals(3, ok("mapControls" to 3)[AppSettings.MAP_CONTROLS])
+        assertEquals(15, ok("recenterZoom" to "15")[AppSettings.RECENTER_ZOOM])
+        assertEquals(true, ok("orientationLock" to "1")[AppSettings.ORIENTATION_LOCK])
+        assertEquals(false, ok("orientationLock" to "off")[AppSettings.ORIENTATION_LOCK], "the synced value is on or off")
         val none = ok("units" to "m")
-        assertNull(none.mapControls)
-        assertNull(none.recenterZoom)
-        assertNull(none.orientationLock)
+        assertNull(none[AppSettings.MAP_CONTROLS])
+        assertNull(none[AppSettings.RECENTER_ZOOM])
+        assertNull(none[AppSettings.ORIENTATION_LOCK])
         assertTrue(bad("mapControls" to "4").message.contains("mapControls"))
         bad("mapControls" to "0")
         bad("recenterZoom" to "9")
@@ -158,20 +158,20 @@ class SettingsRoutesTest {
 
     @Test
     fun thePressureFallWarning() { // T178: the four choices by code, label or threshold
-        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.MORE, ok("pressureFallWarning" to "more").pressureFallWarning)
-        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.FEWER, ok("pressureFallWarning" to "6").pressureFallWarning)
-        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.OFF, ok("pressureFallWarning" to "off").pressureFallWarning)
-        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.STANDARD, ok("pressureFallWarning" to "Standard").pressureFallWarning)
-        assertEquals(null, ok("units" to "m").pressureFallWarning)
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.MORE, ok("pressureFallWarning" to "more")[AppSettings.PRESSURE_FALL_WARNING])
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.FEWER, ok("pressureFallWarning" to "6")[AppSettings.PRESSURE_FALL_WARNING])
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.OFF, ok("pressureFallWarning" to "off")[AppSettings.PRESSURE_FALL_WARNING])
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.FallWarning.STANDARD, ok("pressureFallWarning" to "Standard")[AppSettings.PRESSURE_FALL_WARNING])
+        assertEquals(null, ok("units" to "m")[AppSettings.PRESSURE_FALL_WARNING])
         assertTrue(bad("pressureFallWarning" to "5").message.contains("pressureFallWarning"))
     }
 
     @Test
     fun theViewRange() { // T182: 10, 30 or 100 km, synced as the number
-        assertEquals(10, ok("viewRange" to "10").viewRange)
-        assertEquals(100, ok("viewRange" to 100).viewRange)
-        assertEquals(30, ok("viewRange" to "30 km").viewRange)
-        assertNull(ok("units" to "m").viewRange)
+        assertEquals(10, ok("viewRange" to "10")[AppSettings.VIEW_RANGE])
+        assertEquals(100, ok("viewRange" to 100)[AppSettings.VIEW_RANGE])
+        assertEquals(30, ok("viewRange" to "30 km")[AppSettings.VIEW_RANGE])
+        assertNull(ok("units" to "m")[AppSettings.VIEW_RANGE])
         assertTrue(bad("viewRange" to "20").message.contains("viewRange"))
         bad("viewRange" to "30.5")
         bad("viewRange" to "far")
@@ -180,9 +180,9 @@ class SettingsRoutesTest {
 
     @Test
     fun theTimeEstimateForm() { // T184: range (the default) or one number
-        assertEquals("range", ok("timeEstimateForm" to "range").timeEstimateForm)
-        assertEquals("one", ok("timeEstimateForm" to "One").timeEstimateForm)
-        assertEquals(null, ok("units" to "m").timeEstimateForm)
+        assertEquals("range", ok("timeEstimateForm" to "range")[AppSettings.TIME_ESTIMATE_FORM])
+        assertEquals("one", ok("timeEstimateForm" to "One")[AppSettings.TIME_ESTIMATE_FORM])
+        assertEquals(null, ok("units" to "m")[AppSettings.TIME_ESTIMATE_FORM])
         assertTrue(bad("timeEstimateForm" to "both").message.contains("timeEstimateForm"))
         assertTrue("timeEstimateForm" in SettingsRoutes.KEYS)
     }
@@ -211,11 +211,11 @@ class SettingsRoutesTest {
     // T194: the spoken terrain shade line's three choices.
     @Test
     fun theShadeSpokenSetting() {
-        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, ok("shadeSpoken" to "hot").shadeSpoken)
-        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, ok("shadeSpoken" to "On hot days").shadeSpoken)
-        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.ALWAYS, ok("shadeSpoken" to "always").shadeSpoken)
-        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.OFF, ok("shadeSpoken" to "Off").shadeSpoken)
-        assertEquals(null, ok("units" to "m").shadeSpoken)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, ok("shadeSpoken" to "hot")[AppSettings.SHADE_SPOKEN])
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, ok("shadeSpoken" to "On hot days")[AppSettings.SHADE_SPOKEN])
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.ALWAYS, ok("shadeSpoken" to "always")[AppSettings.SHADE_SPOKEN])
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.OFF, ok("shadeSpoken" to "Off")[AppSettings.SHADE_SPOKEN])
+        assertEquals(null, ok("units" to "m")[AppSettings.SHADE_SPOKEN])
         assertTrue(bad("shadeSpoken" to "sometimes").message.contains("off, hot or always"))
         assertTrue("shadeSpoken" in SettingsRoutes.KEYS)
         assertEquals(io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.HOT, io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT, "the default is On hot days (ADR 0044)")
@@ -225,9 +225,9 @@ class SettingsRoutesTest {
     // T213: the trail disagreements' layer switch, on by default, synced.
     @Test
     fun theShowDivergenceSetting() {
-        assertEquals(false, ok("showDivergence" to "0").showDivergence)
-        assertEquals(true, ok("showDivergence" to "on").showDivergence)
-        assertEquals(null, ok("units" to "m").showDivergence)
+        assertEquals(false, ok("showDivergence" to "0")[AppSettings.SHOW_DIVERGENCE])
+        assertEquals(true, ok("showDivergence" to "on")[AppSettings.SHOW_DIVERGENCE])
+        assertEquals(null, ok("units" to "m")[AppSettings.SHOW_DIVERGENCE])
         assertTrue(bad("showDivergence" to "maybe").message.contains("1 or 0"))
         assertTrue(AppSettings.KEY_SHOW_DIVERGENCE in SettingsRoutes.KEYS)
         assertEquals("app.showDivergence", io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.syncedKey(io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.SHOW_DIVERGENCE))

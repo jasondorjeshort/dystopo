@@ -210,7 +210,7 @@ object ActivityPicker {
 
     /** The remembered activity becomes [a] (through the settings, so it syncs). Off the main thread. */
     fun remember(app: DystopoApp, a: Activity) {
-        if (AppSettings.trackActivity != a) SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok(null, false, null, null, trackActivity = a))
+        if (AppSettings.trackActivity != a) SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok.of(AppSettings.TRACK_ACTIVITY, a))
     }
 
     /**

@@ -47,6 +47,11 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T213 skip it (ADR 0033).
  * T182: the viewshed's range (`app.viewRange`, km: `10`, `30` or `100`); a [SettingsRoutes] key.
  * T184: the route card's time (`app.timeEstimateForm`, `range` or `one`); a [SettingsRoutes] key.
+ * T248: every plain setting the registry marks synced ([AppSettings.PLAIN], `synced = true`) is in [current] and [publish]
+ * from its registry line alone, as `app.<key>` with [io.github.jasondorjeshort.dystopo.app.Setting.syncValue]'s value
+ * (`on`/`off` for a switch, the digits of a number, a choice's code); the constants below name the older ones for their
+ * tests, and a new setting needs none. The composites (units, text scale, map options, deadline, recording profiles,
+ * readout entries) keep their lines here.
  *
  * - [publish] runs after [SettingsRoutes.apply] (`POST /settings` and the settings sheet) and writes the
  *   keys that request set, with their values after the change; [publishLocal] after a [LOCAL_KEYS] setting changed
@@ -144,33 +149,10 @@ object SettingsSync {
         val map = AppSettings.mapOptions.json(AppSettings.units)
         for (k in MapOptions.KEYS) m[syncedKey(k)] = map[k]?.toString()
         m += localValues(ScaleBarSettings.bothUnits) // T110
-        m[syncedKey(NAV_SPEECH)] = onOff(AppSettings.navSpeech) // T126
-        m[syncedKey(TRIP_CORRIDOR_M)] = AppSettings.tripCorridorM.toString() // T136
-        m[syncedKey(PACE_STANDARD)] = onOff(AppSettings.paceStandard) // T164
-        m[syncedKey(PACE_FIT)] = AppSettings.paceFit
-        m[syncedKey(PACE_SINCE)] = AppSettings.paceSince.toString()
+        for (s in AppSettings.PLAIN) if (s.synced) m[syncedKey(s.key)] = s.syncValue() // T248: the registry's synced settings
         m[syncedKey(TURN_DEADLINE)] = AppSettings.turnDeadline // T163
-        m[syncedKey(TURN_MARGIN_MIN)] = AppSettings.turnMarginMin.toString()
-        m[syncedKey(TRACK_ACTIVITY)] = AppSettings.trackActivity.code // T172
-        for (a in io.github.jasondorjeshort.dystopo.model.Activity.entries) m[syncedKey(RecordingProfiles.key(a))] = AppSettings.trackProfiles[a]
-        m[syncedKey(READOUT_BAROMETER)] = onOff(AppSettings.readoutBarometer) // T161
-        for (k in io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS) m[syncedKey(k)] = AppSettings.readoutEntries[k]
-        m[syncedKey(MAP_CONTROLS)] = AppSettings.mapControls.toString() // T176
-        m[syncedKey(RECENTER_ZOOM)] = AppSettings.recenterZoom.toString()
-        m[syncedKey(ORIENTATION_LOCK)] = onOff(AppSettings.orientationLock)
-        m[syncedKey(READOUT_BAR)] = onOff(AppSettings.readoutBar) // T177
-        m[syncedKey(CLIMB_WINDOW)] = AppSettings.climbWindowS.toString()
-        m[syncedKey(PRESSURE_FALL_WARNING)] = AppSettings.pressureFallWarning.code // T178
-        m[syncedKey(WATER_ALONG_ROUTE)] = onOff(AppSettings.waterAlongRoute) // T187
-        m[syncedKey(WATER_SPOKEN)] = onOff(AppSettings.waterSpoken)
-        m[syncedKey(VIEW_RANGE)] = AppSettings.viewRangeKm.toString() // T182
-        m[syncedKey(TIME_ESTIMATE_FORM)] = AppSettings.timeEstimateForm // T184
-        m[syncedKey(SHADE_SPOKEN)] = AppSettings.shadeSpoken.key // T194
-        // end T194
-        m[syncedKey(ESTIMATE_POSITION)] = onOff(AppSettings.estimatePosition) // T203
-        // end T203
-        m[syncedKey(SHOW_DIVERGENCE)] = onOff(AppSettings.showDivergence) // T213
-        // end T213
+        for (a in io.github.jasondorjeshort.dystopo.model.Activity.entries) m[syncedKey(RecordingProfiles.key(a))] = AppSettings.trackProfiles[a] // T172
+        for (k in io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS) m[syncedKey(k)] = AppSettings.readoutEntries[k] // T161
         return m
     }
 
@@ -220,35 +202,12 @@ object SettingsSync {
             keys += syncedKey("contourInterval") // a units change can reset a fixed interval to auto
         }
         parsed.map.keys.forEach { keys += syncedKey(it) }
-        if (parsed.navSpeech != null) keys += syncedKey(NAV_SPEECH) // T126
-        if (parsed.tripCorridorM != null) keys += syncedKey(TRIP_CORRIDOR_M) // T136
-        if (parsed.paceStandard != null) keys += syncedKey(PACE_STANDARD) // T164
-        if (parsed.paceFit != null) keys += syncedKey(PACE_FIT)
-        if (parsed.paceSince != null) keys += syncedKey(PACE_SINCE)
+        for (s in parsed.plain.keys) if (s.synced) keys += syncedKey(s.key) // T248: the registry's synced settings
         if (parsed.turnDeadline != null) keys += syncedKey(TURN_DEADLINE) // T163
-        if (parsed.turnMarginMin != null) keys += syncedKey(TURN_MARGIN_MIN)
-        if (parsed.trackActivity != null) keys += syncedKey(TRACK_ACTIVITY) // T172
         parsed.trackProfiles.keys.forEach { keys += syncedKey(RecordingProfiles.key(it)) }
         if (parsed.trackEdit != null) keys += syncedKey(RecordingProfiles.key(AppSettings.trackActivity)) // the remembered one's, as apply edited it
-        if (parsed.readoutBarometer != null) keys += syncedKey(READOUT_BAROMETER) // T161
         parsed.readoutValues.keys.forEach { keys += syncedKey(it) }
         parsed.readoutEdits.keys.forEach { keys += syncedKey(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.key(AppSettings.trackActivity, it)) }
-        if (parsed.mapControls != null) keys += syncedKey(MAP_CONTROLS) // T176
-        if (parsed.recenterZoom != null) keys += syncedKey(RECENTER_ZOOM)
-        if (parsed.orientationLock != null) keys += syncedKey(ORIENTATION_LOCK)
-        if (parsed.readoutBar != null) keys += syncedKey(READOUT_BAR) // T177
-        if (parsed.climbWindow != null) keys += syncedKey(CLIMB_WINDOW)
-        if (parsed.pressureFallWarning != null) keys += syncedKey(PRESSURE_FALL_WARNING) // T178
-        if (parsed.waterAlongRoute != null) keys += syncedKey(WATER_ALONG_ROUTE) // T187
-        if (parsed.waterSpoken != null) keys += syncedKey(WATER_SPOKEN)
-        if (parsed.viewRange != null) keys += syncedKey(VIEW_RANGE) // T182
-        if (parsed.timeEstimateForm != null) keys += syncedKey(TIME_ESTIMATE_FORM) // T184
-        if (parsed.shadeSpoken != null) keys += syncedKey(SHADE_SPOKEN) // T194
-        // end T194
-        if (parsed.estimatePosition != null) keys += syncedKey(ESTIMATE_POSITION) // T203
-        // end T203
-        if (parsed.showDivergence != null) keys += syncedKey(SHOW_DIVERGENCE) // T213
-        // end T213
         publishKeys(app, keys)
     }
 

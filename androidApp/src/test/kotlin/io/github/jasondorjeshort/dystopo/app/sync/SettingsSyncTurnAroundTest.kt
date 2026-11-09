@@ -32,7 +32,7 @@ class SettingsSyncTurnAroundTest {
         assertEquals(mapOf<String, Any?>("turnDeadline" to "17:45", "turnMarginMin" to "60"), plan.params)
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
         assertEquals("17:45", parsed.turnDeadline)
-        assertEquals(60, parsed.turnMarginMin)
+        assertEquals(60, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.TURN_MARGIN_MIN])
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("turnDeadline" to "off")))
     }
 

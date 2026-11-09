@@ -32,7 +32,7 @@ class SettingsSyncCorridorTest {
         assertEquals(mapOf<String, Any?>("tripCorridorM" to "2000"), plan.params)
         assertTrue(plan.local.isEmpty() && plan.skipped.isEmpty())
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(2000, parsed.tripCorridorM)
+        assertEquals(2000, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_CORRIDOR_M])
 
         // The same width already: nothing to apply.
         assertTrue(SettingsSync.plan(b.settings(), mapOf(key to "2000"), SettingsRoutes.KEYS).params.isEmpty())
@@ -40,12 +40,12 @@ class SettingsSyncCorridorTest {
 
     @Test
     fun offAndOutOfRangeWidths() {
-        assertEquals(0, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("tripCorridorM" to "0"))).tripCorridorM)
-        assertEquals(500, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("tripCorridorM" to 500))).tripCorridorM)
+        assertEquals(0, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("tripCorridorM" to "0")))[io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_CORRIDOR_M])
+        assertEquals(500, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("tripCorridorM" to 500)))[io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_CORRIDOR_M])
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("tripCorridorM" to "50")))
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("tripCorridorM" to "20000")))
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("tripCorridorM" to "wide")))
         // A request without the width leaves it alone (so it is not published).
-        assertNull(assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("navSpeech" to "1"))).tripCorridorM)
+        assertNull(assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("navSpeech" to "1")))[io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_CORRIDOR_M])
     }
 }
