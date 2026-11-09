@@ -28,14 +28,11 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Waiting on user
 
-- ADR 0060: the refresh default (automatic, on your "just work in the background", against ADR 0030's explicit
-  refresh); the helper's keep-warm list as a new data flow (the phone polls until you allow it); the daily limit's
-  default, and direct-mode country downloads already past OpenFreeMap's public per-area limit.
-- ADR 0061: the first-run card while the pack list loads off the main thread (F1 wait, F2 unknown until known,
-  F3 placeholder, F4 cheap listing); F1 is built first.
-- Housekeeping: `git branch -D task/T245` (an unpushed rebased copy of merged work; the board's git line).
-- The Menu choice for the top row (Layout C, wave 32); T220's location prompt; proposals 0054 and 0055; on
-  v0.1.24-alpha whether the start stays quick over the large download, a Startup freeze report if not.
+- ADR 0060: the refresh default (automatic, your "just work", against ADR 0030's explicit refresh); the helper's
+  keep-warm list as a new data flow; the daily limit's default, and country downloads past OpenFreeMap's limit.
+- ADR 0061: the first-run card while the pack list loads (F1 wait, F2 unknown until known, F3, F4); F1 built first.
+- `git branch -D task/T245` (the board's git line); the Menu choice (Layout C, wave 32); T220; proposals 0054 and
+  0055; on v0.1.24-alpha whether the start stays quick over the large download, a Startup freeze report if not.
 
 ## Open findings
 
