@@ -6,19 +6,29 @@ your MERGE.
 Implementer's report (verbatim):
 <the report: what was run and seen, edits outside Owns, follow-ups, head SHA>
 
-Machine facts for this run: make your own detached worktree,
-`git -C <main> worktree add --detach <worktrees>\Tnn-verify origin/task/Tnn` (the implementer's
-worktree holds the branch, and a local branch of your own would survive the cleanup chore);
-`JAVA_HOME=<jdk>`, `DYSTOPO_CACHE=<main>\cache`. Your ports: <...>; your emulator: <AVD, console
-port, host port, or "none">.
+Machine facts for this run: worktree root `<worktrees>`; `JAVA_HOME=<jdk>`, `DYSTOPO_CACHE=<main>\cache`.
+Your ports: <...>; your emulator: <AVD, AVD home, console port, host port, guard limit, or "none">.
 Interacts with: <Tmm, its merge SHA from its Status line or "not merged", the files of the shared
 mechanism, the crossing scenario, or "none">.
 
-1. If `main` moved since the branch forked: `git fetch && git rebase origin/main`; on success push with
-   `git push --force-with-lease origin HEAD:task/Tnn` (the only force push allowed). A conflict you
-   cannot resolve mechanically: stop and report.
-2. `./gradlew check`.
-3. Repeat the report's key runs (<list them>) and view every PNG and screenshot they produce.
+1. Run the verifier script (`docs/reference/verifying-a-task.md`) and read its summary
+   (`<Out>\verify-summary.txt`, the JSON beside it for figures):
+   `powershell -ExecutionPolicy Bypass -File <main>\tools\verify-task.ps1 -Task Tnn -WorktreeRoot <worktrees>
+   -Avd <avd> -AvdHome <avd home> -EmuPort <n> -Port <p> -Out <scratchpad>\Tnn-verify -ReportFile <report.txt>
+   -JavaHome <jdk> -Cache <main>\cache [-Parts <parts>] [-KeepEmulator]` (no emulator: `-Skip boot,tour,stop,guard`).
+   It makes the detached worktree `<worktrees>\Tnn-verify`, scans the commit messages and the report, runs `check
+   --no-daemon` with the test counts, boots the emulator from the branch, runs the device tour and the parts, stops
+   the emulator and reads the guard's figures. It stops at the first failed step and names it.
+   - Stopped at `base` (`main` moved): do not rebase or force-push (the harness refuses every force push, so a
+     rewritten branch cannot be pushed). Rerun the script with `-AllowBehind` and report "behind by N"; the
+     coordinator's `--no-ff` merge integrates. A conflict the merge would hit (the coordinator's merge aborts on one):
+     a verifier never resolves it; report it and the coordinator sends the implementer a `git merge origin/main`.
+   - Stopped elsewhere: a red `check`, a failed tour view, a privacy hit or a `stop.log` line is a finding of the
+     verification (FIX, or MERGE WITH NOTES for a known flake retried once); a step that failed for the machine's
+     reasons (the slot wait, a port another agent holds) is retried, not reported as the branch's.
+2. View every screenshot the summary lists (the sheet first) and say what each shows.
+3. Repeat the report's own key runs the script does not cover (<list them>), on the emulator kept with
+   `-KeepEmulator` when they need one, then `-Only stop,guard` with the same arguments; view every PNG they make.
 4. Check each Done-when item: <the Done-when line>.
 5. When the task carries an **Interacts with:** line and Tmm has merged: read Tmm's change to the
    mechanism (`git show <sha> -- <its files>`) and run the crossing scenario from the brief, or one
@@ -28,19 +38,19 @@ mechanism, the crossing scenario, or "none">.
 6. Review the branch (`git log origin/main..HEAD`, `git diff origin/main...HEAD`) for correctness,
    edits outside the Owns line (<the Owns line>) the report does not name, and docs updated on the
    same branch.
-7. Scan the report and the branch's commit messages for personal data:
-   `git log origin/main..HEAD --format=%B | java tools/PrivacyCheck.java scan`, and the report text
-   through the same scanner. The scanner only knows the private terms in `devtool.local.json`, which
-   some machines lack, so also read the report, the commit messages and every doc, finding and test
-   the branch changes for coordinates (whole degrees too) and `view-<lat>n-<lon>w` pack names of any
-   place that is not a major landmark or an `areas.json` area, including readings taken from a
-   phone or an emulator's debug routes. A hit is a FIX: describe the place generically.
+7. Personal data: the script's `privacy` step scanned the commit messages and the report. The scanner only
+   knows the private terms in `devtool.local.json`, which some machines lack (`localFile` false in the summary), so
+   also read the report, the commit messages and every doc, finding and test the branch changes for coordinates
+   (whole degrees too) and `view-<lat>n-<lon>w` pack names of any place that is not a major landmark or an
+   `areas.json` area, including readings taken from a phone or an emulator's debug routes. A hit is a FIX: describe
+   the place generically.
 
 You do not edit the code. A small fix-up may go to the implementer directly (<its agent id>);
 anything that changes scope goes to the coordinator. Temporary files go in a folder of your own under
 the session scratchpad (`<scratchpad>\Tnn-verify\`): every agent of the session shares its root.
-Stop your emulator by serial and confirm with `adb devices`, quoting it (an earlier verifier reported one stopped that still ran, holding 8 GB). Wait in the foreground (`until <check>; do sleep 5; done`), and if a command is moved to the background, poll it. Start no background sleep or monitor
+The script stops its emulator and checks `adb devices`; after `-KeepEmulator`, stop it with `-Only stop,guard` and quote `adb devices` (an earlier verifier reported one stopped that still ran, holding 8 GB). Remove the verify worktree when done (`git worktree remove`; `docs/reference/windows-and-shells.md` for a folder that resists). Wait in the foreground (`until <check>; do sleep 5; done`), and if a command is moved to the background, poll it. Start no background sleep or monitor
 loop, and leave nothing of yours running when you report.
 
-Report: MERGE, MERGE WITH NOTES, or FIX, with specifics (commands run, numbers seen, what each PNG
-showed, each defect with a reproduction), and the head SHA you verified. Under 30 lines.
+Report: MERGE, MERGE WITH NOTES, or FIX, with specifics (the summary's RESULT line and figures: tests, views
+ok, lowest free RAM and peak private bytes; commands run, what each PNG showed, each defect with a
+reproduction), and the head SHA you verified. Under 30 lines.

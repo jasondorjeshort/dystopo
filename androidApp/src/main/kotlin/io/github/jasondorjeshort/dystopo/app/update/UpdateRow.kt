@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +33,8 @@ import kotlin.concurrent.thread
  * so and offers "Install now".
  * T223: the version line is short ("This build: 0.1.19-alpha", "Up to date · 0.1.19-alpha" after a check, in the same
  * place); a tap on it or on Details shows the full build id, the version code and the newest release.
+ * T247: a failed check says one sentence of its kind ([UpdateFailure.sentence]); the kind, the status code and the raw
+ * text fold under "Technical details" (Show / Hide, the Diagnostics row's pattern), collapsed whenever the row opens.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -73,8 +76,21 @@ fun UpdateRow() {
             val bad = s.phase == Updater.Phase.REFUSED || s.phase == Updater.Phase.FAILED || it.startsWith("Install failed")
             BasicText(it, style = TextStyle(color = if (bad) Red else Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium))
         }
+        val failure = s.failure.takeIf { s.phase == Updater.Phase.FAILED }
+        DisposableEffect(Unit) { onDispose { Updater.foldOpen = false } } // collapsed again the next time the row opens
+        if (failure != null) {
+            val open = Updater.foldOpen
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BasicText("Technical details", Modifier.clickable { Updater.foldOpen = !open }.padding(vertical = 4.dp),
+                    style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+                BasicText(if (open) "Hide" else "Show", Modifier.clickable { Updater.foldOpen = !open }.padding(vertical = 4.dp),
+                    style = TextStyle(color = LinkBlue, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+            }
+            if (open) for (l in failure.technical(s.attempts)) BasicText(l, style = TextStyle(color = Muted, fontSize = 12.sp))
+        }
     }
 }
+
 
 /** T223: the Updates row's version text (pure, unit-tested). `GET /update`'s `message` is what the row shows. */
 internal object UpdateText {

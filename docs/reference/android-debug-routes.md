@@ -5,7 +5,7 @@ source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in t
 
 # Android debug routes
 
-Debug builds only, on the debug port (`android-app.md`, Loopback token). The KDoc at the top of each `*Routes.kt` file is the full reference for its routes; this page is the map. Tracks and sync: `android-tracks-and-sync.md`; direct sources, updates and first run: `android-online.md`.
+Debug builds only, on the debug port (`android-app.md`, Loopback token). The KDoc at the top of each `*Routes.kt` file is the full reference for its routes; this page is the map. Tracks and sync: `android-tracks-and-sync.md`; direct sources, updates and first run: `android-online.md` (T247: a failed update check's kind, status code and attempts in `GET /update`, the row's fold by `POST /update/fold`).
 
 ## Endpoints
 
