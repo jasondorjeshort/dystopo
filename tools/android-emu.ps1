@@ -551,8 +551,9 @@ if ($Build) {
         $ErrorActionPreference = 'Continue'
         $buildLog = Join-Path $repoRoot "out\android-emu-build-$Avd.log"
         New-Item -ItemType Directory -Force (Split-Path $buildLog) | Out-Null
-        # T190 (T159's follow-up): --no-daemon, so no Gradle daemon outlives the build (machines.md, the second PC's RAM row).
-    $b = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':androidApp:assembleDebug', '--console=plain', '-q', '--no-daemon') $buildLog
+        # T190 (T159's follow-up): --no-daemon, so no Gradle daemon outlives the build (machines.md, the second PC's RAM row);
+        # T246: the sprite step of android-push-pack.ps1, the other Gradle run of a boot, passes it too.
+        $b = Start-Detached (Join-Path $repoRoot 'gradlew.bat') @(':androidApp:assembleDebug', '--console=plain', '-q', '--no-daemon') $buildLog
         $b.WaitForExit()
         if (Test-Path $buildLog) { Get-Content $buildLog | ForEach-Object { "  $_" } }
         if ($b.ExitCode -ne 0) { throw "assembleDebug failed (exit $($b.ExitCode)); see $buildLog" }
