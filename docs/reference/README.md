@@ -27,4 +27,4 @@ them, on the same branch.
 | `android-release.md` | The release build and signing, deep links, `android-release.ps1` | 2026-10-12 |
 | `home-site.md` | The home site: `tools/site/install.ps1` and `status.ps1`, the server and Caddy as scheduled tasks (S4U needs elevation once), the folder and token, `-Update`, port 80, the owner's three steps, the always-on cost | 2026-11-01 |
 | `verifying-a-task.md` | `tools/verify-task.ps1`, the verifier's mechanical half: its arguments, steps, summary and fixture test, and what the agent keeps | 2026-11-09 |
-| `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps, and the sweep's device parts | 2026-10-14 |
+| `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps, the sweep's device parts, its sheet and the before-and-after sheet (`sweep-diff.py`) | 2026-11-09 |

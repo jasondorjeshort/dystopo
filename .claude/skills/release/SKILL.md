@@ -31,7 +31,12 @@ main is green, without asking again.
    checks the certificate (`apksigner verify --print-certs`: "CN=Dystopo release", fingerprint
    `47:31:38:10...`), the version (`aapt dump badging`) and `SHA256SUMS.txt`.
 4. Write the notes by hand from the CHANGELOG section (install steps for a phone, what works, known
-   limits, checksums and licences); scan them with `PrivacyCheck`.
+   limits, checksums and licences); scan them with `PrivacyCheck`. T259: the sweep run with `-Prev <the last
+   release's sweep folder>` wrote `changes.png` (every screen that changed, before and after); view it, copy it as
+   `dystopo-<tag>-changes.png`, attach it to the draft (`gh release upload <tag> <that file>`), and start the notes'
+   "What changed" with a line linking it
+   (`https://github.com/jasondorjeshort/dystopo/releases/download/<tag>/dystopo-<tag>-changes.png`) and the count
+   from `summary.json` `changes`. No sheet (no `-Prev`, or `count` 0 with nothing new): say so on that line.
 5. **Install from the draft before publishing** (T81): one agent downloads the APKs from the draft
    itself (`gh release download <tag> -p "*x86_64.apk" -p "*arm64-v8a.apk"`, never a local build) and
    on a fresh emulator runs `python -I tools/android-ui.py upgrade --serial <serial> --prev-apk <the

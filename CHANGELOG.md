@@ -4,6 +4,12 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-09
+
+- T244: Proposal 0060: downloads as a synchronisation in cells (no Gradle; alongside)
+- T245: Proposal 0061: the launch as a staged state machine in `shared` (no Gradle; alongside)
+- T259: The before-and-after sheet (no Gradle; alongside)
+
 ## v0.1.24-alpha (2026-11-08)
 
 ### 2026-11-08

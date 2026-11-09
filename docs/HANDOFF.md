@@ -1,38 +1,38 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-09, by main session (wave 31 planned, critic taken, first five agents launched)
+Updated: 2026-11-09, by main session (wave 31 open: T259, T245, T244 merged; T246 and T248 in the lanes)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 31, `out/wave31-research/` [no-check: gitignored].
 
 ## Now
 
 - **Wave 31 is open** (plan at e184b663): seventeen tasks, T244 to T260, two lanes of Gradle work (the owner's
-  widening of ADR 0057 for this PC, 2026-11-09) plus three alongside. Launched 2026-11-09: T246 (lane A, console
-  5570, host 8694), T248 (lane B, console 5572, host 8696), T244 and T245 (proposals 0060 and 0061, no Gradle),
-  T259 (the sheet, Python only). No report yet; no branch merged.
-- Lane A order: T246, T247, T250 (after T248 merged), T252, T253 (after T251), T260 (after T251), T256 (after
-  T255), T258. Lane B: T248, T249, T251, T254, T255, T257 (after T250). A release after T253 and T255 merge; the
-  lane that gets there first idles for the sweep. Within a lane: implementer, verifier (ports 5574/8698 for A,
-  5576/8700 for B), merge, then the next implementer.
-- The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Meter at planning: 7-day 2
-  (resets 2026-11-13), 5-hour 2. Free RAM 98 GB of 128, no emulator; read it before each launch, after each merge.
+  widening of ADR 0057 for this PC, 2026-11-09) plus three alongside, all three merged: T259 (the sheet), T245
+  (ADR 0061, the launch as a declared stage list), T244 (ADR 0060, downloads as a synchronisation in cells).
+- Running: T246 (lane A, console 5570, host 8694) and T248 (lane B, console 5572, host 8696), launched
+  2026-11-09; no report yet. The lane order and the release point are the wave paragraph's; within a lane:
+  implementer, verifier (ports 5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
+- The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Meter at planning:
+  7-day 2 (resets 2026-11-13), 5-hour 2. Free RAM 91 GB of 128 after the third merge, one emulator up.
 
 ## Next
 
-1. As T244 and T245 report `under review`: brief a critic each (the `proposal` skill's `brief-critic.md`, most
-   capable model), then message the implementer to revise; the coordinator decides; the ADRs are wave 32's.
-2. As T246 or T248 reports: a Sonnet-class verifier (`brief` skill, `verifier.md`; once T246 has merged, its script
-   and its reference page go in every verifier brief [no-check: T246 writes the page]); merge by the `wave` skill's
-   sequence; then the lane's next implementer (T247 in A, T249 in B), whose brief lists what merged.
-3. At T253 and T255 merged: the `sweep` skill, then the `release` skill (ADR 0024). At the wave's end: close by the
+1. As T246 or T248 reports: a Sonnet-class verifier (`brief` skill, `verifier.md`; once T246 has merged, its
+   script and its reference page go in every verifier brief [no-check: T246 writes the page]); merge by the `wave`
+   skill's sequence; then the lane's next implementer (T247 in A, T249 in B), whose brief lists what merged. Every
+   brief says: the push on a line of its own (the guard denies a push chained after another git command; two
+   agents read that as a refused force-push and merged instead).
+2. At T253 and T255 merged: the `sweep` skill, then the `release` skill (ADR 0024). At the wave's end: close by the
    `wave` skill (the meter against 53; the figure revised if five points off), then plan wave 32 from the wave
-   paragraph's Not-taken list and the two ADRs.
+   paragraph's Not-taken list and the build orders in ADR 0060 and ADR 0061.
 
 ## Waiting on user
 
-- The Menu choice for the top row (Layout C's step 8, wave 32); T220's location prompt; proposals 0054 and 0055.
-- On v0.1.24-alpha: whether the start stays quick over the large download; a Startup freeze report if not.
-- For your eye (ADR 0031): the wave 30 items listed in `docs/tasks/wave-30.md`'s Status lines (T239, T235, T237, T243).
+- ADR 0060: the refresh default (automatic, your "just work", against ADR 0030's explicit refresh); the helper's
+  keep-warm list as a new data flow; the daily limit's default, and country downloads past OpenFreeMap's limit.
+- ADR 0061: the first-run card while the pack list loads (F1 wait, F2 unknown until known, F3, F4); F1 built first.
+- `git branch -D task/T245` (the board's git line); the Menu choice (Layout C, wave 32); T220; proposals 0054 and
+  0055; on v0.1.24-alpha whether the start stays quick over the large download, a Startup freeze report if not.
 
 ## Open findings
 
