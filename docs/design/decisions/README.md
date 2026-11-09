@@ -47,6 +47,7 @@ Status: `proposed` (waits for the owner: anything humans see or touch), `accepte
 | [0057-one-gradle-using-agent-at-a-time.md](0057-one-gradle-using-agent-at-a-time.md) | One Gradle-using agent at a time unless the owner says wider: implementer, verifier and merge, then the next task; agents with no Gradle or emulator may run alongside (owner, 2026-11-04) |
 | [0058-release-builds-keep-true-stacks.md](0058-release-builds-keep-true-stacks.md) | Release builds keep true stacks: `-dontobfuscate` and `-dontoptimize` with line numbers, shrinking on, no mapping file; +2.08 MB (8.9%); reverse if a phone comparison shows a cost |
 | [0059-no-built-in-server-locations.md](0059-no-built-in-server-locations.md) | No built-in server locations: every server is the user's setting, a link's or a discovered peer's; public data and distribution sources (GitHub, OSM, USGS, the registry) may be named; the owner's instance is one of many |
+| [0061-the-launch-as-a-declared-stage-list.md](0061-the-launch-as-a-declared-stage-list.md) | The launch as a declared stage list: stages, marks, needs, threads and gates as pure data in `shared` commonMain with a JVM test; the runner in `androidApp` on coroutines; one main-thread wait before `startCamera`; the style posted by a worker; T229's rule split by build (debug fails by name, release waits traced); F1 first, F2 waits for the owner |
 
 Template (also in the `adr` skill):
 
