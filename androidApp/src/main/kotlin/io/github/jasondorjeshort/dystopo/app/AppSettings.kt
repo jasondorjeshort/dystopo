@@ -60,8 +60,10 @@ object AppSettings {
     private fun localeUnits(): ContourUnits =
         if (Locale.getDefault().country in setOf("US", "LR", "MM")) ContourUnits.FEET else ContourUnits.METERS
 
-    fun load(context: Context) {
-        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    fun load(context: Context) = load(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+
+    /** T248: [load] from a store (a test passes an in-memory one, `SettingsRegistryTest`). */
+    internal fun load(p: SharedPreferences) {
         prefs = p
         // Stored as a Float; round so 1.6 reads back as 1.6, not 1.600000023841858.
         textScale = MapLibreStyle.clampTextScale(Math.round(p.getFloat(KEY_TEXT_SCALE, 1.0f) * 1000.0) / 1000.0)
