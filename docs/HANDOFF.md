@@ -11,9 +11,10 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
   cards step, which guards the release). Running: T250 (lane A, console 5570), T251 (lane B, console 5572).
   The lane order and the release point are the wave paragraph's; within a lane: implementer, verifier (ports
   5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
-- Rules learned: no force push works here, so nobody rebases a pushed branch (merge `main` in); a push runs on
-  a line of its own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete.
-- The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Free RAM 86 to 91 GB.
+- Rules learned: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line of
+  its own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete.
+- **Gate:** the 5-hour meter hit 50 at 17:04 (7-day 25); the owner chose no grant: nothing new launches before
+  19:40 local; T250 runs on, T251 (built, 5a151b4a) waits for its verifier. Live server up on 8765; RAM 86 to 91 GB.
 
 ## Next
 
@@ -37,4 +38,3 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 ## Open findings
 
 - `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: guarded; the snapshot loop is wave 32's.
-- `docs/findings/2026-11-07-update-check-shows-githubs-raw-504.md`: T247 takes it this wave.
