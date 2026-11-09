@@ -41,6 +41,15 @@ import java.io.File
  *   `POST /debug/cache/hold?ms=0..120000` holds the next launch's walk of the online cache that long at its first file, once
  *   (a file, as the tracking delay), so the `indexing` window can be seen: the one list and the Storage screen saying so,
  *   a kill mid-index. Answers `pendingHoldMs`.
+ * - T249: `GET /debug/cache`'s `online` also has `fromSnapshot` (this launch read the index from `online/tiles.index`, no
+ *   walk) and `snapshot`: `file`, `present`, `fileBytes`, `entriesInFile`, `ageMs`, `usedThisLaunch`, `load` (`used`, and
+ *   `why` not, or `entries`, `fileBytesPerEntry`, `readMs`, `validateMs`, `fileMs`, `pinRecountMs`), `lastSave` (`reason`
+ *   walk, interval, stop or debug, `entries`, `fileBytes`, `copyMs`, `writeMs`, or `error`), `saves`, `dirty`, `marker`;
+ *   `index.walker` names the walker. `POST /debug/cache/snapshot?save=1[&force=1][&holdMs=0..120000]` writes it now on a
+ *   thread of its own (`holdMs` stops the write halfway that long, so a kill mid-write can be tried; `force` writes an
+ *   unchanged index); `?delete=1` deletes it, so the next launch walks. `POST /debug/cache/walk` times both walkers over
+ *   the online cache's directory without filing anything (`list+lstat`, then `walkFileTree`, then each again), on a
+ *   thread of its own; `GET /debug/cache`'s `walkers` follows it (files, bytes, ms and µs a file per run).
  */
 object DebugRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -75,6 +84,25 @@ object DebugRoutes {
                 val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 0..120_000 } ?: return Response.json(mapOf("error" to "ms must be 0..120000"), 400)
                 io.github.jasondorjeshort.dystopo.app.online.OnlineService.holdNextIndex(app, ms)
                 Response.json(mapOf("pendingHoldMs" to io.github.jasondorjeshort.dystopo.app.online.OnlineService.pendingIndexHoldMs(app)))
+            }
+            "POST" to "/debug/cache/snapshot" -> { // T249
+                val service = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app)
+                when {
+                    r.query["delete"] == "1" -> Response.json(mapOf("deleted" to (service.cache.snapshotFile?.delete() == true)))
+                    r.query["save"] == "1" -> {
+                        val hold = r.query["holdMs"]?.let { it.toLongOrNull()?.takeIf { ms -> ms in 0..120_000 } ?: return Response.json(mapOf("error" to "holdMs must be 0..120000"), 400) } ?: 0L
+                        service.cache.writeHoldMs = hold
+                        val force = r.query["force"] == "1"
+                        Thread({ service.saveIndex("debug", force) }, "debug-index-save").apply { isDaemon = true }.start()
+                        Response.json(mapOf("started" to true, "holdMs" to hold, "force" to force))
+                    }
+                    else -> Response.json(mapOf("error" to "save=1 or delete=1"), 400)
+                }
+            }
+            "POST" to "/debug/cache/walk" -> { // T249
+                if (walkers?.get("running") == true) return Response.json(mapOf("error" to "a walk is running", "walkers" to walkers), 409)
+                startWalkers(app)
+                Response.json(mapOf("started" to true))
             }
             "GET" to "/debug/cpu" -> Response.json(cpu())
             "GET" to "/debug/strictmode" -> Response.json(StrictModeCounts.json())
@@ -126,7 +154,36 @@ object DebugRoutes {
             "contours" to io.github.jasondorjeshort.dystopo.app.ContourCache.get(app).json(),
             "javaHeap" to linkedMapOf("usedBytes" to rt.totalMemory() - rt.freeMemory(), "maxBytes" to rt.maxMemory(), "gc" to gc),
             "fill" to fill,
+            "walkers" to walkers, // T249
         )
+    }
+
+    /** T249: the last `POST /debug/cache/walk` (its runs so far while it runs). */
+    @Volatile private var walkers: Map<String, Any?>? = null
+
+    /** T249: both walkers over the online cache's directory, alternately, counting files and bytes (nothing filed). */
+    private fun startWalkers(app: DystopoApp) {
+        val dir = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.dir
+        val list = io.github.jasondorjeshort.dystopo.app.online.ListWalker(io.github.jasondorjeshort.dystopo.app.online.ListWalker::osLstat)
+        val nio = io.github.jasondorjeshort.dystopo.app.online.NioWalker
+        walkers = mapOf("running" to true, "runs" to emptyList<Any>())
+        Thread({
+            val runs = ArrayList<Map<String, Any?>>()
+            try {
+                for (w in listOf(list, nio, list, nio)) {
+                    var files = 0L
+                    var bytes = 0L
+                    val t0 = SystemClock.elapsedRealtimeNanos()
+                    w.walk(dir) { _, b, _, _ -> files++; bytes += b }
+                    val ms = (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000
+                    runs += linkedMapOf("walker" to w.name, "files" to files, "bytes" to bytes, "ms" to ms, "usPerFile" to if (files > 0) ms * 1000 / files else null)
+                    walkers = mapOf("running" to true, "runs" to ArrayList(runs))
+                }
+                walkers = mapOf("running" to false, "runs" to runs)
+            } catch (e: Throwable) {
+                walkers = mapOf("running" to false, "runs" to runs, "error" to "${e.javaClass.simpleName}: ${e.message}")
+            }
+        }, "debug-cache-walk").apply { isDaemon = true }.start()
     }
 
     /**

@@ -1,11 +1,16 @@
 package io.github.jasondorjeshort.dystopo.app.online
 
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -44,6 +49,17 @@ import java.util.concurrent.atomic.AtomicLong
  * T242: the index is compact ([TileIndex]: a struct of arrays, the tile keys packed, eviction by touch-minute buckets), and
  * [trim] has hysteresis: past [maxBytes] it trims to [maxBytes] less [slackOf] (2 %), so a put at the cap does not trim
  * per tile.
+ *
+ * T249: **the index kept on disk.** With [snapshot] on (the online cache), the index is written to `<dir>.index` beside the
+ * directory ([snapshotFile]; [TileIndexSnapshot] is the format) when it changed: on the owner's interval and at the app's
+ * stop ([saveSnapshot], called by `OnlineService`), and after a walk. A launch reads it in one pass on the index's thread
+ * instead of walking, after a sample of its directories and entries agreed with the disk ([TileIndexSnapshot.validate]);
+ * it is discarded, and the directory walked, when it is corrupt or disagrees, when a write of it was interrupted (its
+ * `.tmp` is left), and when the last run changed the index after its last write (the `.dirty` marker, made at the first
+ * change after a write and deleted by the next). Over an index read from it, a key not in the index is still looked for
+ * on disk ([get], [contains]), and an entry whose file is gone is dropped on [get]. The pinned flags it kept are asked
+ * again once it is read ([recountPinned]: navigation's pins do not outlive the process). The walk itself lists each
+ * directory and stats its files ([TileWalker]; on Android `File.list` plus `Os.lstat`).
  */
 class TileCache(
     val dir: File,
@@ -52,6 +68,10 @@ class TileCache(
     private val onMain: () -> Boolean = ::isUiThread,
     /** T242: called by the walk after each file it indexed, with the count so far (a test holds the walk with it). */
     private val walkHook: ((Long) -> Unit)? = null,
+    /** T249: keep the index on disk beside [dir] ([snapshotFile]); the online cache's. */
+    snapshot: Boolean = false,
+    /** T249: how the directory is walked when there is no snapshot to read. */
+    private val walker: TileWalker = TileWalker.forPlatform(),
     /** Last, so the callers' trailing lambda is the clock (as before T242). */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -106,6 +126,49 @@ class TileCache(
         private set
     private val startedNs = System.nanoTime()
 
+    // --- T249: the snapshot ---
+
+    /** T249: where the index is kept on disk (`<dir>.index` beside [dir], so it moves with it), or null when it is not. */
+    val snapshotFile: File? = if (snapshot) File(dir.absoluteFile.parentFile, "${dir.name}.index") else null
+    private val snapshotTmp: File? = snapshotFile?.let { File(it.parentFile, it.name + ".tmp") }
+    /** T249: made at the first change after a write of the snapshot, deleted by the next: present at launch, the last run's changes were not written. */
+    private val dirtyMarker: File? = snapshotFile?.let { File(it.parentFile, it.name + ".dirty") }
+
+    /** T249: this launch's index was read from the snapshot (no walk). */
+    @Volatile var fromSnapshot = false
+        private set
+
+    /** T249: what this launch did with the snapshot: read it (its figures) or why it was not used. */
+    @Volatile var snapshotLoad: Map<String, Any?>? = null
+        private set
+
+    /** T249: the last write of the snapshot (its reason, figures, or error). */
+    @Volatile var lastSave: Map<String, Any?>? = null
+        private set
+    val saves = AtomicLong()
+
+    /** T249 (debug): the next write of the snapshot stops this long halfway (`POST /debug/cache/snapshot?holdMs=`), so a kill mid-write can be tried. */
+    @Volatile var writeHoldMs = 0L
+
+    // Under [lock]: changes to the index (entries, sizes, pins) since the process started, and as of the last write.
+    private var changes = 0L
+    private var savedChanges = 0L
+    private var markerOn = false
+    /** Under [lock]: the index's thread has looked for the last run's marker (until then a change makes none: it would hide it). */
+    private var markerChecked = false
+    /** T249: a touch changed an entry's minute since the last write (written then, but no reason to walk after a kill). */
+    @Volatile private var touched = false
+    private val saveLock = Any()
+
+    /** T249: under [lock]: the index changed (an entry, a size, a pin); the first change after a write makes the marker. */
+    private fun changed() {
+        changes++
+        if (!markerOn && markerChecked && dirtyMarker != null) {
+            markerOn = true
+            runCatching { dirtyMarker!!.parentFile?.mkdirs(); dirtyMarker!!.createNewFile() }
+        }
+    }
+
     private fun fileOf(key: String) = File(dir, key)
 
     /** T151: told under the lock of every key added (true) or removed (false); `areas/Areas.kt` keeps the keys as rows. */
@@ -119,9 +182,10 @@ class TileCache(
     init {
         dir.mkdirs()
         if (dir.list().isNullOrEmpty()) {
-            markReady() // nothing to walk (a new install, or after Android's Clear cache)
+            markerChecked = true
+            markReady() // nothing to walk (a new install, or after Android's Clear cache); a snapshot left is written over at the first change
         } else {
-            Thread(::walk, "tile-index-${dir.name}").apply { isDaemon = true }.start()
+            Thread(::index, "tile-index-${dir.name}").apply { isDaemon = true }.start()
         }
     }
 
@@ -139,13 +203,18 @@ class TileCache(
 
     private fun addEntry(key: String, bytes: Int, minute: Int, pinned: Boolean) {
         index.add(key, bytes, minute, pinned)
+        counted(bytes, pinned)
+        onIndex?.invoke(key, true)
+        changed()
+    }
+
+    private fun counted(bytes: Int, pinned: Boolean) {
         total += bytes
         entries++
         if (pinned) {
             pinnedTotal += bytes
             pinnedCount++
         }
-        onIndex?.invoke(key, true)
     }
 
     /** Removes [slot] ([key]) from the index and the totals; T151: and tells [onIndex] that [key] went. */
@@ -159,6 +228,7 @@ class TileCache(
         }
         index.remove(slot)
         onIndex?.invoke(key, false)
+        changed()
     }
 
     private fun setPinned(slot: Int, pinned: Boolean) {
@@ -172,46 +242,51 @@ class TileCache(
             pinnedCount--
         }
         index.setPinned(slot, pinned)
+        changed()
     }
 
     // --- the walk (T242) ---
 
     private class Walked(val key: String, val bytes: Long, val mtime: Long)
 
+    /** T249: the index's thread: the snapshot read when it may be, else the walk (then the snapshot written). */
+    private fun index() {
+        val reason = if (snapshotFile != null) {
+            try {
+                loadSnapshot()
+            } catch (t: Throwable) {
+                runCatching { snapshotFile?.delete() }
+                "${t.javaClass.simpleName}: ${t.message}"
+            }
+        } else "off"
+        if (reason == null) {
+            markReady(fromSnapshot = true)
+            // Navigation's pins do not outlive the process: the kept flags are asked again (and the totals with them).
+            val t0 = System.nanoTime()
+            runCatching { recountPinned() }
+            snapshotLoad = snapshotLoad.orEmpty() + mapOf("pinRecountMs" to (System.nanoTime() - t0) / 1_000_000)
+            return
+        }
+        if (snapshotFile != null) snapshotLoad = snapshotLoad.orEmpty() + mapOf("used" to false, "why" to reason)
+        walk()
+        if (snapshotFile != null) runCatching { saveSnapshot("walk") }
+    }
+
     private fun walk() {
         val startedAt = System.currentTimeMillis()
         val batch = ArrayList<Walked>(WALK_BATCH)
         try {
-            val prefixes = ArrayDeque<String>()
-            Files.walkFileTree(dir.toPath(), object : SimpleFileVisitor<Path>() {
-                override fun preVisitDirectory(d: Path, attrs: BasicFileAttributes): FileVisitResult {
-                    prefixes.addLast(if (prefixes.isEmpty()) "" else prefixes.last() + d.fileName.toString() + "/")
-                    return FileVisitResult.CONTINUE
-                }
-
-                override fun postVisitDirectory(d: Path, exc: IOException?): FileVisitResult {
-                    prefixes.removeLast()
-                    return FileVisitResult.CONTINUE
-                }
-
-                override fun visitFile(f: Path, attrs: BasicFileAttributes): FileVisitResult {
-                    if (!attrs.isRegularFile) return FileVisitResult.CONTINUE
-                    val name = f.fileName.toString()
-                    val mtime = attrs.lastModifiedTime().toMillis()
-                    if (name.endsWith(".tmp")) {
-                        // A write interrupted by a kill; one under way now (a put while indexing) is younger.
-                        if (mtime < startedAt - STALE_TMP_MS) runCatching { Files.deleteIfExists(f) }
-                        return FileVisitResult.CONTINUE
-                    }
-                    batch += Walked(prefixes.last() + name, attrs.size(), mtime)
+            walker.walk(dir) { key, bytes, mtime, path ->
+                if (key.endsWith(".tmp")) {
+                    // A write interrupted by a kill; one under way now (a put while indexing) is younger.
+                    if (mtime < startedAt - STALE_TMP_MS) runCatching { File(path).delete() }
+                } else {
+                    batch += Walked(key, bytes, mtime)
                     walked++
                     if (batch.size >= WALK_BATCH) fileWalked(batch)
                     walkHook?.invoke(walked)
-                    return FileVisitResult.CONTINUE
                 }
-
-                override fun visitFileFailed(f: Path, exc: IOException): FileVisitResult = FileVisitResult.CONTINUE
-            })
+            }
         } catch (t: Throwable) {
             indexError = "${t.javaClass.simpleName}: ${t.message}" // what was filed stays; get and contains still find the rest
         } finally {
@@ -237,9 +312,10 @@ class TileCache(
         batch.clear()
     }
 
-    private fun markReady() {
+    private fun markReady(fromSnapshot: Boolean = false) {
         val actions: List<Pair<String, () -> Unit>>
         synchronized(lock) {
+            this.fromSnapshot = fromSnapshot
             state = State.READY
             removed = null
             actions = ArrayList(pending)
@@ -283,6 +359,220 @@ class TileCache(
         }
     }
 
+    // --- T249: the snapshot ---
+
+    /** T249: reads the snapshot into the index; null when it was used, else why not (a snapshot not used is deleted). */
+    private fun loadSnapshot(): String? {
+        val snap = snapshotFile!!
+        val t0 = System.nanoTime()
+        val interrupted = snapshotTmp!!.exists()
+        if (interrupted) snapshotTmp.delete()
+        val dirty: Boolean
+        synchronized(lock) {
+            dirty = dirtyMarker!!.exists()
+            markerChecked = true
+            markerOn = dirty
+            if (changes > 0 && !markerOn) { // a put while this thread started: its marker now
+                markerOn = true
+                runCatching { dirtyMarker!!.parentFile?.mkdirs(); dirtyMarker!!.createNewFile() }
+            }
+        }
+        if (!snap.isFile) return if (interrupted) "none (a write of it was interrupted)" else "none"
+        val fileBytes = snap.length()
+        if (interrupted) return "a write of it was interrupted".also { snap.delete() }
+        if (dirty) return "the last run changed the index after its last write".also { snap.delete() }
+        val read = try {
+            TileIndexSnapshot.read(snap.readBytes()) // one read of the whole file
+        } catch (c: TileIndexSnapshot.Corrupt) {
+            snap.delete()
+            return "corrupt: ${c.message}"
+        }
+        val tRead = System.nanoTime()
+        val mismatch = TileIndexSnapshot.validate(dir, read, kotlin.random.Random(System.nanoTime()))
+        val tValid = System.nanoTime()
+        if (mismatch != null) return "disagrees with the directory: $mismatch".also { snap.delete() }
+        fileSnapshot(read.entries)
+        val tFiled = System.nanoTime()
+        val written = read.header["written"]?.toLongOrNull()
+        snapshotLoad = linkedMapOf(
+            "used" to true, "entries" to read.entries.total, "fileBytes" to fileBytes,
+            "fileBytesPerEntry" to read.entries.total.takeIf { it > 0 }?.let { fileBytes.toDouble() / it },
+            "writtenAt" to written, "ageMs" to written?.let { clock() - it },
+            "readMs" to (tRead - t0) / 1_000_000, "validateMs" to (tValid - tRead) / 1_000_000, "fileMs" to (tFiled - tValid) / 1_000_000,
+        )
+        return null
+    }
+
+    /**
+     * T249: files [e] (read from the snapshot) in chunks under the lock, skipping keys held or removed meanwhile; not a
+     * change. The entries go in by minute ([TileIndex.addLoaded]), so each bucket is found once.
+     */
+    private fun fileSnapshot(e: TileIndexSnapshot.Entries) {
+        val groups = IntArray(e.groups.size)
+        synchronized(lock) { for ((g, pe) in e.groups.withIndex()) groups[g] = index.internGroup(pe.first, pe.second) }
+        val byMinute = LongArray(e.count) { (e.minutes[it].toLong() shl 32) or it.toLong() }
+        byMinute.sort()
+        val order = IntArray(e.count) { byMinute[it].toInt() }
+        val full = groups.any { it < 0 } // more groups than a key packs: those entries go in one by one, as strings
+        val totals = LongArray(4)
+        var i = 0
+        while (i < e.count) {
+            val to = minOf(e.count, i + SCAN_CHUNK)
+            synchronized(lock) {
+                val gone = removed?.takeIf { it.isNotEmpty() }
+                val tell = onIndex
+                if (full) {
+                    for (o in i until to) {
+                        val j = order[o]
+                        val key = e.keyOf(j)
+                        if (gone?.contains(key) == true || index.find(key) != TileIndex.NONE) continue
+                        index.add(key, e.sizes[j], e.minutes[j], e.pinned[j])
+                        counted(e.sizes[j], e.pinned[j])
+                        tell?.invoke(key, true)
+                    }
+                } else {
+                    totals.fill(0)
+                    index.addLoaded(
+                        e.keys, e.sizes, e.minutes, e.pinned, order, i, to, groups,
+                        skip = gone?.let { g -> { k -> index.keyOfPacked(k) in g } },
+                        added = tell?.let { t -> { s -> t(index.keyOf(s), true) } },
+                        totals = totals,
+                    )
+                    total += totals[1]
+                    entries += totals[0].toInt()
+                    pinnedTotal += totals[3]
+                    pinnedCount += totals[2].toInt()
+                }
+            }
+            i = to
+            walked = i.toLong()
+        }
+        synchronized(lock) {
+            val gone = removed
+            for (en in e.strings) {
+                if (gone?.contains(en.key) == true || index.find(en.key) != TileIndex.NONE) continue
+                index.add(en.key, en.bytes, en.minute, en.pinned)
+                counted(en.bytes, en.pinned)
+                onIndex?.invoke(en.key, true)
+            }
+        }
+        walked = e.total.toLong()
+    }
+
+    /**
+     * T249: writes the index to [snapshotFile] when it changed since the last write (or [force]), atomically (a `.tmp`
+     * renamed over it); off the main thread, once the index is whole. Returns what happened: `written`, `clean`, `indexing`,
+     * `off` or `error`; [lastSave] has the figures.
+     */
+    fun saveSnapshot(reason: String, force: Boolean = false): String {
+        val snap = snapshotFile ?: return "off"
+        check(!onMain()) { "TileCache.saveSnapshot on the main thread, from ${callerOf()}" }
+        synchronized(saveLock) {
+            if (!ready) return "indexing"
+            val gen: Long
+            synchronized(lock) {
+                gen = changes
+                if (!force && gen == savedChanges && !touched) return "clean"
+                touched = false
+            }
+            val t0 = System.nanoTime()
+            val e = copyEntries()
+            val tCopy = System.nanoTime()
+            val tmp = snapshotTmp!!
+            var written = 0
+            try {
+                snap.parentFile?.mkdirs()
+                FileOutputStream(tmp).use { fos ->
+                    val out = BufferedOutputStream(fos, 1 shl 16)
+                    written = TileIndexSnapshot.write(out, e, clock(), dir.name, midway = {
+                        val ms = writeHoldMs
+                        if (ms > 0) {
+                            writeHoldMs = 0
+                            out.flush()
+                            Thread.sleep(ms)
+                        }
+                    })
+                    out.flush()
+                    fos.fd.sync()
+                }
+                Files.move(tmp.toPath(), snap.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (t: Throwable) {
+                touched = true
+                runCatching { tmp.delete() }
+                lastSave = linkedMapOf("reason" to reason, "error" to "${t.javaClass.simpleName}: ${t.message}", "at" to clock())
+                return "error"
+            }
+            synchronized(lock) {
+                if (changes == gen) { // nothing changed while it was written: the marker goes
+                    savedChanges = gen
+                    if (markerOn) {
+                        markerOn = false
+                        runCatching { dirtyMarker?.delete() }
+                    }
+                }
+            }
+            saves.incrementAndGet()
+            val bytes = snap.length()
+            lastSave = linkedMapOf(
+                "reason" to reason, "at" to clock(), "entries" to written, "fileBytes" to bytes,
+                "fileBytesPerEntry" to written.takeIf { it > 0 }?.let { bytes.toDouble() / it },
+                "copyMs" to (tCopy - t0) / 1_000_000, "writeMs" to (System.nanoTime() - tCopy) / 1_000_000,
+            )
+            return "written"
+        }
+    }
+
+    /** T249: the index's entries copied out, in chunks of [SCAN_CHUNK] slots under the lock (a key moved meanwhile may be listed twice). */
+    private fun copyEntries(): TileIndexSnapshot.Entries {
+        var cap = entries + 1024
+        var keys = LongArray(cap)
+        var sizes = IntArray(cap)
+        var minutes = IntArray(cap)
+        var pinned = BooleanArray(cap)
+        var n = 0
+        val strings = ArrayList<TileIndexSnapshot.StringEntry>()
+        var from = 0
+        while (true) {
+            val more = synchronized(lock) {
+                val to = minOf(index.high, from + SCAN_CHUNK)
+                for (s in from until to) {
+                    if (!index.isUsed(s)) continue
+                    if (index.isStringKey(s)) {
+                        strings += TileIndexSnapshot.StringEntry(index.keyOf(s), index.size(s), index.minute(s), index.isPinned(s))
+                        continue
+                    }
+                    if (n == cap) {
+                        cap += cap / 2 + 1024
+                        keys = keys.copyOf(cap); sizes = sizes.copyOf(cap); minutes = minutes.copyOf(cap); pinned = pinned.copyOf(cap)
+                    }
+                    keys[n] = index.packedKey(s)
+                    sizes[n] = index.size(s)
+                    minutes[n] = index.minute(s)
+                    pinned[n] = index.isPinned(s)
+                    n++
+                }
+                from = to
+                to < index.high
+            }
+            if (!more) break
+        }
+        val groups = synchronized(lock) { (0 until index.groups).map { index.groupPrefixOf(it) to index.groupExtOf(it) } }
+        return TileIndexSnapshot.Entries(groups, keys, sizes, minutes, pinned, n, strings)
+    }
+
+    /** T249: the snapshot's file and what this launch and the last write did with it, for `GET /debug/cache`. */
+    fun snapshotJson(): Map<String, Any?>? {
+        val f = snapshotFile ?: return null
+        val written = lastSave?.get("at") as? Long
+        return linkedMapOf(
+            "file" to "${f.parentFile?.name}/${f.name}", "present" to f.isFile, "fileBytes" to f.length(),
+            "entriesInFile" to (lastSave?.get("entries") ?: snapshotLoad?.get("entries")),
+            "ageMs" to (written ?: snapshotLoad?.get("writtenAt") as? Long)?.let { clock() - it },
+            "usedThisLaunch" to fromSnapshot, "load" to snapshotLoad, "lastSave" to lastSave, "saves" to saves.get(),
+            "dirty" to (synchronized(lock) { changes != savedChanges } || touched), "marker" to dirtyMarker?.isFile,
+        )
+    }
+
     // --- per key: these work while indexing ---
 
     private fun checkKey(key: String) =
@@ -292,12 +582,13 @@ class TileCache(
 
     /**
      * The cached bytes for [key], or null. A hit makes the entry the most recently used. T242: while indexing a key the
-     * walk has not reached yet is read from its file, and filed.
+     * walk has not reached yet is read from its file, and filed. T249: so
+     * is one an index read from the snapshot lacks (written after its last write), and an entry whose file is gone is dropped.
      */
     fun get(key: String): ByteArray? {
         checkKey(key)
         val known = synchronized(lock) { index.find(key) != TileIndex.NONE }
-        if (!known && ready) {
+        if (!known && ready && !fromSnapshot) { // T249: over a snapshot's index, a file it does not name is still looked for
             misses.incrementAndGet()
             return null
         }
@@ -321,7 +612,10 @@ class TileCache(
         synchronized(lock) {
             val s = index.find(key)
             if (s != TileIndex.NONE) {
-                if (index.minute(s) < minute) touchFile = true
+                if (index.minute(s) < minute) {
+                    touchFile = true
+                    touched = true
+                }
                 index.touch(s, minute)
             } else if (removed?.contains(key) != true) {
                 addEntry(key, data.size, minute, pinned)
@@ -332,12 +626,15 @@ class TileCache(
         return data
     }
 
-    /** Whether [key] is cached. T242: while indexing, a key the walk has not reached is looked for on disk (a stat). */
+    /**
+     * Whether [key] is cached. T242: while indexing, a key the walk has not reached is looked for on disk (a stat). T249: so
+     * is one an index read from the snapshot lacks.
+     */
     fun contains(key: String): Boolean {
         if (!validKey(key)) return false
         synchronized(lock) {
             if (index.find(key) != TileIndex.NONE) return true
-            if (ready || removed?.contains(key) == true) return false
+            if ((ready && !fromSnapshot) || removed?.contains(key) == true) return false
         }
         return fileOf(key).isFile
     }
@@ -385,8 +682,10 @@ class TileCache(
                 total += bytes.size - old
                 if (index.isPinned(s)) pinnedTotal += bytes.size - old
                 index.setSize(s, bytes.size)
+                if (old != bytes.size) changed()
                 setPinned(s, pinned)
                 index.touch(s, minute)
+                touched = true
             } else {
                 addEntry(key, bytes.size, minute, pinned)
             }
@@ -697,6 +996,7 @@ class TileCache(
         "state" to state.name.lowercase(), "walked" to walked, "walkMs" to walkMs, "error" to indexError,
         "heapBytes" to index.heapBytes(), "heapBytesPerEntry" to entries.takeIf { it > 0 }?.let { index.heapBytes() / it },
         "stringKeys" to index.stringKeys, "groups" to index.groups, "buckets" to index.bucketCount,
+        "walker" to walker.name, "fromSnapshot" to fromSnapshot, // T249
     )
 
     fun json(): Map<String, Any?> = linkedMapOf(
@@ -705,6 +1005,7 @@ class TileCache(
         "hits" to hits.get(), "misses" to misses.get(), "writes" to writes.get(), "evictions" to evictions.get(),
         "budgetEvictions" to budgetEvictions.get(), // T112
         "index" to indexJson(), // T242
+        "fromSnapshot" to fromSnapshot, "snapshot" to snapshotJson(), // T249
     )
 
     /** The first frame outside this class and its index: the caller a failed check names. */
@@ -754,4 +1055,115 @@ private fun isUiThread(): Boolean = try {
     android.os.Looper.getMainLooper()?.thread === Thread.currentThread()
 } catch (_: Throwable) {
     false
+}
+
+/**
+ * T249: how [TileCache] walks its directory: every regular file below the root as its key (the path relative to the root,
+ * `/` between segments), its bytes and its modification time (ms), with its path for the stale `.tmp` files' deletion.
+ * [NioWalker] is `Files.walkFileTree` (T242's); [ListWalker] lists each directory with `File.list` and asks a stat of each
+ * name ([ListWalker.osLstat] on Android: `Os.lstat`, one system call and no `Path` objects). `POST /debug/cache/walk` times
+ * both over the online cache.
+ */
+abstract class TileWalker(val name: String) {
+    fun interface Visitor {
+        fun file(key: String, bytes: Long, mtimeMs: Long, path: String)
+    }
+
+    abstract fun walk(root: File, visit: Visitor)
+
+    companion object {
+        /** On Android the list walker over `Os.lstat` (T249's measurement), elsewhere (the JVM's tests) `Files.walkFileTree`. */
+        fun forPlatform(): TileWalker =
+            if (System.getProperty("java.vm.name").orEmpty().contains("Dalvik")) ListWalker(ListWalker::osLstat) else NioWalker
+    }
+}
+
+/** T242's walk: `Files.walkFileTree` with one `BasicFileAttributes` read per file. */
+object NioWalker : TileWalker("walkFileTree") {
+    override fun walk(root: File, visit: Visitor) {
+        val prefixes = ArrayDeque<String>()
+        Files.walkFileTree(root.toPath(), object : SimpleFileVisitor<Path>() {
+            override fun preVisitDirectory(d: Path, attrs: BasicFileAttributes): FileVisitResult {
+                prefixes.addLast(if (prefixes.isEmpty()) "" else prefixes.last() + d.fileName.toString() + "/")
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(d: Path, exc: IOException?): FileVisitResult {
+                prefixes.removeLast()
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun visitFile(f: Path, attrs: BasicFileAttributes): FileVisitResult {
+                if (!attrs.isRegularFile) return FileVisitResult.CONTINUE
+                visit.file(prefixes.last() + f.fileName.toString(), attrs.size(), attrs.lastModifiedTime().toMillis(), f.toString())
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun visitFileFailed(f: Path, exc: IOException): FileVisitResult = FileVisitResult.CONTINUE
+        })
+    }
+}
+
+/**
+ * T249: `File.list` per directory and [stat] per name (depth first, an explicit stack). [stat] fills `out[0]` with the
+ * bytes and `out[1]` with the modification time (ms) and answers [FILE], [DIR], [OTHER] or [NONE] (gone, or unreadable).
+ */
+class ListWalker(private val stat: (String, LongArray) -> Int) : TileWalker("list+lstat") {
+    override fun walk(root: File, visit: Visitor) {
+        val paths = ArrayList<String>()
+        val prefixes = ArrayList<String>()
+        paths += root.path
+        prefixes += ""
+        val out = LongArray(2)
+        while (paths.isNotEmpty()) {
+            val p = paths.removeAt(paths.size - 1)
+            val prefix = prefixes.removeAt(prefixes.size - 1)
+            val names = File(p).list() ?: continue
+            for (n in names) {
+                val full = "$p/$n"
+                when (stat(full, out)) {
+                    FILE -> visit.file(prefix + n, out[0], out[1], full)
+                    DIR -> {
+                        paths += full
+                        prefixes += "$prefix$n/"
+                    }
+                }
+            }
+        }
+    }
+
+    companion object {
+        const val NONE = 0
+        const val FILE = 1
+        const val DIR = 2
+        const val OTHER = 3
+
+        /** Android's `lstat(2)` ([android.system.Os]); seconds of modification time (API 26 has no `st_mtim`). */
+        fun osLstat(path: String, out: LongArray): Int = try {
+            val st = android.system.Os.lstat(path)
+            out[0] = st.st_size
+            out[1] = st.st_mtime * 1000
+            when {
+                android.system.OsConstants.S_ISREG(st.st_mode) -> FILE
+                android.system.OsConstants.S_ISDIR(st.st_mode) -> DIR
+                else -> OTHER
+            }
+        } catch (_: android.system.ErrnoException) {
+            NONE
+        }
+
+        /** The JVM's stat (the tests'): `BasicFileAttributes` without following links. */
+        fun jvmStat(path: String, out: LongArray): Int = try {
+            val a = Files.readAttributes(Paths.get(path), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+            out[0] = a.size()
+            out[1] = a.lastModifiedTime().toMillis()
+            when {
+                a.isRegularFile -> FILE
+                a.isDirectory -> DIR
+                else -> OTHER
+            }
+        } catch (_: IOException) {
+            NONE
+        }
+    }
 }

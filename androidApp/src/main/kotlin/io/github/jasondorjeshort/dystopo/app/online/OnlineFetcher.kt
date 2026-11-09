@@ -499,8 +499,23 @@ class OnlineFetcher(
      * known): `<key>/<route>@<old>/...` for the routes that depend on it, and for `dem` also the tiles derived
      * on the phone (`<key>/contours-...@<old>/`, `<key>/shade-...@<old>/`). T95: except the fetched tiles a pinned
      * area holds at [old] ([AreaPins.holds]), which lookups find through the pins' versions until it is refreshed.
+     *
+     * T249 (T242's follow-up): while the cache's index is built the drop waits for it on a thread of its own
+     * ([TileCache.whenReady]), not on the thread that checked the version (a tile request's, for a whole walk).
      */
     private fun dropOld(s: Source, name: String, old: String?) {
+        if (!cache.ready) {
+            versionDropsDeferred.incrementAndGet()
+            cache.whenReady("version-drop-${s.key}-$name") { runCatching { dropOldNow(s, name, old) } }
+            return
+        }
+        dropOldNow(s, name, old)
+    }
+
+    /** T249: [dropOld]s that waited for the cache's index on their own thread. */
+    val versionDropsDeferred = java.util.concurrent.atomic.AtomicLong()
+
+    private fun dropOldNow(s: Source, name: String, old: String?) {
         val routes = VERSION_OF.filterValues { it == name }.keys
         val p = runCatching { pins.pins() }.getOrDefault(AreaPins.NONE)
         val oldV = old ?: ""
@@ -636,6 +651,7 @@ class OnlineFetcher(
             "negativeCacheHits" to negativeHits.get(), "negativeRetried" to negativeRetried.get(), "backoffSkips" to backoffSkips.get(), "sharedFetches" to sharedFetches.get(),
             "emptyAnswersAsMissing" to emptyAsMissing.get(), "versionChecks" to versionChecks.get(), // T74
             "pinnedHits" to pinnedHits.get(), "pinnedKept" to pinnedKept.get(), "unheldDropped" to unheldDropped.get(), // T95
+            "versionDropsDeferred" to versionDropsDeferred.get(), // T249
             "inFlight" to inFlight.size, "maxInFlight" to maxInFlight,
             "fetchMsAvg" to if (n == 0L) null else fetchMs.get() / n, "fetchMsMax" to maxFetchMs.get(),
             "negativeCache" to mapOf("missing" to sourceList.sumOf { s -> s.missingUntil.count { it.value > now } }, "failed" to sourceList.sumOf { s -> s.failedUntil.count { it.value > now } }),
