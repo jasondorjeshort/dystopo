@@ -6,15 +6,13 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Now
 
-- **Wave 31 is open** (plan at e184b663; T261 added): seventeen tasks, two lanes of Gradle work (the owner's
-  widening of ADR 0057 for this PC) plus three alongside. Merged: T259, T245 (ADR 0061), T244 (ADR 0060), T248
-  (the settings registry), T246 (the verifier script, used by every verifier since), T247, T249 (the tile-index
-  snapshot), T261 (the cards step on `main`, which guards the release). Running: T250 (lane A, console 5570) and
-  T251 (lane B, console 5572). The lane order and the release point are the wave paragraph's; within a lane:
-  implementer, verifier (ports 5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
-- Rules learned: the harness refuses every force push, so nobody rebases a pushed branch (merge `main` in, or let
-  the `--no-ff` merge integrate); a push runs on a line of its own; `git worktree remove` fails here with
-  "Filename too long", so every cleanup chore gets the `\\?\` delete (Sonnet-class).
+- **Wave 31 is open** (plan at e184b663; T261 added): seventeen tasks, two lanes plus three alongside. Merged:
+  T259, T245 (ADR 0061), T244 (ADR 0060), T248, T246 (the verifier script, used since), T247, T249, T261 (the
+  cards step, which guards the release). Running: T250 (lane A, console 5570), T251 (lane B, console 5572).
+  The lane order and the release point are the wave paragraph's; within a lane: implementer, verifier (ports
+  5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
+- Rules learned: no force push works here, so nobody rebases a pushed branch (merge `main` in); a push runs on
+  a line of its own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete.
 - The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Free RAM 86 to 91 GB
   through the merges, peak private bytes 5 to 8 GB (one guard stop after about 40 cold launches, T249).
 
