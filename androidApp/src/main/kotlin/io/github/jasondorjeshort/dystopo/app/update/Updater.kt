@@ -50,6 +50,8 @@ object Updater {
     private const val POLL_MS = 30L * 60 * 1000
     private const val MAX_APK_BYTES = 300L shl 20
     private const val MAX_TEXT_BYTES = 4L shl 20
+    /** T247: a 5xx or a timeout is tried once more after this, quietly (GitHub's gateway timeouts last seconds). */
+    const val RETRY_DELAY_MS = UpdateFailure.RETRY_DELAY_MS
 
     enum class Phase { IDLE, CHECKING, UP_TO_DATE, DOWNLOADING, READY, INSTALLING, INSTALLED, DECLINED, REFUSED, FAILED }
 
@@ -63,10 +65,15 @@ object Updater {
         val totalBytes: Long = 0,
         val manual: Boolean = false,
         val at: Long = 0,
+        /** T247: why a [Phase.FAILED] check failed (its kind, status code and raw text; the row's Technical details). */
+        val failure: UpdateFailure? = null,
+        /** T247: the attempts the last check made (2 when a 5xx or a timeout was tried again after [RETRY_DELAY_MS]). */
+        val attempts: Int = 0,
     ) {
         fun json(): Map<String, Any?> = linkedMapOf(
             "phase" to phase.name.lowercase(), "tag" to tag, "versionName" to versionName, "versionCode" to versionCode,
             "message" to message, "bytes" to bytes, "totalBytes" to totalBytes, "manual" to manual, "at" to at,
+            "failureKind" to failure?.kind?.key, "failureCode" to failure?.code, "failureDetail" to failure?.detail, "attempts" to attempts,
         )
     }
 
@@ -164,24 +171,37 @@ object Updater {
 
     // --- check -------------------------------------------------------------------------------------------------
 
-    /** Runs a check on the update thread. [manual]: "Check for updates" (shows a declined or refused version again). */
+    /**
+     * Runs a check on the update thread. [manual]: "Check for updates" (shows a declined or refused version again).
+     * T247: a failure says one sentence of its kind ([UpdateFailure]); a 5xx or a timeout is first tried once more after
+     * [RETRY_DELAY_MS], the row still "Checking" meanwhile, and only a second failure is shown. The code and the raw
+     * text go to the log and the row's Technical details.
+     */
     fun check(manual: Boolean): Future<State> = worker.submit<State> {
         checks.incrementAndGet()
-        try {
-            doCheck(manual)
-        } catch (e: Exception) {
-            Log.w(TAG, "update check failed", e)
+        val result = UpdateFailure.withOneRetry(RETRY_DELAY_MS, { Thread.sleep(it) }) { attempt ->
+            lastAttempts = attempt
+            try {
+                doCheck(manual)
+                null
+            } catch (e: Exception) {
+                val f = UpdateFailure.of(e)
+                Log.w(TAG, "update check failed (attempt $attempt): ${f.kind.key}${f.code?.let { " $it" } ?: ""}: ${f.detail}", e)
+                if (f.retryable && attempt == 1) {
+                    set(state.copy(phase = Phase.CHECKING, message = "Checking for updates", failure = null, attempts = attempt))
+                    Log.i(TAG, "update check: trying once more in ${RETRY_DELAY_MS / 1000} s")
+                }
+                f
+            }
+        }
+        result.failure?.let { f ->
             attempted()
-            set(State(Phase.FAILED, state.tag, state.versionName, state.versionCode, "Update check failed: ${reason(e)}", manual = manual))
+            set(State(Phase.FAILED, state.tag, state.versionName, state.versionCode, f.sentence, manual = manual, failure = f, attempts = result.attempts))
         }
         state
     }
 
-    private fun reason(e: Throwable): String = when (e) {
-        is java.net.UnknownHostException -> "no network (${e.message})"
-        is java.net.SocketTimeoutException -> "the server did not answer in time"
-        else -> e.message ?: e.javaClass.simpleName
-    }
+    @Volatile private var lastAttempts = 0
 
     private fun set(s: State) {
         state = s.copy(at = System.currentTimeMillis())
@@ -254,7 +274,7 @@ object Updater {
 
     private fun done(s: State) {
         saveCheckRecord(checkRecord().checked(System.currentTimeMillis(), ownCode))
-        set(s)
+        set(s.copy(attempts = lastAttempts))
     }
 
     private fun refuse(release: UpdateFeed.Release, name: String, info: UpdateFeed.VersionInfo?, manual: Boolean, why: String) {
@@ -420,6 +440,8 @@ object Updater {
             // T110: an install asked for while navigating waits for the session to end; the offer's place on the map
             "waitingForNavigation" to waitingForNavigation, "installsAfterNavigation" to installWait.waitedInstalls,
             "navigating" to io.github.jasondorjeshort.dystopo.app.nav.NavSession.active, "overlay" to UpdateOverlayLayout.json(),
+            // T247: the failed check's Technical details fold on the Updates row, and what it shows
+            "technicalDetailsOpen" to UpdateUi.foldOpen, "technicalDetails" to state.failure?.technical(state.attempts),
         )
     }
 
@@ -448,7 +470,7 @@ object Updater {
                 if (c.responseCode != 200) {
                     val code = c.responseCode
                     c.disconnect()
-                    throw IOException("HTTP $code from ${URI(url).host}" + if (code == 403 || code == 429) " (rate limited; try later)" else "")
+                    throw UpdateFailure.HttpStatus(code, "HTTP $code from ${URI(url).host}" + if (code == 403 || code == 429) " (rate limited; try later)" else "")
                 }
                 return c
             }
@@ -524,5 +546,79 @@ object Updater {
             }
         }
         return Signing.hex(md.digest())
+    }
+}
+
+/**
+ * T247: why an update check failed, in one sentence per kind (finding 2026-11-07: the row showed GitHub's raw "504"),
+ * with the status code and the raw text kept for the Technical details fold, `GET /update` and the log. Pure.
+ */
+data class UpdateFailure(val kind: Kind, val code: Int?, val detail: String) {
+    enum class Kind(val key: String) {
+        /** A 5xx: the server, GitHub's gateway mostly, did not answer the request. Tried once more. */
+        SERVER("server"),
+        /** No answer in time (connect or read). Tried once more. */
+        TIMEOUT("timeout"),
+        /** No way to the server: no network, the name not found, the connection refused or reset. */
+        NETWORK("network"),
+        /** An answer that is not a release list (or a `version.json`) we can read. */
+        PARSE("parse"),
+        /** Anything else: a 4xx (the rate limit included), a refused redirect, an oversized answer, a cut download. */
+        OTHER("other"),
+    }
+
+    val retryable: Boolean get() = kind == Kind.SERVER || kind == Kind.TIMEOUT
+
+    /** What the Updates row says. */
+    val sentence: String get() = sentence(kind)
+
+    /** What the row's Technical details fold shows: the kind, the status code when there was one, the raw text. */
+    fun technical(attempts: Int): List<String> = listOfNotNull(
+        "Kind: ${kind.key}" + (code?.let { ", HTTP $it" } ?: ""),
+        detail,
+        if (attempts > 1) "Tried twice, ${RETRY_DELAY_MS / 1000} s apart" else null,
+    )
+
+    /** A non-200 answer, with its status code. */
+    class HttpStatus(val code: Int, message: String) : java.io.IOException(message)
+
+    data class Result(val failure: UpdateFailure?, val attempts: Int)
+
+    companion object {
+        const val RETRY_DELAY_MS = 60_000L
+        const val SERVER_SENTENCE = "GitHub did not answer. Try again later."
+        const val NETWORK_SENTENCE = "No connection."
+        const val PARSE_SENTENCE = "Could not read the release list."
+        const val OTHER_SENTENCE = "The update check did not work. Try again later."
+
+        fun sentence(kind: Kind): String = when (kind) {
+            Kind.SERVER, Kind.TIMEOUT -> SERVER_SENTENCE
+            Kind.NETWORK -> NETWORK_SENTENCE
+            Kind.PARSE -> PARSE_SENTENCE
+            Kind.OTHER -> OTHER_SENTENCE
+        }
+
+        fun of(e: Throwable): UpdateFailure {
+            val detail = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+            return when (e) {
+                is HttpStatus -> UpdateFailure(if (e.code in 500..599) Kind.SERVER else Kind.OTHER, e.code, detail)
+                is java.net.SocketTimeoutException -> UpdateFailure(Kind.TIMEOUT, null, "$detail (${e.javaClass.simpleName})")
+                is java.net.UnknownHostException, is java.net.ConnectException, is java.net.NoRouteToHostException,
+                is java.net.SocketException -> UpdateFailure(Kind.NETWORK, null, "$detail (${e.javaClass.simpleName})")
+                is IllegalArgumentException, is IllegalStateException, is ClassCastException -> UpdateFailure(Kind.PARSE, null, detail)
+                else -> UpdateFailure(Kind.OTHER, null, detail)
+            }
+        }
+
+        /**
+         * Runs [attempt] (1, then perhaps 2), which returns null on success or its failure; a [retryable] failure of the
+         * first attempt sleeps [delayMs] and tries once more. The second attempt's outcome is the result.
+         */
+        fun withOneRetry(delayMs: Long, sleep: (Long) -> Unit, attempt: (Int) -> UpdateFailure?): Result {
+            val first = attempt(1) ?: return Result(null, 1)
+            if (!first.retryable) return Result(first, 1)
+            sleep(delayMs)
+            return Result(attempt(2), 2)
+        }
     }
 }
