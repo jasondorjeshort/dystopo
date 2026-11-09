@@ -46,6 +46,13 @@ class LocationPuck {
     private var accuracy: CircleLayer? = null
     private var ringSource: GeoJsonSource? = null
     private var dot: CircleLayer? = null
+    private var style: org.maplibre.android.maps.Style? = null
+    private var ringLayer: LineLayer? = null
+    private var whiteRing: CircleLayer? = null
+
+    /** T251: times the puck's layers were moved back on top of layers added after them (the track's head covered the grey puck). */
+    var raised = 0L
+        private set
 
     /** T203: the look shown now. */
     var mode = Mode.GPS
@@ -67,22 +74,20 @@ class LocationPuck {
         // T203: the estimate's dashed ring (empty unless estimating).
         val ring = GeoJsonSource(ESTIMATE_SOURCE)
         style.addSource(ring)
-        style.addLayer(
-            LineLayer(ESTIMATE_RING, ESTIMATE_SOURCE).withProperties(
-                PropertyFactory.lineColor("#1a66d9"),
-                PropertyFactory.lineWidth(2f),
-                PropertyFactory.lineOpacity(0.85f),
-                PropertyFactory.lineDasharray(arrayOf(2f, 2f)),
-            ),
+        val rl = LineLayer(ESTIMATE_RING, ESTIMATE_SOURCE).withProperties(
+            PropertyFactory.lineColor("#1a66d9"),
+            PropertyFactory.lineWidth(2f),
+            PropertyFactory.lineOpacity(0.85f),
+            PropertyFactory.lineDasharray(arrayOf(2f, 2f)),
         )
-        style.addLayer(
-            CircleLayer(RING, SOURCE).withProperties(
-                PropertyFactory.circleRadius(11f),
-                PropertyFactory.circleColor("#ffffff"),
-                PropertyFactory.circleStrokeColor("rgba(0,0,0,0.35)"),
-                PropertyFactory.circleStrokeWidth(1.5f),
-            ),
+        style.addLayer(rl)
+        val wr = CircleLayer(RING, SOURCE).withProperties(
+            PropertyFactory.circleRadius(11f),
+            PropertyFactory.circleColor("#ffffff"),
+            PropertyFactory.circleStrokeColor("rgba(0,0,0,0.35)"),
+            PropertyFactory.circleStrokeWidth(1.5f),
         )
+        style.addLayer(wr)
         val d = CircleLayer(DOT, SOURCE).withProperties(
             PropertyFactory.circleRadius(7.5f),
             PropertyFactory.circleColor("#1a66d9"),
@@ -92,12 +97,18 @@ class LocationPuck {
         accuracy = acc
         ringSource = ring
         dot = d
+        this.style = style
+        ringLayer = rl
+        whiteRing = wr
         val m = mode
         mode = Mode.GPS
         last?.let { show(it, m) }
     }
 
     fun uninstall() {
+        style = null
+        ringLayer = null
+        whiteRing = null
         source = null
         accuracy = null
         ringSource = null
@@ -107,6 +118,7 @@ class LocationPuck {
     val installed: Boolean get() = source != null
 
     fun show(loc: Location, look: Mode = Mode.GPS) {
+        if (look != mode) raise() // T251: on a change of look, back on top (the track's head mark drew over the grey puck)
         source?.setGeoJson(Point.fromLngLat(loc.longitude, loc.latitude))
         setMode(look)
         // T203: the estimate's ring at its spread; nothing for the other looks.
@@ -124,6 +136,22 @@ class LocationPuck {
                 ),
             ),
         )
+    }
+
+    /**
+     * T251: moves the puck's layers back above any added after them (the track overlay's start, head and end marks are
+     * installed later and drew over it, hiding the grey look), so the marker is always the top mark. Only when it is not.
+     */
+    private fun raise() {
+        val st = style ?: return
+        val layers = listOfNotNull(accuracy, ringLayer, whiteRing, dot)
+        if (layers.size != 4) return
+        runCatching {
+            if (st.layers.lastOrNull()?.id == DOT) return
+            for (l in layers) st.removeLayer(l)
+            for (l in layers) st.addLayer(l)
+            raised++
+        }
     }
 
     /** T203: the look's paint, set only when it changes. */

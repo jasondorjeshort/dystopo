@@ -677,7 +677,7 @@ class MapController {
             "lat" to l?.latitude, "lon" to l?.longitude, "accuracyM" to l?.takeIf { it.hasAccuracy() }?.accuracy,
             "ageS" to if (l == null) null else puckAgeMs() / 1000.0, "staleAfterS" to staleAfterMs() / 1000.0,
             "recorderShown" to recorderShown, "mapFixesHeld" to mapFixesHeld, "staleShown" to staleShown,
-            "pendingRecorded" to (pendingRecorded != null),
+            "pendingRecorded" to (pendingRecorded != null), "raised" to puck.raised,
         )
     }
 
