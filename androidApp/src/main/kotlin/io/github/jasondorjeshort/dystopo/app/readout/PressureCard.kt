@@ -426,11 +426,14 @@ fun PressureCard() {
     // T212: the compass (MapLibre's own, top right while the map is turned) when it reaches below the chrome: the card
     // starts below it. Polled with the card's other inputs: the view is not Compose state.
     var compass by androidx.compose.runtime.remember { mutableStateOf(CompassView.boundsPx()) }
+    // T261: the top elements as drawn (plain fields of the layout nodes), polled with it: the card starts under those across it.
+    var over by androidx.compose.runtime.remember { mutableStateOf(io.github.jasondorjeshort.dystopo.app.MapLayout.topChromeDp(density.density)) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         while (true) {
             io.github.jasondorjeshort.dystopo.app.Foreground.delay(500)
             val now = CompassView.boundsPx()
             if (!now.contentEquals(compass)) compass = now
+            io.github.jasondorjeshort.dystopo.app.MapLayout.topChromeDp(density.density).let { if (it != over) over = it } // T261
         }
     }
     var expandedByUser by androidx.compose.runtime.remember(c.raisedAtMs) { mutableStateOf<Boolean?>(null) }
@@ -455,7 +458,8 @@ fun PressureCard() {
         val chromeTop = chromeDp.dp + 8.dp
         val compassDp = compass?.let { b -> FloatArray(4) { b[it] / density.density } }
         val bands = io.github.jasondorjeshort.dystopo.app.routing.CardBands
-        val top = bands.warningTop(chromeTop.value, compassDp, leftDp.value, (leftDp + widthDp).value, bottomLimit.value).dp
+        val overNow = over.let { io.github.jasondorjeshort.dystopo.app.MapLayout.topChromeDp(density.density) ?: it } // T261: fresh where this pass recomposes
+        val top = bands.warningTop(chromeTop.value, compassDp, leftDp.value, (leftDp + widthDp).value, bottomLimit.value, over = overNow).dp
         val compassMoves = top > chromeTop
         val room = (bottomLimit - top).coerceAtLeast(0.dp)
         val padV = 10.dp

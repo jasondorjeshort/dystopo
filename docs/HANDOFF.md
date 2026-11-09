@@ -1,19 +1,19 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-09, by main session (wave 31 open: T259, T245, T244 merged; T246 and T248 in the lanes)
+Updated: 2026-11-09, by main session (wave 31 open: eight of seventeen merged; T250 and T251 in the lanes)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 31, `out/wave31-research/` [no-check: gitignored].
 
 ## Now
 
-- **Wave 31 is open** (plan at e184b663): seventeen tasks, T244 to T260, two lanes of Gradle work (the owner's
-  widening of ADR 0057 for this PC, 2026-11-09) plus three alongside, all three merged: T259 (the sheet), T245
-  (ADR 0061, the launch as a declared stage list), T244 (ADR 0060, downloads as a synchronisation in cells).
-- Running: T246 (lane A, console 5570, host 8694) and T248 (lane B, console 5572, host 8696), launched
-  2026-11-09; no report yet. The lane order and the release point are the wave paragraph's; within a lane:
-  implementer, verifier (ports 5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
-- The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Meter at planning:
-  7-day 2 (resets 2026-11-13), 5-hour 2. Free RAM 91 GB of 128 after the third merge, one emulator up.
+- **Wave 31 is open** (plan at e184b663; T261 added): seventeen tasks, two lanes plus three alongside. Merged:
+  T259, T245 (ADR 0061), T244 (ADR 0060), T248, T246 (the verifier script, used since), T247, T249, T261 (the
+  cards step, which guards the release). Running: T250 (lane A, console 5570), T251 (lane B, console 5572).
+  The lane order and the release point are the wave paragraph's; within a lane: implementer, verifier (ports
+  5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
+- Rules learned: no force push works here, so nobody rebases a pushed branch (merge `main` in); a push runs on
+  a line of its own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete.
+- The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Free RAM 86 to 91 GB.
 
 ## Next
 

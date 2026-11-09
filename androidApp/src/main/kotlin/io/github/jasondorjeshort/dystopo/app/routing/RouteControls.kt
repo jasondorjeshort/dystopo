@@ -315,11 +315,17 @@ internal object CardBands {
     /**
      * The warning card's top: [chromeTop] (under the top chrome), or under the [compass] (left, top, right, bottom) when
      * it reaches into the card's band (across [cardLeft] to [cardRight], down to [bottomLimit]) below that top.
+     *
+     * T261: with [over], the top elements as drawn (left, top, right, bottom, the status bar among them), the top is under
+     * those across the card's span only, not [chromeTop]: on a phone on its side at font scale 2.0 the chips' column at
+     * the right set the top 50 dp lower than anything above the card, and the card's title, advice and actions then
+     * reached over the credit line.
      */
-    fun warningTop(chromeTop: Float, compass: FloatArray?, cardLeft: Float, cardRight: Float, bottomLimit: Float, gap: Float = 8f): Float {
-        val c = compass ?: return chromeTop
-        val inBand = c[0] < cardRight && c[2] > cardLeft && c[3] > chromeTop && c[1] < bottomLimit
-        return if (inBand) c[3] + gap else chromeTop
+    fun warningTop(chromeTop: Float, compass: FloatArray?, cardLeft: Float, cardRight: Float, bottomLimit: Float, gap: Float = 8f, over: List<List<Float>>? = null): Float {
+        val top = over?.filter { it[0] < cardRight && it[2] > cardLeft }?.maxOfOrNull { it[3] + gap } ?: chromeTop
+        val c = compass ?: return top
+        val inBand = c[0] < cardRight && c[2] > cardLeft && c[3] > top && c[1] < bottomLimit
+        return if (inBand) c[3] + gap else top
     }
 
     /** Whether the whole warning card fits its [room]: null before its [detail] was measured (it is drawn whole first). */
