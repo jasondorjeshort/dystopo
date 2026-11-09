@@ -1,7 +1,7 @@
 # 0030. Pinned tiles keep the content version they were fetched at; pinned bytes have their own budget
 
 Date: 2026-10-14
-Status: accepted
+Status: superseded by 0060 (in part: the refresh rule, the rejected background refetch and "one version throughout"; ADR 0060, 2026-11-09. The pinned budget and the version-keeping rule stand.)
 
 Record: the critic review of ADR 0027 (`../proposals/0027-critic-review.md`, 2026-10-13); PLANNING ›
 Design goals, "Pinned tiles and content versions (T95)"; the T91 and T95 log entries (2026-10-14, PRs
