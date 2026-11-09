@@ -769,22 +769,28 @@ object MapLayout {
     }
 
     /**
-     * T261: the elements across the top of the map as drawn now (the settings row, Search, the online column with its
-     * card, the track bar with its panel, the Routes chip, the navigation card; the rule's hidden ones left out) and the
-     * status bar as a band the window's width, dp from the window's top left (left, top, right, bottom); null before
-     * Search was placed. The warning card starts under the ones across its own span (`CardBands.warningTop`): on a phone
+     * T261: the elements across the top of the map as drawn now (the online column with its card, the track bar with its
+     * panel, the Routes chip, the navigation card; the rule's hidden ones left out), and the status bar, Search and the
+     * settings row as bands the window's width (the rule's frame: nothing else enters their band), dp from the window's
+     * top left (left, top, right, bottom); null before Search was placed. The warning card starts under the ones across its own span (`CardBands.warningTop`): on a phone
      * on its side the chips stand in their own column beside it, so their bottom no longer sets its top. Main thread.
      */
     fun topChromeDp(density: Float): List<List<Float>>? {
-        val ids = listOf(OverlayIds.SETTINGS_ROW, OverlayIds.SEARCH, OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.NAV_CARD)
-        val rects = ids.map { controls.lastRectOf(nameOf(it)) }
-        if (rects[1] == null) return null
-        return topChrome(rects.filterNotNull(), rootSize()[0], insetsPx()[1], density)
+        val search = controls.lastRectOf(nameOf(OverlayIds.SEARCH)) ?: return null
+        val bands = listOfNotNull(search, controls.lastRectOf(nameOf(OverlayIds.SETTINGS_ROW)))
+        val rects = listOf(OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.NAV_CARD).mapNotNull { controls.lastRectOf(nameOf(it)) }
+        return topChrome(bands, rects, rootSize()[0], insetsPx()[1], density)
     }
 
-    /** T261 (pure, `MapLayoutTest`): [rects] (px) and the status bar's band ([insetTopPx] tall, [widthPx] wide), in dp; empty rectangles left out. */
-    fun topChrome(rects: List<FloatArray>, widthPx: Float, insetTopPx: Float, density: Float): List<List<Float>> =
-        (rects.filter { it[2] > it[0] && it[3] > it[1] } + floatArrayOf(0f, 0f, widthPx, insetTopPx)).map { r -> r.map { it / density } }
+    /**
+     * T261 (pure, `MapLayoutTest`): [rects] (px) as they are, [bands] (px) widened to the window's [widthPx], and the
+     * status bar's band ([insetTopPx] tall), in dp; empty rectangles left out.
+     */
+    fun topChrome(bands: List<FloatArray>, rects: List<FloatArray>, widthPx: Float, insetTopPx: Float, density: Float): List<List<Float>> {
+        fun real(r: FloatArray) = r[2] > r[0] && r[3] > r[1]
+        val all = bands.filter(::real).map { floatArrayOf(0f, it[1], widthPx, it[3]) } + rects.filter(::real) + floatArrayOf(0f, 0f, widthPx, insetTopPx)
+        return all.map { r -> r.map { it / density } }
+    }
 
     private fun mapView(): View? = DystopoApp.instance.map.mapView
 
