@@ -21,6 +21,11 @@ import java.util.concurrent.TimeUnit
  *   `duringNavigation`, `topDp`, `maxHeightDp`, `navCardBottomDp`, `clearOfNavCard`).
  * - `POST /update/dismiss`: "Not now" (declines that version); `POST /update/ack`: "OK" on a refusal.
  * - `POST /update/reset`: forgets declined, refused and ready versions, the download and the last check time.
+ * - T247: a failed check's `message` is one sentence per kind; `GET /update` `state` adds `failureKind` (`server`: a
+ *   5xx, `timeout`, `network`, `parse`, `other`: a 4xx or anything else), `failureCode` (the HTTP status or null),
+ *   `failureDetail` (the raw text, also in the log) and `attempts` (2 when a 5xx or a timeout was tried again after a
+ *   minute, `Updater.RETRY_DELAY_MS`; the phase stays `checking` until then); at the top, `technicalDetails` (the fold's
+ *   lines) and `technicalDetailsOpen`. `POST /update/fold?open=1|0` opens or closes the row's Technical details fold.
  */
 object UpdateRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -41,6 +46,7 @@ object UpdateRoutes {
             "POST" to "/update/dismiss" -> { Updater.decline(); Response.json(Updater.json()) }
             "POST" to "/update/ack" -> { Updater.acknowledge(); Response.json(Updater.json()) }
             "POST" to "/update/reset" -> { Updater.reset(); Response.json(Updater.json()) }
+            "POST" to "/update/fold" -> { Updater.foldOpen = r.query["open"]?.toString() != "0"; Response.json(Updater.json()) }
             else -> Response.notFound()
         }
     }

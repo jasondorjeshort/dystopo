@@ -1,6 +1,6 @@
 ---
 date: 2026-11-07
-status: open
+status: resolved (T247)
 area: android / updater
 ---
 
@@ -31,3 +31,7 @@ which T223 already left as a follow-up ("the raw update-error text"): a person r
   code kept in the Technical details fold and the log; the strings listed (ADR 0031).
 - A 5xx or a timeout retries once after a minute before the row says anything, since GitHub's gateway timeouts
   are usually seconds long.
+- Built (T247): `UpdateFailure` in `Updater.kt` sorts a failure into server, timeout, network, parse or other and
+  gives the row its sentence (the fourth, for a 4xx or anything else: "The update check did not work. Try again
+  later."); the code and raw text sit under the row's Technical details and in the log; a 5xx or a timeout is tried
+  again after 60 s before the row says anything; `GET /update` reports `failureKind`, `failureCode` and `attempts`.
