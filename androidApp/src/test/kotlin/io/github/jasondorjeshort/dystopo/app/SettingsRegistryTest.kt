@@ -6,6 +6,8 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
  * T248: the phone's settings registry changes no stored or synced byte (ADR 0033). A store seeded with a non-default
@@ -92,6 +94,49 @@ class SettingsRegistryTest {
         assertEquals(DEFAULT_SYNCED, canon(SettingsSync.current()))
         assertEquals(DEFAULT_JSON, canon(AppSettings.json()))
         assertEquals(listOf<Pair<String, Any?>>("cacheBudgetMb" to 1024L), empty.writes, "loading writes only the budget's migration")
+    }
+
+    @Test
+    fun aChangeIsStoredUnderItsKeyInItsType() {
+        val p = FakePrefs(seed)
+        AppSettings.load(p)
+        for (s in AppSettings.PLAIN) {
+            assertTrue(s.key in seed, "the seed holds ${s.key}, so the snapshot covers it")
+            p.writes.clear()
+            @Suppress("UNCHECKED_CAST")
+            AppSettings.set(s as Setting<Any>, s.value)
+            assertEquals(listOf(s.key), p.writes.map { it.first }, "${s.key}: one write, under its own key")
+            assertEquals(seed.getValue(s.key)::class, p.writes.single().second!!::class, "${s.key}: stored in the type it always had")
+            assertEquals(seed.getValue(s.key), p.values[s.key], "${s.key}: the same stored value back")
+        }
+    }
+
+    @Test
+    fun everyLineReadsItsOwnValuesAndNamesItsKey() {
+        AppSettings.load(FakePrefs(seed))
+        val keys = AppSettings.PLAIN.map { it.key }
+        assertEquals(keys.toSet().size, keys.size, "one line per key")
+        assertTrue(keys.none { it in SettingsRoutes.COMPOSITE_KEYS }, "a key is plain or composite, not both")
+        assertEquals(SettingsRoutes.COMPOSITE_KEYS + keys, SettingsRoutes.KEYS)
+        for (s in AppSettings.PLAIN) {
+            @Suppress("UNCHECKED_CAST") val t = s as Setting<Any>
+            for (v in listOf(t.default, t.value)) {
+                // What a pull hands to POST /settings' parser (the synced value), and what GET /settings shows, both read back.
+                assertEquals(v, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf(s.key to t.syncValue(v))))[t], "${s.key} from ${t.syncValue(v)}")
+                assertEquals(v, t.parse(t.jsonValue(v)), "${s.key} from ${t.jsonValue(v)}")
+            }
+            val refused = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf(s.key to "nonsense")))
+            assertTrue(s.key in refused.message, "the 400 names ${s.key}: ${refused.message}")
+        }
+    }
+
+    @Test
+    fun aRequestMadeInCodeCarriesItsSettings() {
+        val ok = SettingsRoutes.Parsed.Ok.of(AppSettings.NAV_SPEECH, true).and(AppSettings.TURN_MARGIN_MIN, 45)
+        assertEquals(true, ok[AppSettings.NAV_SPEECH])
+        assertEquals(45, ok[AppSettings.TURN_MARGIN_MIN])
+        assertEquals(null, ok[AppSettings.WATER_SPOKEN])
+        assertEquals(setOf("navSpeech", "turnMarginMin"), ok.plain.keys.map { it.key }.toSet())
     }
 
     private companion object {

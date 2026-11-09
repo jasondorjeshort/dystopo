@@ -71,7 +71,7 @@ class ReadoutSettingsTest {
         val plan = SettingsSync.plan(b.settings(), mapOf(baro to "on", speed to null), SettingsRoutes.KEYS)
         assertEquals(mapOf<String, Any?>("readoutBarometer" to "off", "readout.foot.speed" to "shown=1;pace=1;damping=medium;pm=0;knots=0"), plan.params)
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(false, parsed.readoutBarometer)
+        assertEquals(false, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.READOUT_BAROMETER])
         assertTrue(ReadoutSettings.options(Activity.FOOT, parsed.readoutValues, barometer = true).speed.pace)
     }
 
@@ -82,14 +82,14 @@ class ReadoutSettingsTest {
         assertEquals(300, ReadoutSettings.options(Activity.FOOT, emptyMap(), barometer = true, climbWindowS = 300).climbWindowS)
         assertEquals(60, ReadoutSettings.options(Activity.FOOT, emptyMap(), barometer = true).climbWindowS)
         val p = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("readoutBar" to "0", "climbWindow" to "5min")))
-        assertEquals(false, p.readoutBar)
-        assertEquals(300, p.climbWindow)
-        assertEquals(true, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("readoutBar" to "on"))).readoutBar, "the synced value is on or off")
+        assertEquals(false, p[io.github.jasondorjeshort.dystopo.app.AppSettings.READOUT_BAR])
+        assertEquals(300, p[io.github.jasondorjeshort.dystopo.app.AppSettings.CLIMB_WINDOW])
+        assertEquals(true, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("readoutBar" to "on")))[io.github.jasondorjeshort.dystopo.app.AppSettings.READOUT_BAR], "the synced value is on or off")
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("climbWindow" to "120")))
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("readoutBar" to "maybe")))
         val none = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("units" to "m")))
-        assertNull(none.readoutBar)
-        assertNull(none.climbWindow)
+        assertNull(none[io.github.jasondorjeshort.dystopo.app.AppSettings.READOUT_BAR])
+        assertNull(none[io.github.jasondorjeshort.dystopo.app.AppSettings.CLIMB_WINDOW])
         assertTrue(ReadoutSettings.BAR in SettingsRoutes.KEYS && ReadoutSettings.CLIMB_WINDOW in SettingsRoutes.KEYS)
         // Synced: app.readoutBar on/off, app.climbWindow in seconds, applied on the other phone through the same parse.
         var clock = 1_000L
@@ -103,8 +103,8 @@ class ReadoutSettingsTest {
         b.apply(a.bundle(b.vector()), clock)
         val plan = SettingsSync.plan(b.settings(), mapOf(barKey to "on", winKey to "60"), SettingsRoutes.KEYS)
         val synced = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(false, synced.readoutBar)
-        assertEquals(300, synced.climbWindow)
+        assertEquals(false, synced[io.github.jasondorjeshort.dystopo.app.AppSettings.READOUT_BAR])
+        assertEquals(300, synced[io.github.jasondorjeshort.dystopo.app.AppSettings.CLIMB_WINDOW])
     }
 
     @Test

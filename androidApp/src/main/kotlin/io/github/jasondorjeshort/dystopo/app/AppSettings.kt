@@ -65,6 +65,7 @@ object AppSettings {
     /** T248: [load] from a store (a test passes an in-memory one, `SettingsRegistryTest`). */
     internal fun load(p: SharedPreferences) {
         prefs = p
+        for (s in PLAIN) s.load(p) // T248: every plain setting, before what reads them (the pace fit below)
         // Stored as a Float; round so 1.6 reads back as 1.6, not 1.600000023841858.
         textScale = MapLibreStyle.clampTextScale(Math.round(p.getFloat(KEY_TEXT_SCALE, 1.0f) * 1000.0) / 1000.0)
         unitPreference = UnitPreference(
@@ -75,89 +76,34 @@ object AppSettings {
         mapOptions = loadMapOptions(p)
         server = p.getString(KEY_SERVER, null) ?: defaultServer()
         loadCaches(p) // T41
-        routeSnapM = p.getInt(KEY_ROUTE_SNAP_M, DEFAULT_ROUTE_SNAP_M).coerceIn(ROUTE_SNAP_RANGE) // T57
-        debugFixedPort = p.getBoolean(KEY_DEBUG_FIXED_PORT, false)
-        navStaleS = p.getInt(KEY_NAV_STALE_S, DEFAULT_NAV_STALE_S).coerceIn(NAV_STALE_RANGE) // T91
-        navStartM = p.getInt(KEY_NAV_START_M, DEFAULT_NAV_START_M).coerceIn(NAV_START_RANGE)
-        navSnoozeMin = p.getInt(KEY_NAV_SNOOZE_MIN, DEFAULT_NAV_SNOOZE_MIN).coerceIn(NAV_SNOOZE_RANGE)
         mapOrientation = p.getString(KEY_MAP_ORIENTATION, null) ?: "north-up" // T100
-        navSpeech = p.getBoolean(KEY_NAV_SPEECH, false) // T126
-        // T164: the route-time fit and its switch, then the fits the router reads.
-        paceStandard = p.getBoolean(KEY_PACE_STANDARD, false)
-        paceFit = p.getString(KEY_PACE_FIT, "") ?: ""
-        paceSince = p.getLong(KEY_PACE_SINCE, 0L)
+        // T164: the fits the router reads (the fit and its switch are plain settings, loaded above).
         io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.activate()
         // T163
         turnDeadline = p.getString(KEY_TURN_DEADLINE, null)?.let { io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.parse(it)?.value } ?: io.github.jasondorjeshort.dystopo.nav.DeadlineSetting.DEFAULT
-        turnMarginMin = p.getInt(KEY_TURN_MARGIN_MIN, io.github.jasondorjeshort.dystopo.nav.TurnAround.DEFAULT_MARGIN_MIN).coerceIn(io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE)
         // T172
-        trackActivity = Activity.of(p.getString(KEY_TRACK_ACTIVITY, null)) ?: Activity.FOOT
         trackProfiles = Activity.entries.mapNotNull { a -> p.getString(RecordingProfiles.key(a), null)?.let { v -> RecordingProfiles.parseValue(a, v)?.let { a to it } } }.toMap()
         // T161
-        readoutBarometer = p.getBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER, true)
         readoutEntries = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS.mapNotNull { k ->
             val (a, e) = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.ofKey(k)!!
             p.getString(k, null)?.let { v -> io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.parseValue(a, e, v)?.let { k to it } }
         }.toMap()
-        // T176
-        mapControls = p.getInt(KEY_MAP_CONTROLS, 1).coerceIn(io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS)
-        recenterZoom = p.getInt(KEY_RECENTER_ZOOM, io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.DEFAULT_CLOSE_ZOOM).coerceIn(io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_RANGE)
-        orientationLock = p.getBoolean(KEY_ORIENTATION_LOCK, false)
-        // T177
-        readoutBar = p.getBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, true)
-        climbWindowS = p.getInt(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW, io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S)
-            .takeIf { it in io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.CLIMB_WINDOWS_S } ?: io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S
-        // T178
-        pressureFallWarning = p.getString(KEY_PRESSURE_FALL_WARNING, null)?.let { io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it) } ?: io.github.jasondorjeshort.dystopo.readout.FallWarning.DEFAULT
-        // T187
-        waterAlongRoute = p.getBoolean(KEY_WATER_ALONG_ROUTE, true)
-        waterSpoken = p.getBoolean(KEY_WATER_SPOKEN, false)
-        // T182
-        viewRangeKm = p.getInt(KEY_VIEW_RANGE, io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM).takeIf { it in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM }
-            ?: io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM
-        // T184
-        timeEstimateForm = p.getString(KEY_TIME_ESTIMATE_FORM, null)?.takeIf { it in TIME_FORMS } ?: TIME_RANGE
-        // T194
-        shadeSpoken = io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(p.getString(KEY_SHADE_SPOKEN, null)) ?: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT
-        // end T194
-        // T203
-        estimatePosition = p.getBoolean(KEY_ESTIMATE_POSITION, true)
-        // end T203
-        // T213
-        showDivergence = p.getBoolean(KEY_SHOW_DIVERGENCE, true)
-        // end T213
     }
 
     // ---- T164: route times fitted to the user's tracks (routing/PaceSettings); all three synced (sync/SettingsSync) ----
 
-    private const val KEY_PACE_STANDARD = "paceStandard"
-    private const val KEY_PACE_FIT = "paceFit"
-    private const val KEY_PACE_SINCE = "paceSince"
-
     /** "Use the standard estimate": routes keep the standard model even with a fit (off by default: the fit is used once ready). */
-    @Volatile var paceStandard: Boolean = false
-        private set
+    val paceStandard: Boolean get() = PACE_STANDARD.value
 
     /** The fit as its synced value ([io.github.jasondorjeshort.dystopo.routing.PaceFits.encode]); "" for none yet. */
-    @Volatile var paceFit: String = ""
-        private set
+    val paceFit: String get() = PACE_FIT.value
 
     /** Reset: only tracks started at or after this count (epoch ms; 0 all tracks). */
-    @Volatile var paceSince: Long = 0L
-        private set
-
-    fun setPace(standard: Boolean?, fit: String?, since: Long?) {
-        val e = prefs?.edit()
-        standard?.let { paceStandard = it; e?.putBoolean(KEY_PACE_STANDARD, it) }
-        fit?.let { paceFit = it; e?.putString(KEY_PACE_FIT, it) }
-        since?.let { paceSince = it; e?.putLong(KEY_PACE_SINCE, it) }
-        e?.apply()
-    }
+    val paceSince: Long get() = PACE_SINCE.value
 
     // ---- T163: the turn-around clock (nav/TurnAround): what it counts to and the margin; synced (sync/SettingsSync) ----
 
     private const val KEY_TURN_DEADLINE = "turnDeadline"
-    private const val KEY_TURN_MARGIN_MIN = "turnMarginMin"
     private const val KEY_TURN_TYPED = "turnTypedTime"
 
     /** `sunset` (the default), `civil` or a typed `HH:MM` ([io.github.jasondorjeshort.dystopo.nav.DeadlineSetting]); never off. */
@@ -165,39 +111,28 @@ object AppSettings {
         private set
 
     /** Minutes to be out before the deadline (default 30, 0 to 240). */
-    @Volatile var turnMarginMin: Int = io.github.jasondorjeshort.dystopo.nav.TurnAround.DEFAULT_MARGIN_MIN
-        private set
+    val turnMarginMin: Int get() = TURN_MARGIN_MIN.value
 
     /** The last time typed for the deadline (this phone only), so A time I type offers it again after sunset was chosen. */
     val turnTypedTime: String get() = prefs?.getString(KEY_TURN_TYPED, null) ?: "18:00"
 
-    fun setTurn(deadline: String?, marginMin: Int?) {
-        val e = prefs?.edit()
-        deadline?.let {
-            turnDeadline = it
-            e?.putString(KEY_TURN_DEADLINE, it)
-            if (':' in it) e?.putString(KEY_TURN_TYPED, it)
-        }
-        marginMin?.let { turnMarginMin = it; e?.putInt(KEY_TURN_MARGIN_MIN, it) }
-        e?.apply()
+    /** The deadline, and a typed time also as [turnTypedTime] (a composite: two stored keys, one synced). */
+    fun setTurnDeadline(deadline: String) {
+        turnDeadline = deadline
+        prefs?.edit()?.apply {
+            putString(KEY_TURN_DEADLINE, deadline)
+            if (':' in deadline) putString(KEY_TURN_TYPED, deadline)
+        }?.apply()
     }
 
     // ---- T172: the recording activity remembered for the next Record, and one profile value per activity (tracking/ActivityPicker); synced ----
 
-    private const val KEY_TRACK_ACTIVITY = "trackActivity"
-
     /** The activity the picker marks and a recording with none given starts with (T161's readout reads it too). */
-    @Volatile var trackActivity: Activity = Activity.FOOT
-        private set
+    val trackActivity: Activity get() = TRACK_ACTIVITY.value
 
     /** The stored choices per activity ([RecordingProfiles.encode]'s form); an activity missing has its defaults. */
     @Volatile var trackProfiles: Map<Activity, String> = emptyMap()
         private set
-
-    fun setTrackActivity(a: Activity) {
-        trackActivity = a
-        prefs?.edit()?.putString(KEY_TRACK_ACTIVITY, a.code)?.apply()
-    }
 
     /** Stores [a]'s choices ([value] already checked by [RecordingProfiles.parseValue]; null: back to the defaults). */
     fun setTrackProfile(a: Activity, value: String?) {
@@ -211,17 +146,11 @@ object AppSettings {
     // ---- T161: the live readout's options per activity and entry, and the barometer switch (readout/ReadoutSettings); synced ----
 
     /** The barometer switch (default on): the readout's elevation and climb use the phone's barometer on foot, bike and boat. */
-    @Volatile var readoutBarometer: Boolean = true
-        private set
+    val readoutBarometer: Boolean get() = READOUT_BAROMETER.value
 
     /** The stored options by [io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.key] (`readout.<activity>.<entry>`); missing ones are the defaults. */
     @Volatile var readoutEntries: Map<String, String> = emptyMap()
         private set
-
-    fun setReadoutBarometer(on: Boolean) {
-        readoutBarometer = on
-        prefs?.edit()?.putBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER, on)?.apply()
-    }
 
     /** Stores one activity's entry options ([value] already checked by `ReadoutSettings.parseValue`; null: back to the defaults). */
     fun setReadoutEntry(key: String, value: String?) {
@@ -236,91 +165,41 @@ object AppSettings {
     // ---- T177: the readout bar's switch and the climb window (readout/ReadoutSettings); synced ----
 
     /** The bar beside the scale bar (default on); off draws the scale bar alone and stops the barometer. */
-    @Volatile var readoutBar: Boolean = true
-        private set
+    val readoutBar: Boolean get() = READOUT_BAR.value
 
     /** The climb rate's window in seconds: 30, 60 (default), 300 or 600. */
-    @Volatile var climbWindowS: Int = io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S
-        private set
-
-    fun setReadoutBar(bar: Boolean?, windowS: Int?) {
-        val e = prefs?.edit()
-        bar?.let { readoutBar = it; e?.putBoolean(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, it) }
-        windowS?.let { climbWindowS = it; e?.putInt(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW, it) }
-        e?.apply()
-    }
+    val climbWindowS: Int get() = CLIMB_WINDOW.value
 
     // ---- T178: the pressure-fall warning (readout/PressureWatch); synced ----
 
     const val KEY_PRESSURE_FALL_WARNING = "pressureFallWarning"
 
     /** The fall in 3 hours that warns: Off, More warnings (3 hPa), Standard (4, default) or Fewer (6). */
-    @Volatile var pressureFallWarning: io.github.jasondorjeshort.dystopo.readout.FallWarning = io.github.jasondorjeshort.dystopo.readout.FallWarning.DEFAULT
-        private set
-
-    fun setPressureFallWarning(w: io.github.jasondorjeshort.dystopo.readout.FallWarning) {
-        pressureFallWarning = w
-        prefs?.edit()?.putString(KEY_PRESSURE_FALL_WARNING, w.code)?.apply()
-    }
+    val pressureFallWarning: io.github.jasondorjeshort.dystopo.readout.FallWarning get() = PRESSURE_FALL_WARNING.value
 
     // ---- T176: the position button's layout, its close zoom and the orientation lock (controls/RecenterButton); synced ----
 
-    private const val KEY_MAP_CONTROLS = "mapControls"
-    private const val KEY_RECENTER_ZOOM = "recenterZoom"
-    private const val KEY_ORIENTATION_LOCK = "orientationLock"
-
     /** The position button's layout: 1 (the default, one button), 2 (plus the orientation button), 3 (plus the lock). */
-    @Volatile var mapControls: Int = 1
-        private set
+    val mapControls: Int get() = MAP_CONTROLS.value
 
     /** The zoom a tap on the position button brings the map to (default 14); a tap never zooms out. */
-    @Volatile var recenterZoom: Int = io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.DEFAULT_CLOSE_ZOOM
-        private set
+    val recenterZoom: Int get() = RECENTER_ZOOM.value
 
     /** "Keep north up" (default off): no gesture changes the orientation; only the orientation button and the navigation card do. */
-    @Volatile var orientationLock: Boolean = false
-        private set
-
-    fun setMapControls(layout: Int?, closeZoom: Int?, lock: Boolean?) {
-        val e = prefs?.edit()
-        layout?.let { mapControls = it; e?.putInt(KEY_MAP_CONTROLS, it) }
-        closeZoom?.let { recenterZoom = it; e?.putInt(KEY_RECENTER_ZOOM, it) }
-        lock?.let { orientationLock = it; e?.putBoolean(KEY_ORIENTATION_LOCK, it) }
-        e?.apply()
-    }
+    val orientationLock: Boolean get() = ORIENTATION_LOCK.value
 
     // ---- T187: water along the route (routing/RouteWater) and its spoken line (nav/NavSession); synced ----
 
-    private const val KEY_WATER_ALONG_ROUTE = "waterAlongRoute"
-    private const val KEY_WATER_SPOKEN = "waterSpoken"
-
     /** Water along a planned or navigated route on the cards, the map and the navigation card (default on). */
-    @Volatile var waterAlongRoute: Boolean = true
-        private set
+    val waterAlongRoute: Boolean get() = WATER_ALONG_ROUTE.value
 
     /** While navigating, the last water before a stretch of more than 5 km without any is said once (default off). */
-    @Volatile var waterSpoken: Boolean = false
-        private set
-
-    fun setWater(along: Boolean?, spoken: Boolean?) {
-        val e = prefs?.edit()
-        along?.let { waterAlongRoute = it; e?.putBoolean(KEY_WATER_ALONG_ROUTE, it) }
-        spoken?.let { waterSpoken = it; e?.putBoolean(KEY_WATER_SPOKEN, it) }
-        e?.apply()
-    }
+    val waterSpoken: Boolean get() = WATER_SPOKEN.value
 
     // ---- T182: how far "What can I see from here" looks (viewshed/ViewshedSession); synced ----
 
-    private const val KEY_VIEW_RANGE = "viewRange"
-
     /** The viewshed's range in km: 10, 30 (the default) or 100 (the survey: the apps split, and the phone's cost differs). */
-    @Volatile var viewRangeKm: Int = io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM
-        private set
-
-    fun setViewRange(km: Int) {
-        viewRangeKm = km
-        prefs?.edit()?.putInt(KEY_VIEW_RANGE, km)?.apply()
-    }
+    val viewRangeKm: Int get() = VIEW_RANGE.value
 
     // ---- T184: the route card's time as a range or one number (routing/PaceSettings); synced ----
 
@@ -330,26 +209,14 @@ object AppSettings {
     val TIME_FORMS = listOf(TIME_RANGE, TIME_ONE)
 
     /** The route card's time: `range` ("about 4:30" over "4:10 to 4:50", the default) or `one` (the single number). */
-    @Volatile var timeEstimateForm: String = TIME_RANGE
-        private set
-
-    fun setTimeEstimateForm(form: String) {
-        timeEstimateForm = form
-        prefs?.edit()?.putString(KEY_TIME_ESTIMATE_FORM, form)?.apply()
-    }
+    val timeEstimateForm: String get() = TIME_ESTIMATE_FORM.value
 
     // ---- T194: the spoken line before a long sunny stretch while navigating (nav/NavShade); synced ----
 
     const val KEY_SHADE_SPOKEN = "shadeSpoken"
 
     /** `off`, `hot` (on hot days, the default: 25 C at the walker's height, routing/HotDay) or `always`. */
-    @Volatile var shadeSpoken: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken = io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT
-        private set
-
-    fun setShadeSpoken(v: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken) {
-        shadeSpoken = v
-        prefs?.edit()?.putString(KEY_SHADE_SPOKEN, v.key)?.apply()
-    }
+    val shadeSpoken: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken get() = SHADE_SPOKEN.value
     // end T194
 
     // ---- T203: a position from the terrain while the GPS is poor or gone (tracking/TerrainSource); synced ----
@@ -357,13 +224,7 @@ object AppSettings {
     const val KEY_ESTIMATE_POSITION = "estimatePosition"
 
     /** "Estimate position when GPS is poor", on by default (ADR 0044: no practice to follow, a cost in battery, a guess that can mislead). */
-    @Volatile var estimatePosition: Boolean = true
-        private set
-
-    fun setEstimatePosition(on: Boolean) {
-        estimatePosition = on
-        prefs?.edit()?.putBoolean(KEY_ESTIMATE_POSITION, on)?.apply()
-    }
+    val estimatePosition: Boolean get() = ESTIMATE_POSITION.value
     // end T203
 
     // ---- T213: where the user's tracks leave the mapped trails, on the map (divergence/DivergenceLayer); synced ----
@@ -371,26 +232,12 @@ object AppSettings {
     const val KEY_SHOW_DIVERGENCE = "showDivergence"
 
     /** "Show trail disagreements", on by default: a layer switch as every overlay has (the survey of 2026-11-02). */
-    @Volatile var showDivergence: Boolean = true
-        private set
-
-    fun setShowDivergence(on: Boolean) {
-        showDivergence = on
-        prefs?.edit()?.putBoolean(KEY_SHOW_DIVERGENCE, on)?.apply()
-    }
+    val showDivergence: Boolean get() = SHOW_DIVERGENCE.value
     // end T213
 
     // ---- T126: spoken turn directions while navigating (nav/NavSpeech), off by default; synced (sync/SettingsSync) ----
 
-    private const val KEY_NAV_SPEECH = "navSpeech"
-
-    @Volatile var navSpeech: Boolean = false
-        private set
-
-    fun setNavSpeech(on: Boolean) {
-        navSpeech = on
-        prefs?.edit()?.putBoolean(KEY_NAV_SPEECH, on)?.apply()
-    }
+    val navSpeech: Boolean get() = NAV_SPEECH.value
 
     // ---- T100: the map orientation kept across restarts (controls/MapOrientation): north-up or facing ----
 
@@ -406,9 +253,6 @@ object AppSettings {
 
     // ---- T91: navigation thresholds (the T65 constants) ----
 
-    private const val KEY_NAV_STALE_S = "navStaleS"
-    private const val KEY_NAV_START_M = "navStartM"
-    private const val KEY_NAV_SNOOZE_MIN = "navSnoozeMin"
     const val DEFAULT_NAV_STALE_S = 30
     const val DEFAULT_NAV_START_M = 2000
     const val DEFAULT_NAV_SNOOZE_MIN = 10
@@ -417,52 +261,27 @@ object AppSettings {
     val NAV_SNOOZE_RANGE = 1..240
 
     /** A GPS fix older than this is not used, and with no usable fix for this long the bar says so (seconds). */
-    @Volatile var navStaleS: Int = DEFAULT_NAV_STALE_S
-        private set
+    val navStaleS: Int get() = NAV_STALE_S.value
     /** The last known location starts navigation only within this of the line (metres). */
-    @Volatile var navStartM: Int = DEFAULT_NAV_START_M
-        private set
+    val navStartM: Int get() = NAV_START_M.value
     /** The banner's Snooze button holds the off-route alert this long (minutes). */
-    @Volatile var navSnoozeMin: Int = DEFAULT_NAV_SNOOZE_MIN
-        private set
-
-    fun setNav(staleS: Int?, startM: Int?, snoozeMin: Int?) {
-        val e = prefs?.edit()
-        staleS?.let { navStaleS = it; e?.putInt(KEY_NAV_STALE_S, it) }
-        startM?.let { navStartM = it; e?.putInt(KEY_NAV_START_M, it) }
-        snoozeMin?.let { navSnoozeMin = it; e?.putInt(KEY_NAV_SNOOZE_MIN, it) }
-        e?.apply()
-    }
+    val navSnoozeMin: Int get() = NAV_SNOOZE_MIN.value
 
     // ---- T57: routing snap distance, debug server port ----
 
-    private const val KEY_ROUTE_SNAP_M = "routeSnapM"
-    private const val KEY_DEBUG_FIXED_PORT = "debugFixedPort"
     const val DEFAULT_ROUTE_SNAP_M = 300
     /** How far a tapped start or end may be from the nearest trail or road, metres. */
     val ROUTE_SNAP_RANGE = 50..1000
 
     /** T57: the route planner's snap distance (default 300 m, up to 1 km). */
-    @Volatile var routeSnapM: Int = DEFAULT_ROUTE_SNAP_M
-        private set
-
-    fun setRouteSnapM(m: Int) {
-        routeSnapM = m
-        prefs?.edit()?.putInt(KEY_ROUTE_SNAP_M, m)?.apply()
-    }
+    val routeSnapM: Int get() = ROUTE_SNAP_M.value
 
     /**
      * T57: debug builds serve the debug routes on a random loopback port announced only in logcat
      * ([DystopoApp.debugPort]); with this set (`POST /settings?debugFixedPort=1`, from the next launch) they
      * stay on the tile server's port 8686 with the `/health` token bootstrap, as before T57.
      */
-    @Volatile var debugFixedPort: Boolean = false
-        private set
-
-    fun setDebugFixedPort(on: Boolean) {
-        debugFixedPort = on
-        prefs?.edit()?.putBoolean(KEY_DEBUG_FIXED_PORT, on)?.commit() // commit: usually followed by a restart
-    }
+    val debugFixedPort: Boolean get() = DEBUG_FIXED_PORT.value
 
     // ---- T41: cache caps ----
 
@@ -509,7 +328,6 @@ object AppSettings {
         onlineCacheMb = p.getLong(KEY_ONLINE_CACHE_MB, DEFAULT_ONLINE_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
         contourCacheMb = p.getLong(KEY_CONTOUR_CACHE_MB, DEFAULT_CONTOUR_CACHE_MB).coerceIn(CACHE_CAP_MB_RANGE)
         pinnedCacheMb = p.getLong(KEY_PINNED_CACHE_MB, DEFAULT_PINNED_CACHE_MB).coerceIn(PINNED_CACHE_MB_RANGE) // T115
-        tripCorridorM = p.getInt(KEY_TRIP_CORRIDOR_M, io.github.jasondorjeshort.dystopo.areas.TripCorridor.DEFAULT_WIDTH_M).takeIf { io.github.jasondorjeshort.dystopo.areas.TripCorridor.validWidth(it) } ?: io.github.jasondorjeshort.dystopo.areas.TripCorridor.DEFAULT_WIDTH_M // T130
         val plan = io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan
         cacheBudgetMb = if (p.contains(KEY_CACHE_BUDGET_MB)) {
             p.getLong(KEY_CACHE_BUDGET_MB, plan.DEFAULT_MB).coerceIn(plan.RANGE_MB)
@@ -545,10 +363,8 @@ object AppSettings {
     }
 
     // T130: the corridor every trip keeps offline, metres each side (0: off); validated and applied by areas/TripCorridors.
-    private const val KEY_TRIP_CORRIDOR_M = "tripCorridorM"
-    @Volatile var tripCorridorM: Int = io.github.jasondorjeshort.dystopo.areas.TripCorridor.DEFAULT_WIDTH_M
-        private set
-    fun setTripCorridorM(m: Int) { tripCorridorM = m; prefs?.edit()?.putInt(KEY_TRIP_CORRIDOR_M, m)?.apply() }
+    val tripCorridorM: Int get() = TRIP_CORRIDOR_M.value
+    fun setTripCorridorM(m: Int) = set(TRIP_CORRIDOR_M, m)
 
     /** Sets and persists a cap (the caller checked the range and resizes the cache). */
     fun setOnlineCacheMb(mb: Long) {
@@ -656,37 +472,167 @@ object AppSettings {
         "unitsSet" to (unitPreference.units != null),
         "unitsSource" to (unitPreference.source ?: "locale default (not set yet)"),
         "warmup" to warmup,
-        "tripCorridorM" to tripCorridorM, // T130
         "onlineCacheMb" to onlineCacheMb, // T41
         "pinnedCacheMb" to pinnedCacheMb, // T91
         "contourCacheMb" to contourCacheMb,
         "cacheBudgetMb" to cacheBudgetMb, // T112
-        "routeSnapM" to routeSnapM, // T57
-        "routeSnapRange" to listOf(ROUTE_SNAP_RANGE.first, ROUTE_SNAP_RANGE.last),
-        "debugFixedPort" to debugFixedPort,
-        "navStaleS" to navStaleS, "navStartM" to navStartM, "navSnoozeMin" to navSnoozeMin, // T91
-        "navSpeech" to navSpeech, // T126
-        "paceStandard" to paceStandard, "paceFit" to paceFit, "paceSince" to paceSince, // T164
-        "turnDeadline" to turnDeadline, "turnMarginMin" to turnMarginMin, // T163
-        // T172: the remembered activity, its profile's four choices, and every activity's (stored value or null for the defaults)
-        "trackActivity" to trackActivity.code,
+        "routeSnapRange" to listOf(ROUTE_SNAP_RANGE.first, ROUTE_SNAP_RANGE.last), // T57
+        "turnDeadline" to turnDeadline, // T163
+        // T172: the remembered activity's profile's four choices, and every activity's (stored value or null for the defaults)
         "trackProfile" to RecordingProfiles.json(trackProfile()),
         "trackProfiles" to Activity.entries.associate { a -> a.code to (RecordingProfiles.json(trackProfile(a)) + mapOf("stored" to trackProfiles[a])) },
-        // T161: the barometer switch, the remembered activity's readout options per entry, and the stored values
-        "readoutBarometer" to readoutBarometer,
+        // T161: the remembered activity's readout options per entry, and the stored values
         "readout" to readoutOptions().let { o -> io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.entries.associate { e -> e.code to o[e].encode() } },
         "readoutStored" to readoutEntries,
-        "mapControls" to mapControls, "recenterZoom" to recenterZoom, "orientationLock" to orientationLock, // T176
-        "readoutBar" to readoutBar, "climbWindow" to climbWindowS, // T177
-        "pressureFallWarning" to pressureFallWarning.code, // T178
-        "waterAlongRoute" to waterAlongRoute, "waterSpoken" to waterSpoken, // T187
-        "viewRange" to viewRangeKm, // T182
-        "timeEstimateForm" to timeEstimateForm, // T184
-        "shadeSpoken" to shadeSpoken.key, // T194
-        // end T194
-        "estimatePosition" to estimatePosition, // T203
-        // end T203
-        KEY_SHOW_DIVERGENCE to showDivergence, // T213
-        // end T213
-    ) + mapOptions.json(units) // T47
+    ) + PLAIN.associate { it.key to it.jsonValue() } + mapOptions.json(units) // T248: every plain setting; T47
+
+    // ---- T248: the registry of plain settings ----
+    //
+    // One line per setting whose value is one stored key: its key (the `POST /settings` key, the stored key and, when
+    // synced, `app.<key>` in the sync log), its default and its kind. The line alone puts it in `GET /settings`, in
+    // `POST /settings` (parsed, refused with a 400 naming the key, stored, published), in [load] and in the sync replica
+    // (`SettingsSync.current()`, `publish()` and `pull()`); the app reads `X.value`. What still takes code: a row in
+    // `settings/SettingsLayout.kt` and `SettingsPages.kt` (`change(SettingsRoutes.Parsed.Ok.of(X, v))`), a help text,
+    // and a line in `SettingsRoutes.apply` only when a change must act at once. Composites keep their own code and are
+    // listed by key in `SettingsRoutes.COMPOSITE_KEYS`. A key's stored type never changes (ADR 0033); renaming one is a
+    // migration. Declared last: the lines read the ranges above.
+
+    private val registry = ArrayList<Setting<*>>()
+
+    /** Every plain setting, in the order of the lines below. */
+    val PLAIN: List<Setting<*>> get() = registry
+
+    /** Sets and stores a plain setting (the caller parsed it; `SettingsRoutes.apply` acts on the change). */
+    fun <T : Any> set(s: Setting<T>, v: T) {
+        s.value = v
+        prefs?.edit()?.also { s.write(it, v) }?.let { if (s.commitNow) it.commit() else it.apply() }
+    }
+
+    private fun <T : Any> add(s: Setting<T>): Setting<T> {
+        require(registry.none { it.key == s.key }) { "two plain settings named ${s.key}" }
+        registry += s
+        return s
+    }
+
+    /** A switch: `1`/`0` (also `true`, `on`, `yes`) to `POST /settings`, stored as a boolean, synced `on`/`off`. */
+    private fun flag(key: String, default: Boolean, synced: Boolean = false, commitNow: Boolean = false) =
+        add(Setting(key, default, synced, Setting.Type.FLAG, { Setting.parseFlag(it) }, { "$key must be 1 or 0 (got $it)" }, commitNow = commitNow))
+
+    /** A whole number in [range] (a decimal is rounded), stored as an int and synced as its digits; a stored value outside is brought into it. */
+    private fun whole(key: String, default: Int, range: IntRange, unit: String, synced: Boolean = false) =
+        add(Setting(key, default, synced, Setting.Type.INT, { Setting.parseWhole(it, range) }, { "$key must be between ${range.first} and ${range.last} $unit (got $it)" }, { it.coerceIn(range) }))
+
+    val ROUTE_SNAP_M = whole("routeSnapM", DEFAULT_ROUTE_SNAP_M, ROUTE_SNAP_RANGE, "m") // T57: the next plan uses it
+    val DEBUG_FIXED_PORT = flag("debugFixedPort", false, commitNow = true) // T57: from the next launch (committed: a restart follows)
+    val NAV_STALE_S = whole("navStaleS", DEFAULT_NAV_STALE_S, NAV_STALE_RANGE, "s") // T91: from the next navigation start
+    val NAV_START_M = whole("navStartM", DEFAULT_NAV_START_M, NAV_START_RANGE, "m")
+    val NAV_SNOOZE_MIN = whole("navSnoozeMin", DEFAULT_NAV_SNOOZE_MIN, NAV_SNOOZE_RANGE, "min")
+    val NAV_SPEECH = flag("navSpeech", false, synced = true) // T126
+    val TRIP_CORRIDOR_M = add(Setting("tripCorridorM", io.github.jasondorjeshort.dystopo.areas.TripCorridor.DEFAULT_WIDTH_M, true, Setting.Type.INT, // T130, T136: whole metres, 0 off
+        { io.github.jasondorjeshort.dystopo.app.areas.parseCorridorWidth(it) }, { io.github.jasondorjeshort.dystopo.app.areas.corridorWidthError(it) },
+        { it.takeIf { m -> io.github.jasondorjeshort.dystopo.areas.TripCorridor.validWidth(m) } }))
+    val PACE_STANDARD = flag("paceStandard", false, synced = true) // T164
+    val PACE_FIT = add(Setting("paceFit", "", true, Setting.Type.STRING, // T164: PaceFits.encode's value, "" for none
+        { r -> r.toString().trim().takeIf { io.github.jasondorjeshort.dystopo.routing.PaceFits.decode(it) != null } }, { "paceFit is not a fit this build reads (got ${it.toString().trim()})" }))
+    val PACE_SINCE = add(Setting("paceSince", 0L, true, Setting.Type.LONG, // T164: epoch ms, 0 every track
+        { r -> ((r as? Number)?.toLong() ?: r.toString().trim().toLongOrNull())?.takeIf { it >= 0 } }, { "paceSince must be a time in epoch milliseconds, 0 for every track (got $it)" }))
+    val TURN_MARGIN_MIN = whole("turnMarginMin", io.github.jasondorjeshort.dystopo.nav.TurnAround.DEFAULT_MARGIN_MIN, io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE, "min", synced = true) // T163
+    val TRACK_ACTIVITY = add(Setting("trackActivity", Activity.FOOT, true, Setting.Type.code({ it.code }, { Activity.of(it) }), // T172: an activity code
+        { Activity.of(it.toString().trim().lowercase()) }, { "trackActivity must be one of ${Activity.entries.map { a -> a.code }} (got $it)" }))
+    val READOUT_BAROMETER = flag(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER, true, synced = true) // T161
+    val MAP_CONTROLS = whole("mapControls", 1, io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS, "buttons", synced = true) // T176
+    val RECENTER_ZOOM = whole("recenterZoom", io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.DEFAULT_CLOSE_ZOOM, io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_RANGE, "(zoom level)", synced = true)
+    val ORIENTATION_LOCK = flag("orientationLock", false, synced = true)
+    val READOUT_BAR = flag(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAR, true, synced = true) // T177
+    val CLIMB_WINDOW = add(Setting(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.CLIMB_WINDOW, io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.DEFAULT_CLIMB_WINDOW_S, true, Setting.Type.INT, // T177: seconds
+        { io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.parseClimbWindow(it.toString()) }, { "climbWindow must be 30, 60, 300 or 600 seconds (got $it)" },
+        { it.takeIf { s -> s in io.github.jasondorjeshort.dystopo.readout.ReadoutOptions.CLIMB_WINDOWS_S } }))
+    val PRESSURE_FALL_WARNING = add(Setting(KEY_PRESSURE_FALL_WARNING, io.github.jasondorjeshort.dystopo.readout.FallWarning.DEFAULT, true, // T178
+        Setting.Type.code({ it.code }, { io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it) }),
+        { io.github.jasondorjeshort.dystopo.readout.FallWarning.parse(it.toString()) }, { "$KEY_PRESSURE_FALL_WARNING must be off, more, standard or fewer (or 0, 3, 4, 6) (got $it)" }))
+    val WATER_ALONG_ROUTE = flag("waterAlongRoute", true, synced = true) // T187
+    val WATER_SPOKEN = flag("waterSpoken", false, synced = true)
+    val VIEW_RANGE = add(Setting("viewRange", io.github.jasondorjeshort.dystopo.dem.Viewshed.DEFAULT_RANGE_KM, true, Setting.Type.INT, // T182: km
+        { raw -> ((raw as? Number)?.toDouble() ?: raw.toString().trim().removeSuffix("km").trim().toDoubleOrNull())?.takeIf { it.isFinite() && it.toInt().toDouble() == it && it.toInt() in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM }?.toInt() },
+        { "viewRange must be one of ${io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM.joinToString(", ")} km (got $it)" },
+        { it.takeIf { km -> km in io.github.jasondorjeshort.dystopo.dem.Viewshed.RANGES_KM } }))
+    val TIME_ESTIMATE_FORM = add(Setting(KEY_TIME_ESTIMATE_FORM, TIME_RANGE, true, Setting.Type.STRING, // T184
+        { v -> v.toString().trim().lowercase().takeIf { it in TIME_FORMS } }, { "$KEY_TIME_ESTIMATE_FORM must be range or one (got $it)" }, { it.takeIf { f -> f in TIME_FORMS } }))
+    val SHADE_SPOKEN = add(Setting(KEY_SHADE_SPOKEN, io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.DEFAULT, true, // T194
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(it) }),
+        { io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(it.toString()) }, { "$KEY_SHADE_SPOKEN must be off, hot or always (got $it)" }))
+    val ESTIMATE_POSITION = flag(KEY_ESTIMATE_POSITION, true, synced = true) // T203
+    val SHOW_DIVERGENCE = flag(KEY_SHOW_DIVERGENCE, true, synced = true) // T213
+}
+
+/**
+ * T248: one plain phone setting in [AppSettings.PLAIN] (see the registry's comment there): its [key], [default], whether
+ * it is [synced] as `app.<key>`, its stored [type], how `POST /settings` reads it ([parse], refused with [error]) and the
+ * check a stored value passes (else the default). [value] is what the app uses; [AppSettings.set] changes and stores it.
+ */
+class Setting<T : Any> internal constructor(
+    val key: String,
+    val default: T,
+    val synced: Boolean,
+    internal val type: Type<T>,
+    private val parser: (Any) -> T?,
+    private val refusal: (Any) -> String,
+    private val check: (T) -> T? = { it },
+    internal val commitNow: Boolean = false,
+) {
+    @Volatile var value: T = default
+        internal set
+
+    /** `POST /settings`' reading of [raw] (a query string or a JSON value): the value, or null for one refused with [error]. */
+    fun parse(raw: Any): T? = parser(raw)
+
+    /** The 400's sentence for [raw]; it names the key. */
+    fun error(raw: Any): String = refusal(raw)
+
+    /** The value in the sync log (`on`/`off` for a switch, a code for a choice). */
+    fun syncValue(v: T = value): String = type.sync(v)
+
+    /** The value in `GET /settings` (a boolean, a number, a string or a choice's code). */
+    fun jsonValue(v: T = value): Any = type.json(v)
+
+    internal fun load(p: SharedPreferences) { value = check(type.read(p, key, default)) ?: default }
+
+    internal fun write(e: SharedPreferences.Editor, v: T) = type.write(e, key, v)
+
+    override fun toString() = key
+
+    /** How a value is stored (its preferences type, which never changes for a key), synced and reported. */
+    class Type<T : Any>(
+        internal val read: (SharedPreferences, String, T) -> T,
+        internal val write: (SharedPreferences.Editor, String, T) -> Unit,
+        internal val sync: (T) -> String = { it.toString() },
+        internal val json: (T) -> Any = { it },
+    ) {
+        companion object {
+            val FLAG = Type<Boolean>({ p, k, d -> p.getBoolean(k, d) }, { e, k, v -> e.putBoolean(k, v) }, { if (it) "on" else "off" })
+            val INT = Type<Int>({ p, k, d -> p.getInt(k, d) }, { e, k, v -> e.putInt(k, v) })
+            val LONG = Type<Long>({ p, k, d -> p.getLong(k, d) }, { e, k, v -> e.putLong(k, v) })
+            val STRING = Type<String>({ p, k, d -> p.getString(k, d) ?: d }, { e, k, v -> e.putString(k, v) })
+
+            /** A choice stored, synced and reported as its code; a stored code this build does not read is the default. */
+            fun <T : Any> code(code: (T) -> String, of: (String) -> T?) =
+                Type<T>({ p, k, d -> p.getString(k, null)?.let(of) ?: d }, { e, k, v -> e.putString(k, code(v)) }, code, code)
+        }
+    }
+
+    companion object {
+        /** `1`, `true`, `on`, `yes` or `0`, `false`, `off`, `no` (any case); null for anything else. */
+        fun parseFlag(raw: Any): Boolean? = when (raw.toString().trim().lowercase()) {
+            "1", "true", "on", "yes" -> true
+            "0", "false", "off", "no" -> false
+            else -> null
+        }
+
+        /** A number within [range], rounded to a whole one; null outside it or not a number. */
+        fun parseWhole(raw: Any, range: IntRange): Int? {
+            val v = (raw as? Number)?.toDouble() ?: raw.toString().trim().toDoubleOrNull()
+            if (v == null || !v.isFinite() || v < range.first || v > range.last) return null
+            return Math.round(v).toInt()
+        }
+    }
 }

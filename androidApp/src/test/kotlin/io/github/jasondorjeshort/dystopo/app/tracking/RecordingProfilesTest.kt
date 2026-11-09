@@ -45,7 +45,7 @@ class RecordingProfilesTest {
 
     @Test
     fun theRowKeysEditAndTheRememberedActivityParses() {
-        assertEquals(Activity.BOAT, ok("trackActivity" to "boat").trackActivity)
+        assertEquals(Activity.BOAT, ok("trackActivity" to "boat")[io.github.jasondorjeshort.dystopo.app.AppSettings.TRACK_ACTIVITY])
         assertTrue(bad("trackActivity" to "skate").message.contains("trackActivity"))
         val e = ok("trackAccuracyM" to "off", "trackAutoPause" to "1", "trackNetworkFallback" to "0", "trackIntervalS" to "10").trackEdit!!
         assertEquals(RecordingProfiles.Edit(accuracyGiven = true, accuracyM = null, autoPause = true, networkFallback = false, intervalMs = 10_000), e)
@@ -88,7 +88,7 @@ class RecordingProfilesTest {
         val plan = SettingsSync.plan(b.settings(), mapOf(act to "foot", prof to null), SettingsRoutes.KEYS)
         assertEquals(mapOf<String, Any?>("trackActivity" to "bike", "trackProfile.bike" to "acc=20;autopause=1;net=1;interval=2000"), plan.params)
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(Activity.BIKE, parsed.trackActivity)
+        assertEquals(Activity.BIKE, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.TRACK_ACTIVITY])
         assertEquals(2000L, RecordingProfiles.profile(Activity.BIKE, parsed.trackProfiles[Activity.BIKE]).intervalMs)
         assertTrue(SettingsSync.plan(b.settings(), values, SettingsRoutes.KEYS).params.isEmpty(), "already the same: nothing to apply")
     }

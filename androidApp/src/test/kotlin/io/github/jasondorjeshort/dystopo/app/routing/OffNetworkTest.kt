@@ -70,13 +70,13 @@ class OffNetworkTest {
     fun snapSettingIsValidated() {
         val ok = SettingsRoutes.parse(mapOf("routeSnapM" to "750"))
         assertIs<SettingsRoutes.Parsed.Ok>(ok)
-        assertEquals(750, ok.routeSnapM)
+        assertEquals(750, ok[io.github.jasondorjeshort.dystopo.app.AppSettings.ROUTE_SNAP_M])
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("routeSnapM" to "1500")))
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("routeSnapM" to "20")))
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("routeSnapM" to "far")))
         val fixed = SettingsRoutes.parse(mapOf("debugFixedPort" to "1"))
         assertIs<SettingsRoutes.Parsed.Ok>(fixed)
-        assertEquals(true, fixed.debugFixedPort)
+        assertEquals(true, fixed[io.github.jasondorjeshort.dystopo.app.AppSettings.DEBUG_FIXED_PORT])
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("debugFixedPort" to "maybe")))
     }
 

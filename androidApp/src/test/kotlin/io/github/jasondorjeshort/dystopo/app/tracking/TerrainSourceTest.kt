@@ -58,14 +58,14 @@ class TerrainSourceTest {
         assertEquals("Estimate position when GPS is poor", SettingsRow.ESTIMATE_POSITION.label)
         assertTrue(SettingsRow.ESTIMATE_POSITION in SettingsLayout.rows(SettingsGroup.NAVIGATION))
         assertTrue(AppSettings.KEY_ESTIMATE_POSITION in SettingsRoutes.KEYS)
-        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("estimatePosition" to "0"))).estimatePosition)
-        assertEquals(true, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("estimatePosition" to "on"))).estimatePosition)
-        assertNull(assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("units" to "m"))).estimatePosition)
+        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("estimatePosition" to "0")))[io.github.jasondorjeshort.dystopo.app.AppSettings.ESTIMATE_POSITION])
+        assertEquals(true, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("estimatePosition" to "on")))[io.github.jasondorjeshort.dystopo.app.AppSettings.ESTIMATE_POSITION])
+        assertNull(assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("units" to "m")))[io.github.jasondorjeshort.dystopo.app.AppSettings.ESTIMATE_POSITION])
         assertTrue(assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("estimatePosition" to "maybe"))).message.contains("1 or 0"))
         assertEquals("app.estimatePosition", SettingsSync.syncedKey(SettingsSync.ESTIMATE_POSITION))
         // A synced "off" from another phone becomes the route's parameter.
         val plan = SettingsSync.plan(mapOf("app.estimatePosition" to "off"), emptyMap(), SettingsRoutes.KEYS)
         assertEquals("off", plan.params["estimatePosition"])
-        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params)).estimatePosition)
+        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[io.github.jasondorjeshort.dystopo.app.AppSettings.ESTIMATE_POSITION])
     }
 }

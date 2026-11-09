@@ -142,7 +142,7 @@ object ViewshedSession {
     fun setRange(km: Int) {
         Thread({
             try {
-                io.github.jasondorjeshort.dystopo.app.SettingsRoutes(DystopoApp.instance).apply(io.github.jasondorjeshort.dystopo.app.SettingsRoutes.Parsed.Ok(null, false, null, null, viewRange = km))
+                io.github.jasondorjeshort.dystopo.app.SettingsRoutes(DystopoApp.instance).apply(io.github.jasondorjeshort.dystopo.app.SettingsRoutes.Parsed.Ok.of(io.github.jasondorjeshort.dystopo.app.AppSettings.VIEW_RANGE, km))
             } finally {
                 ui { io.github.jasondorjeshort.dystopo.app.SettingsUi.revision++ }
             }

@@ -33,8 +33,8 @@ class SettingsSyncPaceTest {
         val plan = SettingsSync.plan(b.settings(), mapOf("app.paceFit" to "", "app.paceStandard" to "on", "app.paceSince" to "0"), SettingsRoutes.KEYS)
         assertEquals(mapOf<String, Any?>("paceFit" to fit, "paceStandard" to "off"), plan.params)
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(fit, parsed.paceFit)
-        assertEquals(false, parsed.paceStandard)
+        assertEquals(fit, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.PACE_FIT])
+        assertEquals(false, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.PACE_STANDARD])
 
         // An older reader, without the keys, skips them and takes the rest (ADR 0033).
         val old = SettingsSync.plan(b.settings(), emptyMap(), SettingsRoutes.KEYS - setOf("paceFit", "paceStandard", "paceSince"))

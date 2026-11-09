@@ -102,7 +102,7 @@ object Recenter {
      */
     fun toggleLock(app: DystopoApp, source: String): Map<String, Any?> {
         val on = !AppSettings.orientationLock
-        SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok(null, false, null, null, orientationLock = on))
+        SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok.of(io.github.jasondorjeshort.dystopo.app.AppSettings.ORIENTATION_LOCK, on))
         app.map.onMain { SettingsUi.revision++ }
         val r = linkedMapOf<String, Any?>("button" to "lock", "source" to source, "lock" to AppSettings.orientationLock, "toast" to if (on) LOCKED_TOAST else UNLOCKED_TOAST)
         lastButton = r

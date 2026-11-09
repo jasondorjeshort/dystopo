@@ -31,7 +31,7 @@ class SettingsSyncSpeechTest {
         assertEquals(mapOf<String, Any?>("navSpeech" to "on"), plan.params)
         assertTrue(plan.local.isEmpty())
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(true, parsed.navSpeech)
+        assertEquals(true, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.NAV_SPEECH])
 
         // Already on: nothing to apply.
         assertTrue(SettingsSync.plan(b.settings(), mapOf(key to "on"), SettingsRoutes.KEYS).params.isEmpty())

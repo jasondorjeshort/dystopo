@@ -32,9 +32,9 @@ class PositionButtonSyncTest {
         val plan = SettingsSync.plan(b.settings(), current, SettingsRoutes.KEYS)
         assertEquals(mapOf<String, Any?>("mapControls" to "3", "recenterZoom" to "15", "orientationLock" to "on"), plan.params)
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(3, parsed.mapControls)
-        assertEquals(15, parsed.recenterZoom)
-        assertEquals(true, parsed.orientationLock)
+        assertEquals(3, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.MAP_CONTROLS])
+        assertEquals(15, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.RECENTER_ZOOM])
+        assertEquals(true, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.ORIENTATION_LOCK])
 
         // Already the same: nothing to apply.
         assertTrue(SettingsSync.plan(b.settings(), values, SettingsRoutes.KEYS).params.isEmpty())

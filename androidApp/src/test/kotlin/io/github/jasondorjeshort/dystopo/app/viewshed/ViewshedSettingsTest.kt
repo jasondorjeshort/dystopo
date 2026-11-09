@@ -29,7 +29,7 @@ class ViewshedSettingsTest {
         b.apply(a.bundle(b.vector()), clock)
         val plan = SettingsSync.plan(b.settings(), mapOf("app.viewRange" to "30"), SettingsRoutes.KEYS)
         assertEquals(mapOf<String, Any?>("viewRange" to "100"), plan.params)
-        assertEquals(100, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params)).viewRange)
+        assertEquals(100, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[io.github.jasondorjeshort.dystopo.app.AppSettings.VIEW_RANGE])
     }
 
     @Test

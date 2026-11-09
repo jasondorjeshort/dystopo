@@ -132,11 +132,11 @@ object PaceSettings {
     }
 
     /** "Use the standard estimate" on or off, as the row's chips set it (through the settings parser, so it syncs). */
-    fun setStandard(app: DystopoApp, on: Boolean) = apply(app, SettingsRoutes.Parsed.Ok(null, false, null, null, paceStandard = on))
+    fun setStandard(app: DystopoApp, on: Boolean) = apply(app, SettingsRoutes.Parsed.Ok.of(io.github.jasondorjeshort.dystopo.app.AppSettings.PACE_STANDARD, on))
 
     /** Reset: forget the fit, count only tracks from now on, then refit (which finds none yet). */
     fun reset(app: DystopoApp) {
-        apply(app, SettingsRoutes.Parsed.Ok(null, false, null, null, paceFit = "", paceSince = System.currentTimeMillis()))
+        apply(app, SettingsRoutes.Parsed.Ok.of(io.github.jasondorjeshort.dystopo.app.AppSettings.PACE_FIT, "").and(io.github.jasondorjeshort.dystopo.app.AppSettings.PACE_SINCE, System.currentTimeMillis()))
         signature = null
         refitSoon(app, "reset", buildGraph = false)
     }
@@ -175,7 +175,7 @@ object PaceSettings {
             val report = PaceFits.fromTracks(tracks, TrackMatch.snapper(router), AppSettings.paceSince)
             val value = report.setting()
             val changed = value != AppSettings.paceFit
-            if (changed) apply(app, SettingsRoutes.Parsed.Ok(null, false, null, null, paceFit = value))
+            if (changed) apply(app, SettingsRoutes.Parsed.Ok.of(io.github.jasondorjeshort.dystopo.app.AppSettings.PACE_FIT, value))
             signature = sig
             Log.i(TAG, "refit ($why): ${tracks.size} tracks, ${value.ifEmpty { "no fit" }}${if (changed) " (changed)" else ""} in ${System.currentTimeMillis() - t0} ms")
             return linkedMapOf(

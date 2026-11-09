@@ -132,9 +132,9 @@ class RouteWaterTest {
         b.apply(a.bundle(b.vector()), clock)
         val plan = SettingsSync.plan(b.settings(), mapOf("app.waterAlongRoute" to "on", "app.waterSpoken" to "off"), SettingsRoutes.KEYS)
         val parsed = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))
-        assertEquals(false, parsed.waterAlongRoute)
-        assertEquals(true, parsed.waterSpoken)
+        assertEquals(false, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.WATER_ALONG_ROUTE])
+        assertEquals(true, parsed[io.github.jasondorjeshort.dystopo.app.AppSettings.WATER_SPOKEN])
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("waterSpoken" to "loud")))
-        assertNull(assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("units" to "m"))).waterAlongRoute)
+        assertNull(assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("units" to "m")))[io.github.jasondorjeshort.dystopo.app.AppSettings.WATER_ALONG_ROUTE])
     }
 }
