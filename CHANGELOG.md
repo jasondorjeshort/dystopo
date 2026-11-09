@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-09
 
+- T249: The tile index kept on disk, and the walk made cheap (lane B; T242's follow-ups)
 - T247: The update row's words and one quiet retry (lane A; small)
 - T246: The verifier script (lane A, first)
 - T248: One registry for the phone's settings (lane B, first; no visible change)
