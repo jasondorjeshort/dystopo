@@ -271,7 +271,10 @@ Run-Step 'fetch' {
 Run-Step 'worktree' {
     $isWt = (Test-Path (Join-Path $wt '.git'))
     if ($Fixture) { $isWt = $true }
-    if (-not $isWt -and (Test-Path $wt) -and -not $DryRun) { Fail "$wt exists but is not a worktree: remove it (docs/reference/windows-and-shells.md, Worktrees)" }
+    # An empty folder is fine (git worktree add fills it): a removed worktree's folder can stay while a process that
+    # started inside it (seen in T246: one started during the run, the adb server likely) holds it as its directory.
+    $emptyDir = (Test-Path $wt) -and -not @(Get-ChildItem -Force -LiteralPath $wt -ErrorAction SilentlyContinue).Count
+    if (-not $isWt -and (Test-Path $wt) -and -not $emptyDir -and -not $DryRun) { Fail "$wt exists but is not a worktree: remove it (docs/reference/windows-and-shells.md, Worktrees)" }
     if ($isWt) {
         $dirty = Query 'dirty' 'git' @('-C', $wt, 'status', '--porcelain', '--untracked-files=no')
         if ($dirty) { Fail "$wt exists with changes ($(($dirty -split "`n").Count) files): commit or push your rebase first, or remove it" }

@@ -21,7 +21,9 @@ powershell -ExecutionPolicy Bypass -File tools\verify-task.ps1 -Task T247 -Workt
     -JavaHome "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot" -Cache C:\Users\<you>\Documents\src\dystopo\cache
 ```
 - `-WorktreeRoot` gets `<Task>-verify` (`git worktree add --detach`, at `origin/task/<Task>`). Default: the main
-  checkout's sibling `<name>-wt`. A clean one left from an earlier run is moved to the branch's tip instead.
+  checkout's sibling `<name>-wt`. A clean one left from an earlier run is moved to the branch's tip instead. An
+  empty folder of that name is used as it is: after T246's run `git worktree remove` and the long-path delete
+  emptied it, but a process started during the run (likely the shared adb server) still held it as its directory.
 - `-Avd`, `-AvdHome`, `-EmuPort`, `-Port`: the emulator of the brief; `-PrivateLimitGB` the guard limit when the brief
   gives one (else `policy.json`'s); `-Owner` the lock's owner (default `<Task>-verify`); `-Server` the app's server
   for the boot and the tour (default `none`; never the coordinator's 8765, which the script refuses).
@@ -73,13 +75,17 @@ earlier steps (each marked `from`) and adds the stop and the guard's figures for
 `<Out>\verify-summary.txt` is for reading in one go:
 ```
 verify T246 at 25b41241... (origin/task/T246), worktree ...\dystopo-wt\T246-verify
-RESULT: ok (12 steps ok)                         | RESULT: FAILED at step slot
-fetch      ok           0.6 s
-check      ok         512.0 s  1803 tests, 0 failures, 0 errors, 3 skipped in 260 files
-tour       ok         420.3 s  10/10 views ok; sheet ...\tour\tour-sheet.png
-guard      ok           0.1 s  lowest free 61.2 GB, peak private 7.1 GB, 0 stop.log lines
-screenshots: 12 (look at each; the sheet first): ...\tour\tour-sheet.png
+RESULT: FAILED at step tour
+check      ok         333.3 s  4883 tests, 0 failures, 0 errors, 0 skipped in 839 files
+slot       ok           2.3 s  0 of 2 slots taken by others
+boot       ok         187.3 s  emulator-5570 booted, the branch's debug APK installed, server none
+tour       failed     674.7 s  tour not ok (exit 1): 10/10 views ok; sheet ...	our	our-sheet.png; failed steps: cards
+stop       ok           3.4 s  emulator-5570 stopped and dystopo35-T246 deleted; adb devices no longer lists it
+guard      ok           0.1 s  lowest free 87.2 GB, peak private 5.1 GB, 0 stop.log lines
+screenshots: 40 (look at each; the sheet first): ...	our	our-cards-sheet.png, ...	our	our-sheet.png
 ```
+(T246's own run, a tools-only branch: the tour's cards step failed at font scale 2.0 in landscape on the app as it
+was on `main`, which the summary names; the whole run took about 20 minutes on the second PC.)
 `<Out>\verify-summary.json` has `task`, `branch`, `head`, `worktree`, `ok`, `failedStep`, `seconds`, `screenshots`
 (every PNG of the tour and the parts), `commands` (each step's command lines) and `steps`, one object per step with
 `name`, `status` (`ok`, `failed`, `not run`, `skipped`, `kept`), `ok`, `seconds`, `note` or `error`, and its figures:
