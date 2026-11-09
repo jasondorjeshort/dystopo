@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-01
+verified: 2026-11-09
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -26,6 +26,7 @@ wins and this file gets fixed.
 | Signing key | `tools\release.keystore` and `tools\release.properties` in this main checkout, the other account's (below), and the `RELEASE_*` Actions secrets (`.claude/skills/release/SKILL.md`) |
 | Private terms | `devtool.local.json` in this main checkout; the privacy hooks read it from the main checkout even in worktrees |
 | Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`) |
+| RAM, CPU, disks | 128 GB, 16 cores (2026-11-09: 98 GB free with no emulator running); C: about 290 GB free, E: about 1.4 TB free. The owner widened ADR 0057's one-Gradle-agent default to two at once for this PC on 2026-11-09 (wave 31's paragraph in `docs/TASKS.md`); the emulator cap of 2 and the guard stay |
 
 ## The other account (second account, wave 12 second half and wave 13 second half)
 
