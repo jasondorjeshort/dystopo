@@ -13,8 +13,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
   5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
 - Rules learned: no force push works here, so nobody rebases a pushed branch (merge `main` in); a push runs on
   a line of its own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete.
-- The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Free RAM 86 to 91 GB
-  through the merges, peak private bytes 5 to 8 GB (one guard stop after about 40 cold launches, T249).
+- The live server on 8765 is up (PID in `out/coordinator-pids.txt` [no-check: gitignored]). Free RAM 86 to 91 GB.
 
 ## Next
 
