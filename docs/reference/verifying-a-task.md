@@ -61,10 +61,11 @@ The run stops at the first failed step and names it; `stop` and `guard` still ru
 left behind. Each program's wait has a ceiling (`check` 2400 s, `boot` and `tour` 1500, a part 900, `stop` 300); at
 it the program's process tree is killed by its PID, as `tools\sweep.ps1` does, and the step fails saying so.
 
-**When `main` moved** the run stops at `base` before the expensive steps. Bring the branch up to date in the verify
-worktree (`git rebase origin/main` and `git push --force-with-lease origin HEAD:task/<Task>`; the auto-mode classifier
-refuses a force push in this session's agents, T246 saw it, so there `git merge origin/main` and
-`git push origin HEAD:task/<Task>`), then run the same command again: the worktree is reused.
+**When `main` moved** the run stops at `base` before the expensive steps. Nobody rebases a pushed branch: the harness
+refuses every force push (`--force-with-lease` included; T246 and two proposal agents saw it on 2026-11-09), so a
+rewritten branch cannot be pushed. A verifier reruns the same command with `-AllowBehind` and reports "behind by N";
+the coordinator's `--no-ff` merge integrates `main`. Only when that merge would conflict does the implementer bring
+the branch up to date, by `git merge origin/main` in its own worktree and a plain push.
 
 **The emulator for the scenario.** With `-KeepEmulator` the `stop` step is `kept` and its note gives the stop command;
 run the report's scenario on that emulator, then `-Only stop,guard` with the same arguments: the summary keeps the

@@ -4,9 +4,9 @@
 #   worktree  the detached worktree <WorktreeRoot>\<Task>-verify at origin/task/<Task> (git worktree add --detach); one
 #             that already exists and is clean is moved to origin/task/<Task> instead (the rerun after a rebase)
 #   base      whether origin/main moved since the branch forked (merge-base): moved is a failure that names the count,
-#             since bringing the branch up to date is the agent's step (in the worktree: rebase and push --force-with-lease,
-#             or where a force push is refused, merge origin/main and push; then run again);
-#             -AllowBehind goes on without it
+#             which the verifier reports ("behind by N") and reruns with -AllowBehind: nobody rebases a pushed branch
+#             (the harness refuses every force push), the coordinator's --no-ff merge integrates main, and only a
+#             conflict sends the implementer a git merge origin/main and a plain push
 #   privacy   the branch's commit messages (git log origin/main..origin/task/<Task> --format=%B), and -ReportFile, through
 #             java tools/PrivacyCheck.java scan; any hit fails
 #   data      local.properties and the Rainier packs (rainier-dem, rainier-outdoors) copied from the main checkout into
@@ -298,7 +298,7 @@ Run-Step 'base' {
         $f.note = "origin/main moved $behind commits since the fork"
         if (-not $AllowBehind) {
             foreach ($k in $f.Keys) { $script:steps['base'][$k] = $f[$k] }
-            Fail "origin/main moved $behind commits since the fork ($($mb.Substring(0, [math]::Min(9, $mb.Length)))): bring the branch up to date in $wt (git rebase origin/main, then git push --force-with-lease origin HEAD:$Branch; where a force push is refused, git merge origin/main, then git push origin HEAD:$Branch), then run this again (or -AllowBehind)"
+            Fail "origin/main moved $behind commits since the fork ($($mb.Substring(0, [math]::Min(9, $mb.Length)))): report 'behind by $behind' and run this again with -AllowBehind (nobody rebases a pushed branch: the harness refuses every force push; the coordinator's --no-ff merge integrates main, and only a conflict sends the implementer a git merge origin/main and a plain push)"
         }
     } else { $f.note = 'origin/main has not moved since the fork' }
     $f

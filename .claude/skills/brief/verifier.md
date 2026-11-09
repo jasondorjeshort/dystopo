@@ -19,10 +19,10 @@ mechanism, the crossing scenario, or "none">.
    It makes the detached worktree `<worktrees>\Tnn-verify`, scans the commit messages and the report, runs `check
    --no-daemon` with the test counts, boots the emulator from the branch, runs the device tour and the parts, stops
    the emulator and reads the guard's figures. It stops at the first failed step and names it.
-   - Stopped at `base` (`main` moved): bring the branch up to date in that worktree (`git rebase origin/main`, then
-     `git push --force-with-lease origin HEAD:task/Tnn`, the only force push allowed; where a force push is refused,
-     `git merge origin/main`, then `git push origin HEAD:task/Tnn`) and run the script again. A conflict you cannot
-     resolve mechanically: stop and report.
+   - Stopped at `base` (`main` moved): do not rebase or force-push (the harness refuses every force push, so a
+     rewritten branch cannot be pushed). Rerun the script with `-AllowBehind` and report "behind by N"; the
+     coordinator's `--no-ff` merge integrates. A conflict the merge would hit (the coordinator's merge aborts on one):
+     a verifier never resolves it; report it and the coordinator sends the implementer a `git merge origin/main`.
    - Stopped elsewhere: a red `check`, a failed tour view, a privacy hit or a `stop.log` line is a finding of the
      verification (FIX, or MERGE WITH NOTES for a known flake retried once); a step that failed for the machine's
      reasons (the slot wait, a port another agent holds) is retried, not reported as the branch's.
