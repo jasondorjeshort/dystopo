@@ -194,9 +194,10 @@ function Write-Summary {
         try {
             $prev = Get-Content -Raw $file | ConvertFrom-Json
             if ($prev.task -eq $Task) {
+                if (-not $script:headSha) { $script:headSha = $prev.head }
                 $stepsOut = @(foreach ($s in $stepsOut) {
                     $old = @($prev.steps | Where-Object { $_.name -eq $s.name })[0]
-                    if ($s.status -eq 'skipped' -and $old -and $old.status -ne 'skipped') { $o = $old; $o | Add-Member -Force NoteProperty from $prev.started; $o } else { $s }
+                    if ($s.status -eq 'skipped' -and $old -and $old.status -ne 'skipped') { $o = $old; if (-not $o.from) { $o | Add-Member -Force NoteProperty from $prev.started }; $o } else { $s }
                 })
             }
         } catch { }

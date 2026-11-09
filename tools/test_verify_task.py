@@ -188,6 +188,19 @@ if s:
     check(st["check"]["status"] == "skipped" and st["tour"]["status"] == "skipped", "skip: statuses")
     check(s["failedStep"] == "ui-routes", f"skip: failedStep {s['failedStep']}")
 
+# 8b. -KeepEmulator leaves the stop to a later -Only stop,guard, whose summary keeps the earlier steps.
+root = tempfile.mkdtemp(prefix="verify-task-test-")
+CLEANUP.append(root)
+fixture(root)
+p, s, text = run(root, "-KeepEmulator")
+check(s and s["ok"] and steps(s)["stop"]["status"] == "kept" and "-Stop -Delete" in steps(s)["stop"]["note"], "keep: stop kept with its command")
+p, s, text = run(root, "-Only", "stop,guard")
+if s:
+    st = steps(s)
+    check(st["stop"]["status"] == "ok" and st["guard"]["status"] == "ok", f"only: {st['stop']['status']} {st['guard']['status']}")
+    check(st["check"]["status"] == "ok" and st["check"]["tests"] == 15 and "from" in st["check"], f"only: check carried {st['check']}")
+    check(s["head"] == "a" * 40, "only: head carried")
+
 # 9. -DryRun on the real checkout: the commands, nothing run, no summary.
 out = tempfile.mkdtemp(prefix="verify-task-dry-")
 CLEANUP.append(out)
