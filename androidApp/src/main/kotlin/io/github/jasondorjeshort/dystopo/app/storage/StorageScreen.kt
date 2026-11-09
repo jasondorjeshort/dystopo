@@ -170,7 +170,8 @@ private fun BudgetSection(b: Map<String, Any?>, stores: Map<String, Map<String, 
             for ((key, bytes) in kinds) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(10.dp).height(10.dp).background(kindColor(key), RoundedCornerShape(2.dp)))
-                    BasicText(" ${stores[key]?.get("label")} ${mb(bytes)}", style = TextStyle(color = Muted, fontSize = 11.sp))
+                    // T249: no figure while its index is built (it read "0.0 MB")
+                    BasicText(" ${stores[key]?.get("label")} ${if (stores[key]?.get("indexing") == true) INDEXING_SHORT else mb(bytes)}", style = TextStyle(color = Muted, fontSize = 11.sp))
                 }
             }
         }
@@ -272,7 +273,7 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
                 style = TextStyle(color = Ink, fontSize = 13.sp),
             )
         }
-        if (inBudget && totalBytes > 0) {
+        if (inBudget && totalBytes > 0 && s["indexing"] != true) { // T249: no share while the index is built
             // T112: the kind against the whole budget, with its floor marked.
             val share = (bytes.toDouble() / totalBytes).coerceIn(0.0, 1.0).toFloat()
             val floor = ((s["floorBytes"] as? Number)?.toDouble() ?: 0.0) / totalBytes
@@ -293,6 +294,8 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
             }
         }
         holdsLine(key, s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
+        // T249: Android's own Clear cache (in the app's settings) empties the directory these two rows live in.
+        if (key == Storage.ONLINE) BasicText(CLEAR_CACHE_LINE, style = TextStyle(color = Muted, fontSize = 11.sp))
         olderLine(s)?.let { BasicText(it, style = TextStyle(color = Older, fontSize = 12.sp, fontWeight = FontWeight.Bold)) } // T95
         // T115: the pinned budget now goes up to 1 TB, so say so when it is past what the phone has free, as the cache budget does.
         if (key == Storage.PINNED && budget != null && budget * BudgetPlan.MB > freeBytes + bytes) {
@@ -400,6 +403,12 @@ internal val STORAGE_HELP: List<HelpText> = run {
     )
 }
 
+/** T249: under the Online tiles row (the owner lost kept maps to it on 2026-11-07; where they live is ADR 0060's move). */
+internal const val CLEAR_CACHE_LINE = "Android's Clear cache for this app deletes these tiles and the offline maps in the budget too."
+
+/** T249: the budget legend's word for a kind whose index is being built. */
+internal const val INDEXING_SHORT = "counting"
+
 /** T237 (ADR 0056): the two stores of offline maps, named by their clearing rule (also `GET /storage`'s labels). */
 internal const val STORE_OUTSIDE = "Offline maps, outside the budget"
 internal const val STORE_IN_BUDGET = "Offline maps, in the budget"
@@ -413,7 +422,7 @@ private fun holdsLine(key: String, s: Map<String, Any?>): String? {
     val kinds = holds?.entries?.joinToString(", ") { (k, v) -> "$k ${mb(v["bytes"])}" }
     // T95: what the pinned tiles are, as for the online row (which counts its unpinned tiles only).
     if (key == Storage.PINNED) return "${s["areas"]} saved" + (kinds?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") + "; in their own budget, apart from the cache budget, kept until removed"
-    if (holds == null) return null
+    if (holds == null || s["indexing"] == true) return null // T249: not "Empty" while the index is built
     if (holds.isEmpty()) return "Empty"
     return kinds
 }
