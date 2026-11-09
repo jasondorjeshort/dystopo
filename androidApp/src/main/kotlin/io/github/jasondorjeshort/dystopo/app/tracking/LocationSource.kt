@@ -15,7 +15,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 /**
  * Where track fixes come from. The recorder doesn't care which: the phone's GPS ([GpsLocationSource]),
  * a fix posted to the debug server's `POST /location`, or a GPX replay ([InjectedLocationSource]).
- * However the map's location puck is fed (T27), the same fix reaches the recorder through here.
+ * However the map's location puck is fed (T27), the same fix reaches the recorder through here. T251: while a recording
+ * takes fixes the puck is fed from the other end: the fixes the recorder keeps move it (`Tracking`'s `puck`,
+ * `MapController.onRecorder`), so the map's own listener stalling can no longer leave the puck behind the track's head.
  */
 interface LocationSource {
     val name: String

@@ -513,10 +513,25 @@ class MapController {
     /** Called (main thread) when a fix seeded the units preference and they changed; set by [DystopoApp]. */
     @Volatile var onUnitsSeeded: () -> Unit = {}
 
-    private fun onFix(loc: Location) {
-        val terrain = loc.provider == io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE
-        if (!terrain) {
+    /** T251: where a fix reached the puck from: the map's own listener (or an injected fix), the terrain estimate, the recorder. */
+    private enum class Origin(val code: String) { MAP("map"), TERRAIN("estimate"), RECORDER("recorder") }
+
+    private fun onFix(
+        loc: Location,
+        origin: Origin = if (loc.provider == io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE) Origin.TERRAIN else Origin.MAP,
+        flagged: Boolean = false,
+    ) {
+        val terrain = origin == Origin.TERRAIN
+        if (origin == Origin.MAP) {
             if (!injectedLocation) io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.onMapFix(loc) // T203
+            // T251: while a recording takes fixes, the recorder's kept fixes drive the puck ([onRecorder]), so the puck and the
+            // track's head are one position; this listener's fixes still seed the units. The course reaches the heading through
+            // the recorder's fixes (the camera's follow mode, below).
+            if (!PuckRule.takes(fromRecorder = false, estimate = false, recorderDrives = recorderDrivesPuck, holdsPuck = false, poor = false)) {
+                mapFixesHeld++
+                if (AppSettings.unitPreference.units == null && AppSettings.seedUnits(loc.latitude, loc.longitude, "fix")) onUnitsSeeded()
+                return
+            }
             // T203: while the estimate holds the puck, a poor fix does not move it (the estimate is the better guess); it
             // still reaches the readout and the course, as before.
             if (io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.holdsPuck && !goodFix(loc)) {
@@ -525,6 +540,15 @@ class MapController {
                 return
             }
             lastGoodShownAt = if (goodFix(loc)) SystemClock.elapsedRealtime() else lastGoodShownAt
+        } else if (origin == Origin.RECORDER) {
+            // T251 with T203: a flagged fix does not take the puck from the estimate; a good one ends the estimate's hold.
+            if (!PuckRule.takes(fromRecorder = true, estimate = false, recorderDrives = true, holdsPuck = io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.holdsPuck, poor = flagged)) {
+                terrainHeldFixes++
+                runCatching { io.github.jasondorjeshort.dystopo.app.controls.Heading.onFix(loc) }
+                return
+            }
+            if (!flagged) lastGoodShownAt = SystemClock.elapsedRealtime()
+            recorderShown++
         }
         val shown = lastLocation
         lastLocation = loc
@@ -533,7 +557,10 @@ class MapController {
             if (recorded != null) runCatching { openFix(recorded) }
             if (AppSettings.unitPreference.units == null && AppSettings.seedUnits(loc.latitude, loc.longitude, "fix")) onUnitsSeeded()
         }
-        val look = if (terrain) LocationPuck.Mode.ESTIMATE else LocationPuck.Mode.GPS
+        val look = PuckRule.look(terrain, if (flagged) io.github.jasondorjeshort.dystopo.model.TrackPoint.INACCURATE else 0) // T251
+        puckFixAt = fixElapsedMs(loc) // T251: the age the grey look keys on, also when the redraw is skipped
+        puckOrigin = origin
+        puckNetwork = flagged && (loc.provider == "network" || loc.provider == "passive")
         // T41: the half-second redraw on a still map was this: GPS and network each report the same fix every
         // second, and every update of the puck's source makes MapLibre draw a frame. Skip fixes that would not
         // move the puck or change its halo.
@@ -543,7 +570,115 @@ class MapController {
         } else {
             puckUpdatesSkipped++
         }
+        scheduleStale()
         runCatching { MapOrientation.onFix(loc) } // T100: the camera follows the puck; facing turns to the heading
+    }
+
+    // ---- T251: one position on the map ----
+
+    /**
+     * T251: true while a recording takes fixes (recording, not paused, not auto-paused): the recorder's kept fixes drive the
+     * puck and the map's own listener does not move it. Set by [onRecorder].
+     */
+    @Volatile var recorderDrivesPuck = false
+        private set
+    @Volatile private var puckOrigin = Origin.MAP
+    @Volatile private var puckNetwork = false
+    /** Elapsed-realtime ms of the fix the puck shows (its receipt, for an injected or recorded fix). */
+    @Volatile private var puckFixAt = 0L
+    /** The recorder's last kept fix while the app was in the background, shown when it comes back. Main thread. */
+    private var pendingRecorded: Pair<Location, Boolean>? = null
+    /** Fixes of the map's own listener kept off the puck while the recorder drove it. */
+    @Volatile var mapFixesHeld = 0L
+        private set
+    /** Recorder fixes the puck took. */
+    @Volatile var recorderShown = 0L
+        private set
+    /** Times the puck turned grey for want of a fix within the gap rule. */
+    @Volatile var staleShown = 0L
+        private set
+
+    private fun fixElapsedMs(loc: Location): Long =
+        if (loc.elapsedRealtimeNanos > 0) loc.elapsedRealtimeNanos / 1_000_000 else SystemClock.elapsedRealtime()
+
+    /**
+     * T251 (the tracking thread): whether the recorder drives the puck now ([drives]), and the fix it just kept, if any, with
+     * its point's [flags] (`TrackPoint`): a flagged one (over the activity's accuracy bound, or a network fix) draws in the
+     * estimate's look. In the background the fix waits for the app's return (T150: no puck or camera work on a stopped map).
+     * The terrain estimate's own fixes come through [showEstimate], not here.
+     */
+    fun onRecorder(drives: Boolean, kept: io.github.jasondorjeshort.dystopo.store.LocationFix?, flags: Int) {
+        recorderDrivesPuck = drives
+        if (kept == null || !drives || kept.source == io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE) return
+        val flagged = PuckRule.look(false, flags) == LocationPuck.Mode.FLAGGED
+        val loc = Location(kept.source).apply {
+            latitude = kept.lat
+            longitude = kept.lon
+            kept.accuracyM?.let { accuracy = it.toFloat() }
+            kept.ele?.let { altitude = it }
+            kept.speedMps?.let { speed = it.toFloat() }
+            kept.courseDeg?.let { bearing = it.toFloat() }
+            time = kept.time
+            elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+        }
+        main.post {
+            if (!Foreground.started) {
+                pendingRecorded = loc to flagged
+                return@post
+            }
+            pendingRecorded = null
+            onFix(loc, Origin.RECORDER, flagged)
+        }
+    }
+
+    /** T251: the puck's grey look after this long without a fix: the activity's gap rule (the recording's, else the remembered one). */
+    fun staleAfterMs(): Long = runCatching {
+        PuckRule.staleAfterMs(io.github.jasondorjeshort.dystopo.app.tracking.Tracking.readyOrNull?.recorder?.profile ?: AppSettings.trackProfile())
+    }.getOrNull() ?: PuckRule.DEFAULT_STALE_MS
+
+    private fun puckAgeMs(): Long = SystemClock.elapsedRealtime() - puckFixAt
+
+    private val staleCheck = Runnable { checkStale() }
+
+    /** Main thread: checks again when the shown fix reaches the gap rule's age. */
+    private fun scheduleStale() {
+        main.removeCallbacks(staleCheck)
+        if (lastLocation == null) return
+        main.postDelayed(staleCheck, (staleAfterMs() - puckAgeMs()).coerceAtLeast(0) + 50)
+    }
+
+    private fun checkStale() {
+        val last = lastLocation ?: return
+        if (!puck.installed || puck.mode.grey || !Foreground.started) return // the next start schedules it again
+        if (puckAgeMs() < staleAfterMs()) return scheduleStale()
+        puck.show(last, LocationPuck.Mode.STALE)
+        staleShown++
+    }
+
+    /**
+     * T251, the long-press card's first line: what the puck is, when [lat], [lon] is within [radiusM] of it; null otherwise.
+     * Main thread.
+     */
+    fun puckMark(lat: Double, lon: Double, radiusM: Double): String? {
+        val last = lastLocation ?: return null
+        if (!puck.installed) return null
+        val d = FloatArray(1)
+        Location.distanceBetween(lat, lon, last.latitude, last.longitude, d)
+        if (d[0] > radiusM) return null
+        val acc = if (last.hasAccuracy()) last.accuracy.toDouble() else null
+        return PuckText.line(puck.mode, acc, puckAgeMs(), puckNetwork, AppSettings.units)
+    }
+
+    /** T251: the puck's state for `GET /location` and `GET /tracks` (any thread). */
+    fun puckJson(): Map<String, Any?> {
+        val l = lastLocation
+        return linkedMapOf(
+            "mode" to puck.mode.code, "source" to puckOrigin.code, "recorderDrives" to recorderDrivesPuck,
+            "lat" to l?.latitude, "lon" to l?.longitude, "accuracyM" to l?.takeIf { it.hasAccuracy() }?.accuracy,
+            "ageS" to if (l == null) null else puckAgeMs() / 1000.0, "staleAfterS" to staleAfterMs() / 1000.0,
+            "recorderShown" to recorderShown, "mapFixesHeld" to mapFixesHeld, "staleShown" to staleShown,
+            "pendingRecorded" to (pendingRecorded != null),
+        )
     }
 
     /** T203: a GPS (or injected) fix within the activity's accuracy bound: it ends the estimate's hold on the puck. */
@@ -582,7 +717,14 @@ class MapController {
 
     /** T203: the estimate let go of the puck: back to the GPS look where it stands, until the next fix moves it. Any thread. */
     fun endEstimate() {
-        main.post { val last = lastLocation; if (last != null && puck.installed && puck.mode != LocationPuck.Mode.GPS) puck.show(last, LocationPuck.Mode.GPS) }
+        main.post {
+            val last = lastLocation
+            // T251: only the estimate's own looks; a flagged or grey puck keeps its look until the next fix.
+            if (last != null && puck.installed && (puck.mode == LocationPuck.Mode.ESTIMATE || puck.mode == LocationPuck.Mode.LOST)) {
+                puck.show(last, if (puckAgeMs() >= staleAfterMs()) LocationPuck.Mode.STALE else LocationPuck.Mode.GPS)
+                scheduleStale()
+            }
+        }
     }
 
     /** T203: the give-up: a grey dot on the last estimate, no ring, until a good fix. Any thread. */
@@ -610,6 +752,11 @@ class MapController {
      */
     fun setForeground(on: Boolean) {
         if (on) startDeviceLocation() else stopDeviceLocation()
+        if (on) {
+            // T251: the recorder's last fix from the background, then the grey look if even that is old.
+            pendingRecorded?.let { (loc, flagged) -> pendingRecorded = null; if (recorderDrivesPuck) onFix(loc, Origin.RECORDER, flagged) }
+            scheduleStale()
+        }
     }
 
     /** Device fixes from GPS and network providers (main thread). No-op without permission, while injecting or in the background. */
@@ -683,6 +830,7 @@ class MapController {
             "foreground" to Foreground.started,
             "last" to l?.let { mapOf("lat" to it.latitude, "lon" to it.longitude, "accuracy" to it.accuracy, "provider" to it.provider) },
             "puckMode" to puck.mode.code, "terrainShown" to terrainShown, "terrainHeldFixes" to terrainHeldFixes, // T203
+            "puck" to puckJson(), // T251
         )
     }
 

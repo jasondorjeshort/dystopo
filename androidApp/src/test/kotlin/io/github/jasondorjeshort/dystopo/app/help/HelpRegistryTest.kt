@@ -143,6 +143,9 @@ class HelpRegistryTest {
             // T213: the trail disagreements' switch and the long-press card's lines.
             "settings.showDivergence", "longPress.divergence",
             // end T213
+            // T251: the marks on the map.
+            "map.marks",
+            // end T251
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
