@@ -1,31 +1,29 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-10, by main session (wave 31 closed, v0.1.26-alpha published; wave 32 planned and criticised, waiting for the owner's go)
+Updated: 2026-11-10, by main session (wave 32 launched on the owner's go: T262, T264, T271 running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32, `out/wave32-research/` [no-check: gitignored].
 
 ## Now
 
-- **Wave 31 is closed** (record `docs/tasks/wave-31.md`; the log's "Wave 31 closes" entry of 2026-11-10): seventeen
-  tasks, two alphas. **v0.1.26-alpha published** 2026-11-10 13:36 UTC (tag on e5331b9c, versionCode 1445, the
-  before-and-after sheet attached). Nothing runs. Meter at the close: 5-hour 11, 7-day 55 (the allowance's 53 held).
-- **Wave 32 is planned** (298987de; twelve tasks T262 to T273 in two lanes plus one alongside, in two halves against
-  the 7-day reset of 2026-11-13; the critic's 22 objections answered in the wave paragraph; research in
-  `out/wave32-research/` [no-check: gitignored], the critic's report beside it) and **not launched: the owner's go is
-  pending.** The first half is the release set T262, T272, T264, T269, T265 (lane A first T262, lane B first T264).
+- Wave 31 closed (`docs/tasks/wave-31.md`); **v0.1.26-alpha published** 2026-11-10 (tag on e5331b9c, versionCode 1445).
+- **Wave 32 launched 2026-11-10 17:40 UTC on the owner's go** (plan 298987de, three fixes 93636d62; research and the
+  critic's report in `out/wave32-research/` [no-check: gitignored]): T262 (lane A, 5570/8694), T264 (lane B,
+  5572/8696), T271 (alongside, no Gradle) running. Meter at the go 7-day 68, 5-hour 32: the second half waits for the
+  reset of 2026-11-14 03:00 UTC. Free RAM 90.5 GB.
 - Rules learned this wave: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line
   of its own; an LZW error in a cached DEM cell is a stale range cache (delete the cell; T269); a sweep part can lose
   its emulator right after a guard reboot (one rerun; T273 adds the storage wait).
 
 ## Next
 
-1. On the owner's go: launch wave 32's first half by the `wave` skill (T262 in lane A with console 5570 and host
-   8694, T264 in lane B with 5572 and 8696, T271 alongside; verifiers on 5574/8698 and 5576/8700); briefs by the
-   `brief` skill from the task entries, the code maps in the session scratchpad (`wave32-map-*.md`) and the research.
+1. As each reports: a verifier (Sonnet, `wave` skill; ports 5574/8698 and 5576/8700, T271's on a free slot with a
+   real dump), merge on MERGE. Lane A next T272, lane B next T269; then T265 after T262, T264 and T269 merge.
+2. After the first half: sweep and alpha; the second half after the 7-day reset.
 
 ## Waiting on user
 
-- **Wave 32's go**, and its choices: T263's picker setting default (the research says skip the Record-as step; the
+- Wave 32's choices: T263's picker setting default (the research says skip the Record-as step; the
   plan keeps it until you say); the course entry off by default in the readout (seen on the v0.1.26 install).
 - ADR 0060: the refresh default, the keep-warm list as a new data flow, the daily limit's default, country downloads.
 - ADR 0061: the first-run card while the pack list loads (F1 wait, F2 unknown until known, F3, F4); F1 built first.
