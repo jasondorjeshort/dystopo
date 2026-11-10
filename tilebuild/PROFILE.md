@@ -63,8 +63,13 @@ alone, no OSM extract and no ocean polygons, z0 to z5 (`--max-zoom 5` at most). 
 `water` (Natural Earth's ocean and lakes, as below), `boundary` (country borders z0-5, state and province lines z4 only)
 and `place`: countries (`class` `country`) at Natural Earth's label point from its `min_label` zoom (1:50m countries), and
 cities (`class` `city`, `capital` 2 for a national capital) from Natural Earth's own `min_zoom` up to z5 (1:10m populated
-places). No roads: they start at z4 from OSM for little gain at these zooms. Sizes measured 2026-11-10: 1,748,638 bytes
-for z0-5 (z0 9 kB, z1 16 kB, z2 64 kB, z3 118 kB, z4 664 kB, z5 857 kB) and 1,659,545 for z3-5. Its metadata credits
+places). No roads: they start at z4 from OSM for little gain at these zooms. Sizes measured 2026-11-10: 1,750,461 bytes
+for z0-5 after T274 (z0 10 kB, z1 16 kB, z2 64 kB, z3 118 kB, z4 664 kB, z5 857 kB; T264's first file 1,748,638) and
+1,659,545 for z3-5. The 1:110m ocean (z0-1) is not simplified (T274): Planetiler's default 0.1 px tolerance dropped its
+corner on the -180 side by the Ross Ice Shelf, the west side of the ring slanted off 180, and the seam tiles closed the
+water along the antimeridian (a line under the style's water outline); unsimplified it costs 1.8 kB. `WorldOverviewSeamTest`
+reads every z0-5 tile of the west and east columns of the committed file and fails on a `water` ring edge lying on the
+antimeridian (`DYSTOPO_WORLD_FILE` points it at another build). Its metadata credits
 Natural Earth and the OpenMapTiles schema (`dystopo:license` Natural Earth's public domain; no OSM data is in it).
 
 ## Licensing
