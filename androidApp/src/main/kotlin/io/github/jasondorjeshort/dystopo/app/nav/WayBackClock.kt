@@ -56,6 +56,12 @@ import io.github.jasondorjeshort.dystopo.store.LocationFix
  * Fed by `tracking/Tracking.kt` on its thread ([onPoint], [onStart], [onStop]); read every second on the main thread
  * ([tick]). Debug: `GET /nav/turnaround` without navigation, `GET /tracks` `wayBack`, `POST /tracks/wayback`.
  */
+/** T252: the way back's Compose state (the chip's on, the card's basis open), made and written on the main thread only. */
+object WayBackUiState {
+    var basisOpen by mutableStateOf(false)
+    var chipOn by mutableStateOf(false)
+}
+
 object WayBackClock {
     /** What the card and the recording line show; null when nothing records, the card is off, while navigating, or before a fix. */
     data class Ui(
@@ -86,8 +92,10 @@ object WayBackClock {
     /** T252: the recording panel's chip. */
     const val CHIP = "Turn-back time"
 
-    /** T252: the card's basis is open (a tap on the card; `POST /tracks/wayback?basis=1|0`). */
-    var basisOpen by mutableStateOf(false)
+    /** T252: the card's basis is open (a tap on the card; `POST /tracks/wayback?basis=1|0`); main thread. */
+    var basisOpen: Boolean
+        get() = WayBackUiState.basisOpen
+        set(v) { WayBackUiState.basisOpen = v }
 
     private val main = Handler(Looper.getMainLooper())
     private var trackId: String? = null
@@ -107,10 +115,9 @@ object WayBackClock {
     val isOn: Boolean get() = on
 
     /** T252: [isOn] for the chip to draw (main thread, Compose state). */
-    var chipOn by mutableStateOf(false)
-        private set
+    val chipOn: Boolean get() = WayBackUiState.chipOn
 
-    private fun publishOn() { val v = on; main.post { chipOn = v } }
+    private fun publishOn() { val v = on; main.post { WayBackUiState.chipOn = v } }
 
     /**
      * T252: the activity the clock runs on: the recording's while a track records (its track's, as the tracker publishes

@@ -397,10 +397,9 @@ internal const val TURN_BACK_OFF = "Hide the turn-back time"
 /** T252: the chip's help text (ADR 0031: the owner's to adjust). */
 internal val TURN_BACK_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
     io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.turnBack", "Turn-back time", "The map, top right: Tracks, then the recording panel", needs = "recording", show = { TrackBar.open = true }) {
-        "Off until you turn it on for a recording. It times the way back to where the recording started, along the line " +
-            "recorded, at the walking or cycling pace of the recording's activity, and says when to turn back to be out before " +
-            "sunset (or your deadline in Settings). It shows no time while driving, on a train or a boat, or flying. Tap the card " +
-            "to see how the time is worked out."
+        "Off until you turn it on for a recording. It times the walk or ride back to the recording's start at the pace of " +
+            "its activity and says when to turn back to be out before sunset or your deadline in Settings. No time while " +
+            "driving, on a train or boat, or flying. Tap the card to see how it is worked out."
     },
 )
 
