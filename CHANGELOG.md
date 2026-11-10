@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-10
 
+- T257: The readout: course as a point and degrees, pressure when the phone has it, an extended readout (lane B, after T250)
 - T256: "Line": the straight route follows the geodesic and works anywhere (lane A, after T255)
 
 ## v0.1.25-alpha (2026-11-10)
