@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-10
+
+- T253: The recording panel: Hide, not X; Pause, then Finish (lane A, after T252 and T251)
+
 ### 2026-11-09
 
 - T252: The turn-back card off by default, on with a tap, honest about its clock (lane A)
