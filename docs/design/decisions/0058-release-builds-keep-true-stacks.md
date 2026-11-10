@@ -38,4 +38,11 @@ Supersede this when the phone comparison below shows a cost, or when the freezes
 
 Predictions (the trigger scan reads these).
 - Prediction, check when a release carries T228: on the owner's phone, the startup history's first-frame median and the feel of panning are no worse than an optimised build of the same commit signed with the same key, within 10 percent on the median.
+  Outcome 2026-11-10 (the triage scan): not measured; no optimised build of the same commit has been installed on
+  the owner's phone, and the comparison needs a second signed build there (the owner's, if still wanted).
 - Prediction, check when the first `startup-` or `freeze-` report arrives from a release build: its app frame names a real class and a line that matches the source at that tag.
+  Outcome 2026-11-10 (the triage scan, issues 31 and 32 from v0.1.21-alpha): held in part. The frames name real
+  classes and files (`OnlineService.<init>` at `OnlineService.kt:40`, the `TileCache(...)` construction, and
+  `TileCache.<init>` at `TileCache.kt:22`, the class line, both match the source at the tag); the top frame's line,
+  `TileCache.kt:1321` in a 337-line file, is an inlined line from Kotlin's line map, so a reader of a release stack
+  takes a line past the file's end through the SMAP (the `init` block's `walkTopDown` at lines 83 to 84 is the site).

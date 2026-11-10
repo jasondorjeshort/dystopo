@@ -23,5 +23,9 @@ Every string site changes across several owners' files, and a `RetiredNounsTest`
 
 Predictions (the trigger scan reads these).
 - Prediction, check at the first sweep after B2 ships: no screenshot of that sweep's `ui/` set shows a retired noun.
+  Outcome 2026-11-10 (the triage scan; that sweep's folder is on the second PC, so the wave 31 mid-wave sweep
+  `out/sweep-20261110-0254` stood in): held on the seventeen card, sheet, settings and first-run captures read,
+  which show "Offline maps", "Saved as an offline map" and "Download the map around me"; "Download this area" and
+  "Draw an area" are not retired forms (`RetiredNounsTest` retires pack, offline area, keep offline and region).
 - Prediction, check when the owner has adjusted the build's strings (or by 2027-05-01): fewer than a third of the strings in the proposal's table were reworded again, and the noun was not reversed.
 - Prediction, check by 2027-05-01: `retired-nouns-allow.txt` has fewer than sixty lines. If it passes that, the shape rule is wrong.
