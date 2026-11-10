@@ -162,6 +162,7 @@ private fun BoxScope.Controls() {
                         style = TextStyle(color = Ink, fontSize = 13.sp),
                     )
                     RecordingStateLine(ui)
+                    TurnBackChip() // T252: the card off by default, on with this chip
                     WayBackLine() // T180
                 }
             }
@@ -366,6 +367,42 @@ private fun RecordingStateLine(ui: Tracking.UiState) {
  * re-anchors it at the current position (per device). Nothing while navigating (the navigation card has its own clock)
  * or before the first fix.
  */
+/**
+ * T252: the one chip that turns the turn-back card on or off for this recording (off by default: the owner's ruling, and
+ * the ADR 0039 survey found no app with such a card always on). Outlined while off, filled with a tick while on; the help
+ * icon beside it says what it times. `POST /tracks/wayback?on=0|1` does the same.
+ */
+@Composable
+private fun TurnBackChip() {
+    val nav = io.github.jasondorjeshort.dystopo.app.nav.WayBackClock
+    val on = nav.chipOn
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BasicText(
+            (if (on) "✓ " else "") + nav.CHIP,
+            style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+            modifier = Modifier
+                .background(if (on) Ink else Color.Transparent, RoundedCornerShape(14.dp))
+                .border(1.dp, Ink, RoundedCornerShape(14.dp))
+                .clickable(onClickLabel = if (on) TURN_BACK_OFF else TURN_BACK_ON) { Thread { nav.setOn(!on) }.start() }
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.turnBack")
+    }
+}
+
+/** T252: the chip's action for a screen reader. */
+internal const val TURN_BACK_ON = "Show the turn-back time for this recording"
+internal const val TURN_BACK_OFF = "Hide the turn-back time"
+
+/** T252: the chip's help text (ADR 0031: the owner's to adjust). */
+internal val TURN_BACK_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.turnBack", "Turn-back time", "The map, top right: Tracks, then the recording panel", needs = "recording", show = { TrackBar.open = true }) {
+        "Off until you turn it on for a recording. It times the walk or ride back to the recording's start at the pace of " +
+            "its activity and says when to turn back to be out before sunset or your deadline in Settings. No time while " +
+            "driving, on a train or boat, or flying. Tap the card to see how it is worked out."
+    },
+)
+
 @Composable
 private fun WayBackLine() {
     val w = io.github.jasondorjeshort.dystopo.app.nav.NavUiState.wayBack ?: return
@@ -379,6 +416,7 @@ private fun WayBackLine() {
         style = TextStyle(color = ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
         modifier = Modifier.background(bg, RoundedCornerShape(4.dp)).padding(horizontal = if (bg == Color.Transparent) 0.dp else 4.dp),
     )
+    if (!w.clock) { BasicText(w.label, style = TextStyle(color = Ink, fontSize = 12.sp)); return } // T252: why there is no time
     BasicText(w.sourceLine, style = TextStyle(color = Ink, fontSize = 12.sp))
     Action(io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.STARTS_HERE) {
         Thread {

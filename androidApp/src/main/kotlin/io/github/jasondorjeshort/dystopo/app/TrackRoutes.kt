@@ -40,6 +40,12 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   (`returning`, `headingBack`, `flips`, `flipsAt`, `alongM`, `totalM`, `offM`), the `clock`, `text`, `label`, `ui`.
  *   `POST /tracks/wayback?here=1` is the recording card's "The way back starts here" (the recording's last point; kept per
  *   device, never synced); `POST /tracks/wayback?reset=1` goes back to the rule. 409 when nothing records.
+ *   T252: the card is off until turned on for the recording: `POST /tracks/wayback?on=1|0` is the recording panel's
+ *   "Turn-back time" chip (kept per track beside the override), `basis=1|0` (with it or alone) opens or closes the card's
+ *   basis, as a tap on the card does. `wayBack` gains `on`, `activity`,
+ *   `activitySource`, `paceMode` (`hike`, `bike`, null), `noClock` (`off`, `activity`, `tooFar`, or null while the clock
+ *   shows), `retraceS`, `maxWayBackS`, `deadlineDate` (the deadline's own date, the recording's day), `basisOpen`, and
+ *   `ui.clock`, `ui.basis`; the reading (`text`, `label`, `clock`) is null while no clock shows.
  * - T219, the Tracks sheet ([io.github.jasondorjeshort.dystopo.app.tracking.TracksSheet]): `POST /tracks/ui?open=1|0` opens or
  *   closes it (and unfolds the bar), `&more=1|0` its overflow, `&rowMore=<track id or none>` a row's overflow,
  *   `&importHoldMs=` holds the next import after its start line, for a screenshot; `GET /tracks/ui` answers `open`, `title`,
@@ -194,10 +200,18 @@ object TrackRoutes {
                 return Response.json(recorderJson(t))
             }
             "POST" to "/tracks/wayback" -> { // T180
+                val nav = io.github.jasondorjeshort.dystopo.app.nav.WayBackClock
+                val on = p.s("on") // T252: the turn-back card on or off for this recording, as the chip
+                val basis = p.s("basis") // T252: the card's basis open or closed, as a tap on the card
+                if ((on != null && on != "0" && on != "1") || (basis != null && basis != "0" && basis != "1")) return Response.json(mapOf("error" to "on and basis take 0 or 1"), 400)
                 val ok = when {
                     p.s("here") == "1" -> t.wayBackHere()
                     p.s("reset") == "1" -> t.wayBackReset()
-                    else -> return Response.json(mapOf("error" to "here=1 or reset=1"), 400)
+                    on != null || basis != null -> (on == null || nav.setOn(on == "1")).also { ok ->
+                        if (ok && basis != null) java.util.concurrent.CountDownLatch(1).let { l -> android.os.Handler(android.os.Looper.getMainLooper()).post { nav.basisOpen = basis == "1"; l.countDown() }; l.await(2, java.util.concurrent.TimeUnit.SECONDS) }
+                        if (ok) Thread.sleep(300) // a tick publishes the card
+                    }
+                    else -> return Response.json(mapOf("error" to "here=1, reset=1, on=0|1 or basis=0|1"), 400)
                 }
                 if (!ok) return Response.json(mapOf("error" to "not recording, or no point recorded yet"), 409)
                 return Response.json(mapOf("wayBack" to io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.json()))
