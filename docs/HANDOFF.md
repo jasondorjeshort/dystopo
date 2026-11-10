@@ -11,9 +11,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
   and the critic's report in `out/wave32-research/` [no-check: gitignored]): **T271, T262, T264 merged** (log
   entries of 2026-11-10). Nothing runs. Per-agent token counts for the close: the session scratchpad's
   `wave32-costs.tsv` [no-check: scratchpad]. Usage gate shut at 19:09 UTC (5-hour 53, 7-day 74); 5-hour reset 20:40.
-- Rules learned this wave: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line
-  of its own; an LZW error in a cached DEM cell is a stale range cache (delete the cell; T269); a sweep part can lose
-  its emulator right after a guard reboot (one rerun; T273 adds the storage wait).
+- Rules: no force push (merge `main` in); a push on its own line; an LZW error in a cached DEM cell is a stale range
+  cache (T269); a sweep part can lose its emulator after a guard reboot (one rerun; T273).
 
 ## Next
 
