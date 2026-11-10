@@ -334,6 +334,24 @@ class WayBackTest {
     }
 
     @Test
+    fun aWaypointAsTheReturnPointIsItsOwnSourceAndNamedInTheBasis() {
+        // T272: the app resolves the waypoint to a recorded point; the way back then starts there, as a waypoint.
+        val pts = drive()
+        val wb = WayBack(pace, override = 800, overrideSource = AnchorSource.WAYPOINT)
+        pts.forEach { wb.add(it) }
+        assertEquals(AnchorSource.WAYPOINT, wb.anchorSource)
+        assertEquals(800, wb.anchorIndex)
+        assertEquals("waypoint", AnchorSource.WAYPOINT.key)
+        val basis = TurnActivity.basis(AnchorSource.WAYPOINT, wb.pace, 30, "sunset", "19:12", "Camp")
+        assertTrue(basis.startsWith("Timed back to the waypoint Camp along the line recorded"), basis)
+        assertTrue(TurnActivity.basis(AnchorSource.WAYPOINT, wb.pace, 30, "sunset", null).startsWith("Timed back to the waypoint along"))
+        // Out of range (no such point yet): the rule, as for "here".
+        val early = WayBack(pace, override = 10_000, overrideSource = AnchorSource.WAYPOINT)
+        pts.take(50).forEach { early.add(it) }
+        assertEquals(AnchorSource.START, early.anchorSource)
+    }
+
+    @Test
     fun theFirstGoodFixIsTheStartWithoutADrive() {
         val pts = listOf(
             WayPoint(46.70, -121.73, null, 0, 1.0, flagged = true),

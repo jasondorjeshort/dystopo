@@ -458,4 +458,22 @@ r.state, r.open = "paused", True
 ui.finish_recording(r)
 assert r.taps == ["Finish"], r.taps  # already paused: Finish alone
 
+# T272: the recording notification's actions read from dumpsys: Pause alone while recording, Resume and Finish paused.
+DUMP = """  NotificationRecord(0x0123: pkg=com.other user=UserHandle{0} id=31 tag=null importance=2
+        actions={
+            [0] "Stop" -> PendingIntent{1}
+        }
+  NotificationRecord(0x058d: pkg=%s user=UserHandle{0} id=31 tag=null importance=2 key=0|x: Notification(channel=tracking actions=%d vis=PRIVATE))
+      uid=10209 userId=0
+        actions={
+%s
+        }
+      effectiveNotificationChannel=NotificationChannel{mId='tracking'}
+"""
+row = '            [%d] "%s" -> PendingIntent{443dd01: PendingIntentRecord{7808c8d %s broadcastIntent}}'
+assert ui.notification_actions(DUMP % (ui.PACKAGE, 1, row % (0, "Pause", ui.PACKAGE))) == ["Pause"]
+assert ui.notification_actions(DUMP % (ui.PACKAGE, 2, row % (0, "Resume", ui.PACKAGE) + "\n" + row % (1, "Finish", ui.PACKAGE))) == ["Resume", "Finish"]
+assert ui.notification_actions("nothing posted") is None
+assert ui.notification_actions(DUMP.split("  NotificationRecord(0x058d")[0]) is None  # another app's id 31 is not ours
+
 print("test_android_ui: ok")
