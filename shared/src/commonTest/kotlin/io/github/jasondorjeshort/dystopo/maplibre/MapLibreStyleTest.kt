@@ -77,6 +77,21 @@ class MapLibreStyleTest {
         assertEquals(listOf("background", "hillshade", "contour-minor", "contour-index", "contour-labels"), ids)
     }
 
+    @Test
+    fun terrainLayersStartWhereTheirSourcesDo() {
+        // T265: the map zooms out to z1; the hillshade (256-px DEM tiles: tile zoom z draws from map zoom z - 1) and the
+        // contours (512-px vector tiles) have no layer below their source's lowest zoom, so nothing asks for those tiles.
+        val online = sources.copy(demMinZoom = 6, contourMinZoom = 8, shadeTiles = "http://127.0.0.1:1/shade/{z}/{x}/{y}.png", shadeMinZoom = 6)
+        val byId = layers(MapLibreStyle(online).json()).associateBy { it["id"] as String }
+        assertEquals(5.0, (byId.getValue("hillshade")["minzoom"] as Number).toDouble())
+        for (id in listOf("contour-minor", "contour-index", "contour-labels")) assertEquals(8.0, (byId.getValue(id)["minzoom"] as Number).toDouble(), id)
+        // Direct mode's DEM starts at 8.
+        val direct = layers(MapLibreStyle(online.copy(demMinZoom = 8)).json()).associateBy { it["id"] as String }
+        assertEquals(7.0, (direct.getValue("hillshade")["minzoom"] as Number).toDouble())
+        // A source from zoom 0 needs no limit.
+        assertNull(layers(MapLibreStyle(online.copy(demMinZoom = 0, contourMinZoom = 0)).json()).first { it["id"] == "hillshade" }["minzoom"])
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun layout(l: Map<String, Any?>) = l["layout"] as Map<String, Any?>
 

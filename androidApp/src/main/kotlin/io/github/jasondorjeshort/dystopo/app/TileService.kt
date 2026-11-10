@@ -530,7 +530,7 @@ class TileService(
         val attribution = (osmPacks + packs.demPacks).map { it.attribution }.filter { it.isNotEmpty() }.distinct().joinToString(" | ")
         // T38: with a server the sources also span the server's zooms (the pack's own range is kept inside it).
         val o = online
-        val demLo = if (o == null) demMinZoom else minOf(demMinZoom, OnlineTiles.DEM_MIN_ZOOM)
+        val demLo = if (o == null) demMinZoom else minOf(demMinZoom, o.demMinZoom) // T265: 8 in direct mode (DirectSources.DEM_MIN_ZOOM)
         val demHi = if (o == null) demMaxZoom else if (packs.demPacks.isNotEmpty()) demMaxZoom else OnlineTiles.DEM_MAX_ZOOM
         val osmLo = osmPacks.minOfOrNull { it.header.minZoom } ?: 0
         val osmHi = osmPacks.maxOfOrNull { it.header.maxZoom }

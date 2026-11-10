@@ -99,6 +99,9 @@ class MapLibreStyle(
     private val italic = listOf(FONT_ITALIC)
 
     companion object {
+        /** T265: the DEM and shade raster tiles are 256 px (one map zoom finer than a 512-px tile at the same scale). */
+        const val DEM_TILE_SIZE = 256
+
         /** Built-in enlargement over the devtool's pixel sizes (phone labels were too small at 1.0). */
         const val BASE_TEXT_SCALE = 1.35
         const val MIN_TEXT_SCALE = 0.5
@@ -204,7 +207,7 @@ class MapLibreStyle(
         val symbols = ArrayList<Map<String, Any?>>() // labels in the devtool's priority order (first = most important)
         lower += mapOf("id" to "background", "type" to "background", "paint" to mapOf("background-color" to paper))
         if (options.nativeHillshade) {
-            lower += mapOf(
+            lower += minZoomed(DEM_TILE_SIZE, sources.demMinZoom) + mapOf(
                 "id" to "hillshade", "type" to "hillshade", "source" to "dem",
                 "paint" to mapOf(
                     // Night: dimmed relief, dark shadows and almost no highlight on the dark base.
@@ -245,7 +248,7 @@ class MapLibreStyle(
         sources.sprite?.let { doc["sprite"] = it }
         val src = LinkedHashMap<String, Any?>()
         src["dem"] = mapOf(
-            "type" to "raster-dem", "tiles" to listOf(sources.demTiles), "tileSize" to 256, "encoding" to "terrarium",
+            "type" to "raster-dem", "tiles" to listOf(sources.demTiles), "tileSize" to DEM_TILE_SIZE, "encoding" to "terrarium",
             "minzoom" to sources.demMinZoom, "maxzoom" to sources.demMaxZoom,
         )
         src["contours"] = mapOf(
@@ -254,7 +257,7 @@ class MapLibreStyle(
         )
         if (shade != null) {
             src["shade"] = mapOf(
-                "type" to "raster", "tiles" to listOf(sources.shadeTiles), "tileSize" to 256,
+                "type" to "raster", "tiles" to listOf(sources.shadeTiles), "tileSize" to DEM_TILE_SIZE,
                 "minzoom" to sources.shadeMinZoom, "maxzoom" to sources.shadeMaxZoom,
             )
         }
@@ -273,7 +276,7 @@ class MapLibreStyle(
     /** The generated hillshade/slope raster layer, when the options need one and the server provides the tiles. */
     private fun shadeLayer(): Map<String, Any?>? {
         if (options.shade == null || sources.shadeTiles == null) return null
-        return mapOf(
+        return minZoomed(DEM_TILE_SIZE, sources.shadeMinZoom) + mapOf(
             "id" to "shade", "type" to "raster", "source" to "shade",
             "paint" to mapOf("raster-fade-duration" to 0, "raster-resampling" to "linear"),
         )
@@ -281,14 +284,26 @@ class MapLibreStyle(
 
     // ---- contours ----
 
+    /**
+     * T265: a terrain layer's `minzoom` at its source's lowest zoom, in the map's zoom: a 256-px raster tile of zoom z is
+     * drawn from map zoom z - 1 (MapLibre's zooms count 512-px tiles; [DEM_TILE_SIZE]), a vector tile from z. So the
+     * hillshade and the shade stop where their source's tiles stop and the contours where theirs do, and at the world's
+     * zooms (the map goes out to z1) no layer asks the phone's server for a DEM, shade or contour tile below them. Empty
+     * for a source that starts at 0.
+     */
+    private fun minZoomed(tileSize: Int, sourceMinZoom: Int): Map<String, Any?> {
+        val z = sourceMinZoom - (if (tileSize == DEM_TILE_SIZE) 1 else 0)
+        return if (z > 0) mapOf("minzoom" to z) else emptyMap()
+    }
+
     private fun contourLines(): List<Map<String, Any?>> = listOf(
-        mapOf(
+        minZoomed(512, sources.contourMinZoom) + mapOf(
             "id" to "contour-minor", "type" to "line", "source" to "contours", "source-layer" to "contours",
             "filter" to listOf("!=", listOf("get", "level"), 1),
             "layout" to mapOf("line-join" to "round", "line-cap" to "round"),
             "paint" to mapOf("line-color" to contourColor, "line-opacity" to 0.6, "line-width" to 0.9),
         ),
-        mapOf(
+        minZoomed(512, sources.contourMinZoom) + mapOf(
             "id" to "contour-index", "type" to "line", "source" to "contours", "source-layer" to "contours",
             "filter" to listOf("==", listOf("get", "level"), 1),
             "layout" to mapOf("line-join" to "round", "line-cap" to "round"),
@@ -296,7 +311,7 @@ class MapLibreStyle(
         ),
     )
 
-    private fun contourLabels(): Map<String, Any?> = mapOf(
+    private fun contourLabels(): Map<String, Any?> = minZoomed(512, sources.contourMinZoom) + mapOf(
         "id" to "contour-labels", "type" to "symbol", "source" to "contours", "source-layer" to "contours",
         "filter" to listOf("==", listOf("get", "level"), 1),
         "layout" to mapOf(

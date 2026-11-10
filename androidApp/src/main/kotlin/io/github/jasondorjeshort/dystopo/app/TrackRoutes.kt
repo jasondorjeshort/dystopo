@@ -674,6 +674,7 @@ object TrackRoutes {
                     "features" to t.overlay.features, "labels" to t.overlay.labels, "installed" to t.overlay.installedOnStyle,
                     "bridges" to t.overlay.bridges, "bridgedS" to t.overlay.bridgedMs / 1000.0, // T260
                     "tracks" to t.overlay.tracksDrawn, "routes" to t.overlay.routesDrawn, "live" to t.overlay.liveDrawn, "storedSends" to t.overlay.storedSends, // T262
+                    "parts" to t.overlay.parts, "seamCuts" to t.overlay.seamCuts, "lastFit" to t.overlay.lastFit, // T265
                 ),
                 "replay" to t.replay.json(),
                 "settings" to settingsJson(t),

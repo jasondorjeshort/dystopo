@@ -539,6 +539,7 @@ private fun ProfilePanel(p: Tracking.ProfileView) {
     Panel(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BasicText(p.name, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold), modifier = Modifier.widthIn(max = 220.dp))
+            Action("Fit") { tracker().overlay.fit(p.trackId) } // T265: the whole track in view, the short way round
             Action("Close") { Thread { tracker().showProfile(null) }.start() }
         }
         val s = p.stats

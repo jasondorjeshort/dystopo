@@ -204,6 +204,13 @@ no terrain does, the Online chip reads "from the world overview" and its card "T
 built into the app: coasts, borders and the names of countries and large cities. Zoom in or download an area for more."
 (`GET /online` › `chip`, column `world`); search and routes read as if it were not there (`MapCoverage`). The credits
 name Natural Earth and the OpenMapTiles schema from its metadata. The style draws country names (`countries`) below z7.
+T265: the map zooms out to z1 (`MapController.MIN_ZOOM`; z3 before), the whole world on one screen. The terrain layers
+start where their sources do (`MapLibreStyle`'s layer `minzoom`): the hillshade and the shade one map zoom below the DEM's
+lowest tile zoom (256-px tiles; online z6, so map z5; direct mode z8, so z7), the contours at theirs (online z8), so
+nothing asks for a DEM, shade or contour tile at the world's zooms. A track, its gap bridges and a shown route that cross
+the antimeridian are drawn as two pieces meeting at 180 (`TrackScene.pieces`); the track card's **Fit**, the route
+card's **Fit** and the trip editor's fit frame the whole line the short way round (`CameraFit`, `TrackDrawing.shortWayBox`).
+The route card dismisses a request that has made nothing yet with **Cancel** and a drawn route with **Clear**.
 
 ## The device tour (`android-check.py`)
 

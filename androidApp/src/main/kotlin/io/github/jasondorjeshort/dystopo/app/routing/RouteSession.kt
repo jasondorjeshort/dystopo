@@ -423,44 +423,23 @@ object RouteSession {
      * T49: moves the camera so the whole route shows, clear of the route card at the bottom (its last
      * measured top, at least [CARD_MIN_DP]) and, T122, of everything at the top of the map ([io.github.jasondorjeshort.dystopo.app.FitPadding]:
      * the search box, the online indicator and the right-hand chips, where a fixed 96 dp left the route under the Routes
-     * chip). Main thread.
+     * chip). T265: the short way round across the antimeridian ([io.github.jasondorjeshort.dystopo.app.CameraFit]); a Line
+     * route across the Pacific was framed over another continent. Main thread.
      */
-    private fun fitCamera(p: PlannedRoute) {
-        val m = DystopoApp.instance.map.map ?: return
+    private fun fitCamera(p: PlannedRoute, via: String = "plan") {
         val pts = p.route.points
         if (pts.size < 2) return
-        val b = LatLngBounds.Builder().apply { for (pt in pts) include(LatLng(pt.lat, pt.lon)) }.build()
-        val d = DystopoApp.instance.resources.displayMetrics.density
-        val chrome = io.github.jasondorjeshort.dystopo.app.MapInsets.topChromeBottomPx(d)
-        val cardPx = (maxOf(BottomPanels.routeCardTop.value, CARD_MIN_DP) * d).toInt()
-        val mapH = DystopoApp.instance.map.mapView?.height ?: 0
-        val pad = io.github.jasondorjeshort.dystopo.app.FitPadding.of(chrome, cardPx, mapH, d)
-        // Degenerate (all points the same): just centre on it.
-        val update = if (b.latitudeSpan < 1e-6 && b.longitudeSpan < 1e-6) CameraUpdateFactory.newLatLng(b.center)
-        else CameraUpdateFactory.newLatLngBounds(b, pad[0], pad[1], pad[2], pad[3])
-        m.animateCamera(update, FIT_MS, object : org.maplibre.android.maps.MapLibreMap.CancelableCallback {
-            override fun onCancel() = dropPadding(m)
-            override fun onFinish() = dropPadding(m)
-        })
-        lastFit = linkedMapOf(
-            "bounds" to listOf(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth),
-            "paddingPx" to pad.toList(), "routeId" to p.route.id,
-            // T122: the top chrome's bottom the padding clears (px from the window top) and the map's height.
-            "chromeBottomPx" to chrome, "mapHeightPx" to mapH, "clearOfChrome" to (pad[1] >= chrome),
-        )
+        val cardTop = maxOf(BottomPanels.routeCardTop.value, CARD_MIN_DP)
+        val fit = io.github.jasondorjeshort.dystopo.app.CameraFit.fit(pts.map { it.lat to it.lon }, cardTop, FIT_MS) { lastFit = lastFit?.plus("paddingDropped" to true) } ?: return
+        lastFit = fit + mapOf("routeId" to p.route.id, "via" to via)
     }
 
-    /**
-     * T114: MapLibre keeps a bounds fit's padding on the camera, so every later move (a map link, the recentre button)
-     * centred in the padded box, 100 dp or more above the screen's centre; the same view without it. Main thread.
-     */
-    private fun dropPadding(m: org.maplibre.android.maps.MapLibreMap) {
-        val p = m.cameraPosition
-        if (p.padding?.any { it != 0.0 } != true) return
-        val v = DystopoApp.instance.map.mapView ?: return
-        val centre = m.projection.fromScreenLocation(android.graphics.PointF(v.width / 2f, v.height / 2f))
-        m.moveCamera(CameraUpdateFactory.newCameraPosition(org.maplibre.android.camera.CameraPosition.Builder(p).target(centre).padding(0.0, 0.0, 0.0, 0.0).build()))
-        lastFit = lastFit?.plus("paddingDropped" to true)
+    /** T265: the card's Fit: the camera shows the whole route again (`GET /route` `lastFit.via` `fit`). Main thread. */
+    fun fit(): Boolean {
+        val p = plan ?: return false
+        if (phase != "route") return false
+        fitCamera(p, via = "fit")
+        return true
     }
 
     fun clear() {

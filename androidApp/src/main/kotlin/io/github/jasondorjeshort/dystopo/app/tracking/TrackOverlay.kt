@@ -4,6 +4,7 @@ import android.graphics.PointF
 import android.os.Handler
 import android.os.Looper
 import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.geo.Geodesic
 import io.github.jasondorjeshort.dystopo.gpx.TrackDrawing
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.model.Track
@@ -83,6 +84,15 @@ class TrackOverlay {
         private set
     @Volatile var storedSends = 0L
         private set
+    /** T265: the line parts drawn and the cuts at the antimeridian among them ([TrackScene.pieces]), for `GET /tracks` `overlay`. */
+    @Volatile var parts = 0
+        private set
+    @Volatile var seamCuts = 0
+        private set
+    /** T265: the track card's last Fit (the bounds, the short way round, and the padding), `GET /tracks` `overlay.lastFit`. */
+    @Volatile var lastFit: Map<String, Any?>? = null
+        private set
+    @Volatile private var drawnTracks: Map<String, Track> = emptyMap()
 
     /** Attaches to [mapView] (main thread). A new view (activity recreated) replaces the old one. */
     fun bind(mapView: MapView) {
@@ -127,7 +137,24 @@ class TrackOverlay {
         tracksDrawn = stored.map { it.id } + listOfNotNull(live?.id)
         routesDrawn = routes.map { it.first }
         liveDrawn = live?.id
+        parts = s.parts + l.parts
+        seamCuts = s.seamCuts + l.seamCuts
+        drawnTracks = (stored + listOfNotNull(live)).associateBy { it.id }
         main.post { apply() }
+    }
+
+    /**
+     * T265: the track card's Fit: the camera shows the whole of track [id] as drawn now (the recording's fixes so far), the
+     * short way round across the antimeridian ([io.github.jasondorjeshort.dystopo.app.CameraFit]), above the track panels.
+     * False when the track is not drawn. Main thread.
+     */
+    fun fit(id: String): Boolean {
+        val t = drawnTracks[id] ?: return false
+        val pts = t.points.map { it.lat to it.lon }
+        val cardTop = io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsTop.value
+        val fit = io.github.jasondorjeshort.dystopo.app.CameraFit.fit(pts, cardTop, FIT_MS) { lastFit = lastFit?.plus("paddingDropped" to true) } ?: return false
+        lastFit = fit + ("trackId" to id)
+        return true
     }
 
     private fun features(scene: TrackScene.Scene): List<Feature> {
@@ -299,19 +326,22 @@ class TrackOverlay {
         const val LIVE_LINE = "dystopo-track-live-line"
         const val LIVE_POINTS = "dystopo-track-live-points"
         private const val TAP_RADIUS_PX = 36f
+        private const val FIT_MS = 600
     }
 }
 
 /**
  * T262: what [TrackOverlay] draws, as plain data (pure, `TrackSceneTest`): per track its line (one part per segment of two
- * or more points), T260's gap bridges ([TrackDrawing.gaps], per track), its start and end marks ("current" for the end of
+ * or more points; T265: a segment, a route or a bridge across the antimeridian in two parts, [pieces]), T260's gap bridges ([TrackDrawing.gaps], per track), its start and end marks ("current" for the end of
  * the live recording); per route its line; the waypoints with their names. Points are (lat, lon).
  */
 internal object TrackScene {
     class Line(val kind: String, val id: String, val parts: List<List<Pair<Double, Double>>>)
     class Mark(val kind: String, val lat: Double, val lon: Double, val id: String? = null, val name: String? = null)
-    class Scene(val lines: List<Line>, val marks: List<Mark>, val bridges: Int, val bridgedMs: Long) {
+    /** T265: [seamCuts] counts the steps across the antimeridian that cut a line ([pieces]); [parts] every line's parts. */
+    class Scene(val lines: List<Line>, val marks: List<Mark>, val bridges: Int, val bridgedMs: Long, val seamCuts: Int = 0) {
         val size: Int get() = lines.size + marks.size
+        val parts: Int get() = lines.sumOf { it.parts.size }
     }
 
     fun of(tracks: List<Track>, routes: List<Pair<String, List<Pair<Double, Double>>>>, waypoints: List<Waypoint>, live: Boolean = false): Scene {
@@ -319,12 +349,17 @@ internal object TrackScene {
         val marks = ArrayList<Mark>()
         var bridges = 0
         var bridgedMs = 0L
-        for ((id, pts) in routes) if (pts.size >= 2) lines += Line("route", id, listOf(pts))
+        var cuts = 0
+        fun pieces(points: List<Pair<Double, Double>>): List<List<Pair<Double, Double>>> {
+            cuts += points.zipWithNext().count { (a, b) -> kotlin.math.abs(b.second - a.second) > 180 && kotlin.math.abs(a.second) != 180.0 && kotlin.math.abs(b.second) != 180.0 }
+            return TrackScene.pieces(points)
+        }
+        for ((id, pts) in routes) if (pts.size >= 2) pieces(pts).takeIf { it.isNotEmpty() }?.let { lines += Line("route", id, it) }
         for (t in tracks) {
-            val parts = t.segments.map { s -> s.points.map { it.lat to it.lon } }.filter { it.size >= 2 }
+            val parts = t.segments.flatMap { s -> pieces(s.points.map { it.lat to it.lon }) }
             if (parts.isNotEmpty()) lines += Line("track", t.id, parts)
             val gaps = TrackDrawing.gaps(t)
-            for (g in gaps) lines += Line("gap", t.id, listOf(listOf(g.from.lat to g.from.lon, g.to.lat to g.to.lon)))
+            for (g in gaps) pieces(listOf(g.from.lat to g.from.lon, g.to.lat to g.to.lon)).takeIf { it.isNotEmpty() }?.let { lines += Line("gap", t.id, it) }
             bridges += gaps.size
             bridgedMs += gaps.sumOf { it.durationMs }
             val pts = t.points
@@ -333,6 +368,15 @@ internal object TrackScene {
             if (pts.size >= 2) pts.last().let { marks += Mark(if (live) "current" else "end", it.lat, it.lon, t.id) }
         }
         for (w in waypoints) marks += Mark("waypoint", w.lat, w.lon, w.id, w.name)
-        return Scene(lines, marks, bridges, bridgedMs)
+        return Scene(lines, marks, bridges, bridgedMs, cuts)
     }
+
+    /**
+     * T265: one line's (lat, lon) points as the pieces to draw: where two neighbours are more than 180 degrees of longitude
+     * apart (a step across the antimeridian) the seam's two points are put in ([Geodesic.withSeamPoints]) and the line is
+     * cut there ([Geodesic.splitPieces]), as the route overlay does (T256), so a flight across the Pacific is drawn as two
+     * pieces meeting at 180 and never as a line back across the whole map. Pieces of one point are dropped.
+     */
+    fun pieces(points: List<Pair<Double, Double>>): List<List<Pair<Double, Double>>> =
+        Geodesic.splitPieces(Geodesic.withSeamPoints(points, { it.first }, { it.second }) { lat, lon -> lat to lon }) { it.second }
 }
