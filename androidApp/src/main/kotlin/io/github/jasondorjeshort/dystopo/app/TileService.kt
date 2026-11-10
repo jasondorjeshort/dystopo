@@ -385,6 +385,7 @@ class TileService(
         val dropped = synchronized(pyramids) {
             pyramids.values.sumOf { p -> p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4 }.also { pyramids.clear() }
         }
+        runCatching { packWider.trimMemory() } // T254 (registered with the heap guard before it is made)
         return dropped + cliffs.trimMemory() + (online?.trimMemory() ?: 0L)
     }
 

@@ -271,6 +271,7 @@ class OnlineTiles(
 
     /** T127: drops the online pyramid's decoded DEM tiles (made again from the online cache); the bytes dropped. */
     fun trimMemory(): Long = synchronized(this) {
+        widerOsm.trimMemory() // T254: the decoded ancestors
         val p = current?.pyramid
         current = null
         p?.let { it.cachedTiles.toLong() * it.tileSize * it.tileSize * 4 } ?: 0L
@@ -529,7 +530,15 @@ class WiderZoom(private val maxDepth: Int = MAX_DEPTH, private val ancestor: (z:
     val decodes = java.util.concurrent.atomic.AtomicLong()
     val misses = java.util.concurrent.atomic.AtomicLong()
     val failures = java.util.concurrent.atomic.AtomicLong()
+    /** Answers that waited for another thread's decode of the same ancestor. */
+    val decodeWaits = java.util.concurrent.atomic.AtomicLong()
+    private val decoding = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.CompletableFuture<VectorTile?>>()
+
+    /** The cut and encode of each answer, the ancestor decoded already (`answerMs` in each sample: the whole answer). */
     val timing = io.github.jasondorjeshort.dystopo.app.Timing(keepRecent = 12)
+
+    /** Each ancestor's decode, once per ancestor kept. */
+    val decodeTiming = io.github.jasondorjeshort.dystopo.app.Timing(keepRecent = 6)
 
     private fun key(z: Int, x: Int, y: Int) = (z.toLong() shl 58) or (x.toLong() shl 29) or y.toLong()
 
@@ -544,22 +553,43 @@ class WiderZoom(private val maxDepth: Int = MAX_DEPTH, private val ancestor: (z:
             val k = key(az, ax, ay)
             var fresh = false
             val tile = synchronized(decoded) { decoded[k] } ?: run {
-                val bytes = ancestor(az, ax, ay) ?: return@run null
-                val t = try {
-                    MvtDecoder.decode(bytes)
-                } catch (e: IllegalArgumentException) {
-                    failures.incrementAndGet()
-                    return@run null
+                // One decode per ancestor: the children of a view come in a burst, and the others wait for the first.
+                val mine = java.util.concurrent.CompletableFuture<VectorTile?>()
+                val running = decoding.putIfAbsent(k, mine)
+                if (running != null) {
+                    decodeWaits.incrementAndGet()
+                    return@run running.get()
                 }
-                decodes.incrementAndGet()
-                fresh = true
-                synchronized(decoded) { decoded[k] = t }
-                t
+                try {
+                    val t = ancestor(az, ax, ay)?.let { bytes ->
+                        val t0 = System.nanoTime()
+                        try {
+                            MvtDecoder.decode(bytes).also {
+                                decodes.incrementAndGet()
+                                fresh = true
+                                decodeTiming.add((System.nanoTime() - t0) / 1e6, mapOf("tile" to "$az/$ax/$ay", "bytes" to bytes.size))
+                            }
+                        } catch (e: IllegalArgumentException) {
+                            failures.incrementAndGet()
+                            null
+                        }
+                    }
+                    if (t != null) synchronized(decoded) { decoded[k] = t }
+                    mine.complete(t)
+                    t
+                } catch (e: Throwable) {
+                    mine.complete(null)
+                    throw e
+                } finally {
+                    decoding.remove(k, mine)
+                }
             } ?: continue
+            val cutStarted = System.nanoTime()
             val bytes = MvtEncoder.encode(MvtOverzoom.cut(tile, d, x - (ax shl d), y - (ay shl d)))
-            val ms = (System.nanoTime() - started) / 1e6
+            val now = System.nanoTime()
+            val ms = (now - started) / 1e6
             cuts.incrementAndGet()
-            timing.add(ms, mapOf("tile" to "$z/$x/$y", "from" to az, "decoded" to fresh))
+            timing.add((now - cutStarted) / 1e6, mapOf("tile" to "$z/$x/$y", "from" to az, "bytes" to bytes.size, "answerMs" to Math.round(ms * 10) / 10.0))
             return Cut(bytes, az, ms, fresh)
         }
         misses.incrementAndGet()
@@ -570,8 +600,9 @@ class WiderZoom(private val maxDepth: Int = MAX_DEPTH, private val ancestor: (z:
     fun trimMemory(): Int = synchronized(decoded) { decoded.size.also { decoded.clear() } }
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "maxDepth" to maxDepth, "cuts" to cuts.get(), "decodes" to decodes.get(), "noAncestor" to misses.get(),
-        "undecodable" to failures.get(), "kept" to synchronized(decoded) { decoded.size }, "cutMs" to timing.json(),
+        "maxDepth" to maxDepth, "cuts" to cuts.get(), "decodes" to decodes.get(), "decodeWaits" to decodeWaits.get(),
+        "noAncestor" to misses.get(), "undecodable" to failures.get(), "kept" to synchronized(decoded) { decoded.size },
+        "cutMs" to timing.json(), "decodeMs" to decodeTiming.json(),
     )
 
     companion object {
