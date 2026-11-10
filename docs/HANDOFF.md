@@ -14,7 +14,6 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 - Rules learned: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line of its
   own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete; a
   deterministic LZW or Deflate error in a cached DEM cell is a stale range cache: delete that cell's directory.
-  Leftover folders for a Haiku chore: `../dystopo-wt/T254-verify` and `../dystopo-wt/T122`, then `git worktree prune`.
 - **Gate:** the 5-hour meter hit 50 twice (17:04, 00:29); the owner chose no grant; the lanes resumed at the resets;
   5-hour 15, 7-day 51 at 04:55. Two Gradle agents at once: one Kotlin compiler OOM per `check` (green on retry).
 
