@@ -36,7 +36,7 @@ class GlanceTextTest {
     fun theLinesAreTheBarsEntriesInTheirOrder() {
         val every = GlanceText.lines(StripText.items(walk, all, ContourUnits.METERS))
         assertEquals(listOf("elevation", "climb", "speed", "course"), every.map { it.kind })
-        assertEquals(listOf("1650 m", "↑320 m/h", "4.5 km/h", "245°"), every.map { it.full })
+        assertEquals(listOf("1650 m", "↑320 m/h", "4.5 km/h", "WSW 245°"), every.map { it.full })
         // On foot the bar's defaults are elevation and climb: the glance shows the same two, no list of its own.
         assertEquals(listOf("elevation", "climb"), GlanceText.lines(StripText.items(walk, bar, ContourUnits.METERS)).map { it.kind })
         // An entry switched off is gone from both.
@@ -117,7 +117,7 @@ class GlanceTextTest {
     @Test
     fun theBarsDescriptionReadsTheEntriesDrawn() { // T204's follow-up
         val items = StripText.items(walk, all, ContourUnits.METERS)
-        assertEquals("elevation 1650 m · climb ↑320 m/h · speed 4.5 km/h · course 245°", StripText.line(items))
+        assertEquals("elevation 1650 m · climb ↑320 m/h · speed 4.5 km/h · course WSW 245°", StripText.line(items))
         assertEquals("elevation 1650 m", StripText.line(items.take(1)))
         assertEquals("elevation 1650 m · Set at Camp Muir", StripText.line(items.take(1), "Set at Camp Muir"))
         assertNull(StripText.line(emptyList()))

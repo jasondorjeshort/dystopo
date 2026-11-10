@@ -270,6 +270,8 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         SettingsRow.READOUT_CLIMB -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB, change, help = "settings.readoutClimb")
         SettingsRow.READOUT_COURSE -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE, change, help = "settings.readoutCourse")
         SettingsRow.READOUT_ELEVATION -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION, change, help = "settings.readoutElevation")
+        // T257: the extended readout (GPS accuracy and fix age together) and the pressure, for the remembered activity.
+        SettingsRow.READOUT_EXTENDED -> ReadoutExtendedRow(row, change)
         SettingsRow.READOUT_BAROMETER -> {
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             // T250: Automatic, Always or Never (was T161's on/off switch).
@@ -441,8 +443,37 @@ internal const val TIME_FORM_RANGE = "Range"
 internal const val TIME_FORM_ONE = "One number"
 
 /**
+ * T257: the "Extended readout" row for the remembered activity: On adds the GPS accuracy and the fix age to the bar
+ * (both stored as that activity's entries, `readout.<activity>.accuracy` and `.fixAge`), and "Pressure" turns the
+ * barometer's pressure entry on or off (shown by default where the phone has a barometer). ADR 0044: the survey of
+ * 2026-11-09 found every app that offers these fields lets the user choose them.
+ */
+@Composable
+private fun ReadoutExtendedRow(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> Unit) {
+    @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+    val rs = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings
+    val a = AppSettings.trackActivity
+    val o = AppSettings.readoutOptions(a)
+    fun edit(m: Map<io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, String>) = change(SettingsRoutes.Parsed.Ok(null, false, null, null, readoutEdits = m))
+    val present = remember { io.github.jasondorjeshort.dystopo.app.readout.Barometer.present }
+    Setting(row.label, "${RecordingProfiles.label(a)}: ${if (present) EXTENDED_ROW_LINE else EXTENDED_ROW_LINE_NO_BAROMETER}", help = "settings.readoutExtended") {
+        OnOff(o.extended) { on -> edit(rs.EXTENDED.associateWith { if (on) "shown=1" else "shown=0" }) }
+        Option(rs.label(io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.PRESSURE), o.pressure.shown) {
+            edit(mapOf(io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.PRESSURE to if (o.pressure.shown) "shown=0" else "shown=1"))
+        }
+    }
+}
+
+/** T257: the Extended readout row's hint, after the activity's name (ADR 0031: the owner adjusts). */
+internal const val EXTENDED_ROW_LINE = "GPS accuracy and fix age in the readout bar; the air pressure where the phone has a barometer"
+internal const val EXTENDED_ROW_LINE_NO_BAROMETER = "GPS accuracy and fix age in the readout bar"
+// end T257
+
+/**
  * T161: one readout entry's row for the remembered activity (T172's, named in the hint): shown or not, then for a
  * shown entry the speed's unit (km/h or mph, pace, and knots for boat and flying), the smoothing and the ±.
+ * T257: the course's "Degrees" (after the compass point, on by default) and its north, "True north" (the default) or
+ * "Magnetic" (marked "M" in the bar where the magnetic model gives a declination).
  */
 @Composable
 private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dystopo.readout.ReadoutEntry, change: (SettingsRoutes.Parsed.Ok) -> Unit, help: String) {
@@ -456,6 +487,10 @@ private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dysto
         io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB -> "how fast you climb or descend, 0 when level" // T177
         io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE -> "the direction you travel, held while you stand"
         io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION -> "your height above sea level"
+        // T257: no row of their own (the Extended readout row), named for completeness.
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.PRESSURE -> "the air pressure the barometer reads"
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ACCURACY -> "how far off the GPS position may be"
+        io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.FIX_AGE -> "how long ago the GPS gave a position"
     }
     Setting(row.label, "${RecordingProfiles.label(a)}: $what", help = help) {
         OnOff(o.shown) { edit(if (it) "shown=1" else "shown=0") }
@@ -465,14 +500,20 @@ private fun ReadoutEntryRow(row: SettingsRow, e: io.github.jasondorjeshort.dysto
                 Option("Pace", o.pace) { edit("pace=1;knots=0") }
                 if (rs.offersKnots(a, e)) Option("Knots", o.knots && !o.pace) { edit("pace=0;knots=1") }
             }
+            // T257: the course's degrees and its north.
+            if (rs.offersNorth(e)) {
+                Option(rs.DEGREES, o.degrees) { edit(if (o.degrees) "deg=0" else "deg=1") }
+                Option(rs.TRUE_NORTH, !o.magnetic) { edit("mag=0") }
+                Option(rs.MAGNETIC_NORTH, o.magnetic) { edit("mag=1") }
+            }
             // T177: on the ground the climb's smoothing is the climb window's row; flying keeps its lag.
-            if (e != io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB || a == io.github.jasondorjeshort.dystopo.model.Activity.AIR) {
+            if (rs.offersSmoothing(e) && (e != io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.CLIMB || a == io.github.jasondorjeshort.dystopo.model.Activity.AIR)) {
                 BasicText("Smoothing", Modifier.padding(vertical = 8.dp), style = TextStyle(color = Muted, fontSize = 13.sp))
                 for (d in io.github.jasondorjeshort.dystopo.readout.Damping.entries) {
                     Option(d.code.replaceFirstChar { it.uppercase() }, o.damping == d) { edit("damping=${d.code}") }
                 }
             }
-            Option("±", o.plusMinus) { edit(if (o.plusMinus) "pm=0" else "pm=1") }
+            if (rs.offersSmoothing(e)) Option("±", o.plusMinus) { edit(if (o.plusMinus) "pm=0" else "pm=1") }
         }
     }
 }
@@ -667,13 +708,22 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "too little data to tell, and a dash while the barometer and the GPS contradict each other."
         },
         HelpText("settings.readoutCourse", "Course", at(SettingsGroup.NAVIGATION, "Readout: Course"), show = page(SettingsGroup.NAVIGATION)) {
-            "The direction you are moving over the ground, in degrees from true north, from the GPS. It stays at the last " +
-                "direction while you stand still, since the GPS cannot tell a direction then."
+            // T257: the point and the degrees, and the north.
+            "The direction you move over the ground, from the GPS, as a compass point and degrees: SSE 163°. The degrees go " +
+                "first when the bar is short of room. Degrees are from true north; Magnetic counts from magnetic north, marked " +
+                "M (T where the magnetic model has no answer). It holds the last direction while you stand still."
         },
         HelpText("settings.readoutElevation", "Elevation", at(SettingsGroup.NAVIGATION, "Readout: Elevation"), show = page(SettingsGroup.NAVIGATION)) {
             "Your height above sea level, from the GPS, the elevation map on foot, and the barometer when the phone has one. " +
                 "± shows how far off it may be. The GPS alone can be off by tens of metres in a canyon."
         },
+        // T257: the extended readout row.
+        HelpText("settings.readoutExtended", "Extended readout", at(SettingsGroup.NAVIGATION, "Extended readout"), show = page(SettingsGroup.NAVIGATION)) { units ->
+            "On adds the GPS accuracy, how far off the position may be, and the fix age, how long ago the GPS gave one. " +
+                "Pressure shows the barometer's air pressure in ${if (units == ContourUnits.FEET) "inHg" else "hPa"}, with the trend " +
+                "arrow while a track records, whether or not the elevation uses it. These go first when the bar is short of room."
+        },
+        // end T257
         HelpText("settings.readoutBarometer", "Barometer", at(SettingsGroup.NAVIGATION, "Readout: Barometer"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "Air pressure falls about 1 hPa every ${if (units == ContourUnits.FEET) "27 ft" else "8 m"} you climb. Automatic uses the " +
                 "barometer on foot, by bike and by boat, not in a car, train or aircraft, and drops it at once while it disagrees " +

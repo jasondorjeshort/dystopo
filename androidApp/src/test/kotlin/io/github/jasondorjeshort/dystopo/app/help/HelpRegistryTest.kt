@@ -103,6 +103,8 @@ class HelpRegistryTest {
             // T161: the readout rows.
             "settings.readoutSpeed", "settings.readoutClimb", "settings.readoutCourse", "settings.readoutElevation",
             "settings.readoutBarometer",
+            // T257: the extended readout row.
+            "settings.readoutExtended",
             // T176: the position button's rows.
             "settings.mapControls", "settings.recenterZoom", "settings.orientationLock",
             // T177: the readout bar's rows.

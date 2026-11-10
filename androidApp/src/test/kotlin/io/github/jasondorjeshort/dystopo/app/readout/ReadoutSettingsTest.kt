@@ -23,7 +23,7 @@ class ReadoutSettingsTest {
     fun unsetIsTheDefaultsOfEachActivity() {
         for (a in Activity.entries) assertEquals(ReadoutOptions.phoneDefaults(a), ReadoutSettings.options(a, emptyMap(), barometer = io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO)) // T177: the bar's defaults
         assertTrue(ReadoutSettings.options(Activity.FOOT, emptyMap(), barometer = io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER).barometer == io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER)
-        assertEquals(24, ReadoutSettings.KEYS.size)
+        assertEquals(42, ReadoutSettings.KEYS.size) // T257: seven entries for each of six activities
         assertEquals("readout.boat.speed", ReadoutSettings.key(Activity.BOAT, ReadoutEntry.SPEED))
         assertEquals(Activity.RAIL to ReadoutEntry.ELEVATION, ReadoutSettings.ofKey("readout.rail.elevation"))
         assertNull(ReadoutSettings.ofKey("readout.speed"))
@@ -40,6 +40,30 @@ class ReadoutSettingsTest {
         assertEquals(EntryOptions(shown = true), ReadoutSettings.merge(ReadoutEntry.CLIMB, "pace=1;knots=1", EntryOptions(shown = true)))
         assertEquals(base.copy(pace = true), ReadoutSettings.merge(ReadoutEntry.SPEED, "pace=1;knots=1", base))
         assertEquals("shown=1;pace=0;damping=medium;pm=0;knots=1", ReadoutSettings.parseValue(Activity.AIR, ReadoutEntry.SPEED, "knots=1"))
+    }
+
+    @Test
+    fun theCourseDegreesNorthAndTheExtendedEntries() { // T257
+        val course = ReadoutOptions.phoneDefaults(Activity.BOAT).course
+        assertEquals(course.copy(degrees = false), ReadoutSettings.merge(ReadoutEntry.COURSE, "deg=0", course))
+        assertEquals(course.copy(magnetic = true), ReadoutSettings.merge(ReadoutEntry.COURSE, "mag=1", course))
+        assertNull(ReadoutSettings.merge(ReadoutEntry.COURSE, "mag=2", course))
+        assertEquals(EntryOptions(shown = true), ReadoutSettings.merge(ReadoutEntry.SPEED, "deg=0;mag=1", EntryOptions(shown = true)), "degrees and north are the course's only")
+        assertEquals("shown=1;pace=0;damping=medium;pm=0;knots=0;mag=1", ReadoutSettings.parseValue(Activity.BOAT, ReadoutEntry.COURSE, "mag=1"))
+        // A newer build's key in a stored or synced whole value is kept (ADR 0033); a row's edit drops it.
+        assertEquals("shown=1;pace=0;damping=medium;pm=0;knots=0;hue=red", ReadoutSettings.parseValue(Activity.FOOT, ReadoutEntry.SPEED, "shown=1;hue=red"))
+        // An old stored composite: T161's four keys only, the course "SSE 163°" true, the pressure shown, the extended off.
+        val old = mapOf("readout.foot.course" to "shown=1;pace=0;damping=medium;pm=0;knots=0", "readout.foot.speed" to "shown=1;pace=1;damping=high;pm=0;knots=0")
+        val o = ReadoutSettings.options(Activity.FOOT, old, barometer = io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO)
+        assertTrue(o.course.shown && o.course.degrees && !o.course.magnetic)
+        assertTrue(o.pressure.shown)
+        assertFalse(o.extended)
+        assertEquals("readout.foot.fixAge", ReadoutSettings.key(Activity.FOOT, ReadoutEntry.FIX_AGE))
+        assertEquals(ReadoutEntry.PRESSURE, ReadoutSettings.entryOfEditKey("readout.pressure"))
+        val ext = ReadoutSettings.EXTENDED.fold(o) { acc, e -> acc.with(e, acc[e].copy(shown = true)) }
+        assertTrue(ext.extended)
+        assertFalse(ReadoutSettings.offersSmoothing(ReadoutEntry.PRESSURE))
+        assertTrue(ReadoutSettings.offersNorth(ReadoutEntry.COURSE))
     }
 
     @Test

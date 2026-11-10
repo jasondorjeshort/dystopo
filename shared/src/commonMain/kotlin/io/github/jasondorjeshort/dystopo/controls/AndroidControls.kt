@@ -64,6 +64,7 @@ object AndroidControls {
         row("shadeSpoken", "navigation", 25),
         row("setHeight", "navigation", 26, ControlKind.ACTION),
         row("estimatePosition", "navigation", 27),
+        row("readoutExtended", "navigation", 35), // T257: the page's last row, after the map elements' 28 to 34
         row("syncStatus", "sync", 1, ControlKind.LINK),
         row("share", "sync", 2, ControlKind.LINK),
         row("updates", "about", 1),

@@ -81,6 +81,14 @@ import java.util.concurrent.TimeUnit
  *
  * T196: the pressure-fall warning's way down ([WayDownWatch], in `PressureCard.kt`) reads [lastFix] as the walker's
  * position; `GET /readout` › `wayDown` is [WayDownWatch.json].
+ *
+ * T257: the snapshot's pressure is the last sample as read ([onSensorPressure], [onReplayPressure]), not the
+ * estimator's (which takes samples only once a fix has set the clock), so the bar shows it from the first sample and
+ * whatever the barometer's mode: the sensor is read while the pressure entry is shown on a phone with a barometer,
+ * even where the readout does not use it for the elevation (Never, or Automatic in an aircraft); a dash once no sample
+ * came for [PRESSURE_FRESH_MS]. The entry is drawn only on a phone with a barometer or while a replay feeds a pressure
+ * column ([pressureDrawn]). A magnetic course reads the WMM's declination at [lastFix] ([ReadoutText.declination]).
+ * `GET /readout` › `bar` lists the entries shown (`entries`, `drawn`, `dropped`), `extended`, `course` and `pressure`.
  */
 object LiveReadout {
     const val TAG = "DystopoReadout"
@@ -142,11 +150,47 @@ object LiveReadout {
         post { feedFix(fix) }
     }
 
+    // T257: the last pressure sample as read (any thread writes, the readout's thread reads).
+    @Volatile private var rawHPa: Double? = null
+    @Volatile private var rawAt = 0L
+    @Volatile private var rawSource: String? = null
+
+    /** T257: a pressure sample older than this (wall clock) reads as a dash in the bar. */
+    const val PRESSURE_FRESH_MS = 30_000L
+
+    /** T257: a replay's pressure column keeps the pressure entry drawn this long after its last sample on a phone without a barometer. */
+    const val REPLAY_PRESSURE_DRAWN_MS = 60_000L
+
+    private fun raw(hPa: Double, source: String) {
+        if (!(hPa in 300.0..1100.0)) return
+        rawHPa = hPa
+        rawAt = SystemClock.elapsedRealtime()
+        rawSource = source
+    }
+
+    /** T257: the pressure entry is drawn: the phone has a barometer, or a replay fed a pressure column lately. */
+    fun pressureDrawn(): Boolean = Barometer.present ||
+        (lastReplayPressureAt != 0L && SystemClock.elapsedRealtime() - lastReplayPressureAt < REPLAY_PRESSURE_DRAWN_MS)
+
+    /** T257: the pressure entry's value from the last sample as read: shown while fresh, a dash once stale, hidden before any. */
+    private fun pressureValue(o: ReadoutOptions): io.github.jasondorjeshort.dystopo.readout.ReadoutValue {
+        val e = ReadoutEntry.PRESSURE
+        val hPa = rawHPa
+        return when {
+            !o.pressure.shown -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.HIDDEN, reason = "off")
+            hPa == null -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.HIDDEN, reason = "no samples")
+            SystemClock.elapsedRealtime() - rawAt > PRESSURE_FRESH_MS ->
+                io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.DASH, source = rawSource, reason = "silent")
+            else -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.SHOWN, hPa, source = rawSource)
+        }
+    }
+
     /** A replay's pressure column (`Replay.kt`): [timeMs] on the fixes' clock. */
     fun onReplayPressure(timeMs: Long, hPa: Double) {
         val now = SystemClock.elapsedRealtime()
         lastInjectedAt = now
         lastReplayPressureAt = now
+        raw(hPa, "replay") // T257
         bump("replayPressure")
         PressureWatch.onReplayPressure(timeMs, hPa) // T178: the trend takes the replay's column too
         post { ensure().onPressure(PressureSample(timeMs, hPa, PressureSampleSource.REPLAY)) } // T204: the source, so a switch is a new offset
@@ -155,6 +199,7 @@ object LiveReadout {
     /** A barometer sample ([Barometer], its own thread); [wallMs] on the wall clock. */
     fun onSensorPressure(wallMs: Long, hPa: Double) {
         if (SystemClock.elapsedRealtime() - lastInjectedAt < INJECTED_PRECEDENCE_MS) { bump("sensorPressureIgnored"); return }
+        raw(hPa, "sensor") // T257
         post {
             if (!clockKnown) bump("sensorPressureBeforeClock")
             else { bump("sensorPressure"); ensure().onPressure(PressureSample(wallMs + offsetMs, hPa, PressureSampleSource.SENSOR)) }
@@ -182,7 +227,7 @@ object LiveReadout {
 
     /** T177: the bar before the first [refresh] answered: every shown entry a dash. */
     fun placeholder(): List<StripItem> =
-        StripText.items(null, AppSettings.readoutOptions(activity()), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits, trendSlot = trendSlot())
+        StripText.items(null, AppSettings.readoutOptions(activity()), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits, trendSlot = trendSlot(), pressureDrawn = pressureDrawn())
 
     /** T178: an arrow of the barometer's trend can appear beside the elevation (the switch on, a barometer present). */
     private fun trendSlot(): Boolean = AppSettings.readoutBarometer && Barometer.present
@@ -199,6 +244,8 @@ object LiveReadout {
         lastReplayPressureAt = 0L
         lastFix = null // T197
         lastPin = null
+        rawHPa = null // T257
+        rawSource = null
         counts.clear()
         bump("resets")
         recompute()
@@ -218,7 +265,25 @@ object LiveReadout {
                 "window" to (s?.options?.climbWindowS ?: AppSettings.climbWindowS).let { w -> linkedMapOf("s" to w, "label" to ReadoutOptions.windowLabel(w)) },
                 "windowFilledS" to s?.readout?.climbFilledS?.let { Math.round(it * 10) / 10.0 },
                 "bothUnits" to (s?.both ?: false),
-                "fields" to s?.items?.map { linkedMapOf("entry" to it.entry.code, "state" to it.state, "text" to it.full, "other" to it.other, "caption" to it.caption, "dimmed" to it.dimmed) },
+                "fields" to s?.items?.map { linkedMapOf("entry" to it.entry.code, "state" to it.state, "text" to it.full, "other" to it.other, "caption" to it.caption, "dimmed" to it.dimmed, "compact" to it.compact) },
+                // T257: the entries shown (in the bar's order), those the bar draws now and those it leaves out for room
+                // (`courseDegrees` first when the course is drawn as its point alone), the extended readout, the course's
+                // north and the pressure behind its entry.
+                "entries" to s?.items?.map { it.entry.code },
+                "drawn" to s?.items?.take(StripLayout.drawnItems)?.map { it.entry.code }?.takeIf { StripLayout.shown },
+                "dropped" to StripLayout.droppedItems.takeIf { StripLayout.shown },
+                "extended" to (s?.options ?: AppSettings.readoutOptions(activity())).extended,
+                "course" to s?.options?.course?.let { c ->
+                    linkedMapOf(
+                        "degrees" to c.degrees, "north" to if (c.magnetic) "magnetic" else "true",
+                        "declinationDeg" to s.declinationDeg?.let { Math.round(it * 10) / 10.0 },
+                        "mark" to when { !c.magnetic -> null; s.declinationDeg != null -> ReadoutText.MAGNETIC_MARK; else -> ReadoutText.TRUE_MARK },
+                    )
+                },
+                "pressure" to linkedMapOf(
+                    "drawn" to (s?.pressureDrawn ?: pressureDrawn()), "hPa" to rawHPa?.let { Math.round(it * 100) / 100.0 }, "source" to rawSource,
+                    "ageS" to rawHPa?.let { (SystemClock.elapsedRealtime() - rawAt) / 1000 },
+                ),
             ),
             "activity" to (s?.options?.activity ?: activity()).code,
             "activitySource" to activitySource, // T250: `recording` (the recording's activity) or `remembered`
@@ -228,7 +293,7 @@ object LiveReadout {
             "drawn" to s?.items?.map { it.json() },
             "line" to s?.line,
             "gap" to s?.gapText,
-            "text" to s?.let { snap -> ReadoutEntry.entries.associate { e -> e.code to ReadoutText.of(snap.readout[e], snap.options, snap.units)?.full } },
+            "text" to s?.let { snap -> ReadoutEntry.entries.associate { e -> e.code to ReadoutText.of(snap.readout[e], snap.options, snap.units, snap.declinationDeg)?.full } },
             "readout" to s?.readout?.json(),
             "barometerSensor" to b + mapOf(
                 "wanted" to (s?.barometerWanted ?: false),
@@ -330,14 +395,21 @@ object LiveReadout {
         val r = e.readout(System.currentTimeMillis() + offsetMs)
         val units = AppSettings.units
         val o = e.options
-        val wanted = composed && StripLayout.shown && Foreground.started && barometerUsed(e.profile, o)
+        val visible = composed && StripLayout.shown && Foreground.started
+        val fusing = visible && barometerUsed(e.profile, o)
+        // T257: also read while the pressure entry is shown, whatever the mode (its samples are not fused unless the mode lets them).
+        val wanted = fusing || (visible && o.pressure.shown && Barometer.present)
         Barometer.want(wanted)
         // T173: the weather station prior, fetched and fed only while the barometer serves the shown strip.
-        PressureSource.tick(wanted && Barometer.present, lastFed, offsetMs)?.let { e.onStationPressure(it) }
+        PressureSource.tick(fusing && Barometer.present, lastFed, offsetMs)?.let { e.onStationPressure(it) }
         if (STATION_SOURCE_ID in r.provenance) PressureSource.credited = true
         val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits // T177 (T161's follow-up)
-        val items = StripText.items(r, o, units, both, PressureWatch.arrow, PressureWatch.arrowLabel, trendSlot()) // T178: the trend's arrow
-        snapshot = Snapshot(r, o, units, items, StripText.gap(r.gapS), wanted, both)
+        // T257: the pressure as last read, the declination at the last fix for a magnetic course.
+        val withPressure = r.copy(pressure = pressureValue(o))
+        val decl = if (o.course.magnetic) lastFix?.let { ReadoutText.declination(it.lat, it.lon, System.currentTimeMillis()) } else null
+        val drawnP = pressureDrawn()
+        val items = StripText.items(withPressure, o, units, both, PressureWatch.arrow, PressureWatch.arrowLabel, trendSlot(), decl, drawnP) // T178: the trend's arrow
+        snapshot = Snapshot(withPressure, o, units, items, StripText.gap(r.gapS), wanted, both, decl, drawnP)
     }
 
     /**
@@ -361,6 +433,10 @@ object LiveReadout {
         val barometerWanted: Boolean,
         /** T177: the items carry the other unit system's text (the scale bar's both-units mode). */
         val both: Boolean = false,
+        /** T257: the WMM's declination at the last fix while the course is magnetic and the model gives one. */
+        val declinationDeg: Double? = null,
+        /** T257: the pressure entry is drawn ([pressureDrawn]). */
+        val pressureDrawn: Boolean = false,
     ) {
         /** The strip as one line of text (what `GET /readout` `line` and the strip's description say); T197: the mark's words last. */
         val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l ->

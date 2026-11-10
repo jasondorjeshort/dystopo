@@ -198,12 +198,17 @@ object StripLayout {
  * T210: a tap on the bar (the mark keeps its own) opens the glance view ([GlanceView], every entry in the largest type
  * that fits); a screen reader offers it as the bar's action. The description reads the entries drawn only (T204's
  * follow-up: it read the ones left out for room too); the glance view reads them all.
+ *
+ * T257: the course "SSE 163°" has a second, shorter form, its point alone ([StripItem.compact]), composed after the
+ * entries and measured but placed only when the bar is short of room: the degrees go first, before any entry
+ * ([DroppingFlow]); then the fix age, the accuracy, the pressure and the rest from the end of their order.
  */
 @Composable
 fun ReadoutStrip(night: Boolean) {
     var items by remember { mutableStateOf(LiveReadout.snapshot?.items ?: LiveReadout.placeholder()) }
     var markLabel by remember { mutableStateOf<String?>(null) } // T210: the description's last words while the mark shows
     var drawn by remember { mutableStateOf(Int.MAX_VALUE) } // T210: the entries the bar's measure kept ([DroppingFlow])
+    var short by remember { mutableStateOf(false) } // T257: the course drawn as its point alone
     var mark by remember { mutableStateOf(false) } // T197
     DisposableEffect(Unit) {
         LiveReadout.setComposed(true)
@@ -236,7 +241,8 @@ fun ReadoutStrip(night: Boolean) {
     val markStyle = TextStyle(color = ink, fontSize = 11.sp, fontWeight = FontWeight.Bold) // T197
     val context = LocalContext.current
     val entries = items.map { it.entry.code }
-    val description = StripText.line(items.take(drawn), markLabel) ?: "" // T210
+    val degreesAt = items.indexOfFirst { it.compact != null } // T257: the course with degrees, which has a shorter form
+    val description = StripText.line(items.take(drawn), markLabel, short) ?: "" // T210
     Layout(
         modifier = Modifier
             .control("readoutStrip") // T238
@@ -256,11 +262,11 @@ fun ReadoutStrip(night: Boolean) {
                 contentDescription = description
                 onClick(label = GLANCE_OPEN_LABEL) { Glance.show("bar"); true }
             },
-        measurePolicy = remember(entries) { DroppingFlow(entries, ITEM_GAP, ROW_GAP) { k -> if (drawn != k) drawn = k } },
+        measurePolicy = remember(entries, degreesAt) { DroppingFlow(entries, degreesAt, ITEM_GAP, ROW_GAP) { k, s -> if (drawn != k) drawn = k; if (short != s) short = s } },
         content = {
         for (it in items) {
             // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
-            val markSlot = it.entry == io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION && it.trendSlot
+            val markSlot = it.pinSlot // T257: its own flag (it rode on the trend's slot before the arrow could move to the pressure)
             val tapMark = markSlot && mark
             Column(Modifier.alpha(if (it.dimmed) DIM else 1f).then(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -282,6 +288,19 @@ fun ReadoutStrip(night: Boolean) {
                 }
             }
         }
+        // T257: the course's point alone, the last child: placed in the course's stead only when the bar is short of room.
+        items.getOrNull(degreesAt)?.let { c ->
+            Column(Modifier.alpha(if (c.dimmed) DIM else 1f)) {
+                Box {
+                    BasicText(c.captionTemplate, Modifier.alpha(0f), style = captionStyle)
+                    BasicText(c.caption, style = captionStyle)
+                }
+                Box {
+                    ValueRow(c.compactTemplate.orEmpty(), "", null, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle)
+                    ValueRow(c.compact.orEmpty(), "", null, null, Modifier, valueStyle, unitStyle, pmStyle)
+                }
+            }
+        }
         },
     )
 }
@@ -296,23 +315,45 @@ fun ReadoutStrip(night: Boolean) {
  * T239: how many entries it draws is the layout rule's (`app/MapLayout.kt`, the readout's entries one rung each of its
  * ladder, the elevation last): it starts from the rule's count, within the width the rule wrapped them at (its control
  * node's limit), and drops more only if a height still cuts it; before the rule's first pass, every entry.
+ *
+ * T257: with a course that has a shorter form ([degreesAt] its index, its point-alone child the last measurable), the
+ * entries the rule sees ([StripLayout.entrySizesPx]) are the course's short form in its place and, as a last rung of
+ * its own, the width the degrees add: so the rule's first step down, and this measure's, draws the point alone and
+ * every entry still, and the next ones leave out entries from the end as before. [onDrawn] gets the entries drawn and
+ * whether the course is drawn short.
  */
-private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGap: Dp, val onDrawn: (Int) -> Unit = {}) : MeasurePolicy {
+private class DroppingFlow(val entries: List<String>, val degreesAt: Int, val itemGap: Dp, val rowGap: Dp, val onDrawn: (Int, Boolean) -> Unit = { _, _ -> }) : MeasurePolicy {
     override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
         val gapX = itemGap.roundToPx()
         val gapY = rowGap.roundToPx()
         val maxW = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
         val maxH = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
-        val placeables = measurables.map { it.measure(Constraints(maxWidth = maxW)) }
-        StripLayout.entriesMeasured(placeables.map { intArrayOf(it.width, it.height) }, PLATE_PADDING_Y.roundToPx() * 2) // T224
+        val measured = measurables.map { it.measure(Constraints(maxWidth = maxW)) }
+        val n = entries.size.coerceAtMost(measured.size)
+        val full = measured.take(n)
+        // T257: the course's point alone, and the entries with it in the course's place.
+        val alt = if (degreesAt in 0 until n && measured.size > n) measured[n] else null
+        val shortList = if (alt != null) full.toMutableList().also { it[degreesAt] = alt } else full
+        val virtual = shortList.map { intArrayOf(it.width, it.height) } +
+            (alt?.let { listOf(intArrayOf((full[degreesAt].width - it.width - gapX).coerceAtLeast(1), full[degreesAt].height)) } ?: emptyList())
+        StripLayout.entriesMeasured(virtual, PLATE_PADDING_Y.roundToPx() * 2) // T224
+
+        // T257: the entries drawn at virtual count k: every entry whole at the full count, else the first k with the course short.
+        fun drawnAt(k: Int): List<androidx.compose.ui.layout.Placeable> = when {
+            alt == null -> full.take(k)
+            k >= virtual.size -> full
+            else -> shortList.take(k)
+        }
+        var placeables = full
 
         // The rows of the first k entries: (first index, width, height) per row.
         fun rows(k: Int): List<IntArray> {
+            placeables = drawnAt(k)
             val out = ArrayList<IntArray>()
             var start = 0
             var w = 0
             var h = 0
-            for (i in 0 until k) {
+            for (i in placeables.indices) {
                 val p = placeables[i]
                 if (i > start && w + gapX + p.width > maxW) {
                     out += intArrayOf(start, w, h)
@@ -323,27 +364,29 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
                 w += (if (i > start) gapX else 0) + p.width
                 h = maxOf(h, p.height)
             }
-            if (k > start) out += intArrayOf(start, w, h)
+            if (placeables.size > start) out += intArrayOf(start, w, h)
             return out
         }
 
         fun height(r: List<IntArray>) = r.sumOf { it[2] } + gapY * (r.size - 1).coerceAtLeast(0)
-        var k = io.github.jasondorjeshort.dystopo.app.MapLayout.controls.entriesFor("readoutStrip")?.takeIf { it >= 1 }?.coerceAtMost(placeables.size) ?: placeables.size
+        var k = io.github.jasondorjeshort.dystopo.app.MapLayout.controls.entriesFor("readoutStrip")?.takeIf { it >= 1 }?.coerceAtMost(virtual.size) ?: virtual.size
         var r = rows(k)
         while (k > 1 && height(r) > maxH) {
             k--
             r = rows(k)
         }
+        val drawnCount = placeables.size
+        val short = alt != null && k < virtual.size && drawnCount > degreesAt
         StripLayout.fits = k == 0 || height(r) <= maxH
-        StripLayout.drawnItems = k
-        StripLayout.droppedItems = entries.drop(k)
-        onDrawn(k) // T210: the description reads these
+        StripLayout.drawnItems = drawnCount
+        StripLayout.droppedItems = (if (short) listOf(StripText.COURSE_DEGREES) else emptyList()) + entries.drop(drawnCount) // T257: the degrees first
+        onDrawn(drawnCount, short) // T210: the description reads these
         val width = (r.maxOfOrNull { it[1] } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
         val height = height(r).coerceIn(constraints.minHeight, constraints.maxHeight)
         return layout(width, height) {
             var y = 0
             for ((ri, row) in r.withIndex()) {
-                val end = if (ri + 1 < r.size) r[ri + 1][0] else k
+                val end = if (ri + 1 < r.size) r[ri + 1][0] else placeables.size
                 var x = 0
                 for (i in row[0] until end) {
                     placeables[i].place(x, y)
@@ -354,8 +397,11 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
         }
     }
 
+    /** T257: the entries without the course's point-alone child (the last measurable when there is one). */
+    private fun whole(measurables: List<IntrinsicMeasurable>): List<IntrinsicMeasurable> = measurables.take(entries.size)
+
     override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int): Int =
-        measurables.sumOf { it.maxIntrinsicWidth(height) } + itemGap.roundToPx() * (measurables.size - 1).coerceAtLeast(0)
+        whole(measurables).let { m -> m.sumOf { it.maxIntrinsicWidth(height) } + itemGap.roundToPx() * (m.size - 1).coerceAtLeast(0) }
 
     /** The narrowest the bar draws: the first entry (the elevation) alone, on its row; the scale bar's layout reads it. */
     override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int): Int =
@@ -366,7 +412,7 @@ private class DroppingFlow(val entries: List<String>, val itemGap: Dp, val rowGa
         measurables.firstOrNull()?.maxIntrinsicHeight(width) ?: 0
 
     override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int): Int =
-        measurables.sumOf { it.maxIntrinsicHeight(width) } + rowGap.roundToPx() * (measurables.size - 1).coerceAtLeast(0)
+        whole(measurables).let { m -> m.sumOf { it.maxIntrinsicHeight(width) } + rowGap.roundToPx() * (m.size - 1).coerceAtLeast(0) }
 }
 
 /** T161: the gap between entries; T204: and between rows, as the flow row had them. */

@@ -12,12 +12,13 @@ class ReadoutOptionsTest {
     @Test
     fun defaultsPerActivity() {
         fun shown(a: Activity) = ReadoutEntry.entries.filter { ReadoutOptions.defaults(a)[it].shown }.map { it.code }
-        assertEquals(listOf("speed", "climb", "course", "elevation"), shown(Activity.FOOT))
-        assertEquals(listOf("speed", "course", "elevation"), shown(Activity.BIKE))
-        assertEquals(listOf("speed", "elevation"), shown(Activity.ROAD))
-        assertEquals(listOf("speed", "elevation"), shown(Activity.RAIL))
-        assertEquals(listOf("speed", "course"), shown(Activity.BOAT))
-        assertEquals(listOf("speed", "climb", "course", "elevation"), shown(Activity.AIR))
+        // T257: the pressure on for every activity (drawn only where the phone has a barometer); accuracy and fix age off.
+        assertEquals(listOf("speed", "climb", "course", "elevation", "pressure"), shown(Activity.FOOT))
+        assertEquals(listOf("speed", "course", "elevation", "pressure"), shown(Activity.BIKE))
+        assertEquals(listOf("speed", "elevation", "pressure"), shown(Activity.ROAD))
+        assertEquals(listOf("speed", "elevation", "pressure"), shown(Activity.RAIL))
+        assertEquals(listOf("speed", "course", "pressure"), shown(Activity.BOAT))
+        assertEquals(listOf("speed", "climb", "course", "elevation", "pressure"), shown(Activity.AIR))
         for (a in Activity.entries) {
             val o = ReadoutOptions.defaults(a)
             assertEquals(BarometerMode.AUTO, o.barometer)
@@ -41,7 +42,7 @@ class ReadoutOptionsTest {
         assertEquals("shown=0;pace=1;damping=high;pm=1;knots=1", e.encode())
         assertEquals(e, EntryOptions.decode(e.encode(), EntryOptions(shown = true)))
         val def = EntryOptions(shown = true)
-        assertEquals(def.copy(damping = Damping.LOW), EntryOptions.decode("damping=low;future=7;pm=x", def))
+        assertEquals(def.copy(damping = Damping.LOW, extra = "future=7"), EntryOptions.decode("damping=low;future=7;pm=x", def)) // T257: the unknown key kept
         assertEquals(def, EntryOptions.decode(null, def))
         assertEquals(ReadoutEntry.CLIMB, ReadoutEntry.of("climb"))
     }
@@ -74,8 +75,8 @@ class ReadoutOptionsTest {
         val withPm = foot.with(ReadoutEntry.ELEVATION, foot.elevation.copy(plusMinus = true))
         assertEquals("1645 m ± 4", ReadoutText.of(ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, 1645.2, 3.6), withPm, ContourUnits.METERS)!!.full)
         assertEquals("5397 ft", ReadoutText.of(ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, 1645.0, 3.6), foot, ContourUnits.FEET)!!.full)
-        assertEquals("245°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 244.6, 5.0), foot, ContourUnits.METERS)!!.full)
-        assertEquals("0°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 359.7, 5.0), foot, ContourUnits.METERS)!!.full)
+        assertEquals("WSW 245°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 244.6, 5.0), foot, ContourUnits.METERS)!!.full)
+        assertEquals("N 0°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, 359.7, 5.0), foot, ContourUnits.METERS)!!.full)
         // T204 (T177's follow-up): the course's dash carries its degree sign as the number does, no space between.
         assertEquals("–°", ReadoutText.of(ReadoutValue(ReadoutEntry.COURSE, ValueState.DASH), foot, ContourUnits.METERS)!!.full)
     }
@@ -83,7 +84,7 @@ class ReadoutOptionsTest {
     @Test
     fun theBarsDefaultsTheWindowZeroAndTheOtherUnits() { // T177
         fun shown(o: ReadoutOptions) = ReadoutEntry.entries.filter { o[it].shown }.map { it.code }
-        assertEquals(listOf("climb", "elevation"), shown(ReadoutOptions.phoneDefaults(Activity.FOOT)), "the bar on foot: elevation and climb")
+        assertEquals(listOf("climb", "elevation", "pressure"), shown(ReadoutOptions.phoneDefaults(Activity.FOOT)), "the bar on foot: elevation and climb (T257: and the pressure)")
         for (a in Activity.entries - Activity.FOOT) assertEquals(ReadoutOptions.defaults(a), ReadoutOptions.phoneDefaults(a))
         assertEquals(60, ReadoutOptions.defaults(Activity.FOOT).climbWindowS)
         assertEquals(listOf("30 s", "1 min", "5 min", "10 min"), ReadoutOptions.CLIMB_WINDOWS_S.map(ReadoutOptions::windowLabel))
