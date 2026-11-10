@@ -18,6 +18,7 @@ import io.github.jasondorjeshort.dystopo.model.TrackSegment
 import io.github.jasondorjeshort.dystopo.store.LocationFix
 import io.github.jasondorjeshort.dystopo.model.Activity
 import io.github.jasondorjeshort.dystopo.model.ActivityProfile
+import io.github.jasondorjeshort.dystopo.store.ShownKind
 import io.github.jasondorjeshort.dystopo.store.SqlTrackStore
 import io.github.jasondorjeshort.dystopo.store.StoredWaypoint
 import io.github.jasondorjeshort.dystopo.store.TrackExport
@@ -84,6 +85,11 @@ import kotlinx.coroutines.launch
  * estimated and flagged and leaves them out of the distance until the next good fix. They are not the GPS: the silence,
  * the watchdog and the network fallback still count from the last GPS fix, and an estimate goes neither to the pressure
  * trend nor to the readout. The state line and the notification add the estimate's line ([RecordingStatus.estimate]).
+ *
+ * T262, **what the map shows**: every track and route is shown on this device's map until hidden ([setShown], the store's
+ * per-device flag, never synced); [refreshOverlay] draws them all, the recording on top. Before, one transient field held
+ * the one shown track, and a new recording, an import, a profile or a relaunch replaced it: the earlier track left the
+ * map without being hidden or deleted. [shownId] remains for a reader of one track (the print sheet).
  */
 class Tracking private constructor(private val app: DystopoApp) {
     enum class Mode(val gps: Boolean, val injected: Boolean) { ALL(true, true), GPS(true, false), INJECTED(false, true) }
@@ -102,7 +108,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         val tracks: List<TrackSummary> = emptyList(),
         /** Distance per stored track (from the store's stats cache) for the list. */
         val distances: Map<String, Double> = emptyMap(),
-        val shownId: String? = null,
+        /** T262: the tracks hidden on this device's map (every other track is shown). */
+        val hidden: Set<String> = emptySet(),
         val message: String? = null,
         /** The waypoint the rename/delete sheet is open for. */
         val selectedWaypoint: StoredWaypoint? = null,
@@ -139,6 +146,10 @@ class Tracking private constructor(private val app: DystopoApp) {
 
     @Volatile var mode: Mode = Mode.ALL
         private set
+    /**
+     * T262: the one track a reader of one track draws (the print sheet): the recording while it records and is shown, else
+     * the newest shown track; null when every track is hidden. Worked out with the list ([refreshUi]).
+     */
     @Volatile var shownId: String? = null
         private set
     @Volatile var selectedWaypointId: String? = null
@@ -202,7 +213,6 @@ class Tracking private constructor(private val app: DystopoApp) {
         }
         injected.start { TerrainSource.onFix(it) } // T203: replays and POST /location feed the terrain source too
         TerrainSource.start { fix -> post { onTerrainFix(fix) } } // T203
-        shownId = call { store.list().lastOrNull()?.id }
         // Taps arrive on the main thread; selectWaypoint waits on the tracking thread, so hop off main.
         overlay.onWaypointTap = { id -> Thread { selectWaypoint(id) }.start() }
         refreshUi()
@@ -516,7 +526,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             prefs.edit().putString(KEY_REC_MODE, mode.name).apply()
             stoppedBySystemAt = null
             watch.begin(SystemClock.elapsedRealtime())
-            recorder.start(n, profile).also { shownId = it.id; io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStart(it.id) } // T180
+            recorder.start(n, profile).also { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStart(it.id) } // T180; T262: a new track is shown
                 .also { puck(null) } // T251
         }
         startService()
@@ -609,12 +619,40 @@ class Tracking private constructor(private val app: DystopoApp) {
         return ok
     }
 
-    fun show(id: String?): Boolean {
-        if (id != null && call { store.summary(id) } == null) return false
-        shownId = id
+    /** T262: shows track [id] on the map if it is hidden (a notification tap, a waypoint selected); false for an unknown track. */
+    fun show(id: String): Boolean = setShown(id, true)
+
+    /**
+     * T262: shows or hides track [id] on this device's map (the list's eye, `POST /tracks/{id}/show?on=`); kept in the store,
+     * never synced. False for an unknown track.
+     */
+    fun setShown(id: String, shown: Boolean): Boolean {
+        val ok = call {
+            if (store.summary(id) == null) return@call false
+            store.setShown(ShownKind.TRACK, id, shown)
+            true
+        }
+        if (ok) {
+            refreshUi()
+            refreshOverlay(force = true)
+        }
+        return ok
+    }
+
+    /** T262: the hidden tracks, as the store has them (tracking thread). */
+    fun hiddenTracks(): Set<String> = store.hidden(ShownKind.TRACK)
+
+    /** T262: renames track [id] (the list's Rename; a synced field). False for an unknown track or a blank name. */
+    fun rename(id: String, name: String): Boolean {
+        val n = name.trim()
+        if (n.isEmpty()) return false
+        val ok = call {
+            if (store.summary(id) == null) return@call false
+            store.rename(id, n, System.currentTimeMillis())
+            true
+        }
         refreshUi()
-        refreshOverlay(force = true)
-        return true
+        return ok
     }
 
     fun delete(id: String): Boolean {
@@ -622,7 +660,6 @@ class Tracking private constructor(private val app: DystopoApp) {
             if (recorder.activeId == id) { recorder.stop(); io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStop() } // T180
             store.delete(id)
         }
-        if (shownId == id) shownId = null
         if (profileId == id) profileId = null
         if (selectedWaypointId != null && call { store.waypoint(selectedWaypointId!!) } == null) selectedWaypointId = null
         refreshUi()
@@ -694,11 +731,10 @@ class Tracking private constructor(private val app: DystopoApp) {
         return ok
     }
 
-    /** Opens the elevation profile for [id] (and shows the track); null closes it. False for an unknown track. */
+    /** Opens the elevation profile for [id] (and shows the track; T262: on the map, if it was hidden); null closes it. False for an unknown track. */
     fun showProfile(id: String?): Boolean {
         if (id != null) {
-            if (call { store.summary(id) } == null) return false
-            shownId = id
+            if (call { store.summary(id)?.also { store.setShown(ShownKind.TRACK, id, true) } } == null) return false
         }
         profileId = id
         refreshUi()
@@ -715,10 +751,9 @@ class Tracking private constructor(private val app: DystopoApp) {
     private fun trackFor(id: String): Track? =
         if (id == recorder.activeId) Track(id, "", recorder.livePoints().map { TrackSegment(it) }, profile = recorder.profile) else store.track(id) // T260: its interval
 
-    /** Imports GPX text into the store and shows the first new track. Throws IllegalArgumentException for a bad file. */
+    /** Imports GPX text into the store; T262: every new track is shown, beside the others. Throws IllegalArgumentException for a bad file. */
     fun importGpx(text: String, fallbackName: String, file: String = fallbackName): TrackImport.Result {
         val r = call { TrackImport.import(store, text, System.currentTimeMillis(), fallbackName) }
-        r.imported.firstOrNull()?.let { shownId = it.id }
         val msg = io.github.jasondorjeshort.dystopo.app.routing.ImportText.tracks(r.imported.size, r.skippedTracks.size, r.waypoints, file) // T219
         refreshUi(msg)
         refreshOverlay(force = true)
@@ -775,6 +810,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         val live = recorder.liveStats()
         val active = recorder.activeId?.let { store.summary(it) }
         val tracks = store.list().reversed()
+        val hidden = store.hidden(ShownKind.TRACK) // T262
+        shownId = recorder.activeId?.takeIf { it !in hidden } ?: tracks.firstOrNull { it.id !in hidden }?.id
         val profile = profileId?.let { id ->
             val s = tracks.firstOrNull { it.id == id } ?: return@let null
             val key = id to (if (id == recorder.activeId) recorder.accepted.toInt() else s.points)
@@ -790,7 +827,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             durationS = live?.durationS,
             tracks = tracks,
             distances = tracks.filter { it.id != recorder.activeId }.associate { it.id to (store.stats(it.id)?.distanceM ?: 0.0) },
-            shownId = shownId,
+            hidden = hidden,
             message = message ?: ui.message,
             selectedWaypoint = selectedWaypointId?.let { store.waypoint(it) },
             profile = profile,
@@ -805,9 +842,14 @@ class Tracking private constructor(private val app: DystopoApp) {
         if (status != null) notification.update(status, recorder.activeId, active?.createdAt)
     }
 
+    /** T262: stored tracks read for the overlay, by id, with the (updated, points) they were read at. Tracking thread. */
+    private val overlayTracks = HashMap<String, Pair<Pair<Long, Int>, Track>>()
+    private val overlayRoutes = HashMap<String, Pair<Long, List<Pair<Double, Double>>>>()
+
     /**
-     * Redraws the overlay with the shown track (the active one while recording), at most twice a
-     * second unless [force]d. Runs the store read on the tracking thread.
+     * Redraws the overlay (T262: every shown track and route, the recording on top; the waypoints of the shown tracks and
+     * the free-standing ones), at most twice a second unless [force]d. Runs the store reads on the tracking thread; a stored
+     * track is read again only when it changed, and the map gets the stored ones again only when the set changed.
      */
     fun refreshOverlay(force: Boolean = false): Unit = post {
         // T159: nothing to draw on a stopped map; the Foreground collector redraws when the app comes back.
@@ -824,11 +866,34 @@ class Tracking private constructor(private val app: DystopoApp) {
             return@post
         }
         lastOverlayAt = now
-        val id = shownId
-        val track: Track? = id?.let { trackFor(it) }
-        // T91: free-standing waypoints (dropped with no recording, or synced) show whatever track is shown.
-        val waypoints = (id?.let { store.waypoints(it) } ?: emptyList()) + store.waypoints(null)
-        overlay.show(track, waypoints, recording = id != null && id == recorder.activeId)
+        val activeId = recorder.activeId
+        val hidden = store.hidden(ShownKind.TRACK)
+        val shown = store.list().filter { it.id !in hidden }
+        val stored = shown.filter { it.id != activeId }.mapNotNull { s ->
+            val key = s.updatedAt to s.points
+            overlayTracks[s.id]?.takeIf { it.first == key }?.second ?: store.track(s.id)?.also { overlayTracks[s.id] = key to it }
+        }
+        overlayTracks.keys.retainAll(stored.map { it.id }.toSet())
+        val live = activeId?.takeIf { id -> shown.any { it.id == id } }?.let { trackFor(it) }
+        // T91: free-standing waypoints (dropped with no recording, or synced) show whatever is shown.
+        val waypoints = shown.flatMap { store.waypoints(it.id) } + store.waypoints(null)
+        val routes = shownRoutes()
+        val key = listOf(stored.map { it.id to overlayTracks[it.id]?.first }, routes.map { it.first to overlayRoutes[it.first]?.first }, waypoints.map { it.id to it.name to it.lat to it.lon })
+        overlay.show(stored, routes, waypoints, live, key)
+    }
+
+    /** T262: the shown routes' lines, but the one open in the trip editor, which draws it ([io.github.jasondorjeshort.dystopo.app.trips.TripOverlay]). */
+    private fun shownRoutes(): List<Pair<String, List<Pair<Double, Double>>>> {
+        val sync = store as? io.github.jasondorjeshort.dystopo.sync.SyncStore ?: return emptyList()
+        val hidden = store.hidden(ShownKind.ROUTE)
+        val editing = runCatching { io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId }.getOrNull()
+        val items = sync.routeList().filter { it.id !in hidden && it.id != editing }
+        val out = items.mapNotNull { r ->
+            overlayRoutes[r.id]?.takeIf { it.first == r.updatedAt }?.second?.let { r.id to it }
+                ?: sync.routePlan(r.id)?.path?.points?.map { it.lat to it.lon }?.also { overlayRoutes[r.id] = r.updatedAt to it }?.let { r.id to it }
+        }
+        overlayRoutes.keys.retainAll(out.map { it.first }.toSet())
+        return out
     }
 
     companion object {
@@ -882,6 +947,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             ActivityPicker.target
             BatteryExemption.cardOpen
             TrackBar.open
+            io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.open // T262
             LongPressMenu.sun
         }
 

@@ -12,14 +12,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** T219: what the Tracks sheet says: its title and row, import, export and sync (ADR 0031's strings, pure). */
+/** T219: what the Tracks sheet (T262: the Tracks and routes screen) says: its title and row, import, export and sync (ADR 0031's strings, pure). */
 class TrackSentencesTest {
     @Test
-    fun theSheetsTitleAndRow() {
-        assertEquals("Tracks · 3", tracksTitle(3))
-        assertEquals("Nov 3 · 312 ft", trackRowLine("Nov 3", "312 ft", false))
-        assertEquals("Nov 3 · 0.2 mi · recording", trackRowLine("Nov 3", "0.2 mi", true))
-        assertEquals("Nov 3", trackRowLine("Nov 3", null, false))
+    fun theListsRowLine() { // T262: the Tracks and routes screen's track line (T219's sheet row before)
+        assertEquals("On foot · Nov 3 · 312 ft", io.github.jasondorjeshort.dystopo.app.tracks.trackLine("On foot", "Nov 3", "312 ft", false))
+        assertEquals("Track · Nov 3 · 0.2 mi · recording", io.github.jasondorjeshort.dystopo.app.tracks.trackLine(null, "Nov 3", "0.2 mi", true))
+        assertEquals("Track · Nov 3", io.github.jasondorjeshort.dystopo.app.tracks.trackLine(null, "Nov 3", null, false))
     }
 
     @Test

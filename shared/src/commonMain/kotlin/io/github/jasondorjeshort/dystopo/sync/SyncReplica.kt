@@ -348,6 +348,8 @@ data class RouteListItem(
     val straightM: Double,
     /** Epoch ms of the last change this replica saw (local bookkeeping, not synced; 0 when unknown). */
     val updatedAt: Long,
+    /** T262: epoch ms of the route's first put (its HLC's wall time; 0 when unknown): the Tracks and routes list's date. */
+    val createdAt: Long = 0L,
 ) {
     fun json(): Map<String, Any?> = linkedMapOf(
         "id" to id, "name" to name, "mode" to mode, "distanceM" to RouteSummary.r1(distanceM), "ascentM" to ascentM?.let(RouteSummary::r1),

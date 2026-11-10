@@ -45,8 +45,8 @@ object SaveFile {
         else ask(made.first, made.second, { tracking.refreshUi(it) }) { tracking.export(id) }
     }, "dystopo-save-file").start()
 
-    /** Exports a kept route. */
-    fun route(plan: RoutePlan) = ask(plan.name.ifBlank { Trips.UNNAMED }, RouteGpx.gpx(plan), { Trips.say(it) })
+    /** Exports a kept route; [say] gets the line after the save (T262: the Tracks and routes screen's message; the trip card's by default). */
+    fun route(plan: RoutePlan, say: (String) -> Unit = { Trips.say(it) }) = ask(plan.name.ifBlank { Trips.UNNAMED }, RouteGpx.gpx(plan), say)
 
     /** Exports the planning card's route under the name [Trips.keep] would give it (off the main thread: the name reads the packs). */
     fun route(plan: PlannedRoute, from: RouteOrigin.End?, to: RouteOrigin.End?) = Thread({

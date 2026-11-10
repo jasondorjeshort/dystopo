@@ -277,6 +277,55 @@ class TrackDbMigrationTest {
         }
     }
 
+    /**
+     * T262: a version-6 file (v0.1.26-alpha's schema) holding a track and a route, written by the store before the shown flag
+     * existed, upgrades to the current schema with both shown; a hide is kept across a reopen and across the rows' rebuild
+     * from the log (a rename), and is forgotten with the item.
+     */
+    @Test
+    fun versionSixItemsAreShownAfterTheUpgrade() {
+        val dir = Files.createTempDirectory("dystopo-upgrade6").toFile()
+        val t1 = "00000000-0000-4000-8000-000000000061"
+        val r1 = "00000000-0000-4000-8000-000000000062"
+        try {
+            val f = frozen(6, dir)
+            DriverManager.getConnection(url(f)).use { c -> c.createStatement().use { st -> st.executeUpdate("PRAGMA user_version = 6") } }
+            // The store of a version-6 build: no migration, and no call that reads the new table.
+            JdbcSqliteDriver(url(f), Properties()).use { d ->
+                val store = SqlTrackStore(d, wallClock = { 1_000L })
+                store.create(t1, "Paradise loop", 1_000L)
+                store.append(t1, io.github.jasondorjeshort.dystopo.model.TrackPoint(46.785, -121.735, 1650.0, 1_000L), newSegment = true, now = 1_000L)
+                store.append(t1, io.github.jasondorjeshort.dystopo.model.TrackPoint(46.786, -121.734, 1660.0, 61_000L), now = 61_000L)
+                store.putRoute(io.github.jasondorjeshort.dystopo.model.Route(r1, "To Panorama Point", listOf(
+                    io.github.jasondorjeshort.dystopo.model.RoutePoint(46.785, -121.735), io.github.jasondorjeshort.dystopo.model.RoutePoint(46.800, -121.730),
+                )), 2_000L)
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d, wallClock = { 3_000L })
+                assertEquals(listOf(t1), store.list().map { it.id })
+                assertEquals(listOf(r1), store.routeList().map { it.id })
+                assertEquals(emptySet(), store.hidden(ShownKind.TRACK))
+                assertEquals(emptySet(), store.hidden(ShownKind.ROUTE))
+                store.setShown(ShownKind.TRACK, t1, false)
+                store.setShown(ShownKind.ROUTE, r1, false)
+                store.rename(t1, "Paradise loop, renamed", 4_000L)
+                store.setField(io.github.jasondorjeshort.dystopo.sync.EntityKind.ROUTE, r1, "name", "Renamed route", 4_000L)
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d, wallClock = { 5_000L })
+                assertEquals(setOf(t1), store.hidden(ShownKind.TRACK))
+                assertEquals(setOf(r1), store.hidden(ShownKind.ROUTE))
+                store.setShown(ShownKind.TRACK, t1, true)
+                assertEquals(emptySet(), store.hidden(ShownKind.TRACK))
+                store.deleteRoute(r1, 6_000L)
+                assertEquals(emptySet(), store.hidden(ShownKind.ROUTE))
+            }
+            assertEquals(schemaOf(fresh(dir)), schemaOf(f))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     /** What the app does on first open after an update: a version-1 file with a track, opened with the current schema. */
     @Test
     fun versionOneDataSurvivesTheUpgrade() {

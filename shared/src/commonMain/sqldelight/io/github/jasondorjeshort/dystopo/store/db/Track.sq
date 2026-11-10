@@ -2,7 +2,7 @@
 -- Coordinates are WGS84 degrees, elevations meters as recorded, times epoch milliseconds UTC
 -- (see model/UserData.kt). Points keep their insertion order in `seq` and their segment index in `segment`.
 --
--- This file is the CURRENT schema (version 6). Changing it needs a migration: see 1.sqm to 5.sqm and the
+-- This file is the CURRENT schema (version 7). Changing it needs a migration: see 1.sqm to 6.sqm and the
 -- "Track database migrations" paragraph in CLAUDE.md. New columns go at the END of a table, in the
 -- order the migration adds them.
 --
@@ -144,6 +144,15 @@ CREATE TABLE route (
 );
 
 CREATE INDEX route_order ON route(created_hlc, id);
+
+-- Version 7 (T262): whether a track (kind 1) or a route (kind 3, the log's entity kinds) is drawn on this device's map.
+-- Per device, never synced; an item with no row is shown (every item stored before version 7 is).
+CREATE TABLE item_shown (
+    kind INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    shown INTEGER NOT NULL,
+    PRIMARY KEY (kind, id)
+);
 
 -- For every device, the newest of its operations this replica holds (the version vector).
 CREATE TABLE sync_vector (
@@ -369,3 +378,14 @@ SELECT * FROM route ORDER BY created_hlc, id;
 
 routeIdsInLog:
 SELECT DISTINCT entity FROM sync_op WHERE kind = 3;
+
+-- ---- Shown on this device's map (T262) ----
+
+putShown:
+INSERT OR REPLACE INTO item_shown(kind, id, shown) VALUES (?, ?, ?);
+
+selectHidden:
+SELECT id FROM item_shown WHERE kind = ? AND shown = 0 ORDER BY id;
+
+deleteShown:
+DELETE FROM item_shown WHERE kind = ? AND id = ?;

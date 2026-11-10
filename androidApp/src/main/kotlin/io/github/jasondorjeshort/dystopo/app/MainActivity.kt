@@ -238,9 +238,8 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         StartupTrace.composing("compose UpdateOverlay")
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused
-        StartupTrace.composing("compose RoutesSheet and TracksSheet")
-        io.github.jasondorjeshort.dystopo.app.trips.RoutesSheet() // T219: the Routes list and the Tracks sheet, over the map's own controls
-        io.github.jasondorjeshort.dystopo.app.tracking.TracksSheet()
+        StartupTrace.composing("compose TracksScreen")
+        io.github.jasondorjeshort.dystopo.app.tracks.TracksScreen() // T262: Tracks and routes, full screen over the map's own controls (T219's two sheets before)
         StartupTrace.composing("compose SettingsSheet")
         SettingsSheet() // T33: units, text size, warm-up
         StartupTrace.composing("compose StorageScreen and SyncStatusSheet")

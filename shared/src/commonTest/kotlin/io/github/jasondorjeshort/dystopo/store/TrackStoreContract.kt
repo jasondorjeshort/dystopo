@@ -66,6 +66,36 @@ abstract class TrackStoreContract {
         assertEquals(TrackSummary(a.id, "Renamed", 100, 500, false, 11, 0), s.summary(a.id))
     }
 
+    /**
+     * T262: every track is shown until hidden on this device; hiding writes no operation (per device, not synced: a peer
+     * merging this store's log still shows it), showing again forgets the row, and a deleted track takes its flag along.
+     */
+    @Test
+    fun shownIsPerDeviceAndNotSynced() {
+        val s = newStore()
+        val a = s.create("00000000-0000-4000-8000-0000000000a1", "A", 100).id
+        val b = s.create("00000000-0000-4000-8000-0000000000b1", "B", 200).id
+        assertEquals(emptySet(), s.hidden(ShownKind.TRACK))
+        val sync = s as? io.github.jasondorjeshort.dystopo.sync.SyncStore
+        val opsBefore = sync?.opsSince(io.github.jasondorjeshort.dystopo.sync.VersionVector(emptyMap()))?.size
+        s.setShown(ShownKind.TRACK, a, false)
+        s.setShown(ShownKind.ROUTE, "00000000-0000-4000-8000-0000000000c1", false)
+        assertEquals(setOf(a), s.hidden(ShownKind.TRACK))
+        assertEquals(setOf("00000000-0000-4000-8000-0000000000c1"), s.hidden(ShownKind.ROUTE))
+        if (sync != null) {
+            assertEquals(opsBefore, sync.opsSince(io.github.jasondorjeshort.dystopo.sync.VersionVector(emptyMap())).size, "a hide is no operation")
+            val peer = InMemoryTrackStore()
+            peer.apply(sync.bundle(peer.vector()), 1_000)
+            assertEquals(listOf(a, b), peer.list().map { it.id })
+            assertEquals(emptySet(), peer.hidden(ShownKind.TRACK), "the peer keeps its own choice")
+        }
+        s.setShown(ShownKind.TRACK, a, true)
+        assertEquals(emptySet(), s.hidden(ShownKind.TRACK))
+        s.setShown(ShownKind.TRACK, b, false)
+        assertTrue(s.delete(b))
+        assertEquals(emptySet(), s.hidden(ShownKind.TRACK))
+    }
+
     @Test
     fun listsInCreationOrderAndDeletes() {
         val s = newStore()

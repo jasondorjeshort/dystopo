@@ -276,6 +276,7 @@ class InMemoryTrackStore(
         }
         emit(Delete(EntityKind.TRACK, trackId), now)
         rematerialize(Key(EntityKind.TRACK, trackId))
+        hiddenItems[ShownKind.TRACK]?.remove(trackId) // T262
         return true
     }
 
@@ -364,6 +365,7 @@ class InMemoryTrackStore(
         if (id !in routeViews) return false
         emit(Delete(EntityKind.ROUTE, id), now)
         rematerialize(Key(EntityKind.ROUTE, id))
+        hiddenItems[ShownKind.ROUTE]?.remove(id) // T262
         return true
     }
 
@@ -380,7 +382,17 @@ class InMemoryTrackStore(
 
     override fun routePlans(): List<RoutePlan> = routeViews.values.sortedWith(compareBy({ routeMeta[it.id]?.first }, { it.id }))
 
-    override fun routeList(): List<RouteListItem> = routePlans().map { RouteListItem.of(it, routeMeta[it.id]?.second ?: 0L) }
+    override fun routeList(): List<RouteListItem> = routePlans().map { RouteListItem.of(it, routeMeta[it.id]?.second ?: 0L).copy(createdAt = routeMeta[it.id]?.first?.wall ?: 0L) }
+
+    /** T262: hidden items per kind, per device (never an operation). */
+    private val hiddenItems = HashMap<ShownKind, MutableSet<String>>()
+
+    override fun setShown(kind: ShownKind, id: String, shown: Boolean) {
+        val set = hiddenItems.getOrPut(kind) { HashSet() }
+        if (shown) set.remove(id) else set.add(id)
+    }
+
+    override fun hidden(kind: ShownKind): Set<String> = hiddenItems[kind].orEmpty().toSet()
 
     override fun setSetting(key: String, value: String?, now: Long) {
         if (value == null) {

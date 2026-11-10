@@ -1,0 +1,10 @@
+-- Version 6 -> 7 (T262): the shown flag of each track and route on this device's map. Per device, never synced (no
+-- operation, no change to the log or its wire format). An item with no row is shown, so every track and route stored
+-- before this migration is shown after it; the table starts empty.
+
+CREATE TABLE item_shown (
+    kind INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    shown INTEGER NOT NULL,
+    PRIMARY KEY (kind, id)
+);

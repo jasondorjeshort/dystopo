@@ -444,10 +444,17 @@ class SqlTrackStore(
             }
             emit(Delete(EntityKind.TRACK, trackId), now)
             rebuildTrack(trackId)
+            q.deleteShown(ShownKind.TRACK.code, trackId) // T262
         }
         tails.remove(trackId)
         return existed
     }
+
+    override fun setShown(kind: ShownKind, id: String, shown: Boolean) {
+        if (shown) q.deleteShown(kind.code, id) else q.putShown(kind.code, id, 0L) // T262: no row is shown
+    }
+
+    override fun hidden(kind: ShownKind): Set<String> = q.selectHidden(kind.code).executeAsList().toSet()
 
     override fun list(): List<TrackSummary> = q.selectTracks { id, name, createdAt, updatedAt, recording, _, _, _, _, _, points, waypoints, activity, _ ->
         TrackSummary(id, name, createdAt, updatedAt, recording != 0L, points.toInt(), waypoints.toInt(), Activity.of(activity))
@@ -526,6 +533,7 @@ class SqlTrackStore(
             if (q.selectRoute(id).executeAsOneOrNull() == null) return@transaction
             emit(Delete(EntityKind.ROUTE, id), now)
             rebuildRoute(id)
+            q.deleteShown(ShownKind.ROUTE.code, id) // T262
             ok = true
         }
         return ok
@@ -571,7 +579,10 @@ class SqlTrackStore(
     override fun routePlans(): List<RoutePlan> = q.selectRoutes().executeAsList().map(::planOf)
 
     override fun routeList(): List<RouteListItem> = q.selectRoutes().executeAsList().map { r ->
-        RouteListItem(r.id, r.name, r.mode, r.distance_m, r.ascent_m, r.descent_m, r.time_s, r.via_count.toInt(), r.waypoint_count.toInt(), r.straight_m, r.updated_at)
+        RouteListItem(
+            r.id, r.name, r.mode, r.distance_m, r.ascent_m, r.descent_m, r.time_s, r.via_count.toInt(), r.waypoint_count.toInt(), r.straight_m, r.updated_at,
+            runCatching { Hlc.parse(r.created_hlc).wall }.getOrDefault(0L), // T262: the list's date and order
+        )
     }
 
     /** The routes as the log says they are (every route rematerialised): equal to [routePlans] when the table is faithful. */
