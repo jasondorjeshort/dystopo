@@ -29,7 +29,7 @@ object SaveFile {
     /** The launcher's contract; the name [ask] passes it carries the extension. */
     fun contract() = ActivityResultContracts.CreateDocument(MIME)
 
-    private class Pending(val name: String, val fileName: String, val bytes: ByteArray, val say: (String) -> Unit, val after: () -> Unit)
+    private class Pending(val name: String, val fileName: String, val bytes: ByteArray, val say: (String) -> Unit, val after: () -> Unit, val line: String = saved(name))
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var pending: Pending? = null
@@ -54,9 +54,17 @@ object SaveFile {
         ask(name, RoutePlanner.gpx(plan.route.copy(name = name)), { RouteSession.say(it) })
     }, "dystopo-save-file").start()
 
-    private fun ask(name: String, gpx: String, say: (String) -> Unit, after: () -> Unit = {}) {
-        val file = gpxFileName(name)
-        pending = Pending(name, file, gpx.toByteArray(Charsets.UTF_8), say, after)
+    /** T258: saves [bytes] as [fileName] through the same dialog (the diagnostic dump); [line] is said after the save. */
+    fun bytes(fileName: String, bytes: ByteArray, line: String, say: (String) -> Unit) = launch(Pending(fileName, fileName, bytes, say, {}, line))
+
+    private fun ask(name: String, gpx: String, say: (String) -> Unit, after: () -> Unit = {}) =
+        launch(Pending(name, gpxFileName(name), gpx.toByteArray(Charsets.UTF_8), say, after))
+
+    private fun launch(p: Pending) {
+        val name = p.name
+        val file = p.fileName
+        val say = p.say
+        pending = p
         main.post {
             val activity = DystopoApp.instance.map.activity as? MainActivity
             if (activity == null) {
@@ -89,7 +97,7 @@ object SaveFile {
         }
         try {
             checkNotNull(resolver.openOutputStream(uri, "wt")) { "the folder did not open" }.use { it.write(p.bytes) }
-            val line = saved(p.name)
+            val line = p.line
             last = linkedMapOf("name" to p.name, "fileName" to p.fileName, "bytes" to p.bytes.size, "message" to line)
             p.say(line)
             runCatching(p.after).onFailure { Log.w(TAG, "after saving ${p.fileName}", it) }

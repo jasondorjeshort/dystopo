@@ -54,7 +54,8 @@ import kotlin.concurrent.thread
  * clipboard and then opens the prefilled issue page ([IssueLink]) in the browser, and **Delete**. Nothing is sent by the
  * app: the tester reads the page, signs in and submits. No email option (the crash-report survey: it needs a mailbox and
  * sends unseen through a third-party mail app). T228: **Report the last start** shows the newest start's trace the same way,
- * for a start that felt slow but passed the thresholds; it has no Delete.
+ * for a start that felt slow but passed the thresholds; it has no Delete. T258: below them, **Send diagnostics** ([DiagnosticDump])
+ * saves the diagnostic dump through the system's save dialog, with the line under it saying what the file holds.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -110,6 +111,12 @@ fun ReportRow() {
             }
         }
         ReportUi.message?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)) }
+        // T258: the second action, the diagnostic dump, saved through the system's dialog.
+        BasicText(DUMP_TEXT, Modifier.padding(top = 10.dp), style = TextStyle(color = Muted, fontSize = 11.sp))
+        FlowRow(Modifier.padding(top = 2.dp)) {
+            Option(DUMP_TITLE, false) { DiagnosticDump.save(ReportUi::sayDump) }
+        }
+        ReportUi.dumpMessage?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)) }
     }
 }
 
@@ -152,6 +159,13 @@ object ReportUi {
     var open by mutableStateOf<Open?>(null)
     var message by mutableStateOf<String?>(null)
     var lastStart by mutableStateOf<String?>(null)
+    /** T258: the line under Send diagnostics. */
+    var dumpMessage by mutableStateOf<String?>(null)
+
+    /** T258: Send diagnostics' line, from any thread. */
+    fun sayDump(line: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { dumpMessage = line }
+    }
 
     /** The text Open GitHub issue last put on the clipboard, and the link it opened (for the routes). */
     @Volatile var copied: String? = null

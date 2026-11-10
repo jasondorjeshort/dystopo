@@ -29,6 +29,17 @@ import java.io.File
  * - `POST /debug/crash`: throws on the UI thread (`?thread=worker`: on a new thread) with a message carrying what a real
  *   crash could: the camera's position, a tile path, the packs in use and a file path under the app's storage, so the
  *   report's scrub can be checked; the process dies and the report is listed on the next launch. Answers at once.
+ * - T258, `GET /debug/dump`: the diagnostic dump ([DiagnosticDump], `dystopo-dump 1`, `docs/reference/diagnostic-dump.md`) made
+ *   now, as `text/plain`, the same bytes Send diagnostics saves; `?last=1`: the bytes of the newest dump made (the one the
+ *   dialog saved; 404 before any). Headers `X-Dystopo-Dump-File`, `-Lines`, `-Build-Ms`, `-Logcat-Ms`.
+ * - `GET /debug/dump/sampler`: the [MemorySampler]'s state and cost: `periodS`, `firstS`, `keep`, `file`, `fileBytes`,
+ *   `fileLines`, `samples`, `errors`, `rewrites`, `cpuUsLast`, `cpuUsMax`, `cpuUsMean` (the sampler thread's CPU per sample,
+ *   the file write included), `wallMsLast`, `lastAt`; `last` (the newest dump made: `fileName`, `bytes`, `lines`,
+ *   `sections`, `buildMs`, `logcatMs`, `logcatError`); `message` (the line under the button); `saveFile` (the dialog's
+ *   launches and its last result, [io.github.jasondorjeshort.dystopo.app.SaveFile.json]).
+ * - `POST /debug/dump/sample`: one sample now, written to the ring (`line`), so a tour need not wait a minute a line.
+ * - `POST /debug/dump/save`: what the Send diagnostics tap does (the dump made, then the save dialog opened; drive the
+ *   dialog with taps); 503 while the app is in the background.
  */
 object ReportRoutes {
     private val ONE = Regex("^/reports/([A-Za-z0-9._-]+)$")
@@ -48,6 +59,10 @@ object ReportRoutes {
             "POST" to "/reports/ui" -> ui(app, r.query["id"])
             "POST" to "/reports/open" -> open(app, r.query["id"])
             "POST" to "/debug/crash" -> crash(app, r.query["thread"] == "worker")
+            "GET" to "/debug/dump" -> dump(app, r.query["last"] == "1")
+            "GET" to "/debug/dump/sampler" -> Response.json(sampler())
+            "POST" to "/debug/dump/sample" -> Response.json(mapOf("line" to MemorySampler.sampleNow(app), "sampler" to MemorySampler.json()))
+            "POST" to "/debug/dump/save" -> saveDump(app)
             else -> null
         }
     }
@@ -115,6 +130,29 @@ object ReportRoutes {
         val boom = Runnable { throw DebugCrash(msg) }
         if (worker) Thread(boom, "debug-crash").start() else Handler(Looper.getMainLooper()).postDelayed(boom, 300)
         return Response.json(mapOf("posted" to true, "thread" to if (worker) "debug-crash" else "main"))
+    }
+
+    /** T258: the dump made now, or the newest made. */
+    private fun dump(app: DystopoApp, last: Boolean): Response {
+        val b = if (last) DiagnosticDump.last ?: return Response.json(mapOf("error" to "no dump made yet"), 404) else DiagnosticDump.build(app)
+        return Response(200, "text/plain; charset=utf-8", b.bytes, mapOf(
+            "X-Dystopo-Dump-File" to b.fileName, "X-Dystopo-Dump-Lines" to b.lines.toString(),
+            "X-Dystopo-Dump-Build-Ms" to b.buildMs.toString(), "X-Dystopo-Dump-Logcat-Ms" to b.logcatMs.toString(),
+        ))
+    }
+
+    private fun sampler(): Map<String, Any?> = MemorySampler.json() + linkedMapOf(
+        "last" to DiagnosticDump.last?.let { b ->
+            linkedMapOf("fileName" to b.fileName, "bytes" to b.bytes.size, "lines" to b.lines, "sections" to b.sections, "buildMs" to b.buildMs, "logcatMs" to b.logcatMs, "logcatError" to b.logcatError)
+        },
+        "message" to ReportUi.dumpMessage,
+        "saveFile" to io.github.jasondorjeshort.dystopo.app.SaveFile.json(),
+    )
+
+    private fun saveDump(app: DystopoApp): Response {
+        app.map.backgroundReason()?.let { return Response.json(mapOf("error" to "the app is in the background", "reason" to it), 503) }
+        app.map.onMain { DiagnosticDump.save(ReportUi::sayDump) }
+        return Response.json(mapOf("started" to true))
     }
 
     /** The exception `POST /debug/crash` throws. */

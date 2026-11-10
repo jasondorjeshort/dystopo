@@ -68,6 +68,8 @@ class DystopoApp : Application() {
         MainWatchdog.start(this) // T144: the UI-thread watchdog (every build)
         io.github.jasondorjeshort.dystopo.app.reports.Reports.start(this) // T145: the crash handler, and the exit records read on a worker
         io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.start(this) // T112: one budget over the caches (its own thread)
+        StartupTrace.mark("MemorySampler.start")
+        io.github.jasondorjeshort.dystopo.app.reports.MemorySampler.start(this) // T258: schedules a sample a minute on its own thread (the diagnostic dump's memory history)
         StartupTrace.mark("PackManager.get")
         val downloads = io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads
         StartupTrace.mark("resumePending")
