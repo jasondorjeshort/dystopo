@@ -28,4 +28,10 @@ A wave takes longer on the clock: about 1.5 hours a task, one after another. It 
 Hatchery's wave text carries the same numbers in spirit; this goes back as a carry-back. Revisit if the project moves to a machine with room to spare, on the owner's word.
 
 - Prediction, check at the next wave's close: free RAM stayed above 6 GB throughout, by the readings the coordinator takes after each merge.
+  Outcome 2026-11-10 (checked by the triage scan, from wave 30's close): held; the readings after each merge stayed
+  between 11.0 and 23 GB, and the guard stopped emulators five times at its limits without losing one.
 - Prediction, check at the next wave's close: its cost per task on the 7-day meter is within 0.5 points of the current figure, so running one at a time costs no more.
+  Outcome 2026-11-10 (the same scan): failed; wave 30 read 27 to 72 on the 7-day meter for eleven tasks, three
+  releases and two critics, about 2.5 a task against the 1.25 figured, and the `wave` skill's figure was revised at
+  that close (finding `../../findings/2026-11-10-wave-cost-doubled-and-the-lane-width-does-not-explain-it.md`:
+  wave 31's two lanes cost the same per task, so the serial lane is not the cause).

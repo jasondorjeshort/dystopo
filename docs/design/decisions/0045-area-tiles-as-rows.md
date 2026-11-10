@@ -47,6 +47,10 @@ pinned budget goes to 1 TB. The owner (2026-10-26): "I want to be able to downlo
 Out of scope: a resume cursor over the walk (T151), the top button through the picker (T153), the middle tier
 (T157). Deferred: an index on disk or a compact index for the tile cache, revived when a phone's area downloads
 pass `AreaLimit.maxTiles` in use or a heap reading shows the index near a quarter of the heap.
+2026-11-10 (the triage scan): the trigger fired another way, a launch with no first frame for 120 s while the
+index walked a million files (T242's freeze), and T249 built the compact index and its snapshot on disk
+(`docs/reference/android-app.md`, the online tile cache's index); an incremental index past that is decided in
+ADR 0060's ledger.
 
 ## Consequences
 
