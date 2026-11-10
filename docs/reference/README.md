@@ -28,3 +28,4 @@ them, on the same branch.
 | `home-site.md` | The home site: `tools/site/install.ps1` and `status.ps1`, the server and Caddy as scheduled tasks (S4U needs elevation once), the folder and token, `-Update`, port 80, the owner's three steps, the always-on cost | 2026-11-01 |
 | `verifying-a-task.md` | `tools/verify-task.ps1`, the verifier's mechanical half: its arguments, steps, summary and fixture test, and what the agent keeps | 2026-11-09 |
 | `release-realism.md` | The `tools/android-ui.py` parts that drive the release build by taps, the sweep's device parts, its sheet and the before-and-after sheet (`sweep-diff.py`) | 2026-11-09 |
+| `diagnostic-dump.md` | The diagnostic dump (`dystopo-dump 1`): Send diagnostics on the phone, the sampler's ring, every section and sample key, the scrub, `GET /debug/dump` and `devtool dump-scan` | 2026-11-10 |
