@@ -68,7 +68,7 @@ minor change, a changed meaning a new major version.
 **A sample line** is `s` and then `key=value` pairs; values are integers or a word, never a decimal, so the scrubber
 leaves samples as they are. Keys, in order: `t` epoch ms; `up` seconds since the process started; `pid`; `heapKb` the
 Java heap in use (`Runtime` total minus free); `nativeKb` native allocated (`Debug.getNativeHeapAllocatedSize`); `pssKb`
-this process's PSS (`Debug.getMemoryInfo`); `threads` and `fds` the entries of `/proc/self/task` and `/proc/self/fd`;
+this process's PSS (`Debug.getPss`, from `smaps_rollup` where the kernel has it); `threads` and `fds` the entries of `/proc/self/task` and `/proc/self/fd`;
 `demServed`, `osmServed`, `contourServed`, `tileKb`, `tileErrors` the tile counters since the process started;
 `cacheRuns` the cache budget's runs; `trims` the heap guard's; `fg` 1 while the map is on screen; `rec` the recorder's
 state (`idle`, `recording`, `waiting-for-gps`, `paused`, `auto-paused`, `stopped-by-system`; `-` before the tracker is ready); `cpuUs` the sampler thread's CPU
@@ -93,5 +93,12 @@ which are not places.
 
 ## Cost (T258, API 35 emulator)
 
-See the T258 entry of the dated log in `docs/PLANNING.md` for the measured figures: the sampler's CPU per sample, the
-ring's size at a day and a dump's build time and size.
+- A sample: 15.5 ms of the sampler thread's CPU on average (8 to 20 ms over 13 samples), 17 ms wall, once a minute:
+  about 0.03 % of one core. `Debug.getMemoryInfo`, which the Technical details row uses, cost 67 ms of CPU on average
+  (up to 140 ms) and up to 1.8 s of wall time in the same place, so the sampler reads `Debug.getPss` (it agreed with
+  `getMemoryInfo`'s total within 0.2 %).
+- The ring: about 210 bytes a line, so about 300 kB at 1,440 lines (315 kB at most before the hourly cut).
+- A dump: 77 kB and 542 lines after a device tour (28 samples, 8 starts, 23 Technical details lines, 459 log lines),
+  made in 0.5 s, of which logcat 0.12 s; a full day's ring and 4,000 log lines would make about 0.8 MB.
+
+Under `./gradlew :devtool:run` a refusal's exit status 2 shows as a failed run (exit 1); the JSON is printed first.

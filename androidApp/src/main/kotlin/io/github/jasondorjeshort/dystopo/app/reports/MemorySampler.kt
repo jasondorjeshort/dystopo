@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicLong
  * back to them once it holds [KEEP] + [SLACK] lines, so it is rewritten about once an hour.
  *
  * A line's keys (`docs/reference/diagnostic-dump.md`): `t` (epoch ms), `up` (seconds since the process started), `pid`,
- * `heapKb` (the Java heap in use), `nativeKb` (native allocated), `pssKb` (`Debug.getMemoryInfo`, this process only),
+ * `heapKb` (the Java heap in use), `nativeKb` (native allocated), `pssKb` (`Debug.getPss`, this process only),
  * `threads` and `fds` (`/proc/self/task` and `/proc/self/fd`), the tile counters since the process started (`demServed`,
  * `osmServed`, `contourServed`, `tileKb`, `tileErrors`), `cacheRuns` (the cache budget's runs), `trims` (the heap guard's),
  * `fg` (1 while the map is on screen), `rec` (the recorder's state, `-` before the tracker is ready) and `cpuUs` (this
@@ -74,7 +74,7 @@ object MemorySampler {
     fun line(app: DystopoApp): String {
         val cpu0 = Debug.threadCpuTimeNanos()
         val rt = Runtime.getRuntime()
-        val pss = runCatching { Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }.totalPss.toLong() }.getOrNull()
+        val pss = runCatching { Debug.getPss() }.getOrNull()?.takeIf { it > 0 } // smaps_rollup where the kernel has it: a fraction of getMemoryInfo's full walk
         val c = app.tileCounters
         val tileBytes = c.dem.bytes.get() + c.osm.bytes.get() + c.contours.bytes.get()
         val values = linkedMapOf<String, Any?>(
