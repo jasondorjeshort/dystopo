@@ -60,8 +60,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.tracking.MAP_MARKS_HELP +
             // end T251
             // T252: the recording panel's turn-back chip.
-            io.github.jasondorjeshort.dystopo.app.tracking.TURN_BACK_HELP
+            io.github.jasondorjeshort.dystopo.app.tracking.TURN_BACK_HELP +
             // end T252
+            // T255: what search and routes need, beside the search box's line over a view with map tiles only.
+            io.github.jasondorjeshort.dystopo.app.search.SEARCH_COVERAGE_HELP
+            // end T255
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

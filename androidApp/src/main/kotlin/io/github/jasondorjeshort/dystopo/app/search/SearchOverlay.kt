@@ -61,6 +61,8 @@ object SearchUi {
     var selected by mutableStateOf<PackHit?>(null)
     /** T149: the text field has the focus (the box is open for typing). */
     var focused by mutableStateOf(false)
+    /** T255: what the offline maps hold at the camera's centre, read while the box is [wanted] (null otherwise). */
+    var coverage by mutableStateOf<MapCoverage?>(null)
 
     /** T149: the indexes are wanted: the box is open (focused, or its result list open) or holds text. */
     val wanted: Boolean get() = focused || open || query.isNotBlank()
@@ -75,9 +77,13 @@ object SearchUi {
         val want = wanted
         val states = if (want) PlaceSearch.ensure() else PlaceSearch.peek()
         val building = states.filter { it.status == "building" }
+        // T255: where no offline map with a vector archive covers the view, why search finds nothing here comes first.
+        val cov = if (want) PlaceSearch.coverageOnMain() else null
+        coverage = cov
         status = when {
             !want && states.none { it.busy } -> null // not asked for yet: nothing to say
-            states.isEmpty() -> "No map data here to search"
+            cov != null && cov != MapCoverage.VECTOR -> MapCoverage.searchSentence(cov, 0)
+            states.isEmpty() -> SEARCH_NO_MAP
             building.isNotEmpty() -> "Indexing places" + building.sumOf { it.total }.let { t -> if (t > 0) " ${building.sumOf { it.done } * 100 / t}%" else "..." } +
                 if (building.size > 1) " (${building.size} maps)" else ""
             states.all { it.status == "error" } -> "Search index failed: ${states.first().error}"
@@ -119,6 +125,40 @@ object SearchUi {
 
 /** T149: the box's line when the heap guard refused every index build (asked again after a while). */
 internal const val SEARCH_NO_MEMORY = "Not enough memory to index places now; try again in a minute"
+
+/** T255 (ADR 0031: listed for the owner): the box's line over a view that only map tiles cover ([MapCoverage.TILES_ONLY]). */
+const val SEARCH_TILES_ONLY = "Search needs an offline map here; this area has map tiles only"
+
+/** The box's line where nothing on the phone covers the view ([MapCoverage.NO_MAP]). */
+const val SEARCH_NO_MAP = "No map data here to search"
+
+/** The result list's line where an offline map covers the view and nothing matches. */
+const val SEARCH_NO_MATCH = "No places match"
+
+/**
+ * T255: the link under a "needs an offline map here" line (the search box's and the route card's): opens Offline maps, as
+ * the online chip's card link does ([io.github.jasondorjeshort.dystopo.app.online.OnlineUi.Link.OFFLINE_MAPS]).
+ */
+@Composable
+internal fun OfflineMapsLink(onOpen: () -> Unit = {}) {
+    BasicText(
+        io.github.jasondorjeshort.dystopo.app.online.OnlineUi.Link.OFFLINE_MAPS.text,
+        Modifier.background(Paper, RoundedCornerShape(8.dp)).clickable {
+            onOpen()
+            io.github.jasondorjeshort.dystopo.app.packs.PacksUi.visible = true
+        }.padding(8.dp, 5.dp),
+        style = TextStyle(color = Color(0xFF2C7BB6), fontSize = 13.sp, fontWeight = FontWeight.Bold),
+    )
+}
+
+/** T255: what search and routes need, beside the search box's "needs an offline map here" line; gathered by `HelpRegistry`. */
+internal val SEARCH_COVERAGE_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("search.offlineMap", "Search and routes need an offline map", "The map: the search box", needs = "a view with map tiles only") {
+        "Search and routes read the places and trails of an offline map saved with routing and place search. Where the " +
+            "map shows tiles only (viewed earlier, a map-only download, or cut from a wider zoom) there is nothing to " +
+            "search or route on. Download this area as an offline map from Offline maps."
+    },
+)
 
 /**
  * The search box over the map (top left): type a place name, pick a result, and the camera moves
@@ -188,10 +228,17 @@ fun SearchOverlay() {
                 )
             }
             ui.status?.let { BasicText(it, Modifier.background(Paper, RoundedCornerShape(8.dp)).padding(8.dp, 4.dp), style = TextStyle(color = Accent, fontSize = 12.sp)) }
+            // T255: over a view with map tiles only, the way to an offline map, and what search and routes need.
+            if (ui.coverage == MapCoverage.TILES_ONLY && ui.status == SEARCH_TILES_ONLY) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OfflineMapsLink { focus.clearFocus(); ui.open = false }
+                    io.github.jasondorjeshort.dystopo.app.help.HelpIcon("search.offlineMap")
+                }
+            }
             if (ui.open && ui.query.isNotBlank()) {
                 Column(Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp))) {
                     if (ui.hits.isEmpty() && ui.status == null) {
-                        BasicText("No places match", Modifier.padding(12.dp), style = TextStyle(color = Muted, fontSize = 14.sp))
+                        BasicText(SEARCH_NO_MATCH, Modifier.padding(12.dp), style = TextStyle(color = Muted, fontSize = 14.sp))
                     }
                     LazyColumn(Modifier.heightIn(max = 340.dp)) {
                         itemsIndexed(ui.hits) { i, h ->

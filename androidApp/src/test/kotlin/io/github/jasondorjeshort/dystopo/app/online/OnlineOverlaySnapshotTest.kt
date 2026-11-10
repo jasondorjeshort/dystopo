@@ -22,23 +22,24 @@ class OnlineOverlaySnapshotTest {
 
     /**
      * T236: proposal 0056's chip table, cell by cell, as the proposal writes it ("n/a": a combination the code cannot reach).
-     * Columns: pack, network from public sources, network from your server, cache inside a downloaded map, cache otherwise, no data.
+     * Columns: pack, network from public sources, network from your server, cache inside a downloaded map, cache otherwise, no data;
+     * T255: and a view cut from a wider zoom (T254), drawn from what the phone holds whatever the connection.
      */
     private val table: Map<OnlineUi.Row, Pair<OnlineUi.Dot, List<String>>> = linkedMapOf(
-        OnlineUi.Row.ONLINE to (OnlineUi.Dot.GREEN to listOf("Online · on this phone", "Online · from public sources", "Online · from your server", "Online · on this phone", "Online · viewed earlier", "Online · no data here")),
-        OnlineUi.Row.PAUSED to (OnlineUi.Dot.GREY to listOf("Paused · on this phone", "Paused · viewed earlier", "n/a", "Paused · on this phone", "Paused · viewed earlier", "Paused · no data here")),
-        OnlineUi.Row.SERVER_OFFLINE to (OnlineUi.Dot.RED to listOf("Server offline · on this phone", "n/a", "Server offline · viewed earlier", "Server offline · on this phone", "Server offline · viewed earlier", "Server offline · no data here")),
-        OnlineUi.Row.OFFLINE_RED to (OnlineUi.Dot.RED to listOf("Offline · on this phone", "n/a", "Offline · viewed earlier", "Offline · on this phone", "Offline · viewed earlier", "Offline · no data here")),
-        OnlineUi.Row.OFFLINE_GREY to (OnlineUi.Dot.GREY to listOf("Offline · on this phone", "Offline · viewed earlier", "n/a", "Offline · on this phone", "Offline · viewed earlier", "Offline · no data here")),
-        OnlineUi.Row.CONNECTING to (OnlineUi.Dot.GREY to listOf("Connecting · on this phone", "Connecting · viewed earlier", "Connecting · viewed earlier", "Connecting · on this phone", "Connecting · viewed earlier", "Connecting · no data here")),
-        OnlineUi.Row.NO_SERVER to (OnlineUi.Dot.GREY to listOf("No server · on this phone", "n/a", "n/a", "n/a", "n/a", "No server · no data here")),
+        OnlineUi.Row.ONLINE to (OnlineUi.Dot.GREEN to listOf("Online · on this phone", "Online · from public sources", "Online · from your server", "Online · on this phone", "Online · viewed earlier", "Online · no data here", "Online · from a wider zoom")),
+        OnlineUi.Row.PAUSED to (OnlineUi.Dot.GREY to listOf("Paused · on this phone", "Paused · viewed earlier", "n/a", "Paused · on this phone", "Paused · viewed earlier", "Paused · no data here", "Paused · from a wider zoom")),
+        OnlineUi.Row.SERVER_OFFLINE to (OnlineUi.Dot.RED to listOf("Server offline · on this phone", "n/a", "Server offline · viewed earlier", "Server offline · on this phone", "Server offline · viewed earlier", "Server offline · no data here", "Server offline · from a wider zoom")),
+        OnlineUi.Row.OFFLINE_RED to (OnlineUi.Dot.RED to listOf("Offline · on this phone", "n/a", "Offline · viewed earlier", "Offline · on this phone", "Offline · viewed earlier", "Offline · no data here", "Offline · from a wider zoom")),
+        OnlineUi.Row.OFFLINE_GREY to (OnlineUi.Dot.GREY to listOf("Offline · on this phone", "Offline · viewed earlier", "n/a", "Offline · on this phone", "Offline · viewed earlier", "Offline · no data here", "Offline · from a wider zoom")),
+        OnlineUi.Row.CONNECTING to (OnlineUi.Dot.GREY to listOf("Connecting · on this phone", "Connecting · viewed earlier", "Connecting · viewed earlier", "Connecting · on this phone", "Connecting · viewed earlier", "Connecting · no data here", "Connecting · from a wider zoom")),
+        OnlineUi.Row.NO_SERVER to (OnlineUi.Dot.GREY to listOf("No server · on this phone", "n/a", "n/a", "n/a", "n/a", "No server · no data here", "n/a")),
     )
 
     private enum class Mode { SERVER, DIRECT, NONE }
 
     private val server = "http://192.0.2.10:8765"
 
-    /** The snapshot for [row] in column [col] (0..5 as in [table]); the public column reads the sources directly, the server column has a server set. */
+    /** The snapshot for [row] in column [col] (0..6 as in [table]); the public column reads the sources directly, the server column has a server set. */
     private fun cell(row: OnlineUi.Row, col: Int): OnlineUi {
         val mode = when (col) {
             1 -> Mode.DIRECT
@@ -60,6 +61,7 @@ class OnlineOverlaySnapshotTest {
             1, 2 -> view(OnlineService.ONLINE)
             3 -> view(OnlineService.CACHED, kept = true)
             4 -> view(OnlineService.CACHED)
+            6 -> view(OnlineTiles.WIDER)
             else -> null
         }
         return OnlineUi(
@@ -84,7 +86,7 @@ class OnlineOverlaySnapshotTest {
                 pinned++
             }
         }
-        assertEquals(34, pinned, "every reachable cell of the table")
+        assertEquals(40, pinned, "every reachable cell of the table")
     }
 
     @Test
@@ -115,7 +117,8 @@ class OnlineOverlaySnapshotTest {
             OnlineUi.Row.PAUSED to ("Paused: the session limit is reached." to "Settings › Sources ›"),
             OnlineUi.Row.SERVER_OFFLINE to ("Your server at $server is not answering. It may be off or out of reach." to "Settings › Sources ›"),
             OnlineUi.Row.OFFLINE_RED to ("No connection, so your server at $server cannot be reached. The map still works where it is on this phone." to "Settings › Sources ›"),
-            OnlineUi.Row.OFFLINE_GREY to ("No connection. The map still works where it is on this phone." to null),
+            // T255 (T236's follow-up): no server set, a network, and the public sources failing: not "No connection".
+            OnlineUi.Row.OFFLINE_GREY to ("The public map sources are not answering. The map still works where it is on this phone." to null),
             OnlineUi.Row.CONNECTING to ("Checking the connection." to null),
             OnlineUi.Row.NO_SERVER to ("No server is set and the public sources are off." to "Settings › Sources ›"),
         )
@@ -125,12 +128,13 @@ class OnlineOverlaySnapshotTest {
             assertEquals(want.second ?: "Offline maps ›", u.link?.text, "link of $row")
         }
         val sources = listOf(
-            0 to ("This part of the map is saved on this phone." to "Offline maps ›"),
+            0 to ("This part of the map is saved on this phone as an offline map." to "Offline maps ›"),
             1 to ("This part of the map is coming over the network and is kept only until space is needed." to null),
             2 to ("This part of the map is coming over the network and is kept only until space is needed." to null),
-            3 to ("This part of the map is saved on this phone." to "Offline maps ›"),
+            3 to ("This part of the map is kept on this phone as map tiles only, so search and routes do not work here." to "Offline maps ›"),
             4 to ("You viewed this part earlier. It stays until space is needed." to "Offline maps ›"),
             5 to ("Nothing on this phone covers this view." to "Offline maps ›"),
+            6 to ("This part of the map is cut from a wider zoom kept on this phone, so it shows less detail." to "Offline maps ›"),
         )
         for ((col, want) in sources) {
             val u = cell(OnlineUi.Row.ONLINE, col)
@@ -144,6 +148,24 @@ class OnlineOverlaySnapshotTest {
         assertEquals("red", json["dot"])
         assertEquals(true, json["open"])
         assertEquals("Settings › Sources ›", json["link"])
+    }
+
+    /** T255: the grey row's two first sentences (no network at all, or a network and the public sources failing), and the wider column's JSON. */
+    @Test
+    fun noConnectionOnlyWithoutANetworkAndAWiderViewIsNotNoData() {
+        val noNet = OnlineUi("offline", view(OnlineService.CACHED), emptyMap(), false, direct = true, network = false)
+        assertEquals(OnlineUi.Row.OFFLINE_GREY, noNet.row)
+        assertEquals("No connection. The map still works where it is on this phone.", noNet.stateSentence)
+        val failing = OnlineUi("offline", view(OnlineService.CACHED), emptyMap(), false, direct = true, network = true)
+        assertEquals(OnlineUi.Row.OFFLINE_GREY, failing.row)
+        assertEquals(OnlineUi.SOURCES_NOT_ANSWERING, failing.stateSentence)
+        // A fetcher of nearby phones alone: no public sources to blame.
+        assertEquals("No connection. The map still works where it is on this phone.", OnlineUi("offline", null, emptyMap(), false, direct = false, serverSet = false).stateSentence)
+        val wider = OnlineUi("offline", view(OnlineTiles.WIDER), emptyMap(), false, direct = true, network = false).chipJson(open = true)
+        assertEquals("Offline · from a wider zoom", wider["text"])
+        assertEquals("wider", wider["column"])
+        assertEquals(listOf("No connection. The map still works where it is on this phone.", OnlineUi.CUT_FROM_WIDER), wider["detail"])
+        assertEquals("Offline maps ›", wider["link"])
     }
 
     /** T236 with T242: the card's figure reads the cache's getters, and says the indexing line while they are partial. */

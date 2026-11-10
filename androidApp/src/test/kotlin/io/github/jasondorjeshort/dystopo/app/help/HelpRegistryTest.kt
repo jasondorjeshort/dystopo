@@ -149,6 +149,9 @@ class HelpRegistryTest {
             // T252: the recording panel's turn-back chip.
             "tracks.turnBack",
             // end T252
+            // T255: the search box's line over a view with map tiles only.
+            "search.offlineMap",
+            // end T255
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

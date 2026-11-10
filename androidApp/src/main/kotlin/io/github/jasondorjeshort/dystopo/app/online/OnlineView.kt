@@ -37,8 +37,10 @@ class OnlineView(val lat: Double, val lon: Double, val zoom: Double, val bounds:
         }
 
         /**
-         * T144: [view] with where its terrain comes from (pack, online, cached, none), published for [currentOnMain]. Not on the UI
-         * thread. T236: and whether the tile matched lies in an offline map on the list, asked with the fetcher's versioned key.
+         * T144: [view] with where its terrain comes from (pack, online, cached, none; T254: wider, cut from an ancestor, whose key
+         * is looked up), published for [currentOnMain]. Not on the UI thread. T236: and whether the tile matched lies in an
+         * offline map on the list, asked with the fetcher's versioned key. T255: the search box reads the published source
+         * ([io.github.jasondorjeshort.dystopo.app.search.PlaceSearch.coverageOnMain]) to say why a search finds nothing here.
          */
         fun resolve(app: DystopoApp, view: OnlineView): OnlineView {
             val tiles = app.tiles

@@ -11,11 +11,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.search.MapCoverage
+import io.github.jasondorjeshort.dystopo.app.search.PlaceSearch
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.RoutePath
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
+import io.github.jasondorjeshort.dystopo.routing.RouteFailure
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.ShadeText
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
@@ -345,6 +348,10 @@ object RouteSession {
                 }
             }
         } catch (e: RoutePlanner.NotReady) {
+            // T255: an end no offline map with a vector archive covers: no trail network to wait for there; a failure that
+            // says why (the Offline maps link, Try Crow), whatever the graph of a pack elsewhere is doing.
+            val cov = coverage(fromLat, fromLon, toLat, toLon)
+            if (cov != MapCoverage.VECTOR) return failed(RouteResult.Failed(RouteFailure.EMPTY_GRAPH, routeSentence(cov), mapOf("reason" to cov.code)))
             val s = e.state
             val why = when {
                 s == null -> "this map has no trail data (no vector archive)"
@@ -367,14 +374,35 @@ object RouteSession {
                 main.postDelayed({ if (plan === result.plan) fitCamera(result.plan) }, FIT_AFTER_MS)
             }
             is RouteResult.Failed -> {
-                failure = result
-                persist(null)
-                uiq.publish(PUBLISH_MS) { phase = "failed"; plan = null; message = result.message }
-                overlay.show(null, start, end)
+                // T255: the reason code; an end with map tiles only (or nothing) says so rather than the far pack's "off the network".
+                val cov = coverage(fromLat, fromLon, toLat, toLon)
+                return failed(if (cov == MapCoverage.VECTOR) result.copy(details = result.details + ("reason" to cov.code)) else result.copy(message = routeSentence(cov), details = result.details + ("reason" to cov.code)))
             }
         }
         return result
     }
+
+    /** The failure made the session's: no plan, the message, the ends on the map. */
+    private fun failed(result: RouteResult.Failed): RouteResult.Failed {
+        failure = result
+        persist(null)
+        uiq.publish(PUBLISH_MS) { phase = "failed"; plan = null; message = result.message }
+        overlay.show(null, start, end)
+        return result
+    }
+
+    /**
+     * T255: what the offline maps hold at the two ends ([MapCoverage.ofRoute]), each read at the camera's zoom (the view's
+     * source as [io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.viewSource] names it). Off the UI thread.
+     */
+    private fun coverage(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double): MapCoverage = runCatching {
+        val app = DystopoApp.instance
+        val zoom = runCatching { app.map.onMain { app.map.map?.cameraPosition?.zoom } }.getOrNull() ?: 12.0
+        MapCoverage.ofRoute(PlaceSearch.coverage(app, fromLat, fromLon, zoom), PlaceSearch.coverage(app, toLat, toLon, zoom))
+    }.getOrDefault(MapCoverage.VECTOR)
+
+    /** T255: the card offers the Offline maps link: the route failed for want of an offline map at an end. */
+    val needsOfflineMap: Boolean get() = phase == "failed" && failure?.details?.get("reason").let { it == MapCoverage.TILES_ONLY.code || it == MapCoverage.NO_MAP.code }
 
     /**
      * Plans the current start and end again in [travel] mode: in the background, or with [wait] (T49, the
@@ -600,6 +628,15 @@ interface ShippedGraphWait {
      */
     fun source(pack: String, graphFile: File): Map<String, Any?>?
 }
+
+/** T255 (ADR 0031: listed for the owner): the route card's line when an end has map tiles only ([MapCoverage.TILES_ONLY]). */
+const val ROUTE_TILES_ONLY = "Routes need an offline map here; this area has map tiles only"
+
+/** T255: the same where nothing on the phone covers an end ([MapCoverage.NO_MAP]). */
+const val ROUTE_NO_MAP = "Routes need an offline map here"
+
+/** T255: the card's line for a route an end of which no offline map with a vector archive covers (pure, tested). */
+internal fun routeSentence(c: MapCoverage): String = if (c == MapCoverage.TILES_ONLY) ROUTE_TILES_ONLY else ROUTE_NO_MAP
 
 /** T189: the route card's line while the trail network shipped with the map downloads (ADR 0031: listed for the owner). */
 internal const val GRAPH_DOWNLOADING = "Downloading the trail network"
