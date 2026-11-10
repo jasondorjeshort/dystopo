@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.app.tracking
 import io.github.jasondorjeshort.dystopo.model.GapReason
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
+import io.github.jasondorjeshort.dystopo.store.RecorderCounts
 
 /**
  * T159: the one explicit state of a recording, shown by the track controls and the recording's notification and
@@ -134,6 +135,11 @@ data class RecordingStatus(
     val serviceDown: Boolean = false,
     /** T203: the terrain estimate's line ([TerrainText]) while it estimates or after its give-up, else null. */
     val estimate: String? = null,
+    /**
+     * T251: the recorder's counts, said on the waiting line ([countsLine]) so a lost fix (nothing arrived) reads apart from
+     * fixes that arrived and were flagged or dropped; null says nothing.
+     */
+    val counts: RecorderCounts? = null,
 ) {
     private val track: String get() = name?.takeIf { it.isNotBlank() } ?: "track"
     private val distance: String get() = UnitFormat.distance(distanceM, units)
@@ -174,9 +180,25 @@ data class RecordingStatus(
     private val waitingLine: String
         get() = "No fix for ${silence(silentS)}" +
             (lastAccuracyM?.let { ", last accuracy " + UnitFormat.elevation(it, units) } ?: "") +
-            (fallbackAccuracyM?.let { "; using network location, " + UnitFormat.elevation(it, units) } ?: "")
+            (fallbackAccuracyM?.let { "; using network location, " + UnitFormat.elevation(it, units) } ?: "") +
+            (counts?.let { "; " + countsLine(it) } ?: "") // T251
+
 
     companion object {
+        /**
+         * T251: what the recorder did with the fixes that came: "240 fixes flagged, none dropped", "no fix flagged or
+         * dropped", "1 fix flagged, 3 dropped as jumps". Flagged fixes are kept (poor, over the activity's accuracy bound);
+         * dropped ones are the teleports the recorder refused.
+         */
+        fun countsLine(c: RecorderCounts): String {
+            val f = c.flagged
+            val d = c.dropped
+            if (f == 0L && d == 0L) return "no fix flagged or dropped"
+            val flagged = when (f) { 0L -> "no fix flagged"; 1L -> "1 fix flagged"; else -> "$f fixes flagged" }
+            val dropped = when (d) { 0L -> "none dropped"; 1L -> "1 dropped as a jump"; else -> "$d dropped as jumps" }
+            return "$flagged, $dropped"
+        }
+
         /** "40 s" in steps of 10 s under a minute (the notification is not redrawn every second), then "3 min". */
         fun silence(s: Long): String = if (s < 60) "${(s / 10 * 10).coerceAtLeast(10)} s" else "${s / 60} min"
     }

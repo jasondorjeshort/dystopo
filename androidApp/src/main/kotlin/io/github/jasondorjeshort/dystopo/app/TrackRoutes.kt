@@ -25,6 +25,9 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   (`title`, `text`, `posts`, `dismissals`, `reposts`), the service (`serviceForeground`, `serviceDown`,
  *   `serviceRestarts` by the system, `tasksRemoved`), `flagged`, `gapsWritten` and `gaps` (the active track's gap list:
  *   `start`, `end`, `durationS`, `reason`). `lastFix` carries the accuracy, speed, course and vertical accuracy.
+ *   T251: in `recording`, `counts` (`accepted`, `flagged`, `rejectedSpeed`, `rejectedTime`, `gapSplits`, `dropped`,
+ *   `lastFlaggedAccuracyM` and the waiting line's words, `line`), `head` (the recorder's last kept point: position,
+ *   accuracy, `flags`) and `puck` (`GET /location`'s `puck`, with `toHeadM`, its distance from the head).
  * - `POST /tracks/record?name=&source=all|gps|injected[&activity=foot|bike|road|rail|boat|air]`: start recording (stops the
  *   current track); T172: with that activity's profile from the settings rows (default: the remembered activity, which
  *   this does not change). Tracks and the recording carry `activity`; the recording also `profile` (its four choices and the
@@ -417,6 +420,22 @@ object TrackRoutes {
             "acceptedFixes" to rec.accepted, "flagged" to rec.flagged, "rejectedSpeed" to rec.rejectedSpeed, "rejectedTime" to rec.rejectedTime, // T158
             "skippedPaused" to rec.skippedPaused, "skippedAutoPaused" to rec.skippedAutoPaused, "gapSplits" to rec.gapSplits, "gapsWritten" to rec.gapsWritten,
             "gpsIgnored" to t.gpsIgnored,
+            // T251: the counts as the card's waiting line says them, and the puck against the track's head.
+            "counts" to rec.counts().let { c ->
+                linkedMapOf(
+                    "accepted" to c.accepted, "flagged" to c.flagged, "rejectedSpeed" to c.rejectedSpeed, "rejectedTime" to c.rejectedTime,
+                    "gapSplits" to c.gapSplits, "dropped" to c.dropped, "lastFlaggedAccuracyM" to c.lastFlaggedAccuracyM,
+                    "line" to io.github.jasondorjeshort.dystopo.app.tracking.RecordingStatus.countsLine(c),
+                )
+            },
+            "head" to rec.lastKept?.let { linkedMapOf("lat" to it.lat, "lon" to it.lon, "accuracyM" to it.accuracyM, "flags" to it.flags, "time" to it.time) },
+            "puck" to runCatching {
+                val pk = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.map.puckJson()
+                val head = rec.lastKept
+                val la = pk["lat"] as? Double
+                val lo = pk["lon"] as? Double
+                pk + mapOf("toHeadM" to if (head != null && la != null && lo != null) Math.round(TrackStats.distanceM(la, lo, head.lat, head.lon) * 10) / 10.0 else null)
+            }.getOrNull(),
             "gaps" to rec.activeId?.let { id -> t.store.gaps(id).map(::gapJson) },
             "liveStats" to rec.liveStats()?.let(::statsJson),
         )

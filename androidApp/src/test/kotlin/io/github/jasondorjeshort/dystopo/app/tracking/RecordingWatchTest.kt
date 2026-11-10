@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.app.tracking
 
 import io.github.jasondorjeshort.dystopo.model.GapReason
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.store.RecorderCounts
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -96,6 +97,14 @@ class RecordingWatchTest {
             wait.copy(silentS = 130, units = ContourUnits.FEET, fallbackAccuracyM = 150.0).text,
         )
         assertEquals("No fix for 10 s", wait.copy(silentS = 3, lastAccuracyM = null).text)
+        // T251: the recorder's counts, so a lost fix reads apart from fixes flagged or dropped (the second flight's card).
+        val flight = wait.copy(silentS = 18 * 60, units = ContourUnits.FEET, lastAccuracyM = 120.4, counts = RecorderCounts(900, 240, 0, 3, 1, 160.0))
+        assertEquals("No fix for 18 min, last accuracy 395 ft; 240 fixes flagged, none dropped", flight.text)
+        assertEquals("Waiting for GPS: no fix for 18 min, last accuracy 395 ft; 240 fixes flagged, none dropped", flight.controlsLine)
+        assertEquals("No fix for 40 s, last accuracy 120 m; no fix flagged or dropped", wait.copy(counts = RecorderCounts(30, 0, 0, 0, 0)).text)
+        assertEquals("1 fix flagged, 3 dropped as jumps", RecordingStatus.countsLine(RecorderCounts(30, 1, 3, 0, 0)))
+        assertEquals("no fix flagged, 1 dropped as a jump", RecordingStatus.countsLine(RecorderCounts(30, 0, 1, 7, 0)))
+        assertNull(rec.copy(counts = RecorderCounts(30, 5, 0, 0, 0)).controlsLine, "recording normally, the line stays empty")
 
         assertEquals("Paused: Skyline", rec.copy(state = RecState.PAUSED).title)
         assertEquals("2.41 km so far. Resume to go on recording.", rec.copy(state = RecState.PAUSED).text)
