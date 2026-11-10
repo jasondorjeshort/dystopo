@@ -74,8 +74,11 @@ class OnlineUi(
         OFFLINE_RED("Offline", Dot.RED), OFFLINE_GREY("Offline", Dot.GREY), CONNECTING("Connecting", Dot.GREY), NO_SERVER("No server", Dot.GREY),
     }
 
-    /** T236: the table's columns: where the view's map is. A network tile names its source: public, the user's server, a nearby phone. */
-    enum class Column { PACK, NETWORK_PUBLIC, NETWORK_SERVER, NETWORK_PEER, CACHE_KEPT, CACHE, NO_DATA }
+    /**
+     * T236: the table's columns: where the view's map is. A network tile names its source: public, the user's server, a nearby
+     * phone. T255: [WIDER], a tile the phone lacked, cut from the nearest one it holds at a wider zoom (T254, [OnlineTiles.WIDER]).
+     */
+    enum class Column { PACK, NETWORK_PUBLIC, NETWORK_SERVER, NETWORK_PEER, CACHE_KEPT, CACHE, WIDER, NO_DATA }
 
     /** T236: the online tile cache's figures for the card, read with [TileCache]'s getters (never a whole-index method). */
     class CacheFigures(val bytes: Long, val pinnedBytes: Long, val capMb: Long, val partial: Boolean)
@@ -114,6 +117,7 @@ class OnlineUi(
         OnlineTiles.PACK -> Column.PACK
         OnlineService.ONLINE -> if (direct) Column.NETWORK_PUBLIC else if (serverSet) Column.NETWORK_SERVER else Column.NETWORK_PEER
         OnlineService.CACHED -> if (view.kept) Column.CACHE_KEPT else Column.CACHE
+        OnlineTiles.WIDER -> Column.WIDER // T255: drawn, so never "no data here"
         else -> Column.NO_DATA
     }
 
@@ -127,6 +131,7 @@ class OnlineUi(
         Column.NETWORK_SERVER -> if (fromNetwork) "from your server" else VIEWED
         Column.NETWORK_PEER -> if (fromNetwork) "from a nearby phone" else VIEWED
         Column.CACHE -> VIEWED
+        Column.WIDER -> WIDER_ZOOM
     }
 
     /** T236: the chip's whole text. */
@@ -140,16 +145,21 @@ class OnlineUi(
         Row.PAUSED -> notice ?: "Reading the map sources is paused."
         Row.SERVER_OFFLINE -> "Your server at $address is not answering. It may be off or out of reach."
         Row.OFFLINE_RED -> "No connection, so your server at $address cannot be reached. The map still works where it is on this phone."
-        Row.OFFLINE_GREY -> "No connection. The map still works where it is on this phone."
+        Row.OFFLINE_GREY -> if (network && direct) SOURCES_NOT_ANSWERING else "No connection. The map still works where it is on this phone."
         Row.CONNECTING -> "Checking the connection."
         Row.NO_SERVER -> "No server is set and the public sources are off."
     }
 
-    /** T236: the card's second sentence, about where this view's map is. */
-    val sourceSentence: String get() = when (sourceText) {
-        ON_PHONE -> "This part of the map is saved on this phone."
-        NO_DATA -> "Nothing on this phone covers this view."
-        VIEWED -> "You viewed this part earlier. It stays until space is needed."
+    /**
+     * T236: the card's second sentence, about where this view's map is. T255: an offline map (a pack, with search and routes
+     * where it has places and trails) told from tiles kept by a map-only download, and a view cut from a wider zoom.
+     */
+    val sourceSentence: String get() = when {
+        column == Column.PACK -> SAVED_OFFLINE_MAP
+        column == Column.CACHE_KEPT -> KEPT_TILES
+        column == Column.WIDER -> CUT_FROM_WIDER
+        sourceText == NO_DATA -> "Nothing on this phone covers this view."
+        sourceText == VIEWED -> "You viewed this part earlier. It stays until space is needed."
         else -> "This part of the map is coming over the network and is kept only until space is needed."
     }
 
@@ -205,6 +215,14 @@ class OnlineUi(
         const val ON_PHONE = "on this phone"
         const val VIEWED = "viewed earlier"
         const val NO_DATA = "no data here"
+        /** T255: the chip's source over a view cut from a wider zoom (T254). */
+        const val WIDER_ZOOM = "from a wider zoom"
+        /** T255 (ADR 0031: listed for the owner): the card's source sentences that tell an offline map from kept tiles. */
+        const val SAVED_OFFLINE_MAP = "This part of the map is saved on this phone as an offline map."
+        const val KEPT_TILES = "This part of the map is kept on this phone as map tiles only, so search and routes do not work here."
+        const val CUT_FROM_WIDER = "This part of the map is cut from a wider zoom kept on this phone, so it shows less detail."
+        /** T255 (T236's follow-up): the grey Offline row's first sentence when the phone has a network and the public sources fail. */
+        const val SOURCES_NOT_ANSWERING = "The public map sources are not answering. The map still works where it is on this phone."
         /** T236: the overlay's button (ADR 0056: "area", not "region"). */
         const val DOWNLOAD = "Download this area"
         private val NETWORK = setOf(Column.NETWORK_PUBLIC, Column.NETWORK_SERVER, Column.NETWORK_PEER)

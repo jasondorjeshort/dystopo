@@ -570,6 +570,7 @@ fun RouteControls() {
                 }
                 if (phase == "planning") BuildProgress()
                 RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
+                if (RouteSession.needsOfflineMap) io.github.jasondorjeshort.dystopo.app.search.OfflineMapsLink() // T255: an end with map tiles only
                 // T73: the mode chips (hike, bike, drive; T108: crow) on a row of their own; T108: they wrap rather than
                 // squeeze at large font scales. T212: in the scrolling part, under the lines, so the actions keep their room.
                 ModeChips {

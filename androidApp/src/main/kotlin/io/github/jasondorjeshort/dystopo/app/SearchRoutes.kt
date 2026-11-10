@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.app.search.MapCoverage
 import io.github.jasondorjeshort.dystopo.app.search.PlaceSearch
 import io.github.jasondorjeshort.dystopo.app.search.SearchMarker
 import io.github.jasondorjeshort.dystopo.app.search.SearchUi
@@ -8,12 +9,17 @@ import io.github.jasondorjeshort.dystopo.search.PlaceKind
 /**
  * Debug routes for place search (T39; registered with one line in [Routes]):
  * - `GET /search?q=&lat=&lon=[&limit=][&kind=peak,hut]`: hits from every pack's index (T41; each hit names its `pack`), ranked
- *   around lat/lon (default: the camera centre). 503 while the index is still loading or building.
+ *   around lat/lon (default: the camera centre). 503 while the index is still loading or building. T255: `reason`, why the
+ *   hits are what they are at lat/lon: `found` and `no-match` where an offline map with a vector archive covers it,
+ *   `tiles-only` where only map tiles draw there (viewed earlier, a map-only download, cut from a wider zoom, a terrain-only
+ *   map: no index there; hits of other maps still listed), `no-map` where nothing on the phone does; `coverage` (`vector`,
+ *   `tiles-only`, `no-map`) and `sentence`, the search box's line for it (null when the hits speak for themselves).
  * - `GET /search/status`: index state per pack on the map (status, build progress, timings, entries). T149: it only reads
  *   (as `GET /packs` `search` does): a pack whose index nobody asked for yet is `idle`, and nothing is loaded or built
  *   until a use (`GET /search`, `POST /search/select`, `POST /search/build`, or the search box open or holding text,
  *   `ui.wanted`); per pack `guard` (the heap guard's admission of the build), `heapStartBytes`, `peakHeapBytes`; states
- *   `waiting` (for the guard) and `refused`.
+ *   `waiting` (for the guard) and `refused`. T255: `ui.coverage`, the camera centre's as the box last read it while wanted
+ *   (`vector`, `tiles-only`, `no-map`, null), and `ui.offerOfflineMaps`, the box shows the Offline maps link under its line.
  * - `POST /search/build`: rebuild every pack index (progress in `/search/status` and `/packs`).
  * - `POST /search/ui?q=`: type [q] into the search box (opens the result list), as a user would. T149: `?focus=1|0`
  *   gives the text field the focus or takes it away, as a tap in the box or Back does (`ui.focused`).
@@ -32,9 +38,15 @@ object SearchRoutes {
                 val t0 = System.nanoTime()
                 val hits = PlaceSearch.search(q, lat, lon, limit, kinds)
                     ?: return Response.json(mapOf("error" to "search index not ready", "index" to PlaceSearch.json(app)), 503)
+                val queryMs = (System.nanoTime() - t0) / 10_000 / 100.0
+                // T255: why, at the centre (the view's source read now, at the camera's zoom).
+                val zoom = runCatching { app.map.onMain { app.map.map?.cameraPosition?.zoom } }.getOrNull() ?: 12.0
+                val cov = if (lat != null && lon != null) PlaceSearch.coverage(app, lat, lon, zoom) else null
                 Response.json(linkedMapOf(
-                    "query" to q, "center" to listOf(lat, lon), "queryMs" to (System.nanoTime() - t0) / 10_000 / 100.0,
+                    "query" to q, "center" to listOf(lat, lon), "queryMs" to queryMs,
                     "count" to hits.size, "hits" to hits.map { it.json() },
+                    "reason" to cov?.let { MapCoverage.searchReason(it, hits.size) }, "coverage" to cov?.code,
+                    "sentence" to cov?.let { MapCoverage.searchSentence(it, hits.size) },
                 ))
             }
             "GET" to "/search/status" -> Response.json(status(app))
@@ -71,6 +83,8 @@ object SearchRoutes {
             linkedMapOf(
                 "query" to SearchUi.query, "open" to SearchUi.open, "status" to SearchUi.status,
                 "focused" to SearchUi.focused, "wanted" to SearchUi.wanted, // T149
+                "coverage" to SearchUi.coverage?.code, // T255
+                "offerOfflineMaps" to (SearchUi.coverage == MapCoverage.TILES_ONLY && SearchUi.status == io.github.jasondorjeshort.dystopo.app.search.SEARCH_TILES_ONLY),
                 "hits" to SearchUi.hits.map { it.hit.entry.name }, "selected" to SearchUi.selected?.json(),
                 "markerInstalled" to SearchMarker.installed(app.map.map?.style),
                 "labelInstalled" to SearchMarker.labelInstalled(app.map.map?.style), // T41

@@ -7,6 +7,9 @@ import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.FileRangeSource
 import io.github.jasondorjeshort.dystopo.app.gunzip
+import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
+import io.github.jasondorjeshort.dystopo.app.online.OnlineView
+import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.pmtiles.Compression
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.search.MultiPackSearch
@@ -280,5 +283,72 @@ object PlaceSearch {
         return linkedMapOf("status" to status(s), "ready" to s.count { it.index != null }, "packs" to s.map { it.json() }, "stampRefreshes" to stampRefreshes)
     }
 
+    /**
+     * T255: what the offline maps hold at [lat], [lon] for search and routes ([MapCoverage]): an offline map's vector archive
+     * covers it, or only map tiles draw there, or nothing on the phone does. [source] is the view's source as
+     * [OnlineTiles.viewSource] names it (the online chip's, [OnlineView.currentOnMain], on the UI thread); null reads it now
+     * at [zoom], which takes the online tiles' locks, so never on the UI thread then. The boxes are the packs' own, in memory.
+     */
+    fun coverage(app: DystopoApp, lat: Double, lon: Double, zoom: Double, source: String? = null): MapCoverage {
+        val packs = app.tiles.packs.regions
+        if (MapCoverage.inside(packs.mapNotNull { it.osmCoverage?.bounds }, lat, lon)) return MapCoverage.VECTOR
+        val s = source ?: runCatching { app.tiles.online?.viewSource(lat, lon, zoom)?.first }.getOrNull()
+        // With no online tiles (or before the chip has read the view) the source says only that some pack exists: ask its box.
+        val pack = MapCoverage.inside(packs.mapNotNull { it.demCoverage?.bounds }, lat, lon)
+        return MapCoverage.of(false, if (s == null || s == OnlineTiles.PACK) (if (pack) OnlineTiles.PACK else OnlineTiles.NONE) else s)
+    }
+
+    /** T255: [coverage] at the camera's centre on the UI thread, with the chip's last source; null while the map is not up. */
+    fun coverageOnMain(app: DystopoApp = DystopoApp.instance): MapCoverage? {
+        val v = OnlineView.currentOnMain(app) ?: return null
+        return coverage(app, v.lat, v.lon, v.zoom, v.source)
+    }
+
     const val TAG = "DystopoSearch"
+}
+
+/**
+ * T255 (the idea of 2026-11-07, search and routes finding nothing outside a pack): whether search and routes can answer at a
+ * place. Both read an offline map's vector archive (the search index and the trail network are built from it); a map the
+ * phone draws from tiles alone (viewed earlier, a map-only download, cut from a wider zoom, a terrain-only map) has neither,
+ * so a search or a route there says so instead of "No places match" or a route not found. [code] is the reason code of
+ * `GET /search` and of a failed route's reply.
+ */
+enum class MapCoverage(val code: String) {
+    /** An offline map with a vector archive covers the place: search and routes read it. */
+    VECTOR("vector"),
+    /** Only map tiles draw there: nothing to search or to route on. */
+    TILES_ONLY("tiles-only"),
+    /** Nothing on the phone draws there. */
+    NO_MAP("no-map");
+
+    companion object {
+        /** Pure, tested: a vector archive's cover wins; else the view's source ([OnlineTiles.viewSource]) says whether tiles draw there. */
+        fun of(vectorCovers: Boolean, source: String): MapCoverage = when {
+            vectorCovers -> VECTOR
+            source == OnlineTiles.NONE -> NO_MAP
+            else -> TILES_ONLY
+        }
+
+        /** Pure, tested: [lat], [lon] lies in one of [boxes] (edges included). */
+        fun inside(boxes: List<PackBounds>, lat: Double, lon: Double): Boolean =
+            boxes.any { b -> lon >= b.minLon && lon <= b.maxLon && lat >= b.minLat && lat <= b.maxLat }
+
+        /** Pure, tested: the coverage of a route between two places: the first end without a vector archive, tiles before nothing. */
+        fun ofRoute(a: MapCoverage, b: MapCoverage): MapCoverage = when {
+            a == TILES_ONLY || b == TILES_ONLY -> TILES_ONLY
+            a == NO_MAP || b == NO_MAP -> NO_MAP
+            else -> VECTOR
+        }
+
+        /** Pure, tested: `GET /search`'s `reason`: `found` or `no-match` where a vector archive covers the place, else the coverage's code. */
+        fun searchReason(c: MapCoverage, hits: Int): String = if (c != VECTOR) c.code else if (hits > 0) "found" else "no-match"
+
+        /** Pure, tested: the search box's sentence for [c] with [hits] results (null: the results speak for themselves). */
+        fun searchSentence(c: MapCoverage, hits: Int): String? = when (c) {
+            VECTOR -> if (hits > 0) null else SEARCH_NO_MATCH
+            TILES_ONLY -> SEARCH_TILES_ONLY
+            NO_MAP -> SEARCH_NO_MAP
+        }
+    }
 }
