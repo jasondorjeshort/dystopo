@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-10, by main session (wave 32: T271, T262, T264 merged; gate shut until the 5-hour reset)
+Updated: 2026-11-10, by main session (wave 32: T271, T262, T264 merged; T272 and T269 running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32, `out/wave32-research/` [no-check: gitignored].
 
 ## Now
@@ -16,9 +16,9 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. After the 5-hour reset: a Haiku chore cleans up T262 and T264 (branches, worktrees `dystopo-wt/T262` and `T264`,
-   AVDs `dystopo35-T262` and `dystopo35-T264`; the verifiers' AVDs are gone). Then T272 (lane A, 5570/8694) and
-   T269 (lane B, no emulator); T265 after T269. The tour's offline step flakes on emulator fetches (two branches).
+1. Running (19:45 UTC, the session on another account, 7-day 74 resetting 2026-11-13 04:00 UTC): T272 (lane A,
+   5570/8694), T269 (lane B, no emulator), a chore cleaning up T262 and T264. T265 after T269 merges. The tour's
+   offline step flakes on emulator fetches (two branches).
 2. After the first half: sweep and alpha (the sweep runs T262's `upgrade` check); the second half after the 7-day
    reset of 2026-11-14 03:00 UTC.
 3. The owner removes the empty `C:\c` folder T264's first tilebuild run left (the safety check refused the agent).
