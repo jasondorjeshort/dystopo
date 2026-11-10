@@ -57,4 +57,7 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     // T213: where tracks leave the mapped trails.
     .subcommands(DivergenceCommand())
     // end T213
+    // T258: the diagnostic dumps read together, growth per figure and the starts' medians.
+    .subcommands(DumpScanCommand())
+    // end T258
     .main(args)

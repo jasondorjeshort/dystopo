@@ -54,14 +54,34 @@ object Scrub {
     /** The scrubbed [s] (see the class KDoc for what each placeholder replaces). */
     fun text(s: String, known: Known = Known()): String = scrub(s, known).text
 
-    fun scrub(s: String, known: Known = Known()): Result {
+    fun scrub(s: String, known: Known = Known()): Result = scrub(s, prepare(known))
+
+    /**
+     * T258: [known]'s patterns made once, for a text scrubbed line by line (the diagnostic dump: thousands of log lines,
+     * each scrubbed alone so no rule runs across a line's end).
+     */
+    class Prepared internal constructor(internal val roots: List<Regex>, internal val names: List<Pair<String, Regex>>)
+
+    fun prepare(known: Known = Known()): Prepared = Prepared(
+        known.roots.map { it.trimEnd('/') }.filter { it.length >= 2 }.distinct().sortedByDescending { it.length }
+            .map { root -> Regex(Regex.escape(root) + PATH_TAIL) },
+        listOf(PACK to known.packs, AREA to known.areas, SEARCH to known.searches).flatMap { (placeholder, names) ->
+            names.map { it.trim() }.filter { it.length >= 3 }.distinct().sortedByDescending { it.length }
+                .map { name -> placeholder to Regex(Regex.escape(name), RegexOption.IGNORE_CASE) }
+        },
+    )
+
+    /** [s] scrubbed with patterns made once ([prepare]). */
+    fun text(s: String, prepared: Prepared): String = scrub(s, prepared).text
+
+    fun scrub(s: String, prepared: Prepared): Result {
         val counts = LinkedHashMap<String, Int>()
         fun count(key: String) { counts[key] = (counts[key] ?: 0) + 1 }
         var t = s
 
         // Paths: the given roots first (longest first), then the platform's storage roots.
-        for (root in known.roots.map { it.trimEnd('/') }.filter { it.length >= 2 }.distinct().sortedByDescending { it.length }) {
-            t = Regex(Regex.escape(root) + PATH_TAIL).replace(t) { count("file"); FILE }
+        for (root in prepared.roots) {
+            t = root.replace(t) { count("file"); FILE }
         }
         t = STORAGE.replace(t) { m -> count("file"); m.groupValues[1] + FILE }
 
@@ -93,10 +113,8 @@ object Scrub {
             if (z <= 24 && x < (1L shl z) && y < (1L shl z)) { count("tile"); m.groupValues[1] + TILE } else m.value
         }
 
-        for ((placeholder, names) in listOf(PACK to known.packs, AREA to known.areas, SEARCH to known.searches)) {
-            for (name in names.map { it.trim() }.filter { it.length >= 3 }.distinct().sortedByDescending { it.length }) {
-                t = Regex(Regex.escape(name), RegexOption.IGNORE_CASE).replace(t) { count(placeholder.trim('<', '>')); placeholder }
-            }
+        for ((placeholder, re) in prepared.names) {
+            t = re.replace(t) { count(placeholder.trim('<', '>')); placeholder }
         }
         return Result(t, counts)
     }
