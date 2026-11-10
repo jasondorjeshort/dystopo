@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-10
 
+- T265: The whole world on one screen: tracks split at the seam, a Fit on both cards, zoom 1 (lane B, after T269, T264 and T262)
 - T272: The manager's second pass, the notification's Pause and Finish, a waypoint as the return point (lane A, after T262)
 - T269: A validator for the COG range-block cache (lane B, after T264; no emulator)
 - T264: A bundled world overview, measured first (lane B, first)
