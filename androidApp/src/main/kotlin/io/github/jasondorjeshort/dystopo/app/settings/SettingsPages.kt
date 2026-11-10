@@ -272,10 +272,13 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         SettingsRow.READOUT_ELEVATION -> ReadoutEntryRow(row, io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.ELEVATION, change, help = "settings.readoutElevation")
         SettingsRow.READOUT_BAROMETER -> {
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
-            val on = AppSettings.readoutBarometer
+            // T250: Automatic, Always or Never (was T161's on/off switch).
+            val mode = AppSettings.barometerMode
             val present = remember { io.github.jasondorjeshort.dystopo.app.readout.Barometer.present }
-            Setting(row.label, if (present) "steadies the elevation and the climb on foot, by bike and by boat" else "this phone has no barometer: the elevation comes from GPS and the map", help = "settings.readoutBarometer") {
-                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.READOUT_BAROMETER, it)) }
+            Setting(row.label, if (present) BAROMETER_ROW_LINE else "this phone has no barometer: the elevation comes from GPS and the map", help = "settings.readoutBarometer") {
+                for (m in io.github.jasondorjeshort.dystopo.readout.BarometerMode.entries) {
+                    Option(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.barometerLabel(m), mode == m) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.READOUT_BAROMETER, m)) }
+                }
             }
         }
         // T176: the position button (controls/RecenterButton): its layout, its close zoom and the orientation lock.
@@ -428,6 +431,9 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
 internal const val SHOW_DIVERGENCE_LINE = "where your recorded tracks keep leaving the mapped trail, worked out on this phone"
 
 /** T203: the Estimate position row's line under its title (ADR 0031 string). */
+/** T250: the Barometer row's line under its title. */
+internal const val BAROMETER_ROW_LINE = "steadies the elevation and the climb; automatic leaves it out when flying and when it disagrees with the GPS"
+
 internal const val ESTIMATE_POSITION_LINE = "a position from the barometer and the trails while the GPS is poor or lost"
 
 /** T184: the Route times: Show as row's choices (ADR 0031 strings). */
@@ -656,9 +662,9 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "a route on foot or by bike, it is your speed along the route. Each activity keeps its own; these rows set the one Record uses."
         },
         HelpText("settings.readoutClimb", "Climb", at(SettingsGroup.NAVIGATION, "Readout: Climb"), show = page(SettingsGroup.NAVIGATION)) { units ->
-            "How fast you are going up or down, per hour on the ground (${if (units == ContourUnits.FEET) "ft/h" else "m/h"}) and per " +
-                "minute when flying. On the ground it is your average over the climb window; flying, it lags a few seconds. " +
-                "It reads 0 when you walk on the level or it is too uncertain to tell, and a dash while you stand still."
+            "How fast you go up or down: per hour on the ground (${if (units == ContourUnits.FEET) "ft/h" else "m/h"}), its average " +
+                "over the climb window, and per minute when flying. It reads 0 on the level when it can tell, ? when it has " +
+                "too little data to tell, and a dash while the barometer and the GPS contradict each other."
         },
         HelpText("settings.readoutCourse", "Course", at(SettingsGroup.NAVIGATION, "Readout: Course"), show = page(SettingsGroup.NAVIGATION)) {
             "The direction you are moving over the ground, in degrees from true north, from the GPS. It stays at the last " +
@@ -669,9 +675,10 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "± shows how far off it may be. The GPS alone can be off by tens of metres in a canyon."
         },
         HelpText("settings.readoutBarometer", "Barometer", at(SettingsGroup.NAVIGATION, "Readout: Barometer"), show = page(SettingsGroup.NAVIGATION)) { units ->
-            "Air pressure falls by about 1 hPa every ${if (units == ContourUnits.FEET) "27 ft" else "8 m"} you climb. On foot, by bike " +
-                "and by boat the readout uses the phone's barometer, checked against the GPS, for a steady elevation and climb; " +
-                "not in a car, train or aircraft, whose air does not follow the height. Off uses the GPS and the elevation map."
+            "Air pressure falls about 1 hPa every ${if (units == ContourUnits.FEET) "27 ft" else "8 m"} you climb. Automatic uses the " +
+                "barometer on foot, by bike and by boat, not in a car, train or aircraft, and drops it at once while it disagrees " +
+                "with the GPS. Always uses it whatever you do: in a pressurised cabin it is wrong by design. Never uses the GPS " +
+                "and the elevation map."
         },
         // T176: the position button's rows.
         HelpText("settings.mapControls", "Position button", at(SettingsGroup.MAP, "Position button"), show = page(SettingsGroup.MAP)) {

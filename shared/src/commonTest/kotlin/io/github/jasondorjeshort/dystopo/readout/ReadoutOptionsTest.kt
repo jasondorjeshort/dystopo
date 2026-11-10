@@ -20,7 +20,7 @@ class ReadoutOptionsTest {
         assertEquals(listOf("speed", "climb", "course", "elevation"), shown(Activity.AIR))
         for (a in Activity.entries) {
             val o = ReadoutOptions.defaults(a)
-            assertTrue(o.barometer)
+            assertEquals(BarometerMode.AUTO, o.barometer)
             assertFalse(o.speed.pace || o.speed.knots, "$a: speed, not pace, and never knots by default")
             assertTrue(ReadoutEntry.entries.none { o[it].plusMinus } && ReadoutEntry.entries.all { o[it].damping == Damping.MEDIUM })
         }

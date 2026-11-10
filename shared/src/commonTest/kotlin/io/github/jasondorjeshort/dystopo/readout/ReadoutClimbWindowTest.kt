@@ -12,8 +12,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * T177: the climb rate's window and its three states on the ground: a dash while standing still, 0 while walking on
- * the flat, a value on the climb; a dash while the window fills; the 5 min window smoother than the 1 min one over
+ * T177: the climb rate's window and its states on the ground (T250: 0 while standing still and walking on the flat
+ * when the estimate can tell, a value on the climb; "?" while the window fills); the 5 min window smoother than the 1 min one over
  * undulating ground; the band scaled with the window; the air untouched.
  */
 class ReadoutClimbWindowTest {
@@ -35,7 +35,7 @@ class ReadoutClimbWindowTest {
     private val climb = 500.0 / 3600
 
     @Test
-    fun aDashWhileStillZeroOnTheFlatAndAValueOnTheClimb() {
+    fun zeroWhileStillAndOnTheFlatAndAValueOnTheClimb() {
         for (w in ReadoutOptions.CLIMB_WINDOWS_S) {
             val sim = ReadoutSim(11)
             // 3 min standing, 3 min walking on the flat, then 2 min plus the window climbing at 500 m/h.
@@ -43,9 +43,10 @@ class ReadoutClimbWindowTest {
             val r = run(w, ReadoutSim(11).journey(legs, startEle = 1600.0), sim)
             val states = r.map { it.climb.state }
             println("T177 window $w s: climb states ${states.groupingBy { it.code }.eachCount()}, at 20 s ${r[20].climb.state.code} (${r[20].climb.reason}), end ${(r.last().climb.value!! * 3600).toLong()} m/h")
-            assertEquals(ValueState.DASH, r[20].climb.state, "window $w: filling at 20 s")
+            assertEquals(ValueState.UNKNOWN, r[20].climb.state, "window $w: filling at 20 s") // T250: "?", not a dash
             assertEquals("filling", r[20].climb.reason)
-            for (i in 60 until 175) assertEquals(ValueState.DASH, r[i].climb.state, "window $w: standing at $i s (${r[i].climb.reason})")
+            // T250: standing with the barometer the estimate can tell level: 0, not a dash.
+            for (i in 60 until 175) assertEquals(ValueState.ZERO, r[i].climb.state, "window $w: standing at $i s (${r[i].climb.reason})")
             assertEquals("still", r[170].climb.reason)
             // On the flat: 0 once the window holds the walk (a mean over a window that still holds standing is still 0).
             for (i in 200 until 355) assertEquals(ValueState.ZERO, r[i].climb.state, "window $w: flat walk at $i s (${r[i].climb.value})")
@@ -54,10 +55,11 @@ class ReadoutClimbWindowTest {
             assertTrue(abs(end.value!! - climb) < 0.03, "window $w: climb ${end.value!! * 3600} m/h")
             assertEquals(w, r.last().climbWindowS)
             assertEquals(w.toDouble(), r.last().climbFilledS)
-            // The text: "0 m/h" on the flat, a dash while standing.
+            // The text: "0 m/h" on the flat and standing, "?" while filling (T250).
             val o = options(w)
             assertEquals("0 m/h", ReadoutText.of(r[300].climb, o, ContourUnits.METERS)!!.full)
-            assertEquals("– m/h", ReadoutText.of(r[100].climb, o, ContourUnits.METERS)!!.full)
+            assertEquals("0 m/h", ReadoutText.of(r[100].climb, o, ContourUnits.METERS)!!.full)
+            assertEquals("? m/h", ReadoutText.of(r[20].climb, o, ContourUnits.METERS)!!.full)
         }
     }
 
@@ -66,7 +68,7 @@ class ReadoutClimbWindowTest {
         val sim = ReadoutSim(12)
         val truth = sim.journey(listOf(ReadoutSim.Leg(200, 1.0, climb = climb)), startEle = 1600.0)
         val r = run(600, truth, ReadoutSim(12))
-        assertEquals(ValueState.DASH, r[25].climb.state)
+        assertEquals(ValueState.UNKNOWN, r[25].climb.state) // T250: "?" while filling
         assertEquals(ValueState.SHOWN, r[60].climb.state, "10 min window: a value after 30 s of data, over what is held")
         assertTrue(r[60].climbFilledS!! in 30.0..60.0, "filled ${r[60].climbFilledS}")
     }
@@ -130,9 +132,9 @@ class ReadoutClimbWindowTest {
             }
             val lastT = fixes.last().time
             val atFix = est.readout(lastT).climb
-            // GNSS alone over 1 min can read the climb as 0 (the band); either way the state and figure are held.
+            // GNSS alone over 1 min may not tell the climb (T250: "?"); either way the state and figure are held.
             if (withBaro) assertEquals(ValueState.SHOWN, atFix.state, "window $w: climbing at the last fix")
-            assertTrue(atFix.state == ValueState.SHOWN || atFix.state == ValueState.ZERO, "baro $withBaro window $w: ${atFix.state}")
+            assertTrue(atFix.state == ValueState.SHOWN || atFix.state == ValueState.ZERO || atFix.state == ValueState.UNKNOWN, "baro $withBaro window $w: ${atFix.state}")
             // The fixes stop; the barometer goes on reading a level phone for twice the window.
             val level = climbing.last().ele
             val series = ArrayList<ReadoutValue>()
@@ -150,7 +152,7 @@ class ReadoutClimbWindowTest {
             }
             for (s in w + 1..2 * w) {
                 val c = series[s - 1]
-                assertEquals(ValueState.DASH, c.state, "baro $withBaro window $w: a dash at $s s")
+                assertEquals(ValueState.UNKNOWN, c.state, "baro $withBaro window $w: \"?\" at $s s") // T250: too little data, not a dash
                 assertEquals("no fix", c.reason)
                 assertTrue(c.dimmed)
             }

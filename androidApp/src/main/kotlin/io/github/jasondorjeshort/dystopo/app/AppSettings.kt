@@ -66,6 +66,7 @@ object AppSettings {
     internal fun load(p: SharedPreferences) {
         prefs = p
         for (s in PLAIN) s.load(p) // T248: every plain setting, before what reads them (the pace fit below)
+        migrateBarometer(p) // T250: T161's on/off switch to the three-valued mode
         // Stored as a Float; round so 1.6 reads back as 1.6, not 1.600000023841858.
         textScale = MapLibreStyle.clampTextScale(Math.round(p.getFloat(KEY_TEXT_SCALE, 1.0f) * 1000.0) / 1000.0)
         unitPreference = UnitPreference(
@@ -145,8 +146,31 @@ object AppSettings {
 
     // ---- T161: the live readout's options per activity and entry, and the barometer switch (readout/ReadoutSettings); synced ----
 
-    /** The barometer switch (default on): the readout's elevation and climb use the phone's barometer on foot, bike and boat. */
-    val readoutBarometer: Boolean get() = READOUT_BAROMETER.value
+    /**
+     * T250: the barometer's mode (Automatic by default; [io.github.jasondorjeshort.dystopo.readout.BarometerMode]): the
+     * readout's elevation and climb use the phone's barometer on foot, bike and boat while it agrees with the GNSS,
+     * always, or never.
+     */
+    val barometerMode: io.github.jasondorjeshort.dystopo.readout.BarometerMode get() = READOUT_BAROMETER.value
+
+    /** The barometer is read at all (any mode but Never): T178's trend and its arrow follow this, as they followed T161's switch. */
+    val readoutBarometer: Boolean get() = READOUT_BAROMETER.value != io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER
+
+    /**
+     * T250 (ADR 0033): a store from before T250 holds T161's switch as a boolean under `readoutBarometer`; on reads as
+     * Automatic and off as Never, written under the mode's own key and the old one removed. A store that already has the
+     * mode keeps it.
+     */
+    internal fun migrateBarometer(p: SharedPreferences) {
+        val old = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER
+        if (p.contains(READOUT_BAROMETER.storeKey) || !p.contains(old)) return
+        val on = runCatching { p.getBoolean(old, true) }.getOrDefault(true)
+        val mode = if (on) io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO else io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER
+        READOUT_BAROMETER.value = mode
+        val e = p.edit()
+        READOUT_BAROMETER.write(e, mode)
+        e.remove(old).apply()
+    }
 
     /** The stored options by [io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.key] (`readout.<activity>.<entry>`); missing ones are the defaults. */
     @Volatile var readoutEntries: Map<String, String> = emptyMap()
@@ -160,7 +184,7 @@ object AppSettings {
 
     /** [a]'s readout options (the remembered activity's by default): its defaults with the stored values and the barometer switch. */
     fun readoutOptions(a: Activity = trackActivity): io.github.jasondorjeshort.dystopo.readout.ReadoutOptions =
-        io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.options(a, readoutEntries, readoutBarometer, climbWindowS)
+        io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.options(a, readoutEntries, barometerMode, climbWindowS)
 
     // ---- T177: the readout bar's switch and the climb window (readout/ReadoutSettings); synced ----
 
@@ -539,7 +563,12 @@ object AppSettings {
     val TURN_MARGIN_MIN = whole("turnMarginMin", io.github.jasondorjeshort.dystopo.nav.TurnAround.DEFAULT_MARGIN_MIN, io.github.jasondorjeshort.dystopo.nav.TurnAround.MARGIN_RANGE, "min", synced = true) // T163
     val TRACK_ACTIVITY = add(Setting("trackActivity", Activity.FOOT, true, Setting.Type.code({ it.code }, { Activity.of(it) }), // T172: an activity code
         { Activity.of(it.toString().trim().lowercase()) }, { "trackActivity must be one of ${Activity.entries.map { a -> a.code }} (got $it)" }))
-    val READOUT_BAROMETER = flag(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER, true, synced = true) // T161
+    val READOUT_BAROMETER = add(Setting(io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER, io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO, true, // T161, T250: the mode
+        Setting.Type({ p, k, d -> p.getString(k, null)?.let { io.github.jasondorjeshort.dystopo.readout.BarometerMode.of(it) } ?: d }, { e, k, v -> e.putString(k, v.code) },
+            { io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.syncValue(it) }, { it.code }),
+        { io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.parseBarometer(it.toString()) },
+        { "readoutBarometer must be auto, always or never (1 and 0 read as auto and never) (got $it)" },
+        storeKey = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER_STORED))
     val MAP_CONTROLS = whole("mapControls", 1, io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.LAYOUTS, "buttons", synced = true) // T176
     val RECENTER_ZOOM = whole("recenterZoom", io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.DEFAULT_CLOSE_ZOOM, io.github.jasondorjeshort.dystopo.app.controls.OrientationRules.CLOSE_ZOOM_RANGE, "(zoom level)", synced = true)
     val ORIENTATION_LOCK = flag("orientationLock", false, synced = true)
@@ -579,6 +608,8 @@ class Setting<T : Any> internal constructor(
     private val refusal: (Any) -> String,
     private val check: (T) -> T? = { it },
     internal val commitNow: Boolean = false,
+    /** T250: the preferences key it is stored under, when not [key] (a key whose stored type changed is a new stored key, ADR 0033). */
+    internal val storeKey: String = key,
 ) {
     @Volatile var value: T = default
         internal set
@@ -595,9 +626,9 @@ class Setting<T : Any> internal constructor(
     /** The value in `GET /settings` (a boolean, a number, a string or a choice's code). */
     fun jsonValue(v: T = value): Any = type.json(v)
 
-    internal fun load(p: SharedPreferences) { value = check(type.read(p, key, default)) ?: default }
+    internal fun load(p: SharedPreferences) { value = check(type.read(p, storeKey, default)) ?: default }
 
-    internal fun write(e: SharedPreferences.Editor, v: T) = type.write(e, key, v)
+    internal fun write(e: SharedPreferences.Editor, v: T) = type.write(e, storeKey, v)
 
     override fun toString() = key
 

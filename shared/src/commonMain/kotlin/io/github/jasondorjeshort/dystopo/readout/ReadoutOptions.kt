@@ -22,6 +22,28 @@ enum class ReadoutEntry(val code: String) {
 }
 
 /**
+ * T250: when the readout uses the phone's barometer (ADR 0044: devices and users split, the survey of 2026-11-09,
+ * `out/wave31-research/barometer-rule.md`; it replaces T161's on/off switch, on read as [AUTO] and off as [NEVER]).
+ *
+ * - [AUTO], the default: only where the activity's profile fuses it ([io.github.jasondorjeshort.dystopo.model.ActivityProfile.elevation]:
+ *   foot, bike, boat; never road, rail or flying, whose air does not follow the height), and out at once, without
+ *   blending, while it disagrees with the GNSS (or the vehicle-speed and jitter rules hold it), back only after the
+ *   two have agreed again for a while ([ReadoutTuning.AGREE_WINDOWS]).
+ * - [ALWAYS]: whatever the activity and whatever the GNSS says (a storm's pressure swings; in a pressurised cabin it is
+ *   wrong by design, and the help says so).
+ * - [NEVER]: the GNSS and the DEM alone.
+ */
+enum class BarometerMode(val code: String) {
+    AUTO("auto"),
+    ALWAYS("always"),
+    NEVER("never");
+
+    companion object {
+        fun of(code: String?): BarometerMode? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/**
  * How much an entry is smoothed (T160): the window or lag each level means depends on the activity
  * ([ReadoutTuning]). The marine convention of a damping setting (the readout idea's research, 2026-10-25),
  * offered on every entry.
@@ -87,8 +109,8 @@ data class EntryOptions(
  * - air: ground speed, climb (ft/min), track and GPS altitude, the aviation instrument set.
  *
  * The ± is off by default everywhere (no surveyed watch or app shows an accuracy beside the value); damping is
- * medium; knots off ([EntryOptions.knots]). [barometer] is T161's switch, default on (the owner's point 7); the
- * barometer is still never used in road, rail and air ([io.github.jasondorjeshort.dystopo.model.ActivityProfile.elevation]).
+ * medium; knots off ([EntryOptions.knots]). [barometer] is T250's mode ([BarometerMode], T161's on/off switch before it),
+ * default [BarometerMode.AUTO].
  */
 data class ReadoutOptions(
     val activity: Activity,
@@ -96,7 +118,7 @@ data class ReadoutOptions(
     val climb: EntryOptions,
     val course: EntryOptions,
     val elevation: EntryOptions,
-    val barometer: Boolean = true,
+    val barometer: BarometerMode = BarometerMode.AUTO,
     /**
      * T177: the climb rate's window in seconds, one of [CLIMB_WINDOWS_S] (default [DEFAULT_CLIMB_WINDOW_S]): on the
      * ground the climb shown is the mean vertical speed over the last this many seconds ([ReadoutEstimator]); the air

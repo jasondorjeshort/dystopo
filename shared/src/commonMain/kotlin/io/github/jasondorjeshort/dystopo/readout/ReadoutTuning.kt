@@ -142,6 +142,40 @@ object ReadoutTuning {
     /** T204: the interval the climb cap is applied over is at most this (s), so a sample after a long silence is judged as after 10 s. */
     const val STEP_MAX_DT_S = 10.0
 
+    /**
+     * T250, the barometer's disagreement rule in [BarometerMode.AUTO] (the owner, 2026-11-07: "in auto we should
+     * immediately fall back to not using it rather than go inconsistent"; the survey's one precedent, a watch maker's
+     * "GPS may override the barometer", is a hard switch too): the pressure altitude's rate and the GNSS height's rate
+     * are compared over windows of [DISAGREE_WINDOW_S] (T160's 60 s: a GNSS height's error is correlated over about
+     * 30 s on foot, so a shorter window reads its noise as a rate); one window apart by more than [DISAGREE_MPS] (T160's
+     * 1 m/s: 3600 m/h, beyond any walker's climb, while a cabin's pressure and the aircraft's height part by several
+     * m/s within a minute of a climb or a descent) puts the barometer out at once, no longer after two in a row, and
+     * the elevation and the climb carry on from the GNSS (and the DEM) alone, never a blend of the two.
+     */
+    const val DISAGREE_WINDOW_S = 60.0
+    const val DISAGREE_MPS = 1.0
+
+    /** T250: GNSS heights with a vertical accuracy worse than this (m) are not compared (their rate is noise). */
+    const val DISAGREE_MAX_VACC_M = 10.0
+
+    /**
+     * T250, the way back (hysteresis): while out for a disagreement the two rates are still compared, and the barometer
+     * returns, its offset taken afresh from the height, after [AGREE_WINDOWS] windows in a row within [AGREE_MPS]: half
+     * the threshold that put it out (derived: so a pair hovering at the threshold does not flip in and out each
+     * minute), and two minutes rather than one (T160's reopen came 60 s after the last trigger, which a cabin at cruise
+     * pressure would meet between a climb and a descent and lose again within a window).
+     */
+    const val AGREE_MPS = 0.5
+    const val AGREE_WINDOWS = 2
+
+    /**
+     * T250: a climb near zero reads 0 only when the estimate could have told a climb at the gate's [ClimbGate.showMps]:
+     * its uncertainty (the window mean's on the ground, the filter's in the air) times this is under that band. Else
+     * the data is insufficient and the climb reads "?" (the owner, 2026-11-07: "a ? or - here might be more useful if
+     * the data is insufficient or contradictory"). Two: the same two sigmas the show test asks of a value.
+     */
+    const val CLIMB_RESOLVE_SIGMAS = 2.0
+
     /** No fix for longer than this (or three fix intervals) dims the values and counts the gap. */
     const val GAP_S = 5.0
 

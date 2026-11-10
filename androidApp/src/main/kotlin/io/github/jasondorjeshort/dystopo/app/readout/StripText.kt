@@ -47,6 +47,9 @@ data class StripItem(
         const val STATE_VALUE = "value"
         const val STATE_ZERO = "zero"
         const val STATE_DASH = "dash"
+
+        /** T250: "?": the climb's data is insufficient (its window filling, too uncertain to tell, no fix, no height yet). */
+        const val STATE_UNKNOWN = "unknown"
     }
 }
 
@@ -59,6 +62,10 @@ data class StripItem(
  * climb near zero while standing) and "0" for a climb near zero while moving, so the bar never comes and goes or
  * changes width. A gap of the fixes no longer adds an item: the first entry's caption reads "no fix" with how long,
  * and the values dim.
+ *
+ * T250, the climb's cell says what the estimate knows: a figure, "0" for a near zero the estimate could tell (moving or
+ * standing), "?" while the data is insufficient (the window filling, too uncertain, no fix, no height yet, before the
+ * first readout), a dash only while the barometer and the GNSS contradict and the barometer is out for it.
  */
 object StripText {
     val ORDER = listOf(ReadoutEntry.ELEVATION, ReadoutEntry.CLIMB, ReadoutEntry.SPEED, ReadoutEntry.COURSE)
@@ -90,12 +97,15 @@ object StripText {
         val otherUnits = if (units == ContourUnits.FEET) ContourUnits.METERS else ContourUnits.FEET
         for (e in entries(o)) {
             val v = r?.get(e)
-            val state = when (v?.state) {
+            // T250: the climb with no value yet is "?" (too little data), the other entries a dash as before.
+            val missing = if (e == ReadoutEntry.CLIMB) ValueState.UNKNOWN else ValueState.DASH
+            val drawn = if (v == null || v.state == ValueState.HIDDEN) ReadoutValue(e, missing) else v
+            val state = when (drawn.state) {
                 ValueState.SHOWN -> StripItem.STATE_VALUE
                 ValueState.ZERO -> StripItem.STATE_ZERO
+                ValueState.UNKNOWN -> StripItem.STATE_UNKNOWN
                 else -> StripItem.STATE_DASH
             }
-            val drawn = if (v == null || v.state == ValueState.HIDDEN) ReadoutValue(e, ValueState.DASH) else v
             val label = ReadoutText.of(drawn, o, units) ?: continue
             val other = if (both) ReadoutText.other(drawn, o, units) else null
             val first = out.isEmpty()

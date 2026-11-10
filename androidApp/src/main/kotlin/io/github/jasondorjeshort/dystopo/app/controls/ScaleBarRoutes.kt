@@ -98,7 +98,13 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * - `POST /readout/trend?wayDown=1` computes the way down again now from the last fix (no new warning, nothing
  *   spoken); `?wayDownShow=1|0` presses the card's "Show the way down" or "Hide the way down" (409 when the card shows
  *   no way down). Both answer `trend`.
- * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=0`, T177 `readoutBar=0`,
+ * T250, the barometer's mode and the climb's states: `GET /readout` › `activity` is the recording's while a track
+ * records (`activitySource` `recording`, else `remembered`; `remembered` the picker's); `readout.barometer` adds `mode`
+ * (`auto`, `always`, `never`) and `out` (why it does not feed now: `setting`, `activity`, `disagreement`, `speed`,
+ * `jitter`, `no samples`, `silent`; null in use); `readout.climb.state` adds `unknown` ("?": `reason` `filling`,
+ * `uncertain`, `no fix`) and its `dash` means only `contradiction`; `readout.counters` adds `disagreements` and
+ * `agreements`; `bar.fields` and `drawn` `state` add `unknown`.
+ * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`; `SettingsRoutes`).
  */
 object ScaleBarRoutes {

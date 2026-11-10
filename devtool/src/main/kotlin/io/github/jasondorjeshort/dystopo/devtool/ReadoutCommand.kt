@@ -101,7 +101,8 @@ class ReadoutCommand : CliktCommand(name = "readout") {
     private val pace by option("--pace", help = "Pace instead of speed").flag()
     private val knots by option("--knots", help = "Knots (boat and air only)").flag()
     private val damping by option("--damping", help = "low, medium (default) or high, for every entry").choice("low", "medium", "high").default("medium")
-    private val noBarometer by option("--no-barometer", help = "The barometer switch off").flag()
+    private val noBarometer by option("--no-barometer", help = "The barometer never used (as --barometer never)").flag()
+    private val barometerMode by option("--barometer", help = "T250: the barometer's mode: auto (default), always or never").choice(*io.github.jasondorjeshort.dystopo.readout.BarometerMode.entries.map { it.code }.toTypedArray()).default("auto")
     private val every by option("--every", help = "Print every Nth readout (the summary counts all)").int().default(1)
     // T178: the barometer's trend.
     private val trendFixture by option("--trend-fixture", help = "Run a synthetic pressure-trend fixture (${PressureFixtures.NAMES.joinToString(", ")}) or all; writes out/pressure-<name>.csv")
@@ -130,7 +131,7 @@ class ReadoutCommand : CliktCommand(name = "readout") {
         if (points.any { it.time == null }) throw UsageError("every track point needs a <time>")
         val act = Activity.of(activity)!!
         val d = Damping.of(damping)!!
-        var options = ReadoutOptions.defaults(act).copy(barometer = !noBarometer)
+        var options = ReadoutOptions.defaults(act).copy(barometer = if (noBarometer) io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER else io.github.jasondorjeshort.dystopo.readout.BarometerMode.of(barometerMode)!!)
         for (e in ReadoutEntry.entries) options = options.with(e, options[e].copy(damping = d))
         options = options.with(ReadoutEntry.SPEED, options.speed.copy(pace = pace, knots = knots))
         climbWindow?.let { cw -> // T204 (T177's note)
@@ -212,7 +213,7 @@ class ReadoutCommand : CliktCommand(name = "readout") {
         }
         val report = linkedMapOf<String, Any?>(
             "command" to "readout", "gpxFile" to gpxFile.path, "activity" to act.code,
-            "options" to (ReadoutEntry.entries.associate { it.code to options[it].encode() } + ("barometer" to options.barometer)),
+            "options" to (ReadoutEntry.entries.associate { it.code to options[it].encode() } + ("barometer" to options.barometer.code)),
             "units" to units,
             "inputs" to linkedMapOf(
                 "fixes" to points.size, "pressureSamples" to pressure.size, "dem" to demFile?.path, "path" to pathFile?.path,
@@ -424,7 +425,7 @@ internal class PressureStep(val hPa: Double, val tMs: Long, val afterS: Long) {
 
     fun afterFix(r: Readout, demM: Double?) {
         if (r.timeMs < tMs) return
-        r.climb.value?.takeIf { r.climb.state != ValueState.HIDDEN && r.climb.state != ValueState.DASH }?.let {
+        r.climb.value?.takeIf { r.climb.state != ValueState.HIDDEN && r.climb.state != ValueState.DASH && r.climb.state != ValueState.UNKNOWN }?.let {
             if (kotlin.math.abs(it) > worstClimb) { worstClimb = kotlin.math.abs(it); worstClimbAt = r.timeMs }
         }
         if (atMinute == null && r.timeMs >= tMs + 60_000) { atMinute = r; demAtMinute = demM }

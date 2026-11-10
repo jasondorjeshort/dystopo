@@ -24,6 +24,9 @@ data class ReadoutLabel(val text: String, val unit: String, val plusMinus: Strin
  */
 object ReadoutText {
     const val DASH = "–"
+
+    /** T250: what a value reads when the data is insufficient (the climb's window filling, too uncertain to tell, no fix). */
+    const val UNKNOWN = "?"
     private const val MPS_PER_KMH = 1 / 3.6
     private const val MPS_PER_MPH = 0.44704
     private const val MPS_PER_KN = 1852.0 / 3600
@@ -69,7 +72,7 @@ object ReadoutText {
         return of(value, options, if (units == ContourUnits.FEET) ContourUnits.METERS else ContourUnits.FEET)
     }
 
-    /** [value] as text, or null when it is [ValueState.HIDDEN]. */
+    /** [value] as text, or null when it is [ValueState.HIDDEN]. T250: [ValueState.UNKNOWN] reads [UNKNOWN] ("? m/h"). */
     fun of(value: ReadoutValue, options: ReadoutOptions, units: ContourUnits): ReadoutLabel? {
         val e = value.entry
         val unit = when (e) {
@@ -79,7 +82,9 @@ object ReadoutText {
             ReadoutEntry.ELEVATION -> if (units == ContourUnits.FEET) "ft" else "m"
         }
         if (value.state == ValueState.HIDDEN) return null
-        if (value.state == ValueState.ZERO) return ReadoutLabel("0", unit, null) // T177: a climb near zero while moving
+        if (value.state == ValueState.ZERO) return ReadoutLabel("0", unit, null) // T177: a climb near zero (T250: one the estimate could tell)
+        // T250: "?" for too little data (the course's sign on it, as its dash).
+        if (value.state == ValueState.UNKNOWN) return if (e == ReadoutEntry.COURSE) ReadoutLabel(UNKNOWN + unit, "", null) else ReadoutLabel(UNKNOWN, unit, null)
         val v = value.value
         // T204 (T177's follow-up): the course's degree sign sits on the number, so its dash reads "–°", not "– °".
         if (value.state == ValueState.DASH || v == null) return if (e == ReadoutEntry.COURSE) ReadoutLabel(DASH + unit, "", null) else ReadoutLabel(DASH, unit, null)

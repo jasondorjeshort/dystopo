@@ -49,9 +49,14 @@ import java.util.concurrent.TimeUnit
  *   The sensor's samples wait for the first fix after a start or a reset: before it the fixes' clock is unknown, and
  *   a sample stamped on the wall clock would put the estimator hours ahead of a replay's file times (the fix round's
  *   stall; the estimator now also starts afresh on a clock that goes back).
- * - **The activity** is T172's remembered one ([AppSettings.trackActivity]) with its recording profile, the options
- *   [AppSettings.readoutOptions]; a change takes effect at the next [refresh] (the estimator's windows restart, the
- *   elevation carries on).
+ * - **The activity** (T250) is the recording's while a track records ([activity]: the activity the recorder's track
+ *   carries, as `Tracking` publishes it, so a recording started with an explicit activity, `POST /tracks/record?activity=`,
+ *   or changed while the remembered one stayed, is followed), else T172's remembered one ([AppSettings.trackActivity]),
+ *   with its recording profile and the options [AppSettings.readoutOptions]; a change takes effect at the next
+ *   [refresh] (the estimator's windows restart, the elevation carries on). Before T250 it was always the remembered
+ *   one, so a flight recorded under an explicit flying activity kept a walker's barometer.
+ * - **The barometer's mode** (T250, [AppSettings.barometerMode]): Automatic, Always or Never, in the options; a change
+ *   takes effect at the next [refresh].
  * - **Along the route**: while navigating, the fix's progress along the navigated line when within its off-route
  *   distance, so the speed on foot and by bike is distance along the route over a long window (T160's `route` source).
  * - **The DEM** is the active DEM pack's ([Trips.demSampler]); with none the elevation runs on GNSS (and the barometer).
@@ -177,7 +182,7 @@ object LiveReadout {
 
     /** T177: the bar before the first [refresh] answered: every shown entry a dash. */
     fun placeholder(): List<StripItem> =
-        StripText.items(null, AppSettings.readoutOptions(), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits, trendSlot = trendSlot())
+        StripText.items(null, AppSettings.readoutOptions(activity()), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits, trendSlot = trendSlot())
 
     /** T178: an arrow of the barometer's trend can appear beside the elevation (the switch on, a barometer present). */
     private fun trendSlot(): Boolean = AppSettings.readoutBarometer && Barometer.present
@@ -215,9 +220,11 @@ object LiveReadout {
                 "bothUnits" to (s?.both ?: false),
                 "fields" to s?.items?.map { linkedMapOf("entry" to it.entry.code, "state" to it.state, "text" to it.full, "other" to it.other, "caption" to it.caption, "dimmed" to it.dimmed) },
             ),
-            "activity" to (s?.options?.activity ?: AppSettings.trackActivity).code,
+            "activity" to (s?.options?.activity ?: activity()).code,
+            "activitySource" to activitySource, // T250: `recording` (the recording's activity) or `remembered`
+            "remembered" to AppSettings.trackActivity.code,
             "units" to (s?.units ?: AppSettings.units).symbol,
-            "options" to s?.options?.let { o -> ReadoutEntry.entries.associate { it.code to o[it].encode() } + mapOf("barometer" to o.barometer, "knots" to o.knots) },
+            "options" to s?.options?.let { o -> ReadoutEntry.entries.associate { it.code to o[it].encode() } + mapOf("barometer" to o.barometer.code, "knots" to o.knots) },
             "drawn" to s?.items?.map { it.json() },
             "line" to s?.line,
             "gap" to s?.gapText,
@@ -264,7 +271,7 @@ object LiveReadout {
         lastFed?.let { l ->
             val d = io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(l.lat, l.lon, fix.lat, fix.lon)
             val dt = (fix.time - l.time) / 1000.0
-            if (d > JUMP_M && (dt <= 0 || d / dt > AppSettings.trackProfile().speedBoundMps)) {
+            if (d > JUMP_M && (dt <= 0 || d / dt > AppSettings.trackProfile(activity()).speedBoundMps)) {
                 est = null
                 routeHint = null
                 bump("jumpResets")
@@ -295,9 +302,21 @@ object LiveReadout {
 
     private val dem = ElevationSampler { lat, lon -> runCatching { Trips.demSampler()?.elevation(lat, lon) }.getOrNull() ?: Double.NaN }
 
+    /**
+     * T250: the activity the readout runs on: the recording's while a track records (the activity its track carries, as
+     * [io.github.jasondorjeshort.dystopo.app.tracking.Tracking] publishes it in its UI state), else the remembered one.
+     * [activitySource] says which (`recording` or `remembered`), for `GET /readout`.
+     */
+    fun activity(): io.github.jasondorjeshort.dystopo.model.Activity = recordingActivity() ?: AppSettings.trackActivity
+
+    val activitySource: String get() = if (recordingActivity() != null) "recording" else "remembered"
+
+    private fun recordingActivity(): io.github.jasondorjeshort.dystopo.model.Activity? =
+        runCatching { io.github.jasondorjeshort.dystopo.app.tracking.TrackingUiState.ui.takeIf { it.recording }?.activeActivity }.getOrNull()
+
     /** The estimator on the current activity, profile and options. */
     private fun ensure(): ReadoutEstimator {
-        val a = AppSettings.trackActivity
+        val a = activity()
         val profile = AppSettings.trackProfile(a)
         val options = AppSettings.readoutOptions(a)
         val e = est
@@ -321,9 +340,16 @@ object LiveReadout {
         snapshot = Snapshot(r, o, units, items, StripText.gap(r.gapS), wanted, both)
     }
 
-    /** The barometer is read while it can serve a shown entry: the switch on, an activity that fuses it, climb or elevation shown. */
-    fun barometerUsed(p: ActivityProfile, o: ReadoutOptions): Boolean =
-        o.barometer && p.elevation == ElevationSource.FUSED && (o.climb.shown || o.elevation.shown)
+    /**
+     * The barometer is read while it can serve a shown entry: climb or elevation shown and (T250) the mode Always, or
+     * Automatic with an activity that fuses it (its samples also keep the disagreement's comparison going while it is
+     * out for one); never in Never.
+     */
+    fun barometerUsed(p: ActivityProfile, o: ReadoutOptions): Boolean = when (o.barometer) {
+        io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER -> false
+        io.github.jasondorjeshort.dystopo.readout.BarometerMode.ALWAYS -> true
+        io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO -> p.elevation == ElevationSource.FUSED
+    } && (o.climb.shown || o.elevation.shown)
 
     /** One [refresh]'s result. */
     class Snapshot(

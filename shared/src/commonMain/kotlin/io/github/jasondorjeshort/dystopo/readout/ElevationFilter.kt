@@ -207,6 +207,17 @@ internal class ElevationFilter(var activity: Activity) {
         return true
     }
 
+    /**
+     * T250: the barometer was put out for disagreeing with the GNSS: the vertical speed it carried is not trusted, so
+     * its spread opens to the activity's prior (its ties to the height and the offset dropped) and the next GNSS
+     * heights set it within a few fixes instead of a slow filter unlearning the barometer's rate.
+     */
+    fun loosenVertical() {
+        if (!heightKnown) return
+        val vv = ReadoutTuning.verticalSpeedPriorMps(activity).let { it * it }
+        set(p[0], 0.0, p[2], max(p[4], vv), 0.0, p[8])
+    }
+
     /** T204: a new barometer offset: the next sample takes it afresh from the height (the height does not move); a pin ends. */
     fun newOffset() {
         offsetKnown = false
