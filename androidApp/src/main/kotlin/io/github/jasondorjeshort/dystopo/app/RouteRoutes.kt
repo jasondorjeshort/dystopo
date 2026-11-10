@@ -17,7 +17,7 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   once the route is the session's (`RouteSession.plan` publishes it on the main thread before returning), so a
  *   request right after it (`GET /route`, `GET /nav/directions?route=current`, `POST /nav/start?route=current`) has it.
  *   T108: `mode=crow` is the straight line with the DEM pack's heights (no graph, never 503); its `route` has
- *   `bearingDeg` and one arrival in `instructions`.
+ *   `bearingDeg` and one arrival in `instructions`. T256: shown as "Line", the geodesic, anywhere; no heights: no `profile`.
  * - `GET /route[?profile=1][&wait=ms]`: the current route (or failure) and the card's state. T217: `wait` is how long the
  *   computed blocks (`water`, `exposure`, `bestStart`, `pastEffort`) wait for their answer (default 10 s each; `wait=0`
  *   answers at once, `computing` until then).
