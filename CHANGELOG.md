@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-10
 
+- T262: The tracks and routes manager, and the vanished track (lane A, first)
 - T271: The privacy scanner reads a diagnostic dump without false positives (alongside; no Gradle; small)
 
 ## v0.1.26-alpha (2026-11-10)
