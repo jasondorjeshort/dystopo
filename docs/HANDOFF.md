@@ -1,14 +1,14 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-10, by main session (wave 32: T271, T262, T264 merged; T272 and T269 running)
+Updated: 2026-11-10, by main session (wave 32: T271, T262, T264, T269 merged; T272 and T265 running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32, `out/wave32-research/` [no-check: gitignored].
 
 ## Now
 
 - Wave 31 closed (`docs/tasks/wave-31.md`); **v0.1.26-alpha published** 2026-11-10 (tag on e5331b9c, versionCode 1445).
 - **Wave 32 first half** (launched 2026-11-10 17:40 UTC on the owner's go; plan 298987de, fixes 93636d62; research
-  and the critic's report in `out/wave32-research/` [no-check: gitignored]): **T271, T262, T264 merged** (log
+  and the critic's report in `out/wave32-research/` [no-check: gitignored]): **T271, T262, T264, T269 merged** (log
   entries of 2026-11-10). Nothing runs. Per-agent token counts for the close: the session scratchpad's
   `wave32-costs.tsv` [no-check: scratchpad]. Usage gate shut at 19:09 UTC (5-hour 53, 7-day 74); 5-hour reset 20:40.
 - Rules: no force push (merge `main` in); a push on its own line; an LZW error in a cached DEM cell is a stale range
@@ -16,9 +16,9 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. Running (19:45 UTC, the session on another account, 7-day 74 resetting 2026-11-13 04:00 UTC): T272 (lane A,
-   5570/8694), T269 (lane B, no emulator), a chore cleaning up T262 and T264. T265 after T269 merges. The tour's
-   offline step flakes on emulator fetches (two branches).
+1. Running: T272 (lane A, 5570/8694) and T265 (lane B, 5572/8696; the last of the first half). The session is on
+   another account since 19:40 UTC (7-day resets 2026-11-13 04:00 UTC). The tour's offline step flakes on emulator
+   fetches (two branches); a chore cleans up T269's branch and worktree with the next one.
 2. After the first half: sweep and alpha (the sweep runs T262's `upgrade` check); the second half after the 7-day
    reset of 2026-11-14 03:00 UTC.
 3. The owner removes the empty `C:\c` folder T264's first tilebuild run left (the safety check refused the agent).
