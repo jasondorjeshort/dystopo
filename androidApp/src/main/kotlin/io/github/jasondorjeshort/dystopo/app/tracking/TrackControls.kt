@@ -165,10 +165,8 @@ private fun BoxScope.Controls() {
                     BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                     // T172: the recording's activity; a tap changes it (the recording then uses that activity's settings).
                     ActivityLine(ui.activeId, ui.activeName, ui.activeActivity)
-                    BasicText(
-                        UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)),
-                        style = TextStyle(color = Ink, fontSize = 13.sp),
-                    )
+                    // T260: the gaps bridged on the map, their count and time, after the live stats.
+                    GapStatsLine(UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)), ui.gapText, 13)
                     RecordingStateLine(ui)
                     if (ui.paused) DiscardLine() // T253: paused only, and it asks first
                     TurnBackChip() // T252: the card off by default, on with this chip
@@ -670,13 +668,13 @@ private fun ProfilePanel(p: Tracking.ProfileView) {
             Action("Close") { Thread { tracker().showProfile(null) }.start() }
         }
         val s = p.stats
-        BasicText(
+        GapStatsLine(
             UnitFormat.distance(s.distanceM, AppSettings.units) +
                 (s.ascentM?.let { "  +" + UnitFormat.elevation(it, AppSettings.units) } ?: "") +
                 (s.descentM?.let { " / -" + UnitFormat.elevation(it, AppSettings.units) } ?: "") +
                 (if (s.minEleM != null && s.maxEleM != null) "  ${UnitFormat.elevationValue(s.minEleM!!, AppSettings.units)} to ${UnitFormat.elevation(s.maxEleM!!, AppSettings.units)}" else "") +
                 (if (s.segments > 1) "  ${s.segments} segments" else ""),
-            style = TextStyle(color = Ink, fontSize = 12.sp),
+            p.gapText, 12, // T260
         )
         val eles = p.samples.mapNotNull { it.eleM }
         if (eles.size < 2) {
@@ -718,6 +716,31 @@ private fun ProfilePanel(p: Tracking.ProfileView) {
         }
     }
 }
+
+/**
+ * T260: a statistics line with the gaps the map bridges with a dashed line ("1 gap, 10 min", [gapText]) after it and the
+ * help icon that says what the dash means; the line alone when there is no gap.
+ */
+@Composable
+private fun GapStatsLine(stats: String, gapText: String?, size: Int) {
+    if (gapText == null) {
+        BasicText(stats, style = TextStyle(color = Ink, fontSize = size.sp))
+        return
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BasicText("$stats  $gapText", style = TextStyle(color = Ink, fontSize = size.sp), modifier = Modifier.weight(1f, fill = false))
+        io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.gaps")
+    }
+}
+
+/** T260: what the dashed line means (ADR 0031: the owner's to adjust). */
+internal val TRACK_GAPS_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.gaps", "Gaps in a track", "The map, top right: Tracks, then the recording panel or a track's profile", needs = "a track with a gap", show = { TrackBar.open = true }) {
+        "A dashed line joins two parts of a track where nothing was recorded for a while (no GPS fix, a pause, the app " +
+            "stopped). It is straight, in the track's colour: the way taken there is not known. The figures give the gaps' " +
+            "number and time; the distance leaves them out, and a GPX export keeps each part as its own segment."
+    },
+)
 
 private fun duration(s: Double?): String {
     if (s == null) return ""

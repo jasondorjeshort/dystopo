@@ -62,6 +62,9 @@ object HelpRegistry {
             // T252: the recording panel's turn-back chip.
             io.github.jasondorjeshort.dystopo.app.tracking.TURN_BACK_HELP +
             // end T252
+            // T260: the gaps a track's dashed line bridges, beside the statistics lines.
+            io.github.jasondorjeshort.dystopo.app.tracking.TRACK_GAPS_HELP +
+            // end T260
             // T255: what search and routes need, beside the search box's line over a view with map tiles only.
             io.github.jasondorjeshort.dystopo.app.search.SEARCH_COVERAGE_HELP
             // end T255

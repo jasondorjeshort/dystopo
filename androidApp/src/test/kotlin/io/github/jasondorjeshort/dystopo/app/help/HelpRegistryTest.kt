@@ -149,6 +149,9 @@ class HelpRegistryTest {
             // T252: the recording panel's turn-back chip.
             "tracks.turnBack",
             // end T252
+            // T260: the gaps in a track.
+            "tracks.gaps",
+            // end T260
             // T255: the search box's line over a view with map tiles only.
             "search.offlineMap",
             // end T255
