@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -155,8 +157,11 @@ private fun BoxScope.Controls() {
             EstimateChip() // T203: the terrain estimate, recording or not
             if (barOpen && !TrackBar.listOpen) ActivityPickerPanel(onRecordStarted) // T172; T219: a track's in the Tracks sheet
             if (barOpen && ui.recording) {
-                // T253: a vertical swipe on the panel hides it, as Hide and Back do; the recording goes on.
-                Panel(Modifier.hideOnSwipe()) {
+                // T253: a vertical swipe on the panel hides it, as Hide and Back do; the recording goes on. Where the rule leaves
+                // the panel less than its height (landscape at font scale 2.0) it scrolls instead, so Discard and the turn-back
+                // chip stay reachable; the chips above it (Hide and the record group) never scroll away.
+                val scroll = androidx.compose.foundation.rememberScrollState()
+                Panel((if (scroll.maxValue > 0) Modifier else Modifier.hideOnSwipe()).verticalScroll(scroll, enabled = scroll.maxValue > 0)) {
                     BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                     // T172: the recording's activity; a tap changes it (the recording then uses that activity's settings).
                     ActivityLine(ui.activeId, ui.activeName, ui.activeActivity)
@@ -390,7 +395,7 @@ private fun HideChip(onClick: () -> Unit) {
 /** T253: a vertical swipe of a thumb's length on the panel hides the bar, as Hide and Back do. */
 private fun Modifier.hideOnSwipe(): Modifier = pointerInput(Unit) {
     var dragged = 0f
-    androidx.compose.foundation.gestures.detectVerticalDragGestures(
+    detectVerticalDragGestures(
         onDragStart = { dragged = 0f },
         onDragEnd = { if (kotlin.math.abs(dragged) >= 48.dp.toPx()) TrackBar.hide() },
     ) { change, dy -> change.consume(); dragged += dy }
@@ -406,7 +411,8 @@ private fun DiscardLine() {
         Action(DISCARD, RecordRed) { TrackBar.discardAsk = true }
         return
     }
-    BasicText(DISCARD_QUESTION, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+    // Wrapped at the panel's usual width, so the question does not widen the chip column (it pushed the chips down).
+    BasicText(DISCARD_QUESTION, Modifier.widthIn(max = 160.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
     Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
         Action(DISCARD, RecordRed) {
             TrackBar.discardAsk = false
