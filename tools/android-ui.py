@@ -1424,7 +1424,7 @@ def part_features(args):
 
     def two_tracks():
         # T262: a second recording leaves the first on the map: the list has both, newest first, and both read Shown.
-        pts = record_track(dev, walk(46.7880, -121.7280, 46.7840, -121.7380, 10))
+        pts = record_track(dev, walk(46.7880, -121.7280, 46.7872, -121.7290, 10))
         nodes = tracks_list(dev)
         texts = dev.texts(nodes)
         rows = parse_track_rows(texts)
