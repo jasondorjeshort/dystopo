@@ -123,6 +123,17 @@ class OutdoorsProfile(
             "ne_10m_admin_1_states_provinces_lines" to Triple("boundary", 4, 4),
         )
 
+        /**
+         * T274: the Natural Earth ocean drawn without Planetiler's simplification. Its ring runs down both sides of the
+         * antimeridian, and at z0 and z1 the default 0.1 px tolerance (0.14 and 0.07 degrees) drops the corner vertex
+         * (-180, -84.713), 0.06 degrees off the chord from the Ross Ice Shelf's (-179.942, -84.721) to (-180, -16.555)
+         * by Fiji: the west side then slants off 180 and the seam tiles keep a sliver of land along 180 whose edge the
+         * style's water outline draws as a line. The 1:110m table has 2,025 vertices, so leaving it whole costs
+         * 1.8 kB; the 1:50m and 1:10m oceans keep their corners at their zooms (the checker, `WorldOverviewSeamTest`, reads
+         * every z0 to z5 seam tile of the committed file).
+         */
+        const val NE_UNSIMPLIFIED_OCEAN = "ne_110m_ocean"
+
         /** T264: the Natural Earth tables only a `--natural-earth-only` build reads: country and city labels. */
         const val NE_COUNTRIES = "ne_50m_admin_0_countries"
         const val NE_PLACES = "ne_10m_populated_places"
@@ -210,8 +221,9 @@ class OutdoorsProfile(
         // z4: at z5 France's departments and the like crowd the view, seen on the emulator over Europe).
         val maxZoom = if (naturalEarthOnly && table == "ne_10m_admin_0_boundary_lines_land") NE_MAX_ZOOM else tableMax
         if (layer == "water" && feature.canBePolygon()) {
-            features.polygon("water").setAttr("class", if ("ocean" in table) "ocean" else "lake")
+            val water = features.polygon("water").setAttr("class", if ("ocean" in table) "ocean" else "lake")
                 .setZoomRange(minZoom, maxZoom).setMinPixelSize(2.0)
+            if (table == NE_UNSIMPLIFIED_OCEAN) water.setPixelToleranceAtAllZooms(0.0)
         } else if (layer == "boundary" && feature.canBeLine()) {
             features.line("boundary").setAttr("admin_level", if ("admin_0" in table) 2 else 4)
                 .setZoomRange(minZoom, maxZoom)

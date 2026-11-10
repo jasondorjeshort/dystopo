@@ -127,7 +127,7 @@ fun varint(v: Int): ByteArray {
 // overview"): ./gradlew :tilebuild:run --no-daemon --args="--natural-earth-only --profile outdoors --max-zoom 5
 // --out tilebuild/world/world-outdoors.pmtiles". A rebuild changes the SHA-256 below on purpose, in the same commit.
 val worldOverview = rootProject.file("tilebuild/world/world-outdoors.pmtiles")
-val worldOverviewSha256 = "d770d290259e9b0fa8142de1047a00dda7a1e9d17790a9b878c629404a7e0360"
+val worldOverviewSha256 = "76883128a058f45065617154dd9c58c23b0e71d40d8370a9ee2524ce5a87187e"
 val mapAssetsDir = layout.buildDirectory.dir("generated/mapAssets")
 val bundleMapAssets by tasks.registering {
     group = "build"
