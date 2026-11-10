@@ -134,6 +134,7 @@ Planned 2026-11-10 from the triage of 2026-11-10 (the Plans written into `docs/i
 **Owns:** `tilebuild/*` (the Natural Earth recipe, `PROFILE.md`), `tilebuild/world/world-outdoors.pmtiles`, `androidApp/build.gradle.kts` (the pin line), a checker (a test or a `tools/` script) that reads every z0 to z5 tile touching x=0 or the east edge and fails on a water ring edge lying on the tile edge.
 **Interacts with:** T264 (merged): the file and its pin. T265: z1 is where it shows.
 **Done when:** the checker passes on the new file and fails on the old; the file's size within 10% of 1,748,638 bytes; on the emulator z1 over the South Pacific shows no line along 180 (screencap viewed beside the old one), z3 over the Pacific and z5 over Europe as T264 left them; `check` green.
+**Status: merged.** Verifier MERGE WITH NOTES. Follow-ups: the release APK size not re-measured after the overview's 3 kB (the release reads it); `tilebuild/PROFILE.md`'s z3 to z5 sums are T264's (a tally reads z4 667,673 and z5 882,589 B); a Natural Earth update could lose a seam corner at another scale the same way (the test catches it at the rebuild).
 
 ## Browser demo follow-ups (tools/demo)
 - Contour labels in the live viewer are sparse (MapLibre line placement on unsimplified contour geometry); tune `symbol-spacing`/`text-max-angle`, or feed MapLibre simplified lines from T1's pipeline.
