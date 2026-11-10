@@ -22,7 +22,8 @@ decisions in [design/decisions/](design/decisions/README.md); one line per merge
 ## Data flow
 
 1. **Elevation.** Sources are read by HTTP range requests straight from their public cloud files (COGs, or fixed
-   blocks where only a coverage service exists), cached under `DYSTOPO_CACHE`. Every source converts to **EGM2008**
+   blocks where only a coverage service exists), cached under `DYSTOPO_CACHE` (T269: each file's blocks are checked
+   against the file's ETag and dropped whole when it is republished). Every source converts to **EGM2008**
    through geoid grids from the PROJ CDN, then `best` composites them (Copernicus under the national sources under
    the US sources) with 300 m feathering. Output is Terrarium PNG tiles, in region packs (PMTiles) or live.
 2. **Map data.** OpenStreetMap through three paths: a Planetiler build with the outdoors profile (from a Geofabrik

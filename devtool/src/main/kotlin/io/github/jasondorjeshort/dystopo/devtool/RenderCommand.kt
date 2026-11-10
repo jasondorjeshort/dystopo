@@ -11,6 +11,7 @@ import com.github.ajalt.clikt.parameters.types.file
 import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.render.SlopeShading
+import io.github.jasondorjeshort.dystopo.sources.elevation.RangeValidation
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.io.File
@@ -76,6 +77,7 @@ class RenderCommand : AreaCommand("render") {
             ImageIO.write(image, "png", outFile)
         }
 
+        RangeValidation.awaitChecks(10_000) // T269: the range-cache checks this render started, so their counters are in the report
         val report = RenderReport(
             area = name,
             bbox = listOf(box.west, box.south, box.east, box.north),
@@ -88,7 +90,7 @@ class RenderCommand : AreaCommand("render") {
             elevationMinMeters = grid.finiteMin(),
             elevationMaxMeters = grid.finiteMax(),
             noData = grid.finiteMin() == null,
-            sourceCounters = fetched.counters,
+            sourceCounters = fetched.counters + RangeValidation.json().mapKeys { "rangeCache.${it.key}" },
             contourInterval = contours.interval,
             contourUnits = contours.units,
             contours = contours,

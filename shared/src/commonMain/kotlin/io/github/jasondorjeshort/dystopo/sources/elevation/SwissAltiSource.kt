@@ -160,6 +160,7 @@ class SwissAltiSource(private val cacheDir: String = SourceIo.dir("swissalti3d")
         counters["overviewLevelMax"] = (levels.values.maxOrNull() ?: 0).toLong()
         counters["blocksDecoded"] = opened.values.sumOf { it.tilesDecoded }.toLong()
         counters["rangeRequests"] = opened.values.sumOf { it.source.fetches }
+        counters += rangeValidationCounters(opened.values.map { it.source }) // T269
         counters["readMs"] = readMs
         counters["datumOffsetMeanCm"] = roundL(meanOffset * 100)
         counters["datumUnconvertedCells"] = unconverted

@@ -1,7 +1,8 @@
 ---
 date: 2026-11-10
-status: open
+status: resolved
 area: shared / elevation sources, the range-block cache
+promoted_to: ../reference/code-layout.md (the range cache's validator, T269)
 ---
 
 # The range-block cache keeps blocks across a source's republish, so a cell decodes as garbage
@@ -49,3 +50,8 @@ process and at most once a day) and drop the whole cell on a mismatch; the same 
 sources (`copernicus30`, `swissalti3d`, `kartverket-dtm`, `bev-als-dtm`, `hrdem`, `linz-dem`). Until
 then a deterministic LZW or Deflate error in a cached cell means: delete that cell's directory. A wave 32
 task (`docs/TASKS.md` › Later).
+
+Resolved by T269 (2026-11-10): `validator.json` per cell (the first response's ETag, Last-Modified and length),
+`If-Match` on every range GET, a whole-cell drop on a 412 or another ETag, a daily background HEAD, a one-time check
+of cells cached before it (dropped when Last-Modified is newer than the oldest block), and a recheck on a decode error,
+which replaces the manual deletion above. Every host answered a wrong `If-Match` with 412.

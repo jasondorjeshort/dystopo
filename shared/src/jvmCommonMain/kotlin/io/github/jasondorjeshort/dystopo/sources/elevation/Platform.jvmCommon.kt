@@ -106,6 +106,17 @@ actual object SourceFiles {
     actual fun delete(path: String) {
         File(path).delete()
     }
+
+    actual fun list(dir: String): List<String> = File(dir).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()
+}
+
+/** T269: two daemon threads for the range cache's checks; a check is a HEAD or one small range read. */
+private val background = ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS, java.util.concurrent.LinkedBlockingQueue<Runnable>()) { r ->
+    Thread(r, "range-check").apply { isDaemon = true }
+}
+
+internal actual fun runInBackground(task: () -> Unit) {
+    background.execute(task)
 }
 
 actual class IoPool actual constructor(name: String, threads: Int) {

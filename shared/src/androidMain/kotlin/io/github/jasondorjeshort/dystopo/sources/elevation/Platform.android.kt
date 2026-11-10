@@ -20,14 +20,24 @@ internal object UrlConnectionSourceHttp : SourceHttp {
 
     private fun send(conn: HttpURLConnection): HttpReply = try {
         val status = conn.responseCode
-        val body = if (status in 200..299) conn.inputStream.use { it.readBytes() } else ByteArray(0)
-        HttpReply(status, body)
+        val body = if (status in 200..299 && conn.requestMethod != "HEAD") conn.inputStream.use { it.readBytes() } else ByteArray(0)
+        // T269: the headers (read before disconnect), names in lower case; the status line's null key dropped.
+        val headers = conn.headerFields.entries.mapNotNull { (k, v) -> if (k == null) null else v.firstOrNull()?.let { k.lowercase() to it } }.toMap()
+        HttpReply(status, body, headers)
     } finally {
         conn.disconnect()
     }
 
     override fun range(url: String, offset: Long, length: Int): HttpReply =
         send(open(url, 120_000).apply { setRequestProperty("Range", "bytes=$offset-${offset + length - 1}") })
+
+    override fun range(url: String, offset: Long, length: Int, ifMatch: String): HttpReply =
+        send(open(url, 120_000).apply {
+            setRequestProperty("Range", "bytes=$offset-${offset + length - 1}")
+            setRequestProperty("If-Match", ifMatch)
+        })
+
+    override fun head(url: String, timeoutMs: Long): HttpReply = send(open(url, timeoutMs).apply { requestMethod = "HEAD" })
 
     override fun get(url: String, timeoutMs: Long): HttpReply = send(open(url, timeoutMs))
 }

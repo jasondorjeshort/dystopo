@@ -58,6 +58,7 @@ class CanadaSource(private val cacheDir: String = SourceIo.dir("hrdem")) : Eleva
             counters["m$res.pixelMeters"] = read.pixelMeters.toLong()
             counters["m$res.blocksDecoded"] = read.blocks.toLong()
             counters["m$res.rangeRequests"] = read.requests
+            counters += read.validation // T269
             counters["m$res.cells"] = read.cells
             if (values.none { it.isNaN() }) break
         }
@@ -78,7 +79,7 @@ class CanadaSource(private val cacheDir: String = SourceIo.dir("hrdem")) : Eleva
         return ElevationSource.Result(grid, counters, ElevationSource.provenanceIfData(grid, ids))
     }
 
-    private class Read(val tiles: Int, val levelMax: Int, val pixelMeters: Double, val blocks: Int, val requests: Long, val cells: Long)
+    private class Read(val tiles: Int, val levelMax: Int, val pixelMeters: Double, val blocks: Int, val requests: Long, val cells: Long, val validation: Map<String, Long> = emptyMap())
 
     /** Samples the [res] m mosaic into the NaN cells of [values]. */
     private fun read(res: Int, targetMeters: Double, xs: DoubleArray, ys: DoubleArray, values: FloatArray): Read {
@@ -127,6 +128,7 @@ class CanadaSource(private val cacheDir: String = SourceIo.dir("hrdem")) : Eleva
             pixelMeters = opened.entries.maxOf { (t, tiff) -> tiff.level(levels.getValue(t)).pixelScaleX },
             blocks = opened.values.sumOf { it.tilesDecoded },
             requests = opened.values.sumOf { it.source.fetches },
+            validation = rangeValidationCounters(opened.values.map { it.source }, "m$res."),
             cells = cells,
         )
     }

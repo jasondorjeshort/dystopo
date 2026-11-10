@@ -39,7 +39,13 @@ expect object SourceFiles {
     fun setLastModifiedMs(path: String, ms: Long)
 
     fun delete(path: String)
+
+    /** T269: the names of the plain files directly in [dir] (no subdirectories), empty when it does not exist. */
+    fun list(dir: String): List<String>
 }
+
+/** T269: runs [task] on a small pool of daemon threads and returns at once (the range cache's background checks). */
+internal expect fun runInBackground(task: () -> Unit)
 
 /** A fixed pool of [threads] daemon threads named [name], so one source never has more requests in flight to its host. */
 expect class IoPool(name: String, threads: Int) {

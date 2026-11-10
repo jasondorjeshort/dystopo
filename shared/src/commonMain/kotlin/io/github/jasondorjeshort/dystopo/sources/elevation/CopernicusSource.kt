@@ -63,7 +63,7 @@ class CopernicusSource(private val cacheDir: String = SourceIo.dir("copernicus30
             "tilesDecoded" to cells.values.sumOf { it?.tilesDecoded ?: 0 }.toLong(),
             "rangeRequests" to cells.values.sumOf { it?.source?.fetches ?: 0L },
             "noDataCells" to values.count { it.isNaN() }.toLong(),
-        )
+        ) + rangeValidationCounters(cells.values.mapNotNull { it?.source }) // T269
         val grid = ElevationGrid(window.width, window.height, window.cellSizeMeters, values)
         return ElevationSource.Result(grid, counters, ElevationSource.provenanceIfData(grid, registryIds))
     }

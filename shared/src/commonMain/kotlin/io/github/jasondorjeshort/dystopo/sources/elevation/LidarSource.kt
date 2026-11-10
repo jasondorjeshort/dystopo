@@ -194,6 +194,7 @@ class LidarSource(private val cacheDir: String = SourceIo.dir("3dep1m")) : Feath
         counters["lidarTilesUsed"] = tilesUsed
         counters["tilesDecoded"] = projects.sumOf { p -> p.tiles.sumOf { it.tilesDecoded } }.toLong()
         counters["rangeRequests"] = projects.sumOf { p -> p.tiles.sumOf { it.source.fetches } }
+        counters += rangeValidationCounters(projects.flatMap { p -> p.tiles.map { it.source } }) // T269
         counters["indexCells"] = indexStats.cells.toLong()
         counters["indexQueries"] = indexStats.queries.toLong()
         counters["indexMs"] = indexStats.ms
