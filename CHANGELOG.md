@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-10
 
+- T255: Search and routes say why they find nothing where only tiles cover the map (lane B)
 - T260: A gap in a recorded track is bridged with a dashed line (lane A, after T251 and T253; small)
 - T254: Offline: a missing tile is cut from the nearest tile on the phone, never blank (lane B)
 - T253: The recording panel: Hide, not X; Pause, then Finish (lane A, after T252 and T251)
