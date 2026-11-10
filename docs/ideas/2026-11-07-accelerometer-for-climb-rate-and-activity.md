@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: feature
-related: [2026-11-07-climb-reads-zero-when-the-data-is-contradictory.md, 2026-10-30-pace-and-climb-zones-with-a-tone.md, 2026-11-02-physical-limits-from-your-own-tracks.md]
+related: [2026-10-30-pace-and-climb-zones-with-a-tone.md, 2026-11-02-physical-limits-from-your-own-tracks.md]
 ---
 
 # The accelerometer as a third source for climb rate, and as a tell for car, plane, bike or foot
