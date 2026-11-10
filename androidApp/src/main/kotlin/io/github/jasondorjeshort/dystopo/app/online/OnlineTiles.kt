@@ -167,7 +167,7 @@ class OnlineTiles(
 
     /**
      * T254: DEM tile z/x/y the phone lacks, from the nearest ancestor within [WiderZoom.MAX_DEPTH] levels that the online
-     * cache or a pack holds: the online pyramid's window, which overzooms that ancestor bilinearly as the pack path's
+     * cache or a pack holds, overzoomed bilinearly from that ancestor alone ([widerDemGrid]) as the pack path's
      * synthesis does ([io.github.jasondorjeshort.dystopo.app.TileService.demTile]). Null when no ancestor is on the phone.
      * Not cached; recorded for [viewSource] ([OnlineService.recordWider]).
      */
@@ -186,10 +186,12 @@ class OnlineTiles(
             }
         }
         val from = found ?: return null
-        val p = pyramid()
-        val ts = p.tileSize
-        val grid = p.window(z, x * ts, y * ts, ts, ts)
-        if (grid.values.all { it.isNaN() }) return null
+        // A pyramid of its own over the ancestor's level, read from the phone only: the shared one ([pyramid]) would remember
+        // the missing deeper tiles, and a contour or shade tile made from it later would overzoom the ancestor without
+        // knowing a tile was missing, and be kept in the cache.
+        val grid = widerDemGrid(z, x, y, from.first, decoder) { tz, tx, ty ->
+            if (packCoversDem(tz, tx, ty)) packs.demFor(tz, tx, ty)?.tile(tz, tx, ty) else fetcher.cachedOnly("dem", "$tz/$tx/$ty.png")
+        } ?: return null
         val png = io.github.jasondorjeshort.dystopo.app.TileService.terrariumPng(grid)
         service.recordWider(z, x, y, from)
         service.widerServed("dem", from.first)
@@ -459,6 +461,17 @@ class OnlineTiles(
          */
         fun shadeReadZoom(floor: Int?, z: Int): Int? =
             floor?.takeIf { it > z && it - z <= io.github.jasondorjeshort.dystopo.tiles.ShadeTiles.MAX_OVERSAMPLE }
+
+        /**
+         * T254: DEM tile z/x/y overzoomed (bilinear) from zoom [fromZoom] alone, through a pyramid of its own whose only level
+         * is [fromZoom], read through [read] (the phone's cache and packs): the ancestor and the neighbours its edge needs,
+         * nothing deeper and nothing shared. Null when that level has no elevation in the tile. Pure, tested (`WiderZoomTest`).
+         */
+        fun widerDemGrid(z: Int, x: Int, y: Int, fromZoom: Int, decoder: ImageDecoder, read: (Int, Int, Int) -> ByteArray?): io.github.jasondorjeshort.dystopo.dem.ElevationGrid? {
+            val p = DemPyramid(fromZoom, fromZoom, decoder, cacheTiles = 9) { tz, tx, ty -> if (tz == fromZoom) read(tz, tx, ty) else null }
+            val ts = p.tileSize
+            return p.window(z, x * ts, y * ts, ts, ts).takeUnless { g -> g.values.all { it.isNaN() } }
+        }
 
         /** True when tile z/x/y and box [b] overlap (touching edges do not count). */
         fun tileOverlaps(b: PackBounds, z: Int, x: Int, y: Int): Boolean {

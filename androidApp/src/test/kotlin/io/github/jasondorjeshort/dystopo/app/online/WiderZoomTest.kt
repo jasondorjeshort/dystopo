@@ -91,4 +91,21 @@ class WiderZoomTest {
         assertNotNull(wider.vector(13, 4248, 2920), "five levels up is within it")
         assertEquals(1L, wider.misses.get())
     }
+
+    /**
+     * The DEM cut reads the ancestor's level only, through a pyramid of its own: it never asks for the missing tile or the
+     * levels between (the shared online pyramid would remember them as missing, and a contour or shade tile made from it
+     * afterwards would be kept in the cache although it overzoomed the ancestor).
+     */
+    @Test
+    fun theDemCutReadsTheAncestorsLevelOnly() {
+        // A flat 1000 m Terrarium tile: (R * 256 + G + B / 256) - 32768 = 1000 with R 131, G 232.
+        val flat = io.github.jasondorjeshort.dystopo.tiles.ImageDecoder { io.github.jasondorjeshort.dystopo.tiles.ArgbImage(256, 256, IntArray(256 * 256) { 0xFF83E800.toInt() }) }
+        val reads = java.util.Collections.synchronizedList(ArrayList<String>())
+        val grid = assertNotNull(OnlineTiles.widerDemGrid(15, 6009, 11323, 10, flat) { z, x, y -> reads += "$z/$x/$y"; if (z == 10) ByteArray(1) else null })
+        assertTrue(grid.values.all { kotlin.math.abs(it - 1000f) < 0.01f }, "the ancestor's elevations")
+        assertTrue(reads.isNotEmpty() && reads.all { it.startsWith("10/") }, "only z10 was read: $reads")
+        assertTrue("10/187/353" in reads, "the ancestor itself")
+        assertNull(OnlineTiles.widerDemGrid(15, 6009, 11323, 10, flat) { _, _, _ -> null }, "no elevation, no tile")
+    }
 }

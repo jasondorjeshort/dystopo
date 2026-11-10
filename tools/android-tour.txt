@@ -26,7 +26,8 @@
 @cards 46.7864,-121.7366;46.8024,-121.7289 scale=2.0 fixture=still-fall bearing=30 rotation=1
 @cards 46.7864,-121.7366;46.8024,-121.7289 scale=1.0 fixture=still-fall bearing=30
 @cards 46.7864,-121.7366;46.8024,-121.7289 scale=1.0 fixture=still-fall bearing=30 rotation=1
-# T254: after the direct view (which fills the online cache at Mont Blanc z9), the offline step: the first view online, then
-# airplane mode and the second view, z14 in the valley below Mont Blanc inside the z9 tiles; every vector tile must be answered
-# (cut from the wider zoom, `widerZoom` in GET /stats/requests), no 5xx, roads rendered; airplane mode off after (--no-offline skips it).
-@offline 9/45.865/6.865;14/45.9237/6.8694
+# T254: the offline step, Glacier National Park (no other step shows it, so MapLibre holds none of its tiles): the online
+# cache cleared, the z9 view online (it must fetch the z9 tile the second view lies in, 9/93/176), then airplane mode and
+# z14 at West Glacier on the main road; every vector tile must be answered (cut from z9, widerZoom in GET /stats/requests),
+# no 5xx, roads rendered, none of the view's vector tiles cached; airplane mode off after (--no-offline skips it).
+@offline 9/48.50/-113.80;14/48.4955/-113.982
