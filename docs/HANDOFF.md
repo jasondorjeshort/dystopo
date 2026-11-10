@@ -1,25 +1,28 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-10, by main session (wave 32 launched on the owner's go: T262, T264, T271 running)
+Updated: 2026-11-10, by main session (wave 32: T271, T262, T264 merged; gate shut until the 5-hour reset)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32, `out/wave32-research/` [no-check: gitignored].
 
 ## Now
 
 - Wave 31 closed (`docs/tasks/wave-31.md`); **v0.1.26-alpha published** 2026-11-10 (tag on e5331b9c, versionCode 1445).
-- **Wave 32 launched 2026-11-10 17:40 UTC on the owner's go** (plan 298987de, three fixes 93636d62; research and the
-  critic's report in `out/wave32-research/` [no-check: gitignored]): T262 (lane A, 5570/8694), T264 (lane B,
-  5572/8696), T271 (alongside, no Gradle) running. Meter at the go 7-day 68, 5-hour 32: the second half waits for the
-  reset of 2026-11-14 03:00 UTC. Free RAM 90.5 GB.
+- **Wave 32 first half** (launched 2026-11-10 17:40 UTC on the owner's go; plan 298987de, fixes 93636d62; research
+  and the critic's report in `out/wave32-research/` [no-check: gitignored]): **T271, T262, T264 merged** (log
+  entries of 2026-11-10). Nothing runs. Per-agent token counts for the close: the session scratchpad's
+  `wave32-costs.tsv` [no-check: scratchpad]. Usage gate shut at 19:09 UTC (5-hour 53, 7-day 74); 5-hour reset 20:40.
 - Rules learned this wave: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line
   of its own; an LZW error in a cached DEM cell is a stale range cache (delete the cell; T269); a sweep part can lose
   its emulator right after a guard reboot (one rerun; T273 adds the storage wait).
 
 ## Next
 
-1. As each reports: a verifier (Sonnet, `wave` skill; ports 5574/8698 and 5576/8700, T271's on a free slot with a
-   real dump), merge on MERGE. Lane A next T272, lane B next T269; then T265 after T262, T264 and T269 merge.
-2. After the first half: sweep and alpha; the second half after the 7-day reset.
+1. After the 5-hour reset: a Haiku chore cleans up T262 and T264 (branches, worktrees `dystopo-wt/T262` and `T264`,
+   AVDs `dystopo35-T262` and `dystopo35-T264`; the verifiers' AVDs are gone). Then T272 (lane A, 5570/8694) and
+   T269 (lane B, no emulator); T265 after T269. The tour's offline step flakes on emulator fetches (two branches).
+2. After the first half: sweep and alpha (the sweep runs T262's `upgrade` check); the second half after the 7-day
+   reset of 2026-11-14 03:00 UTC.
+3. The owner removes the empty `C:\c` folder T264's first tilebuild run left (the safety check refused the agent).
 
 ## Waiting on user
 
