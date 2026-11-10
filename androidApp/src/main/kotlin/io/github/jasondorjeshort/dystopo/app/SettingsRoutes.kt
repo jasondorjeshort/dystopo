@@ -52,7 +52,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   (`shown=1;pace=0;damping=low|medium|high;pm=0;knots=0`, keys left out keep their current value; synced as
  *   `app.readout.<activity>.<entry>`); the rows' own keys `readout.<entry>`, the same form, which edit the remembered
  *   activity's options (`trackActivity`'s, also when set in the same request) and sync through its
- *   `readout.<activity>.<entry>`; `readoutBarometer=1|0` (default on, synced `app.readoutBarometer`). Pace and knots
+ *   `readout.<activity>.<entry>`; T250 `readoutBarometer=auto|always|never` (default auto; T161's `1` and `0` read as auto and never; stored as
+ *   `readoutBarometerMode`, synced `app.readoutBarometer` as `on`, `always` or `off`, `ReadoutSettings`). Pace and knots
  *   are speed's only, knots honoured in boat and air only. `GET /settings` reports `readoutBarometer`, `readout` (the
  *   remembered activity's options per entry) and `readoutStored`. The readout takes a change at its next refresh.
  *   T176, the position button (Settings › Map, `controls/RecenterButton`): `mapControls=1|2|3` (default 1: one button;

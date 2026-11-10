@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.readout
 
 import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.readout.BarometerMode
 import io.github.jasondorjeshort.dystopo.readout.Damping
 import io.github.jasondorjeshort.dystopo.readout.EntryOptions
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
@@ -17,8 +18,11 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
  * - The rows' own keys, `readout.<entry>` ([editKey]): some of those options (`pace=1`), applied over the remembered
  *   activity's ([io.github.jasondorjeshort.dystopo.app.AppSettings.trackActivity], T172's) current options and stored
  *   whole under its [key], so they sync through it.
- * - The barometer switch, `readoutBarometer` ([BAROMETER], default on: the owner's point 7), one for every activity
- *   (road, rail and air never use the barometer whatever it says), synced as `app.readoutBarometer`.
+ * - T250: the barometer's mode, `readoutBarometer` ([BAROMETER]; [BarometerMode]: Automatic (the default), Always or
+ *   Never; T161's on/off switch before it), one for every activity, stored as its code under [BAROMETER_STORED] (the
+ *   old key held a boolean, whose type never changes: `AppSettings.load` migrates on to Automatic and off to Never)
+ *   and synced as `app.readoutBarometer` in [syncValue]'s form: `on` for Automatic, `off` for Never (what a build
+ *   before T250 wrote and reads), `always` for Always (a build before T250 skips it and keeps its own value).
  * - T177: the bar switch, `readoutBar` ([BAR], default on: the owner, 2026-10-30, "always visible beside the scale
  *   with an option"; T161's missing whole-strip switch), synced as `app.readoutBar` `on`/`off`; and the climb window,
  *   `climbWindow` ([CLIMB_WINDOW], seconds, 30, 60 (default), 300 or 600; ADR 0044: users ask for 30 s to 5 min and no
@@ -30,6 +34,34 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
  */
 object ReadoutSettings {
     const val BAROMETER = "readoutBarometer"
+
+    /** T250: where the mode is stored (a string code); [BAROMETER] held T161's boolean switch, migrated from on load. */
+    const val BAROMETER_STORED = "readoutBarometerMode"
+
+    /**
+     * T250: the mode as `POST /settings` and a sync give it: `auto` (also `automatic`, and T161's `1`, `on`, `true`,
+     * `yes`), `always`, `never` (also `0`, `off`, `false`, `no`); null for anything else.
+     */
+    fun parseBarometer(raw: String?): BarometerMode? = when (raw?.trim()?.lowercase()) {
+        "auto", "automatic", "1", "on", "true", "yes" -> BarometerMode.AUTO
+        "always" -> BarometerMode.ALWAYS
+        "never", "0", "off", "false", "no" -> BarometerMode.NEVER
+        else -> null
+    }
+
+    /** T250: the synced value: `on` (Automatic) and `off` (Never) as builds before T250 read them, `always`. */
+    fun syncValue(m: BarometerMode): String = when (m) {
+        BarometerMode.AUTO -> "on"
+        BarometerMode.NEVER -> "off"
+        BarometerMode.ALWAYS -> "always"
+    }
+
+    /** T250: the row's choices (ADR 0031: the owner adjusts). */
+    fun barometerLabel(m: BarometerMode): String = when (m) {
+        BarometerMode.AUTO -> "Automatic"
+        BarometerMode.ALWAYS -> "Always"
+        BarometerMode.NEVER -> "Never"
+    }
 
     /** T177: the bar switch and the climb window. */
     const val BAR = "readoutBar"
@@ -96,8 +128,8 @@ object ReadoutSettings {
     /** A stored or synced whole value in [EntryOptions.encode]'s form over [a]'s defaults, or null when it is refused ([merge]). */
     fun parseValue(a: Activity, e: ReadoutEntry, raw: String): String? = merge(e, raw, ReadoutOptions.phoneDefaults(a)[e])?.encode()
 
-    /** [a]'s options: its defaults (T177: [ReadoutOptions.phoneDefaults]) with the [stored] values (by [key]) over them, the barometer switch and the climb window. */
-    fun options(a: Activity, stored: Map<String, String>, barometer: Boolean, climbWindowS: Int = ReadoutOptions.DEFAULT_CLIMB_WINDOW_S): ReadoutOptions {
+    /** [a]'s options: its defaults (T177: [ReadoutOptions.phoneDefaults]) with the [stored] values (by [key]) over them, the barometer's mode and the climb window. */
+    fun options(a: Activity, stored: Map<String, String>, barometer: BarometerMode, climbWindowS: Int = ReadoutOptions.DEFAULT_CLIMB_WINDOW_S): ReadoutOptions {
         var o = ReadoutOptions.phoneDefaults(a).copy(barometer = barometer, climbWindowS = climbWindowS)
         for (e in ReadoutEntry.entries) {
             val v = stored[key(a, e)] ?: continue

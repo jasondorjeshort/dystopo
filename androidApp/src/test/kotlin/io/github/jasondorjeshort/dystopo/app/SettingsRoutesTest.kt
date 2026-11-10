@@ -126,15 +126,19 @@ class SettingsRoutesTest {
         assertEquals("shown=0;pace=1;damping=medium;pm=0;knots=0", ok("readout.foot.speed" to "pace=1").readoutValues["readout.foot.speed"]) // T177: speed is off by default on foot (the bar shows elevation and climb)
         assertEquals("shown=0;pace=0;damping=high;pm=1;knots=0", ok("readout.air.climb" to "shown=0;damping=high;pm=1").readoutValues["readout.air.climb"])
         assertEquals(mapOf(io.github.jasondorjeshort.dystopo.readout.ReadoutEntry.COURSE to "shown=0"), ok("readout.course" to "shown=0").readoutEdits)
-        assertEquals(false, ok("readoutBarometer" to "0")[AppSettings.READOUT_BAROMETER])
-        assertEquals(true, ok("readoutBarometer" to "on")[AppSettings.READOUT_BAROMETER], "the synced value is on or off")
+        // T250: the mode; T161's 1/0 and the synced on/off read as Automatic and Never.
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER, ok("readoutBarometer" to "0")[AppSettings.READOUT_BAROMETER])
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO, ok("readoutBarometer" to "on")[AppSettings.READOUT_BAROMETER], "the synced value on is Automatic")
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.BarometerMode.ALWAYS, ok("readoutBarometer" to "always")[AppSettings.READOUT_BAROMETER])
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO, ok("readoutBarometer" to "auto")[AppSettings.READOUT_BAROMETER])
+        assertEquals(io.github.jasondorjeshort.dystopo.readout.BarometerMode.NEVER, ok("readoutBarometer" to "never")[AppSettings.READOUT_BAROMETER])
         assertNull(ok("units" to "m")[AppSettings.READOUT_BAROMETER])
         assertTrue(ok("units" to "m").readoutEdits.isEmpty())
         assertTrue(bad("readout.foot.speed" to "damping=wild").message.contains("readout.foot.speed"))
         bad("readout.speed" to "shown=2")
         bad("readout.speed" to "fast")
         bad("readout.skate.speed" to "shown=1")
-        bad("readoutBarometer" to "maybe")
+        assertTrue(bad("readoutBarometer" to "maybe").message.contains("auto, always or never"))
     }
 
     @Test

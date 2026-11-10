@@ -30,7 +30,9 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * four recording choices (`app.trackProfile.<activity>`, `acc=50;autopause=0;net=1;interval=1000`); both [SettingsRoutes] keys.
  * T161: the live readout's options per activity and entry (`app.readout.<activity>.<entry>`,
  * `shown=1;pace=0;damping=medium;pm=0;knots=0`) and its barometer switch (`app.readoutBarometer`, `on` or `off`); both
- * [SettingsRoutes] keys.
+ * [SettingsRoutes] keys. T250: the switch became the mode (Automatic, Always, Never) under the same synced key: `on` is
+ * Automatic and `off` Never, so a peer before T250 and this build read each other's on and off; `always` is Always,
+ * which a peer before T250 skips as a value it does not accept (listed in its `lastPull.skipped`), keeping its own.
  * T176: the position button's layout (`app.mapControls`, `1`, `2` or `3`), its close zoom (`app.recenterZoom`, a whole
  * zoom level) and "Keep north up" (`app.orientationLock`, `on` or `off`); [SettingsRoutes] keys. The orientation itself
  * stays on each phone.
@@ -84,7 +86,7 @@ object SettingsSync {
     const val TURN_MARGIN_MIN = "turnMarginMin"
     /** T172: the remembered recording activity, a [SettingsRoutes] key whose synced value is an activity code. */
     const val TRACK_ACTIVITY = "trackActivity"
-    /** T161: the readout's barometer switch, a [SettingsRoutes] key whose synced value is `on` or `off`. */
+    /** T161: the readout's barometer switch, a [SettingsRoutes] key whose synced value is `on` or `off` (T250: or `always`). */
     const val READOUT_BAROMETER = io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.BAROMETER
     /** T176: the position button's layout, its close zoom and the orientation lock, [SettingsRoutes] keys. */
     const val MAP_CONTROLS = "mapControls"

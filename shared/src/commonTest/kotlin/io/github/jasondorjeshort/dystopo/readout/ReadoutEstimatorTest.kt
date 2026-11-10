@@ -222,7 +222,7 @@ class ReadoutEstimatorTest {
     fun disagreementAndJitterAlsoMakeTheBarometerSuspect() {
         val sim = ReadoutSim(6)
         val truth = sim.journey(listOf(ReadoutSim.Leg(600, 1.0)))
-        // The barometer climbs 2 m/s from minute 4 (a lift the GNSS does not see, say): two 60 s windows disagree.
+        // The barometer climbs 2 m/s from minute 4 (a lift the GNSS does not see, say): T250, one 60 s window disagreeing puts it out.
         val lift = ReadoutSim.T0 + 240_000
         val est = ReadoutEstimator(Activity.FOOT)
         val reasons = LinkedHashSet<String>()
@@ -233,7 +233,7 @@ class ReadoutEstimatorTest {
         }
         println("T160 disagreement: suspect ${(firstAt!! - lift) / 1000} s after the lift started, reasons $reasons, counters ${est.readout(ReadoutSim.T0 + 600_000).counters}")
         assertTrue("disagreement" in reasons, "reasons $reasons")
-        assertTrue(firstAt!! - lift <= 125_000)
+        assertTrue(firstAt!! - lift <= 65_000) // T250: the first disagreeing window, no longer two in a row
 
         val est2 = ReadoutEstimator(Activity.FOOT)
         val reasons2 = LinkedHashSet<String>()
@@ -303,7 +303,7 @@ class ReadoutEstimatorTest {
         assertEquals("off", r.climb.reason)
 
         // The barometer switch (T161's) off on foot.
-        val off = ReadoutEstimator(ActivityProfile.of(Activity.FOOT), ReadoutOptions.defaults(Activity.FOOT).copy(barometer = false))
+        val off = ReadoutEstimator(ActivityProfile.of(Activity.FOOT), ReadoutOptions.defaults(Activity.FOOT).copy(barometer = BarometerMode.NEVER))
         feed(off, sim.fixes(truth), sim.pressure(truth)) { _, _ -> }
         assertEquals(BarometerState.OFF, off.readout(ReadoutSim.T0 + 300_000).barometer.state)
     }

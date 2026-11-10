@@ -48,22 +48,31 @@ class StripTextTest {
     }
 
     @Test
-    fun aDashWhileStillZeroOnTheFlatAndADashBeforeAnything() {
-        val still = walk.copy(speed = v(ReadoutEntry.SPEED, null, ValueState.DASH), climb = v(ReadoutEntry.CLIMB, 0.001, ValueState.DASH, reason = "still"))
+    fun theClimbsThreeStatesAndADashBeforeAnything() {
+        // T250: standing still the climb reads 0 when the estimate can tell (the speed a dash), "?" when it cannot, and a
+        // dash only while the sources contradict.
+        val still = walk.copy(speed = v(ReadoutEntry.SPEED, null, ValueState.DASH), climb = v(ReadoutEntry.CLIMB, 0.001, ValueState.ZERO, reason = "still"))
         val s = StripText.items(still, all, ContourUnits.METERS)
-        assertEquals(listOf("1650 m", "– m/h", "– km/h", "245°"), s.map { it.full })
-        assertEquals(listOf("value", "dash", "dash", "value"), s.map { it.state })
+        assertEquals(listOf("1650 m", "0 m/h", "– km/h", "245°"), s.map { it.full })
+        assertEquals(listOf("value", "zero", "dash", "value"), s.map { it.state })
+        val unsure = StripText.items(walk.copy(climb = v(ReadoutEntry.CLIMB, 0.01, ValueState.UNKNOWN, reason = "uncertain")), bar, ContourUnits.METERS)
+        assertEquals(listOf("1650 m", "? m/h"), unsure.map { it.full })
+        assertEquals("unknown", unsure[1].state)
+        val contra = StripText.items(walk.copy(climb = v(ReadoutEntry.CLIMB, null, ValueState.DASH, reason = "contradiction")), bar, ContourUnits.FEET)
+        assertEquals(listOf("5414 ft", "– ft/h"), contra.map { it.full })
+        assertEquals("dash", contra[1].state)
         val flat = walk.copy(climb = v(ReadoutEntry.CLIMB, -0.004, ValueState.ZERO, reason = "near zero"))
         val f = StripText.items(flat, bar, ContourUnits.METERS)
         assertEquals(listOf("1650 m", "0 m/h"), f.map { it.full })
         assertEquals("zero", f[1].state)
-        // Before a fix (no readout yet, or the estimator's "no fix" and "no height yet"): every shown entry a dash, none left out.
+        // Before a fix (no readout yet, or the estimator's "no fix" and "no height yet"): every shown entry a dash, none
+        // left out; T250: the climb "?" (too little data).
         val none = StripText.items(null, bar, ContourUnits.METERS)
-        assertEquals(listOf("– m", "– m/h"), none.map { it.full })
+        assertEquals(listOf("– m", "? m/h"), none.map { it.full })
         fun h(e: ReadoutEntry, why: String) = v(e, null, ValueState.HIDDEN, reason = why)
         val noFix = readout(Activity.FOOT, h(ReadoutEntry.SPEED, "no fix"), h(ReadoutEntry.CLIMB, "no height yet"), h(ReadoutEntry.COURSE, "no fix"), h(ReadoutEntry.ELEVATION, "no height yet"))
-        assertEquals(listOf("dash", "dash", "dash", "dash"), StripText.items(noFix, all, ContourUnits.METERS).map { it.state })
-        assertEquals(listOf("– m", "– m/h", "– km/h", "–°"), StripText.items(noFix, all, ContourUnits.METERS).map { it.full }) // T204: no stray space in the course's dash
+        assertEquals(listOf("dash", "unknown", "dash", "dash"), StripText.items(noFix, all, ContourUnits.METERS).map { it.state })
+        assertEquals(listOf("– m", "? m/h", "– km/h", "–°"), StripText.items(noFix, all, ContourUnits.METERS).map { it.full }) // T204: no stray space in the course's dash
     }
 
     @Test
