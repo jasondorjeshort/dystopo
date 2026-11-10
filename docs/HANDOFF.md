@@ -7,8 +7,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 ## Now
 
 - **Wave 31 is merged** (plan at e184b663): every task in, T256 at e08e9c2b and T257 at 7ed8f5c3 (one fix round)
-  today; **v0.1.25-alpha published** 2026-11-10 09:48 UTC (947d1e71, versionCode 1421). README reads the close.
-  Both lanes' branches, worktrees and AVDs are cleaned up; `git worktree list` holds main and the two carry-backs.
+  today; **v0.1.25-alpha published** 2026-11-10 09:48 UTC (947d1e71, versionCode 1421). Both lanes cleaned up.
 - Running since 06:50: the post-wave sweep (Sonnet; `tools/sweep.ps1 -NoDaemon -Prev out/sweep-20261110-0254
   -First route-card,track,map,readout,settings`, consoles 5640 and 5642; one to two hours). The v0.1.26-alpha notes
   are drafted in the session scratchpad (`notes-v0.1.26-alpha.md`; the changes line and the checksums to fill).
