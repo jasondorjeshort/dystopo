@@ -1,38 +1,37 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-09, by main session (wave 31 open: sixteen of seventeen merged; the mid-wave sweep running; T256 and T257 wait for the release)
+Updated: 2026-11-10, by main session (wave 31 open: sixteen of seventeen merged; v0.1.25-alpha published; T256 and T257 running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 31, `out/wave31-research/` [no-check: gitignored].
 
 ## Now
 
 - **Wave 31 is open** (plan at e184b663; T261 added): seventeen tasks, two lanes plus three alongside. Merged: all
-  but T256 and T257 (T259, T245, T244, T248, T246, T247, T249, T261, T250, T251, T252, T253, T254, T260, T255, T258).
-  Running: the mid-wave sweep on 63325aea (`tools/sweep.ps1`, consoles 5640 and 5642; no `-Prev`: the last
-  release's sweep folder is on the second PC); both lanes idle for it. The lane order and the release point are the
-  wave paragraph's; within a lane: implementer, verifier (ports 5574/8698 for A, 5576/8700 for B), merge, next.
+  but T256 and T257. **v0.1.25-alpha published** 2026-11-10 09:48 UTC (tag on 947d1e71, versionCode 1421; the
+  mid-wave sweep green after a cache repair, `out/sweep-20261110-0254`; notes in `out/wave31-reports/` [no-check: gitignored]).
+- Running since 04:55: T256's implementer in lane A (Opus; AVD `dystopo35-T256`, console 5570, host 8694) and
+  T257's in lane B (Opus; `dystopo35-T257`, 5572, 8696). Verifier ports: 5574/8698 for A, 5576/8700 for B.
 - Rules learned: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line of its
-  own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete.
-- **Gate:** the 5-hour meter hit 50 at 17:04; the owner chose no grant; the lanes resumed at the 19:40 reset (7-day
-  32) and again at the 00:40 reset after a second hold (7-day 49 at 02:30). Two Gradle agents at once cost one
-  Kotlin compiler OOM per `check` (green on retry) and tour screenshot timeouts.
+  own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete; a
+  deterministic LZW or Deflate error in a cached DEM cell is a stale range cache: delete that cell's directory.
+- **Gate:** the 5-hour meter hit 50 twice (17:04, 00:29); the owner chose no grant; the lanes resumed at the resets;
+  5-hour 15, 7-day 51 at 04:55. Two Gradle agents at once: one Kotlin compiler OOM per `check` (green on retry).
 
 ## Next
 
-1. Sweep green: the `release` skill for v0.1.25-alpha on the swept commit (CHANGELOG cut, tag, draft, an agent verifies
-   and installs from the draft, notes, publish, record); red: a fix task or one rerun of the part. Then T256 in A and
-   T257 in B (Opus), verifiers, merges, chores; the close (post-wave sweep, a second release, `docs/tasks/`, wave 32).
-2. At T253 and T255 merged: the `sweep` skill, then the `release` skill (ADR 0024). At the wave's end: close by the
-   `wave` skill (the meter against 53; the figure revised if five points off), then plan wave 32 from the wave
-   paragraph's Not-taken list and the build orders in ADR 0060 and ADR 0061.
+1. T256 and T257 report: a verifier each (Sonnet, `tools/verify-task.ps1`), the `wave` skill's merge sequence, the
+   log, a cleanup chore. Then the close by the `wave` skill: the post-wave sweep (`-Prev out/sweep-20261110-0254`),
+   the second release (v0.1.26-alpha, ADR 0024), the meter against 53 (revised if five points off), a Haiku chore
+   moving wave 31 to `docs/tasks/wave-31.md` [no-check: not yet written], then plan wave 32 from the wave
+   paragraph's Not-taken list, the build orders in ADR 0060 and ADR 0061, and this wave's Later follow-ups.
 
 ## Waiting on user
 
 - ADR 0060: the refresh default (automatic, your "just work", against ADR 0030's explicit refresh); the helper's
   keep-warm list as a new data flow; the daily limit's default, and country downloads past OpenFreeMap's limit.
 - ADR 0061: the first-run card while the pack list loads (F1 wait, F2 unknown until known, F3, F4); F1 built first.
-- The Menu choice (Layout C, wave 32); T220; proposals 0054 and 0055; on v0.1.24-alpha whether the start stays
-  quick over the large download, a Startup freeze report if not.
+- The Menu choice (Layout C, wave 32); T220; proposals 0054 and 0055; v0.1.25-alpha's start over the large
+  download; the owner's-eye items of the sixteen merges (ADR 0031, the board's Status lines).
 
 ## Open findings
 
