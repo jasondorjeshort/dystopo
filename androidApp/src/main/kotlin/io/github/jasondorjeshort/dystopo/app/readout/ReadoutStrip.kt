@@ -91,6 +91,13 @@ object StripLayout {
     @Volatile var drawnItems = 0
     @Volatile var droppedItems: List<String> = emptyList()
 
+    /**
+     * T257: how many of [entrySizesPx]' first entries outrank the scale bar (the readout's own four, the course by its
+     * point alone); the layout rule leaves out the rest (the pressure, the extended readout's, the course's degrees)
+     * before it hides the scale bar.
+     */
+    @Volatile var coreEntries = Int.MAX_VALUE
+
     /** T224: why the bar is not drawn when the right-hand chips leave even the elevation no room. */
     const val NO_ROOM_BESIDE_CHIPS = "noRoomBesideChips"
 
@@ -336,6 +343,7 @@ private class DroppingFlow(val entries: List<String>, val degreesAt: Int, val it
         val shortList = if (alt != null) full.toMutableList().also { it[degreesAt] = alt } else full
         val virtual = shortList.map { intArrayOf(it.width, it.height) } +
             (alt?.let { listOf(intArrayOf((full[degreesAt].width - it.width - gapX).coerceAtLeast(1), full[degreesAt].height)) } ?: emptyList())
+        StripLayout.coreEntries = entries.count { it in CORE_ENTRIES } // T257: a prefix, by StripText.ORDER
         StripLayout.entriesMeasured(virtual, PLATE_PADDING_Y.roundToPx() * 2) // T224
 
         // T257: the entries drawn at virtual count k: every entry whole at the full count, else the first k with the course short.
@@ -414,6 +422,9 @@ private class DroppingFlow(val entries: List<String>, val degreesAt: Int, val it
     override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int): Int =
         whole(measurables).let { m -> m.sumOf { it.maxIntrinsicHeight(width) } + rowGap.roundToPx() * (m.size - 1).coerceAtLeast(0) }
 }
+
+/** T257: the readout's own entries (T161's four), which outrank the scale bar; the rest go before it ([StripLayout.coreEntries]). */
+private val CORE_ENTRIES = setOf("elevation", "climb", "speed", "course")
 
 /** T161: the gap between entries; T204: and between rows, as the flow row had them. */
 private val ITEM_GAP = 10.dp
