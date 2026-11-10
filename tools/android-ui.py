@@ -18,7 +18,7 @@ Parts:
                search (type, pick a hit), routing (long-press start and end, the card, T219: its Export GPX through the
                system's save dialog, Save (Keep before T217) as a trip, the Routes list under the route's place names; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
                "From: Your location"; T243: tapped at its node's centre, no other element's node inside the card), a waypoint with no recording (long-press, Waypoint here,
-               the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Stop, the Tracks sheet, T219: a row's Export GPX through the save dialog, the file listed with `adb shell ls`), the sync sheet
+               the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Pause then Finish (T253; Stop on an older build), the Tracks sheet, T219: a row's Export GPX through the save dialog, the file listed with `adb shell ls`), the sync sheet
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
@@ -42,7 +42,7 @@ Parts:
                cannot), then notifications at the first recording (API 33+): allowed (the recording notification is
                posted) and denied (recording still works).
   background   Record, press Home, force doze (`dumpsys deviceidle force-idle`), feed fixes for --bg-seconds,
-               leave doze, come back and Stop: the foreground service must have kept recording through doze.
+               leave doze, come back, Pause and Finish: the foreground service must have kept recording through doze.
   recenter     (T105, from T93; T176) the map opens on a fix at Paradise at z13, a slow drag moves the puck away, one tap
                on the Recenter button brings it back to where it was (within --recenter-tol px, found by the puck's dot
                colour in raw frames) and zooms in one level to the close zoom 14 (the scale bar's metres per pixel halve);
@@ -870,13 +870,19 @@ def map_settled(dev, name, timeout=90):
     return firstrun.settle_map(dev, name, 0.002, timeout)
 
 
+# T253: the unfolded bar's record group: Record, or Pause while recording, or Resume and Finish while paused; Stop on a
+# build before T253 (the published release the `upgrade` and `update` parts record on).
+RECORD_GROUP = "^(Record|Stop|Pause|Resume|Finish)$"
+
+
 def tracks_bar(dev):
-    """The recording bar (Record or Stop on screen)."""
+    """The unfolded recording bar (its record group on screen); a tap on the folded chip, "Tracks" or, while recording, the
+    red distance ("● 1.2 km"), unfolds it."""
     for _ in range(4):
         nodes = dev.nodes()
-        if dev.find("^(Record|Stop)$", nodes):
+        if dev.find(RECORD_GROUP, nodes):
             return nodes
-        n = dev.find("^Tracks$", nodes)
+        n = dev.find("^Tracks$", nodes) or dev.find("^● ", nodes)
         if not n:
             close_overlays(dev, 1)
             continue
@@ -907,9 +913,26 @@ def tracks_more(dev):
 
 
 def close_tracks(dev):
-    n = dev.find("^×$")
-    if n and dev.find("^(Record|Stop)$"):
+    """Folds the bar: Hide since T253 (a build before it: the bar's "×")."""
+    nodes = dev.nodes()
+    n = dev.find("^Hide$", nodes) or dev.find("^×$", nodes)
+    if n and dev.find(RECORD_GROUP, nodes):
         dev.tap(n)
+
+
+def finish_recording(dev):
+    """T253: ends the recording as a user does: Pause, then Finish (which saves at once); a build before T253: Stop.
+    Raises when the bar does not come back to Record."""
+    nodes = tracks_bar(dev)
+    if dev.find("^Stop$", nodes):
+        dev.tap_text("^Stop$")
+    else:
+        if dev.find("^Pause$", nodes):
+            dev.tap_text("^Pause$")
+        dev.tap_text("^Finish$", timeout=10)
+    n, nodes = dev.wait_for("^Record$", 10)
+    if not n:
+        raise RuntimeError(f"the recording did not end: no Record after Finish (texts: {dev.texts(nodes)[:20]})")
 
 
 def start_recording(dev, allow=True, dialog_timeout=4):
@@ -920,7 +943,7 @@ def start_recording(dev, allow=True, dialog_timeout=4):
     on) starts at Record with no picker (its notification prompt may cover the bar, so neither is a failure here; the
     caller's Stop is the check). Returns the prompt button tapped, or None (T175)."""
     dev.tap_text("^Record$")
-    n, nodes = dev.wait_for("^(Record as|Stop)$", 10)
+    n, nodes = dev.wait_for("^(Record as|Stop|Pause)$", 10)
     if n and dev.find("^Record as$", nodes):
         dev.tap_text("^On foot$")
     asked = answer_dialogs(dev, allow=allow, timeout=dialog_timeout)
@@ -931,18 +954,18 @@ def start_recording(dev, allow=True, dialog_timeout=4):
 
 
 def record_track(dev, points, interval=1.0):
-    """Record, feed the fixes, Stop; returns the points count the bar showed just before Stop."""
+    """Record, feed the fixes, Pause and Finish (T253; Stop before it); returns the points count the panel showed just before."""
     lat, lon, *_ = points[0]
     dev.adb("emu", "geo", "fix", str(lon), str(lat), check_ok=False)  # the first fix is already here, not the image's default place
     time.sleep(2)
     nodes = tracks_bar(dev)
-    if dev.find("^Stop$", nodes):
-        dev.tap_text("^Stop$")
+    if not dev.find("^Record$", nodes):  # a recording left running: end it first
+        finish_recording(dev)
     start_recording(dev, allow=True, dialog_timeout=3)  # the picker, a notification prompt and the battery card, if shown
     geo_fixes(dev, points, interval)
     n = dev.find(r"\d+ pts")
     pts = int(PTS.search(n["text"]).group(1)) if n else None
-    dev.tap_text("^Stop$")
+    finish_recording(dev)
     return pts
 
 
@@ -1557,8 +1580,8 @@ def part_permissions(args):
         def fn():
             dev.adb("emu", "geo", "fix", str(PARADISE[1]), str(PARADISE[0]), check_ok=False)
             nodes = tracks_bar(dev)
-            if dev.find("^Stop$", nodes):
-                dev.tap_text("^Stop$")
+            if not dev.find("^Record$", nodes):
+                finish_recording(dev)
             asked = start_recording(dev, allow=allow, dialog_timeout=6 if api >= 33 else 1)
             if api < 33:
                 asked = "not needed below API 33"
@@ -1566,7 +1589,7 @@ def part_permissions(args):
             n = dev.find(r"\d+ pts")
             pts = int(PTS.search(n["text"]).group(1)) if n else 0
             posted = notification_posted(dev)
-            dev.tap_text("^Stop$")
+            finish_recording(dev)
             r = {"asked": asked, "notificationPosted": posted, "points": pts,
                  "permission": granted(dev, "android.permission.POST_NOTIFICATIONS") if api >= 33 else None}
             checks = {"recorded": pts >= 4}
@@ -1645,7 +1668,7 @@ def part_background(args):
         time.sleep(3)
         n, nodes = dev.wait_for(r"\d+ pts", 10)
         after = int(PTS.search(n["text"]).group(1)) if n else 0
-        dev.tap_text("^Stop$")
+        finish_recording(dev)
         tracks = track_rows(dev)
         close_tracks(dev)
         gained = after - st.get("before", 0)

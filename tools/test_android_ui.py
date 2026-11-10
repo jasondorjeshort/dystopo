@@ -391,4 +391,62 @@ assert list(actions) == ["Route to here", "Waypoint here", "Cancel"], actions
 assert intruders == [["elevation 61 ft · climb – ft/h", [0, 2063, 404, 2189]]], intruders
 assert ui.card_intruders(card) == (actions, []) and ui.card_intruders(card[:1]) == ({}, [])
 
+# T253: the record steps end a recording as a user does: Pause, then Finish; a build before T253 by its one Stop. The
+# folded chip reads the red distance while recording, and Hide folds the bar (the "×" on an older build).
+class Recorder:
+    """The bar's chips by state: folded, or unfolded with its record group."""
+    def __init__(self, old=False):
+        self.state, self.open, self.old, self.taps = "recording", False, old, []
+
+    def nodes(self):
+        if not self.open:
+            label = "● 1.2 km" if self.state != "idle" else "Tracks"
+            return [{"text": "Waypoint", "desc": "", "bounds": [0, 0, 1, 1]}, {"text": label, "desc": "", "bounds": [2, 0, 3, 1]}]
+        group = {"idle": ["Record"], "recording": ["Stop"] if self.old else ["Pause"], "paused": ["Resume", "Finish"]}[self.state]
+        names = (["×"] if self.old else ["Hide"]) + ["Waypoint", "Tracks"] + group
+        return [{"text": t, "desc": "", "bounds": [i, 0, i + 1, 1]} for i, t in enumerate(names)]
+
+    def texts(self, nodes=None):
+        return [n["text"] for n in (nodes or self.nodes())]
+
+    def find(self, pattern, nodes=None, exact=False):
+        return next((n for n in (nodes or self.nodes()) if re.search(pattern, n["text"])), None)
+
+    def wait_for(self, pattern, timeout, exact=False):
+        nodes = self.nodes()
+        return self.find(pattern, nodes), nodes
+
+    def tap(self, n):
+        t = n["text"]
+        self.taps.append(t)
+        if t.startswith("●") or t == "Tracks":
+            self.open = True
+        elif t in ("Hide", "×"):
+            self.open = False
+        elif t == "Pause":
+            self.state = "paused"
+        elif t == "Resume":
+            self.state = "recording"
+        elif t in ("Finish", "Stop"):
+            self.state = "idle"
+
+    def tap_text(self, pattern, timeout=15, exact=False):
+        n = self.find(pattern)
+        if not n:
+            raise RuntimeError(pattern)
+        self.tap(n)
+        return n
+
+
+for old, taps in ((False, ["● 1.2 km", "Pause", "Finish"]), (True, ["● 1.2 km", "Stop"])):
+    r = Recorder(old)
+    ui.finish_recording(r)
+    assert r.state == "idle" and r.taps == taps, (old, r.taps)
+    ui.close_tracks(r)
+    assert not r.open and r.taps[-1] == ("×" if old else "Hide"), r.taps
+r = Recorder()
+r.state, r.open = "paused", True
+ui.finish_recording(r)
+assert r.taps == ["Finish"], r.taps  # already paused: Finish alone
+
 print("test_android_ui: ok")
