@@ -909,6 +909,9 @@ def tracks_list(dev):
         if dev.find(TRACKS_LIST, nodes):
             return nodes
         dev.tap(dev.find("^Tracks$", nodes))
+        n, nodes = dev.wait_for(TRACKS_LIST, 5)  # T262: tracks_bar would close the screen this opened
+        if n:
+            return nodes
     raise RuntimeError(f"no tracks list (texts: {dev.texts()[:20]})")
 
 
@@ -1201,7 +1204,7 @@ def route_to_here(dev, a=PARADISE, b=PANORAMA, z=13):
 
 
 # T262: a route row of the Tracks and routes screen: "Hike route · Nov 10 · 1.8 mi · up 1318 ft · 1:15".
-ROUTE_LINE = r"^[A-Z][\w ()]* route · [^·]+ · (?=[\d.,]+ (mi|km|ft|m) · )"
+ROUTE_ROW = r"^[A-Z][\w ()]* route · [^·]+ · (?=[\d.,]+ (mi|km|ft|m) · )"
 
 
 def route_rows(texts):
@@ -1209,7 +1212,7 @@ def route_rows(texts):
     routes screen gives its numbers after the mode and date."""
     rows, names = [], []
     for i, t in enumerate(texts):
-        m = re.match(ROUTE_LINE, t)
+        m = re.match(ROUTE_ROW, t)
         if re.match(CARD, t) or m:
             rows.append(t[m.end():] if m else t)
             names.append(texts[i - 1] if i else None)
@@ -1220,7 +1223,7 @@ def routes_list(dev, names=None):
     """Opens the Routes list (T262: the Tracks and routes screen on its Routes filter); returns the rows' numbers lines and the screenshot, and closes it. The rows' names go in
     the list [names] when one is passed."""
     dev.tap_text("^Routes$")
-    head, nodes = dev.wait_for(r"^(No routes yet\.|No saved routes yet\.)|" + CARD + "|" + ROUTE_LINE, 10)
+    head, nodes = dev.wait_for(r"^(No routes yet\.|No saved routes yet\.)|" + CARD + "|" + ROUTE_ROW, 10)
     rows, found = route_rows(dev.texts(nodes))
     if names is not None:
         names.extend(found)
