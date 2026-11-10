@@ -841,8 +841,10 @@ CODE = re.compile(r"^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$")
 # The route card's header and a Routes row: distance, then " · " (T217: "1.8 mi · up 1318 ft · 1:15", a downhill route has no
 # "up"; before it, "1.8 mi · +1318 ft").
 CARD = r"^[\d.,]+ (mi|km|ft|m) · "
-# T219: the Tracks sheet's title; before it, the list under the bar showed Sync status.
-TRACKS_LIST = r"^(Tracks · \d+|Sync status)$"
+# T262: the Tracks and routes screen's title; T219's Tracks sheet (the published build `upgrade` and `update` record on) had
+# "Tracks · N"; before it, the list under the bar showed Sync status.
+TRACKS_SCREEN = "^Tracks and routes$"
+TRACKS_LIST = r"^(Tracks and routes|Tracks · \d+|Sync status)$"
 SAVED_GPX = r"^Saved .* as a GPX file$"
 FIRST_RUN = "No map on this phone yet"
 
@@ -875,9 +877,16 @@ def map_settled(dev, name, timeout=90):
 RECORD_GROUP = "^(Record|Stop|Pause|Resume|Finish)$"
 
 
+def close_list(dev, nodes=None):
+    """T262: Back while the Tracks and routes screen is up (the bar's chips under it are still in the dump, covered)."""
+    if dev.find(TRACKS_SCREEN, nodes if nodes is not None else dev.nodes()):
+        close_overlays(dev, 1)
+
+
 def tracks_bar(dev):
     """The unfolded recording bar (its record group on screen); a tap on the folded chip, "Tracks" or, while recording, the
-    red distance ("● 1.2 km"), unfolds it."""
+    red distance ("● 1.2 km"), unfolds it. T262: the Tracks and routes screen is closed first."""
+    close_list(dev)
     for _ in range(4):
         nodes = dev.nodes()
         if dev.find(RECORD_GROUP, nodes):
@@ -891,7 +900,10 @@ def tracks_bar(dev):
 
 
 def tracks_list(dev):
-    """The Tracks sheet (before T219, the list under the bar)."""
+    """The Tracks and routes screen (T262; T219's Tracks sheet on a build before it; before T219, the list under the bar)."""
+    nodes = dev.nodes()
+    if dev.find(TRACKS_SCREEN, nodes):
+        return nodes
     for _ in range(4):
         nodes = tracks_bar(dev)
         if dev.find(TRACKS_LIST, nodes):
@@ -913,7 +925,8 @@ def tracks_more(dev):
 
 
 def close_tracks(dev):
-    """Folds the bar: Hide since T253 (a build before it: the bar's "×")."""
+    """Folds the bar: Hide since T253 (a build before it: the bar's "×"); T262: Back first while the list is up."""
+    close_list(dev)
     nodes = dev.nodes()
     n = dev.find("^Hide$", nodes) or dev.find("^×$", nodes)
     if n and dev.find(RECORD_GROUP, nodes):
@@ -970,13 +983,23 @@ def record_track(dev, points, interval=1.0):
 
 
 def parse_track_rows(texts):
-    """(name, line) of every track row among [texts]: the line is the date and distance since T219, "12 pts" before."""
+    """(name, line) of every track row among [texts]: the line is the date and distance since T219, "12 pts" before; T262:
+    the name and the line are two texts, the line led by the activity ("On foot · Nov 3 · 312 ft")."""
     rows = []
-    for t in texts:
+    for i, t in enumerate(texts):
         m = re.match(r"^\W*(Track [^\n]+)\n([^\n]+)", t)
         if m:
             rows.append((m.group(1).strip(), m.group(2).strip()))
+            continue
+        m = re.match(r"^(Track [^\n·]+)$", t)
+        if m and i + 1 < len(texts) and " · " in texts[i + 1]:
+            rows.append((m.group(1).strip(), texts[i + 1].strip()))
     return rows
+
+
+def track_states(texts):
+    """T262: the eye's words of the list's rows, in order ("Shown", "Hidden")."""
+    return [t for t in texts if t in ("Shown", "Hidden")]
 
 
 def track_rows(dev):
@@ -989,7 +1012,9 @@ def same_first_track(before, after):
     same kind of line (a build before T219 prints points, one after it the date and distance)."""
     if not before or not after or before[0][0] != after[0][0]:
         return False
-    return before[0][1] == after[0][1] or ("pts" in before[0][1]) != ("pts" in after[0][1])
+    a, b = before[0][1], after[0][1]
+    # T262: the list's line leads with the activity, the sheet's had the date first: the shorter line ends the longer.
+    return a == b or a.endswith(" · " + b) or b.endswith(" · " + a) or ("pts" in a) != ("pts" in b)
 
 
 def tap_save_route(dev):
@@ -1175,21 +1200,27 @@ def route_to_here(dev, a=PARADISE, b=PANORAMA, z=13):
                               + (f"; another element's node inside the long-press card: {intruders}" if intruders else "")})}
 
 
+# T262: a route row of the Tracks and routes screen: "Hike route · Nov 10 · 1.8 mi · up 1318 ft · 1:15".
+ROUTE_LINE = r"^[A-Z][\w ()]* route · [^·]+ · (?=[\d.,]+ (mi|km|ft|m) · )"
+
+
 def route_rows(texts):
-    """The Routes list's rows among [texts]: (their numbers lines, the name above each)."""
+    """The Routes list's rows among [texts]: (their numbers lines, the name above each). T262: a row of the Tracks and
+    routes screen gives its numbers after the mode and date."""
     rows, names = [], []
     for i, t in enumerate(texts):
-        if re.match(CARD, t):
-            rows.append(t)
+        m = re.match(ROUTE_LINE, t)
+        if re.match(CARD, t) or m:
+            rows.append(t[m.end():] if m else t)
             names.append(texts[i - 1] if i else None)
     return rows, names
 
 
 def routes_list(dev, names=None):
-    """Opens the Routes list; returns the rows' numbers lines and the screenshot, and closes it. The rows' names go in
+    """Opens the Routes list (T262: the Tracks and routes screen on its Routes filter); returns the rows' numbers lines and the screenshot, and closes it. The rows' names go in
     the list [names] when one is passed."""
     dev.tap_text("^Routes$")
-    head, nodes = dev.wait_for(r"^(No routes yet\.|No saved routes yet\.)|" + CARD, 10)
+    head, nodes = dev.wait_for(r"^(No routes yet\.|No saved routes yet\.)|" + CARD + "|" + ROUTE_LINE, 10)
     rows, found = route_rows(dev.texts(nodes))
     if names is not None:
         names.extend(found)
@@ -1388,6 +1419,18 @@ def part_features(args):
         st["track"] = rows[0] if rows else None
         return {"ok": ok, "pointsWhileRecording": pts, "tracks": rows[:3], **({} if ok else {"error": "no track with at least 8 points"})}
 
+    def two_tracks():
+        # T262: a second recording leaves the first on the map: the list has both, newest first, and both read Shown.
+        pts = record_track(dev, walk(46.7880, -121.7280, 46.7840, -121.7380, 10))
+        nodes = tracks_list(dev)
+        texts = dev.texts(nodes)
+        rows = parse_track_rows(texts)
+        states = track_states(texts)
+        png = dev.screencap("tracks-two-shown")[0]
+        ok = len(rows) >= 2 and states[:2] == ["Shown", "Shown"] and "Hidden" not in states
+        return {"ok": ok, "pointsWhileRecording": pts, "tracks": rows[:3], "states": states[:3], "png": png,
+                **({} if ok else {"error": "the list does not read two tracks, both Shown"})}
+
     def gpx():
         # T219: a row's overflow, Export GPX, the system's save dialog; "GPX" in the row before it.
         nodes = tracks_list(dev)
@@ -1452,7 +1495,7 @@ def part_features(args):
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
-                     ("waypoint", waypoint), ("track", track), ("gpx", gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
+                     ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings)):
         run.step(name, fn)
     run.step("alive", lambda: alive_and_clean(dev))
@@ -1508,12 +1551,14 @@ def part_upgrade(args):
     def survived():
         card, _ = dev.wait_for(FIRST_RUN, 6)
         r = map_settled(dev, "new-map")
-        tracks = track_rows(dev)
+        texts = dev.texts(tracks_list(dev))
+        tracks, states = parse_track_rows(texts), track_states(texts)
         close_tracks(dev)
         rows, png = routes_list(dev)
         checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": same_first_track(st["tracks"], tracks),
-                  "trip": len(rows) == len(st["routes"]) and all("km" in x for x in rows), "metric": all("km" in x for x in rows)}
-        return {"ok": all(checks.values()), "checks": checks, "tracks": tracks, "routes": rows, "png": r.get("png"),
+                  "trip": len(rows) == len(st["routes"]) and all("km" in x for x in rows), "metric": all("km" in x for x in rows),
+                  "tracksShown": bool(states) and all(x == "Shown" for x in states)}  # T262: the migration shows every track
+        return {"ok": all(checks.values()), "checks": checks, "tracks": tracks, "states": states, "routes": rows, "png": r.get("png"),
                 **({} if all(checks.values()) else {"error": "lost in the upgrade: " + ", ".join(k for k, v in checks.items() if not v)})}
 
     for name, fn in (("install-previous", old), ("create-data", data), ("install-new", upgrade), ("survived", survived)):

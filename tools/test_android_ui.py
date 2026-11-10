@@ -295,6 +295,15 @@ old = ui.parse_track_rows(["Track 2026-11-03 04:39\n14 pts  312 ft\nrecording", 
 assert new == [("Track 2026-11-03 04:39", "Nov 3 · 312 ft")] and old == [("Track 2026-11-03 04:39", "14 pts  312 ft")], (new, old)
 assert ui.same_first_track(old, new) and ui.same_first_track(new, new) and not ui.same_first_track(new, [("Track 2026-11-03 04:39", "Nov 3 · 1 mi")])
 assert not ui.same_first_track([], new) and not ui.same_first_track(new, [("Track 2026-11-04 09:00", "Nov 4 · 1 mi")])
+# T262: the Tracks and routes screen: its title, a track's name and line as two texts, the eye's words, a route's row.
+assert re.match(ui.TRACKS_LIST, "Tracks and routes") and re.match(ui.TRACKS_SCREEN, "Tracks and routes")
+t262 = ["Tracks and routes", "All · 3", "Tracks · 2", "Track 2026-11-03 04:39", "On foot · Nov 3 · 312 ft", "Shown", "More actions for x",
+        "Track 2026-11-02 10:00", "Track · Nov 2 · 0.2 mi · recording", "Hidden"]
+assert ui.parse_track_rows(t262) == [("Track 2026-11-03 04:39", "On foot · Nov 3 · 312 ft"), ("Track 2026-11-02 10:00", "Track · Nov 2 · 0.2 mi · recording")]
+assert ui.track_states(t262) == ["Shown", "Hidden"]
+assert ui.same_first_track(new, ui.parse_track_rows(t262)), "the sheet's row and the screen's row are one track"
+assert not ui.same_first_track(new, [("Track 2026-11-03 04:39", "On foot · Nov 3 · 1 mi")])
+assert ui.route_rows(["Paradise to Panorama Point", "Hike route · Nov 10 · 1.8 mi · up 1318 ft · 1:15", "Line route · Nov 9 · 2.1 km · 0:40"]) ==     (["1.8 mi · up 1318 ft · 1:15", "2.1 km · 0:40"], ["Paradise to Panorama Point", "Hike route · Nov 10 · 1.8 mi · up 1318 ft · 1:15"])
 # T222's failure line and the older ones; a sentence that says it worked is no failure.
 for line in ("Download stopped: the connection dropped.", "Sync failed: could not reach your server", "Download failed: timeout"):
     assert re.search(ui.FAILED, line), line
