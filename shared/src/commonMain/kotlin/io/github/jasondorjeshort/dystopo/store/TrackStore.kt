@@ -105,7 +105,19 @@ interface TrackStore {
 
     /** Deletes a waypoint (and touches its track); false if unknown. */
     fun deleteWaypoint(id: String, now: Long): Boolean
+
+    /**
+     * T262: shows or hides a track or a route on this device's map. Per device and never synced: no operation is written,
+     * so a peer keeps its own choice. Every item is shown until hidden here (a new recording, an import, a synced item).
+     */
+    fun setShown(kind: ShownKind, id: String, shown: Boolean)
+
+    /** T262: the ids of [kind] hidden on this device's map (an id with no item is harmless: deleting an item forgets it). */
+    fun hidden(kind: ShownKind): Set<String>
 }
+
+/** T262: what [TrackStore.setShown] shows or hides; [code] is the log's entity kind (`sync_op.kind`). */
+enum class ShownKind(val code: Long) { TRACK(1), ROUTE(3) }
 
 /** A waypoint and the track it belongs to (null: free-standing). */
 data class StoredWaypoint(val trackId: String?, val waypoint: Waypoint)
