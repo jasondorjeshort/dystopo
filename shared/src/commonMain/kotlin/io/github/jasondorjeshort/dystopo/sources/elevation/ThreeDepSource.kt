@@ -111,7 +111,7 @@ class ThreeDepSource(
             "datumOffsetMeanCm" to roundL(meanOffset * 100),
             "datumUnconvertedCells" to unconverted,
             "noDataCells" to values.count { it.isNaN() }.toLong(),
-        ) + (if (destriped.isEmpty()) emptyMap() else mapOf(
+        ) + rangeValidationCounters(present.map { it.source }) + (if (destriped.isEmpty()) emptyMap() else mapOf(
             "destripeBlocks" to stripeStats.blocks.toLong(),
             "destripeBlocksFiltered" to stripeStats.filtered.toLong(),
             "destripeMeanChangeMm" to roundL(stripeStats.meanChange * 1000),

@@ -3,8 +3,15 @@ package io.github.jasondorjeshort.dystopo.sources.elevation
 import kotlin.concurrent.Volatile
 import kotlin.jvm.Synchronized
 
-/** One HTTP response: status and body. */
-class HttpReply(val status: Int, val body: ByteArray)
+/**
+ * One HTTP response: status, body and (T269) the response headers, names in lower case. A client that does not
+ * report headers leaves [headers] empty; the range cache then validates by comparing bytes ([CachedRangeSource]).
+ */
+class HttpReply(val status: Int, val body: ByteArray, val headers: Map<String, String> = emptyMap()) {
+    /** The header [name], whatever its case, or null. */
+    fun header(name: String): String? =
+        headers[name.lowercase()] ?: headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+}
 
 /**
  * The network under the elevation sources: one attempt per call; [SourceIo] adds the retries, the
@@ -16,6 +23,15 @@ interface SourceHttp {
 
     /** GET [url] with a timeout of [timeoutMs]. */
     fun get(url: String, timeoutMs: Long): HttpReply
+
+    /**
+     * T269: [range] with `If-Match: [ifMatch]`, so a file republished since its blocks were cached answers 412. A
+     * client that cannot send it (the default) makes the plain request; the cache then checks by its daily HEAD or bytes.
+     */
+    fun range(url: String, offset: Long, length: Int, ifMatch: String): HttpReply = range(url, offset, length)
+
+    /** T269: HEAD [url] (status and headers), or null when this client cannot (the default; the cache compares bytes instead). */
+    fun head(url: String, timeoutMs: Long): HttpReply? = null
 }
 
 /** An HTTP error status. An [IllegalStateException], as `check` threw before, so existing handlers still match. */
@@ -103,6 +119,23 @@ object SourceIo {
         return reply.body
     }
 
+    /**
+     * T269: a byte range of [url] with its headers, sent with `If-Match: [ifMatch]` when given. 200, 206 and 412 come
+     * back as replies (412: the file changed since [ifMatch]); any other status is an [HttpStatusException].
+     */
+    fun rangeReply(url: String, offset: Long, length: Int, ifMatch: String?): HttpReply {
+        beforeNetwork?.invoke(url)
+        val reply = withRetry { if (ifMatch == null) http.range(url, offset, length) else http.range(url, offset, length, ifMatch) }
+        if (reply.status != 206 && reply.status != 200 && reply.status != 412) throw HttpStatusException(reply.status, url)
+        return reply
+    }
+
+    /** T269: HEAD [url] (one retry of a dropped connection), or null when the client cannot send one. */
+    fun head(url: String, timeoutMs: Long = 20_000): HttpReply? {
+        beforeNetwork?.invoke(url)
+        return withRetry(2) { http.head(url, timeoutMs) }
+    }
+
     /** The whole body of [url]; any status but 200 is an [HttpStatusException]. */
     fun download(url: String): ByteArray {
         beforeNetwork?.invoke(url)
@@ -138,6 +171,9 @@ class SyncMap<K, V> {
 
     @Synchronized
     fun remove(key: K): V? = map.remove(key)
+
+    @Synchronized
+    fun clear() = map.clear()
 
     val size: Int @Synchronized get() = map.size
 }

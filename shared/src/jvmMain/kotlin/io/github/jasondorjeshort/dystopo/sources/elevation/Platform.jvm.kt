@@ -23,11 +23,26 @@ internal object JvmSourceHttp : SourceHttp {
         .header("User-Agent", "dystopo-devtool/0.1")
         .timeout(Duration.ofMillis(timeoutMs))
 
-    override fun range(url: String, offset: Long, length: Int): HttpReply {
-        val req = request(url, 120_000).header("Range", "bytes=$offset-${offset + length - 1}").build()
-        val response = client.send(req, HttpResponse.BodyHandlers.ofByteArray())
-        return HttpReply(response.statusCode(), response.body())
+    override fun range(url: String, offset: Long, length: Int): HttpReply = send(url, offset, length, null)
+
+    override fun range(url: String, offset: Long, length: Int, ifMatch: String): HttpReply = send(url, offset, length, ifMatch)
+
+    private fun send(url: String, offset: Long, length: Int, ifMatch: String?): HttpReply {
+        val req = request(url, 120_000).header("Range", "bytes=$offset-${offset + length - 1}")
+        if (ifMatch != null) req.header("If-Match", ifMatch)
+        val response = client.send(req.build(), HttpResponse.BodyHandlers.ofByteArray())
+        return HttpReply(response.statusCode(), response.body(), headersOf(response))
     }
+
+    override fun head(url: String, timeoutMs: Long): HttpReply {
+        val req = request(url, timeoutMs).method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
+        val response = client.send(req, HttpResponse.BodyHandlers.discarding())
+        return HttpReply(response.statusCode(), ByteArray(0), headersOf(response))
+    }
+
+    /** T269: the first value of each response header, names in lower case. */
+    private fun headersOf(response: HttpResponse<*>): Map<String, String> =
+        response.headers().map().entries.mapNotNull { (k, v) -> v.firstOrNull()?.let { k.lowercase() to it } }.toMap()
 
     override fun get(url: String, timeoutMs: Long): HttpReply {
         val response = client.send(request(url, timeoutMs).build(), HttpResponse.BodyHandlers.ofByteArray())

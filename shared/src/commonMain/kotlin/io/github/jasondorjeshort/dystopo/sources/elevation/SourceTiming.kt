@@ -51,5 +51,6 @@ object SourceTiming {
         "rangeReads" to rangeReads.get(), "rangeMs" to rangeNanos.get() / 1_000_000, "rangeShared" to rangeShared.get(), "diskHits" to diskHits.get(),
         "blocksDecoded" to blocksDecoded.get(), "decodeMs" to decodeNanos.get() / 1_000_000, "blockWaits" to blockWaits.get(),
         "geoidMs" to geoidNanos.get() / 1_000_000, "resampleMs" to resampleNanos.get() / 1_000_000,
+        "rangeCache" to RangeValidation.json(), // T269
     )
 }

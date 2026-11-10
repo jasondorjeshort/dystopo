@@ -93,6 +93,7 @@ class NewZealandSource(private val cacheDir: String = SourceIo.dir("linz-dem")) 
         counters["pixelMeters"] = opened.entries.maxOfOrNull { (s, tiff) -> tiff.level(levels.getValue(s)).pixelScaleX }?.toLong() ?: 0L
         counters["blocksDecoded"] = opened.values.sumOf { it.tilesDecoded }.toLong()
         counters["rangeRequests"] = opened.values.sumOf { it.source.fetches }
+        counters += rangeValidationCounters(opened.values.map { it.source }) // T269
         counters["readMs"] = readMs
         counters["datumOffsetMeanCm"] = roundL(meanOffset * 100)
         counters["datumUnconvertedCells"] = unconverted
