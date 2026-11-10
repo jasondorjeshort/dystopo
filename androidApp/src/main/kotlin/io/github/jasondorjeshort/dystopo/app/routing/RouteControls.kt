@@ -373,7 +373,7 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * or why no route was found. Nothing shows until the first long-press, nor while navigating (T65). The
  * distance, climb and time are [RouteSession.summaryOf], the figures the kept route shows (T65). T102: "Show N
  * directions" opens the turn directions (the default detail level), each with the distance it then runs.
- * T108: Crow joins the mode chips (they wrap at large font scales) with its one line under them, and a crow route
+ * T108: Crow (T256: shown as "Line", the geodesic) joins the mode chips (they wrap at large font scales) with its one line under them, and a crow route
  * shows its bearing instead of the trails it follows.
  *
  * T114: the card names both ends under its title ("From: Your location", "To: Panorama Point"; T192: by the pack's
@@ -381,7 +381,7 @@ fun fromWindowBottom(c: LayoutCoordinates, density: androidx.compose.ui.unit.Den
  * screens of the mainstream navigation apps do; Change on the From line offers Your location, Choose on map and Swap
  * ([RouteSession.fromChoices]). While a route to here waits for its origin the card says so, and with location off it
  * offers Turn on location (the permission prompt, or the phone's location settings). When no path is found it offers
- * Try Crow (the straight line, with its notice under the chips). Go comes first among the actions.
+ * Try Line (T256; the straight line, with its notice under the chips). Go comes first among the actions.
  *
  * T187: under the directions, the water along the route ([WaterAlongLine]): "Water: 3 crossings, the next is likely flowing in
  * 1.2 km" and the longest stretch without water, the first line opening the list ([WaterText.row]); the next card line
@@ -552,6 +552,8 @@ fun RouteControls() {
                     if (plan.mode == TravelMode.CROW) {
                         val b = plan.route.points.let { io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) }
                         BasicText("Bearing $b° (${io.github.jasondorjeshort.dystopo.routing.Directions.compass(b.toDouble())})", style = TextStyle(color = Ink, fontSize = 13.sp))
+                        // T256: a line over no terrain (the ocean) has no profile, and the card says so.
+                        if (plan.route.points.none { it.ele != null }) BasicText(io.github.jasondorjeshort.dystopo.routing.Crow.NO_TERRAIN, style = TextStyle(color = Ink, fontSize = 13.sp))
                     }
                     // T49: the trails it follows, by name. T212: whole, wrapping (it was cut at two lines).
                     // T217: each name once (a trail the route leaves and rejoins was named twice).
@@ -577,7 +579,7 @@ fun RouteControls() {
                     for (m in TravelMode.entries) {
                         val on = RouteSession.mode == m
                         BasicText(
-                            m.label.replaceFirstChar { it.uppercase() },
+                            m.display, // T256: "Line" for crow (the stored value stays crow)
                             style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
                             modifier = Modifier.background(if (on) Ink else Color.Transparent, RoundedCornerShape(12.dp))
                                 .clickable { RouteSession.changeMode(m) }.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -671,7 +673,7 @@ private val ScrollThumb = Color(0x802B2420)
 
 /** T114: the card's new action labels. */
 internal const val TURN_ON_LOCATION = "Turn on location"
-internal const val TRY_CROW = "Try Crow"
+internal const val TRY_CROW = "Try Line" // T256
 
 /**
  * T217 (pure, `RouteFiguresTest`): the planning card's actions for its phase, one list for what the card draws and what

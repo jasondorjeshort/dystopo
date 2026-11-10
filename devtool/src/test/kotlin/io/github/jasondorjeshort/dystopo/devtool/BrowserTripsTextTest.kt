@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 
 /**
  * T111: the browser's Trips box (tools/demo/trips.js) follows the shared routing code where it repeats it: its mode
- * select offers every [TravelMode] (T108's crow included) and so does `demo-check.py --route-mode`, its line under
+ * select offers every [TravelMode] (T108's crow included, T256: by its [TravelMode.display] word, "Line") and so does `demo-check.py --route-mode`, its line under
  * the select for crow is [TravelMode.CROW_NOTICE] word for word, a crow route's bearing uses [Directions.compass]'s
  * words, and its directions list counts the priorities up to [Directions.DEFAULT_LEVEL], as the phone's route card does.
  * T116: saving a trip writes the server's `directionsValue` as its `directions` after each path it writes.
@@ -23,6 +23,10 @@ class BrowserTripsTextTest {
         val options = Regex("""<option value="(\w+)">""").findAll(Regex("""<select id="trip-mode">(.*?)</select>""").find(trips)!!.groupValues[1])
             .map { it.groupValues[1] }.toList()
         assertEquals(TravelMode.entries.map { it.label }, options)
+        // T256: each option reads as the phone's chip ([TravelMode.display]: "Line" for the stored value crow).
+        val words = Regex("""<option value="\w+">([^<]*)</option>""").findAll(Regex("""<select id="trip-mode">(.*?)</select>""").find(trips)!!.groupValues[1])
+            .map { it.groupValues[1] }.toList()
+        assertEquals(TravelMode.entries.map { it.display }, words)
         val choices = Regex("""--route-mode", default="", choices=\[(.*?)]""").find(check)!!.groupValues[1]
         assertEquals(listOf("") + TravelMode.entries.map { it.label }, Regex(""""(\w*)"""").findAll(choices).map { it.groupValues[1] }.toList())
         val crow = Regex("""const CROW_NOTICE = "((?:[^"\\]|\\.)*)";""").find(trips)!!.groupValues[1]
