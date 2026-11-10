@@ -76,12 +76,12 @@ class RouteFiguresTest {
     }
 
     @Test
-    fun aRouteHasOnePrimaryActionThenSaveClearAndTheOverflow() {
+    fun aRouteHasOnePrimaryActionThenSaveFitClearAndTheOverflow() {
         val actions = CardActions.of("route", canTryCrow = false)
-        assertEquals(listOf("go", "save", "clear", "more"), actions.map { it.id })
+        assertEquals(listOf("go", "save", "fit", "clear", "more"), actions.map { it.id })
         assertEquals(listOf("go"), actions.filter { it.primary }.map { it.id })
-        assertEquals(listOf("Go", "Save", "Clear", "More actions"), actions.map { it.label })
-        assertEquals(listOf("filled", "outlined", "text", "overflow"), actions.map { it.style })
+        assertEquals(listOf("Go", "Save", "Fit", "Clear", "More actions"), actions.map { it.label })
+        assertEquals(listOf("filled", "outlined", "text", "text", "overflow"), actions.map { it.style })
         assertEquals(listOf("Export GPX"), actions.last().items.map { it.label })
         val more = actions.last().json()
         assertEquals(false, more["primary"])
@@ -89,12 +89,18 @@ class RouteFiguresTest {
     }
 
     @Test
-    fun theOtherPhasesOfferWhatTheyDidBefore() {
+    fun theOtherPhasesCancelTheRequest() {
+        // T265: nothing is made until a route is drawn, so the dismiss word is Cancel (id `cancel`) in every other phase.
         assertEquals(emptyList(), CardActions.of("idle", canTryCrow = false).map { it.id })
-        assertEquals(listOf("clear"), CardActions.of("planning", canTryCrow = false).map { it.id })
-        assertEquals(listOf("turnOnLocation", "clear"), CardActions.of("noLocation", canTryCrow = false).map { it.id })
-        assertEquals(listOf("tryCrow", "clear"), CardActions.of("failed", canTryCrow = true).map { it.id })
-        assertEquals(listOf("clear"), CardActions.of("failed", canTryCrow = false).map { it.id })
+        assertEquals(listOf("cancel"), CardActions.of("start", canTryCrow = false).map { it.id })
+        assertEquals(listOf("cancel"), CardActions.of("pickStart", canTryCrow = false).map { it.id })
+        assertEquals(listOf("cancel"), CardActions.of("planning", canTryCrow = false).map { it.id })
+        assertEquals(listOf("cancel"), CardActions.of("waitingFix", canTryCrow = false).map { it.id })
+        assertEquals(listOf("turnOnLocation", "cancel"), CardActions.of("noLocation", canTryCrow = false).map { it.id })
+        assertEquals(listOf("tryCrow", "cancel"), CardActions.of("failed", canTryCrow = true).map { it.id })
+        assertEquals(listOf("cancel"), CardActions.of("failed", canTryCrow = false).map { it.id })
+        assertEquals("Cancel", CardActions.of("planning", canTryCrow = false).single().label)
+        assertEquals("Clear", CardActions.of("route", canTryCrow = false).single { it.id == "clear" }.label)
         assertTrue(CardActions.of("failed", canTryCrow = true).none { it.primary })
     }
 

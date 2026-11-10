@@ -96,3 +96,52 @@ object FitPadding {
         return intArrayOf(side, top, side, bottom)
     }
 }
+
+/**
+ * T265: the one camera fit of the route card, the trip editor and the track card: the whole line between the chrome at the
+ * top and a card at the bottom ([FitPadding]), the short way round in longitude ([io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.shortWayBox]),
+ * so a line across the antimeridian is framed over the ocean it crosses rather than over the continents it left (T256's
+ * follow-up: the view sat over another continent). MapLibre takes a box whose east edge is past 180. The fit's padding
+ * is dropped from the camera when it lands (T114), so later moves centre on the screen. Main thread.
+ */
+object CameraFit {
+    /**
+     * Fits [points] (lat, lon) above a card whose top is [cardTopDp] from the window's bottom, over [ms]; [onPaddingDropped]
+     * runs when the padding is dropped. The fit's report (`bounds` west, south, east, north with east past 180 the short
+     * way across the seam, `shortWay`, `paddingPx`, `chromeBottomPx`, `mapHeightPx`, `clearOfChrome`), or null with no
+     * map or no point.
+     */
+    fun fit(points: List<Pair<Double, Double>>, cardTopDp: Float, ms: Int, onPaddingDropped: () -> Unit = {}): Map<String, Any?>? {
+        val app = DystopoApp.instance
+        val m = app.map.map ?: return null
+        val box = io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.shortWayBox(points) ?: return null
+        val (w, s, e, n) = box.toList()
+        val d = app.resources.displayMetrics.density
+        val chrome = MapInsets.topChromeBottomPx(d)
+        val cardPx = (cardTopDp * d).toInt()
+        val mapH = app.map.mapView?.height ?: 0
+        val pad = FitPadding.of(chrome, cardPx, mapH, d)
+        val update = if (n - s < 1e-6 && e - w < 1e-6) org.maplibre.android.camera.CameraUpdateFactory.newLatLng(org.maplibre.android.geometry.LatLng(s, normalize(w)))
+        else org.maplibre.android.camera.CameraUpdateFactory.newLatLngBounds(org.maplibre.android.geometry.LatLngBounds.from(n, e, s, w), pad[0], pad[1], pad[2], pad[3])
+        m.animateCamera(update, ms, object : org.maplibre.android.maps.MapLibreMap.CancelableCallback {
+            override fun onCancel() { if (dropPadding(m)) onPaddingDropped() }
+            override fun onFinish() { if (dropPadding(m)) onPaddingDropped() }
+        })
+        return linkedMapOf(
+            "bounds" to listOf(w, s, e, n), "shortWay" to (e > 180.0), "paddingPx" to pad.toList(),
+            "chromeBottomPx" to chrome, "mapHeightPx" to mapH, "clearOfChrome" to (pad[1] >= chrome),
+        )
+    }
+
+    /** The same view without a fit's padding (MapLibre keeps it on the camera otherwise); true when there was one. */
+    fun dropPadding(m: org.maplibre.android.maps.MapLibreMap): Boolean {
+        val c = m.cameraPosition
+        if (c.padding?.any { it != 0.0 } != true) return false
+        val v = DystopoApp.instance.map.mapView ?: return false
+        val centre = m.projection.fromScreenLocation(android.graphics.PointF(v.width / 2f, v.height / 2f))
+        m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(org.maplibre.android.camera.CameraPosition.Builder(c).target(centre).padding(0.0, 0.0, 0.0, 0.0).build()))
+        return true
+    }
+
+    private fun normalize(lon: Double): Double = ((lon + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+}

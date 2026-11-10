@@ -51,6 +51,41 @@ class TrackDrawingTest {
     }
 
     @Test
+    fun fitBoundsTakesTheShortWayAcrossTheAntimeridian() {
+        // T265: Rainier to Tokyo the short way, across the Pacific: the box runs east from Tokyo past 180 to Rainier.
+        val t = Track("t", "t", listOf(TrackSegment(listOf(TrackPoint(46.85, -121.76), TrackPoint(52.0, -170.0), TrackPoint(53.0, 175.0), TrackPoint(35.68, 139.69)))))
+        val b = TrackDrawing.fitBounds(listOf(t), emptyList(), emptyList(), marginFraction = 0.0, minSizeM = 0.0)!!
+        assertEquals(139.69, b.west, 1e-9)
+        assertEquals(-121.76 + 360.0, b.east, 1e-9)
+        assertEquals(35.68, b.south, 1e-9)
+        assertEquals(53.0, b.north, 1e-9)
+        assertTrue(b.east - b.west < 100.0, "the Pacific, not the world: ${b.east - b.west} degrees")
+
+        // Two points 11 degrees apart across the seam: 349 degrees the other way.
+        val plain = TrackDrawing.fitBounds(listOf(Track("p", "p", listOf(TrackSegment(listOf(TrackPoint(0.0, -179.0), TrackPoint(1.0, 170.0)))))), emptyList(), emptyList(), marginFraction = 0.0, minSizeM = 0.0)!!
+        assertEquals(170.0, plain.west, 1e-9, "the short way from 170 E to 179 W crosses the seam")
+        assertEquals(181.0, plain.east, 1e-9)
+        // A track that does not cross keeps the plain box.
+        val europe = TrackDrawing.fitBounds(listOf(Track("e", "e", listOf(TrackSegment(listOf(TrackPoint(45.8, 6.8), TrackPoint(46.0, 7.0)))))), emptyList(), emptyList(), marginFraction = 0.0, minSizeM = 0.0)!!
+        assertEquals(6.8, europe.west, 1e-9)
+        assertEquals(7.0, europe.east, 1e-9)
+    }
+
+    @Test
+    fun shortWayLonPicksTheNarrowerRange() {
+        assertNull(TrackDrawing.shortWayLon(DoubleArray(0)))
+        assertEquals(10.0 to 10.0, TrackDrawing.shortWayLon(doubleArrayOf(10.0)))
+        assertEquals(-10.0 to 20.0, TrackDrawing.shortWayLon(doubleArrayOf(20.0, -10.0, 5.0)))
+        assertEquals(179.5 to 180.5, TrackDrawing.shortWayLon(doubleArrayOf(179.5, -179.5)))
+        // A tie (two points half the world apart): the range that does not cross the seam.
+        assertEquals(-90.0 to 90.0, TrackDrawing.shortWayLon(doubleArrayOf(90.0, -90.0)))
+        // 180 and -180 are one meridian.
+        assertEquals(-180.0 to -180.0, TrackDrawing.shortWayLon(doubleArrayOf(180.0, -180.0)))
+        val box = TrackDrawing.shortWayBox(listOf(46.85 to -121.76, 35.68 to 139.69))!!
+        assertEquals(listOf(139.69, 35.68, 238.24, 46.85), box.toList().map { kotlin.math.round(it * 100) / 100 })
+    }
+
+    @Test
     fun gapsBridgeSegmentsApartLongerThanTheInterval() {
         fun p(lat: Double, t: Long?) = TrackPoint(lat, -121.73, time = t)
         val segs = listOf(

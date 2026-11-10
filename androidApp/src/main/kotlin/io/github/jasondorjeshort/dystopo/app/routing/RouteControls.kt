@@ -620,7 +620,9 @@ fun RouteControls() {
                         }
                         // T114: no path between the two ends: the straight line (its notice shows under the chips once chosen).
                         CardActions.TRY_CROW_ACTION.id -> CardAction(a, row) { RouteSession.changeMode(TravelMode.CROW) }
-                        CardActions.CLEAR.id -> CardAction(a, row) { RouteSession.clear() }
+                        // T265: Cancel drops a request that has made nothing yet; Clear removes a drawn route. One handler.
+                        CardActions.CLEAR.id, CardActions.CANCEL.id -> CardAction(a, row) { RouteSession.clear() }
+                        CardActions.FIT.id -> CardAction(a, row) { RouteSession.fit() } // T265: the whole route again
                         CardActions.MORE.id -> Box(Modifier.weight(1f).align(Alignment.CenterVertically), contentAlignment = Alignment.CenterEnd) {
                             OverflowDots(a.label) { RouteSession.moreOpen = !RouteSession.moreOpen }
                         }
@@ -697,6 +699,10 @@ internal object CardActions {
     val GO = Item("go", "Go", FILLED)
     val SAVE = Item("save", "Save", OUTLINED)
     val CLEAR = Item("clear", "Clear", TEXT)
+    /** T265: the dismiss word while the route is only asked for (nothing made yet: computing, waiting, failed), the owner's. */
+    val CANCEL = Item("cancel", "Cancel", TEXT)
+    /** T265: the camera shows the whole route again, the short way round across the antimeridian. */
+    val FIT = Item("fit", "Fit", TEXT)
     val EXPORT_GPX = Item("exportGpx", "Export GPX", TEXT)
     val MORE = Item("more", "More actions", OVERFLOW, listOf(EXPORT_GPX))
     val TURN_ON = Item("turnOnLocation", TURN_ON_LOCATION, TEXT)
@@ -704,8 +710,8 @@ internal object CardActions {
 
     fun of(phase: String, canTryCrow: Boolean): List<Item> = when (phase) {
         "idle" -> emptyList()
-        "route" -> listOf(GO, SAVE, CLEAR, MORE)
-        else -> listOfNotNull(TURN_ON.takeIf { phase == "noLocation" }, TRY_CROW_ACTION.takeIf { canTryCrow }, CLEAR)
+        "route" -> listOf(GO, SAVE, FIT, CLEAR, MORE)
+        else -> listOfNotNull(TURN_ON.takeIf { phase == "noLocation" }, TRY_CROW_ACTION.takeIf { canTryCrow }, CANCEL)
     }
 }
 

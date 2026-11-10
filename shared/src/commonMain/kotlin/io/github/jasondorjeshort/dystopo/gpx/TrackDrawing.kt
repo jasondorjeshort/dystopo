@@ -112,22 +112,60 @@ object TrackDrawing {
     }
 
     /**
+     * T265: the shortest range of longitudes that holds every one of [lons], as (west, east) with west in -180..180 and
+     * east = west + the range's width: past 180 when the short way crosses the antimeridian (the convention of
+     * [BoundingBox]), so a flight from the Pacific Northwest to Japan gets the Pacific, not the rest of the world. The
+     * range is the circle minus its largest empty arc between neighbouring longitudes; on a tie the range that does not
+     * cross the seam wins. Null when [lons] is empty.
+     */
+    fun shortWayLon(lons: DoubleArray): Pair<Double, Double>? {
+        if (lons.isEmpty()) return null
+        val sorted = lons.map { normalizeLon(it) }.sorted()
+        // The arc from the last longitude round to the first is the one that leaves the range uncrossed.
+        var bestGap = sorted.first() + 360.0 - sorted.last()
+        var west = sorted.first()
+        var east = sorted.last()
+        for (i in 0 until sorted.size - 1) {
+            val gap = sorted[i + 1] - sorted[i]
+            if (gap > bestGap) {
+                bestGap = gap
+                west = sorted[i + 1]
+                east = sorted[i] + 360.0
+            }
+        }
+        return west to east
+    }
+
+    /** -180 <= lon < 180 (180 itself becomes -180, the same meridian). */
+    private fun normalizeLon(lon: Double): Double = ((lon + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+
+    /**
+     * T265: (west, south, east, north) around the (lat, lon) [points], the short way round in longitude ([shortWayLon]: east
+     * past 180 when that way crosses the antimeridian), with no margin; null when there are none. For a camera fit.
+     */
+    fun shortWayBox(points: List<Pair<Double, Double>>): DoubleArray? {
+        val (w, e) = shortWayLon(DoubleArray(points.size) { points[it].second }) ?: return null
+        return doubleArrayOf(w, points.minOf { it.first }, e, points.maxOf { it.first })
+    }
+
+    /**
      * The box around everything in a document (track points, route points, waypoints), grown by
      * [marginFraction] of its size on each side and to at least [minSizeM] meters across, so a
-     * render fits it with some context. Null for a document without points.
+     * render fits it with some context. Null for a document without points. T265: the short way round in longitude
+     * ([shortWayLon]), so a track across 180 degrees gets a box with its east edge past 180 ([BoundingBox]'s convention)
+     * rather than one round the whole world.
      */
     fun fitBounds(tracks: List<Track>, routes: List<Route>, waypoints: List<Waypoint>, marginFraction: Double = 0.1, minSizeM: Double = 1000.0): BoundingBox? {
-        var w = Double.POSITIVE_INFINITY
-        var e = Double.NEGATIVE_INFINITY
         var s = Double.POSITIVE_INFINITY
         var n = Double.NEGATIVE_INFINITY
+        val lons = ArrayList<Double>()
         fun add(lat: Double, lon: Double) {
-            w = minOf(w, lon); e = max(e, lon); s = minOf(s, lat); n = max(n, lat)
+            s = minOf(s, lat); n = max(n, lat); lons += lon
         }
         tracks.forEach { t -> t.segments.forEach { seg -> seg.points.forEach { add(it.lat, it.lon) } } }
         routes.forEach { r -> r.points.forEach { add(it.lat, it.lon) } }
         waypoints.forEach { add(it.lat, it.lon) }
-        if (w > e) return null
+        val (w, e) = shortWayLon(lons.toDoubleArray()) ?: return null
         val midLat = (s + n) / 2
         val mPerDegLat = WebMercator.EARTH_CIRCUMFERENCE_M / 360.0
         val mPerDegLon = mPerDegLat * cos(midLat * kotlin.math.PI / 180.0)
@@ -135,9 +173,17 @@ object TrackDrawing {
         val minLon = minSizeM / max(mPerDegLon, 1.0)
         val growLon = max((e - w) * marginFraction, (minLon - (e - w)) / 2)
         val growLat = max((n - s) * marginFraction, (minLat - (n - s)) / 2)
+        var west = w - growLon
+        var east = e + growLon
+        if (east - west >= 360.0) {
+            west = -180.0; east = 180.0
+        } else if (e <= 180.0) {
+            // Not across the seam: the box stays inside the world, as before.
+            west = west.coerceAtLeast(-180.0); east = east.coerceAtMost(180.0)
+        }
         return BoundingBox(
-            (w - growLon).coerceAtLeast(-180.0), (s - growLat).coerceAtLeast(-WebMercator.MAX_LAT),
-            (e + growLon).coerceAtMost(180.0), (n + growLat).coerceAtMost(WebMercator.MAX_LAT),
+            west, (s - growLat).coerceAtLeast(-WebMercator.MAX_LAT),
+            east, (n + growLat).coerceAtMost(WebMercator.MAX_LAT),
         )
     }
 }

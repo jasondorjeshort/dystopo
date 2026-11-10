@@ -200,7 +200,9 @@ class MapController {
             MapLayout.compassListener = { t -> placeCompass(view, m, t) }
             MapLayout.compassTarget?.let { placeCompass(view, m, it) }
             m.addOnCameraMoveListener { runCatching { MapLayout.cameraMoved(m.cameraPosition.bearing, atRest = false) } }
-            m.setMinZoomPreference(3.0)
+            // T265: out to z1, the whole world on one screen (a flight halfway round it in one view); z0 is one 512-px
+            // tile, narrower than a phone. The terrain layers stop at their sources' zooms (MapLibreStyle's minzooms).
+            m.setMinZoomPreference(MIN_ZOOM)
             m.setMaxZoomPreference(18.0)
             m.addOnCameraMoveStartedListener { reason ->
                 animating = true
@@ -971,6 +973,9 @@ class MapController {
 
         /** A partial frame with nothing pending and no new frame for this long gets a repaint ([kickRepaint]). */
         const val STUCK_MS = 2_000L
+
+        /** T265: the map's least zoom (3 before): the world fits a phone screen. */
+        const val MIN_ZOOM = 1.0
 
         /** Pause between the two snapshots of [stableSnapshot] (symbol fades take 300 ms). */
         const val STABLE_GAP_MS = 350L

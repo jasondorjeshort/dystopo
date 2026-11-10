@@ -543,33 +543,12 @@ object Trips {
         val pts = p.path.points
         if (pts.isEmpty()) return
         if (pts.size == 1) { m.animateCamera(CameraUpdateFactory.newLatLng(LatLng(pts[0].lat, pts[0].lon)), 600); return }
-        val b = LatLngBounds.Builder().apply { for (pt in pts) include(LatLng(pt.lat, pt.lon)) }.build()
-        if (b.latitudeSpan < 1e-6 && b.longitudeSpan < 1e-6) return
-        val d = app.resources.displayMetrics.density
+        // T265: the short way round across the antimeridian, through the one fit the route and track cards use.
         val insets = io.github.jasondorjeshort.dystopo.app.MapInsets
-        val chrome = insets.topChromeBottomPx(d)
-        val cardPx = (maxOf(insets.tripCardTop.value, CARD_MIN_DP) * d).toInt()
-        val mapH = app.map.mapView?.height ?: 0
-        val pad = io.github.jasondorjeshort.dystopo.app.FitPadding.of(chrome, cardPx, mapH, d)
-        m.animateCamera(CameraUpdateFactory.newLatLngBounds(b, pad[0], pad[1], pad[2], pad[3]), 600, object : org.maplibre.android.maps.MapLibreMap.CancelableCallback {
-            override fun onCancel() = dropPadding(m)
-            override fun onFinish() = dropPadding(m)
-        })
-        lastFit = linkedMapOf(
-            "bounds" to listOf(b.longitudeWest, b.latitudeSouth, b.longitudeEast, b.latitudeNorth), "paddingPx" to pad.toList(),
-            "tripId" to p.id, "chromeBottomPx" to chrome, "cardTopDp" to insets.tripCardTop.value, "mapHeightPx" to mapH,
-            "clearOfChrome" to (pad[1] >= chrome),
-        )
-    }
-
-    /** T122: the same view without the fit's padding (MapLibre keeps it on the camera otherwise). Main thread. */
-    private fun dropPadding(m: org.maplibre.android.maps.MapLibreMap) {
-        val c = m.cameraPosition
-        if (c.padding?.any { it != 0.0 } != true) return
-        val v = app.map.mapView ?: return
-        val centre = m.projection.fromScreenLocation(android.graphics.PointF(v.width / 2f, v.height / 2f))
-        m.moveCamera(CameraUpdateFactory.newCameraPosition(org.maplibre.android.camera.CameraPosition.Builder(c).target(centre).padding(0.0, 0.0, 0.0, 0.0).build()))
-        lastFit = lastFit?.plus("paddingDropped" to true)
+        val fit = io.github.jasondorjeshort.dystopo.app.CameraFit.fit(pts.map { it.lat to it.lon }, maxOf(insets.tripCardTop.value, CARD_MIN_DP), 600) {
+            lastFit = lastFit?.plus("paddingDropped" to true)
+        } ?: return
+        lastFit = fit + mapOf("tripId" to p.id, "cardTopDp" to insets.tripCardTop.value)
     }
 
     /** T130: how long a change off the main thread waits for its Compose state to be applied (a stuck main thread). */
