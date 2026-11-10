@@ -286,6 +286,49 @@ class OutdoorsProfileTest {
         assertEquals(OutdoorsProfile.OSM_WATER_MIN_ZOOM, process(polygons).layer("water").minZoom)
     }
 
+    /** T264: `--natural-earth-only` (the bundled world overview) labels countries and cities and runs the borders to z5. */
+    @Test
+    fun naturalEarthOnlyLabelsCountriesAndCities() {
+        val world = OutdoorsProfile("natural-earth", emptyMap(), maxZoom = 5, naturalEarthOnly = true)
+        fun run(p: OutdoorsProfile, f: SourceFeature) = factory.get(f).also { p.processFeature(f, it) }.toList().also { emitted += it }
+        val square = GeoUtils.JTS_FACTORY.createPolygon(
+            arrayOf(Coordinate(5.0, 45.0), Coordinate(10.0, 45.0), Coordinate(10.0, 48.0), Coordinate(5.0, 48.0), Coordinate(5.0, 45.0)),
+        )
+        val country = SimpleFeature.create(
+            square, mapOf("name" to "Switzerland", "label_x" to 7.5, "label_y" to 46.8, "min_label" to 4.0, "labelrank" to 4L),
+            OutdoorsProfile.NATURAL_EARTH_SOURCE, OutdoorsProfile.NE_COUNTRIES, 1,
+        )
+        val label = run(world, country).layer("place")
+        assertEquals("country", label.getAttrsAtZoom(4)["class"])
+        assertEquals("Switzerland", label.getAttrsAtZoom(4)["name"])
+        assertEquals(4, label.minZoom)
+        // A point at the label point, not the polygon.
+        assertEquals(GeoUtils.latLonToWorldCoords(GeoUtils.point(7.5, 46.8)).coordinate, label.geometry.coordinate)
+
+        fun city(minZoom: Double, capital: Long) = SimpleFeature.create(
+            GeoUtils.point(7.45, 46.95), mapOf("name" to "Bern", "min_zoom" to minZoom, "adm0cap" to capital, "pop_max" to 275_000L),
+            OutdoorsProfile.NATURAL_EARTH_SOURCE, OutdoorsProfile.NE_PLACES, 2,
+        )
+        val bern = run(world, city(4.0, 1L)).layer("place")
+        assertEquals(mapOf("class" to "city", "name" to "Bern", "capital" to 2), bern.getAttrsAtZoom(5))
+        assertEquals(4, bern.minZoom)
+        assertTrue(run(world, city(6.0, 0L)).isEmpty(), "a place Natural Earth puts past z5 is left out")
+
+        val border = SimpleFeature.create(
+            GeoUtils.JTS_FACTORY.createLineString(arrayOf(Coordinate(6.0, 46.0), Coordinate(7.0, 46.5))),
+            emptyMap(), OutdoorsProfile.NATURAL_EARTH_SOURCE, "ne_10m_admin_0_boundary_lines_land", 3,
+        )
+        assertEquals(5, run(world, border).layer("boundary").maxZoom)
+        val states = SimpleFeature.create(
+            GeoUtils.JTS_FACTORY.createLineString(arrayOf(Coordinate(6.0, 46.0), Coordinate(7.0, 46.5))),
+            emptyMap(), OutdoorsProfile.NATURAL_EARTH_SOURCE, "ne_10m_admin_1_states_provinces_lines", 4,
+        )
+        assertEquals(4, run(world, states).layer("boundary").maxZoom)
+        // A build with OSM keeps Natural Earth's borders to z4 and reads no Natural Earth labels.
+        assertEquals(4, process(border).layer("boundary").maxZoom)
+        assertTrue(process(country).isEmpty())
+    }
+
     @Test
     fun peaksAreRankedAndThinnedBelowZ13() {
         fun peak(x: Double, y: Double, ele: Int, name: String?) = VectorTile.Feature(

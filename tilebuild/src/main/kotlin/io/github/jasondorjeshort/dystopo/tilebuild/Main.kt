@@ -31,6 +31,8 @@ object Caches {
 class TileBuildCommand : CliktCommand(name = "tilebuild") {
     override fun help(context: Context) = """
         Build a vector PMTiles archive (OpenMapTiles schema, or --profile outdoors) from an OpenStreetMap extract with Planetiler.
+        Or, with --natural-earth-only (outdoors profile, --max-zoom 5 at most), the whole world from Natural Earth alone:
+        water, country borders, country and city labels, the app's bundled world overview (tilebuild/PROFILE.md).
 
         --extract is a Geofabrik region name ("liechtenstein", "washington"), a full Geofabrik path
         ("north-america/us/washington"), a local .osm.pbf file, or a local OSM XML file (.osm, e.g. an
@@ -39,7 +41,11 @@ class TileBuildCommand : CliktCommand(name = "tilebuild") {
         <cache>/planetiler/ (several hundred MB, once). Prints one JSON report to stdout.
     """.trimIndent()
 
-    private val extract by option("--extract", help = "Geofabrik region name or path, or a local .osm.pbf").required()
+    private val extract by option("--extract", help = "Geofabrik region name or path, or a local .osm.pbf (required unless --natural-earth-only)")
+    private val naturalEarthOnly by option(
+        "--natural-earth-only",
+        help = "No OSM extract: the whole world from Natural Earth alone (outdoors profile, max zoom ${OutdoorsProfile.OSM_WATER_MIN_ZOOM - 1} at most)",
+    ).flag()
     private val out by option("--out", help = "Output .pmtiles file (overwritten)").file(canBeDir = false).required()
     private val bbox by option("--bbox", help = "Clip to west,south,east,north (degrees)")
     private val area by option("--area", help = "Clip to a named area from ${Areas.PUBLIC_FILE}")
@@ -63,7 +69,14 @@ class TileBuildCommand : CliktCommand(name = "tilebuild") {
             else -> null to null
         }
         if (minZoom < 0 || maxZoom > 15 || minZoom > maxZoom) throw UsageError("zoom range must satisfy 0 <= min <= max <= 15")
-        val input = Extracts.resolve(extract, File(Caches.root, "osm"))
+        val input = if (naturalEarthOnly) {
+            if (extract != null || clip != null) throw UsageError("--natural-earth-only builds the whole world: no --extract, --area or --bbox")
+            if (profile != ProfileKind.OUTDOORS.cliName) throw UsageError("--natural-earth-only needs --profile outdoors")
+            if (maxZoom >= OutdoorsProfile.OSM_WATER_MIN_ZOOM) throw UsageError("--natural-earth-only covers z0 to z${OutdoorsProfile.OSM_WATER_MIN_ZOOM - 1}: give --max-zoom ${OutdoorsProfile.OSM_WATER_MIN_ZOOM - 1} or less")
+            Extracts.NONE
+        } else {
+            Extracts.resolve(extract ?: throw UsageError("--extract is required (or --natural-earth-only)"), File(Caches.root, "osm"))
+        }
         val registry = SourceRegistry.builtIn
         sourceIds.firstOrNull { it !in registry }?.let { throw UsageError("--source-id '$it' is not in the data source registry (sources.json)") }
         val request = BuildRequest(

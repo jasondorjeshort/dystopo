@@ -1185,6 +1185,49 @@ def offline_step(server, exe, serial, step, first_wait_ms, wait_ms, shot):
     return out
 
 
+# T264: the views the bundled world overview must draw offline, with the layers each must show (the style's layer ids).
+WORLD_VIEWS = [("pacific-z3", 3, 0.0, -150.0, ("water",)), ("europe-z5", 5, 47.0, 8.0, ("water", "admin-boundary", "countries"))]
+
+
+def world_views(server, wait_ms, shot):
+    """T264: in airplane mode (the offline step's), the z3 view over the Pacific and the z5 view over Europe, where the
+    online cache holds nothing: every vector tile request of the view answered 200 from the bundled world overview, none
+    cut from a wider zoom, the listed layers rendered (`GET /features`), the chip's source "from the world overview"
+    (`GET /online`), a screenshot each. ok when every view passes."""
+    out = {"views": []}
+    for name, z, lat, lon, layers in WORLD_VIEWS:
+        v = {"view": f"{z}/{lat}/{lon}", "name": name}
+        try:
+            base = request_log_total(server)
+            server.json(f"/camera?lat={lat}&lon={lon}&zoom={z}&bearing=0&tilt=0", method="POST")
+            png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+            path = shot.replace(".png", f"-world-{name}.png")
+            with open(path, "wb") as f:
+                f.write(png)
+            v["screenshot"] = path
+            feats = server.json("/features", timeout=60).get("layers") or {}
+            v["layers"] = {k: feats.get(k, 0) for k in layers}
+            total = request_log_total(server)
+            lines = server.json("/stats/requests?limit=4096").get("lines") or []
+            osm = [l for l in lines[max(0, len(lines) - (total - base)):] if l.get("route") == "osm"]
+            v["osm"] = {"requests": len(osm), "statuses": {str(k): sum(1 for l in osm if l.get("status") == k) for k in sorted({l.get("status") for l in osm})},
+                        "fromWiderZoom": sum(1 for l in osm if l.get("widerZoom") is not None)}
+            v["chip"] = ((server.json("/online").get("chip") or {}).get("source"))
+            failed = [f"noLayer:{k}" for k, n in v["layers"].items() if n <= 0]
+            # A tile the overview lacks (Antarctica's interior, all land) is a 404 the map draws as land; any other status fails.
+            if any(l.get("status") not in (200, 404) for l in osm) or not any(l.get("status") == 200 for l in osm) and osm:
+                failed.append("vectorTilesNotAnswered")
+            if v["chip"] != "from the world overview":
+                failed.append("chipSource")
+            v["failed"] = failed
+            v["ok"] = not failed
+        except (urllib.error.URLError, OSError, ValueError, RuntimeError, http.client.HTTPException) as e:
+            v.update(ok=False, error=str(e)[:200])
+        out["views"].append(v)
+    out["ok"] = all(v.get("ok") for v in out["views"])
+    return out
+
+
 def offline_attempt(server, exe, serial, step, first_wait_ms, wait_ms, shot):
     """T254 (idea 2026-11-07-offline-zoom-keeps-what-wider-zooms-showed): the online view (the tour file's `@offline`
     line, a z9 view no earlier step shows: MapLibre asks nothing for tiles it still holds in memory) is looked at with the
@@ -1288,6 +1331,10 @@ def offline_attempt(server, exe, serial, step, first_wait_ms, wait_ms, shot):
             failed.append("fiveHundreds")
         if rep["roadFeatures"] <= 0:
             failed.append("noRoadsRendered")
+        # T264: still offline, the world overview draws the widest views with nothing cached there.
+        rep["world"] = world_views(server, wait_ms, shot)
+        if not rep["world"].get("ok"):
+            failed.append("worldOverviewNotDrawn")
         rep["failed"] = failed
         rep["ok"] = not failed
     except (urllib.error.URLError, OSError, ValueError, RuntimeError, http.client.HTTPException, subprocess.SubprocessError) as e:

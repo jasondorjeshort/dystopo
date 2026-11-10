@@ -36,6 +36,14 @@ object Attribution {
     /** Registry ids of what the outdoors profile reads (no lake centerlines). */
     val OUTDOORS_SOURCE_IDS = listOf("osm", "osm-water-polygons", "natural-earth", "openmaptiles")
 
+    /**
+     * T264: what a Natural-Earth-only build (`--natural-earth-only`, the bundled world overview) credits and reads: no
+     * OpenStreetMap data is in it, so its credit is Natural Earth's plus the schema's, and its licence is Natural Earth's.
+     */
+    val WORLD_CREDIT_IDS = listOf("natural-earth", "openmaptiles")
+    val WORLD_TEXT: String = registry.attribution(WORLD_CREDIT_IDS)
+    val WORLD_HTML: String = registry.attributionHtml(WORLD_CREDIT_IDS)
+
     /** The outdoors schema reuses OpenMapTiles layer names and class values, so the OpenMapTiles credit stays. */
     const val OUTDOORS_SCHEMA = "Dystopo outdoors 1 (tilebuild/PROFILE.md; OpenMapTiles 3.16 layer names and classes, design CC-BY 4.0)"
 
@@ -55,10 +63,13 @@ object Attribution {
         sourceIds: List<String> = SOURCE_IDS,
         schema: String = SCHEMA,
         profile: String = ProfileKind.OPENMAPTILES.cliName,
+        /** T264: a Natural-Earth-only archive credits Natural Earth and carries its licence, not OSM's. */
+        naturalEarthOnly: Boolean = false,
     ): Map<String, String> = buildMap {
-        put("dystopo:attribution", TEXT)
-        put("dystopo:license", LICENSE)
-        put("dystopo:license_url", ODBL_URL)
+        val ne = registry.getValue("natural-earth")
+        put("dystopo:attribution", if (naturalEarthOnly) WORLD_TEXT else TEXT)
+        put("dystopo:license", if (naturalEarthOnly) ne.license else LICENSE)
+        put("dystopo:license_url", if (naturalEarthOnly) ne.licenseUrl else ODBL_URL)
         put("dystopo:sources", sourcesFor(sourceIds).joinToString("; "))
         put("dystopo:provenance", registry.ordered(sourceIds).joinToString(","))
         put("dystopo:schema", schema)

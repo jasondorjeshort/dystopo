@@ -49,6 +49,24 @@ describe the same schema; a test fails if a layer or attribute is missing here.
 - Not included (yet): buildings, house numbers, runways, taxiways and aprons, town POIs (`poi`), contour lines (those
   come from the DEM, not OSM).
 
+## World overview (T264)
+
+`--natural-earth-only` builds the app's bundled world overview: this profile over the whole world from Natural Earth
+alone, no OSM extract and no ocean polygons, z0 to z5 (`--max-zoom 5` at most). The committed file
+`tilebuild/world/world-outdoors.pmtiles` is the output of
+
+```
+./gradlew :tilebuild:run --no-daemon --args="--natural-earth-only --profile outdoors --max-zoom 5 --out tilebuild/world/world-outdoors.pmtiles"
+```
+
+(about 30 s; `androidApp/build.gradle.kts` pins its SHA-256, so a rebuild updates that line in the same commit). Layers:
+`water` (Natural Earth's ocean and lakes, as below), `boundary` (country borders z0-5, state and province lines z4 only)
+and `place`: countries (`class` `country`) at Natural Earth's label point from its `min_label` zoom (1:50m countries), and
+cities (`class` `city`, `capital` 2 for a national capital) from Natural Earth's own `min_zoom` up to z5 (1:10m populated
+places). No roads: they start at z4 from OSM for little gain at these zooms. Sizes measured 2026-11-10: 1,748,638 bytes
+for z0-5 (z0 9 kB, z1 16 kB, z2 64 kB, z3 118 kB, z4 664 kB, z5 857 kB) and 1,659,545 for z3-5. Its metadata credits
+Natural Earth and the OpenMapTiles schema (`dystopo:license` Natural Earth's public domain; no OSM data is in it).
+
 ## Licensing
 
 The tiles contain OpenStreetMap data and are an ODbL 1.0 derived database: the `attribution` field carries

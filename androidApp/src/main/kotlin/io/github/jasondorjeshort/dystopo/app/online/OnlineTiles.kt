@@ -389,7 +389,8 @@ class OnlineTiles(
     /**
      * Where the view centred at [lat], [lon] at map zoom [zoom] gets its terrain: `pack`, `online`
      * (fetched this session), `cached` (from the online disk cache), `wider` (T254: cut from a wider zoom the phone holds,
-     * [WIDER]; the tile returned is that ancestor) or `none` (nothing loaded there yet).
+     * [WIDER]; the tile returned is that ancestor), `world` (T264: no terrain there, the built-in world overview draws the
+     * map at this zoom, [WORLD]) or `none` (nothing loaded there yet).
      * T236 (ADR 0056 B3): with the DEM tile it matched (z, x, y; null for `pack` and `none`), so the chip can ask whether that
      * tile lies in an offline map on the list ([io.github.jasondorjeshort.dystopo.app.areas.Areas.isRecorded]).
      */
@@ -404,6 +405,10 @@ class OnlineTiles(
             // T254: a tile cut from a wider zoom names its ancestor (the tile the phone holds, which an offline map may record).
             service.demSource(t.first, t.second, t.third)?.let { return it to (if (it == WIDER) service.widerAncestor(t.first, t.second, t.third) ?: t else t) }
         }
+        // T264: a 512-px vector tile at the map's zoom; the world overview answers it (z0 to z5, where no pack holds the tile).
+        val zv = floor(zoom).toInt().coerceAtLeast(0)
+        val (vz, vx, vy) = tile(zv)
+        if (packs.worldAnswers(vz, vx, vy)) return WORLD to null
         return NONE to null
     }
 
@@ -493,6 +498,8 @@ class OnlineTiles(
         const val NONE = "none"
         /** T254: the view's terrain was cut from a wider zoom the phone holds ([WiderZoom]); T255 shows "from a wider zoom". */
         const val WIDER = OnlineService.WIDER
+        /** T264: the view draws from the built-in world overview ([io.github.jasondorjeshort.dystopo.app.PackSet.world]); the chip says "from the world overview". */
+        const val WORLD = "world"
 
         /**
          * The DEM tiles (z, x, y) a window of [size] global pixels at ([px], [py]) of zoom [z] samples,

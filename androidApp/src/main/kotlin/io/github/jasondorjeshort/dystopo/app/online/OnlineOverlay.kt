@@ -78,7 +78,7 @@ class OnlineUi(
      * T236: the table's columns: where the view's map is. A network tile names its source: public, the user's server, a nearby
      * phone. T255: [WIDER], a tile the phone lacked, cut from the nearest one it holds at a wider zoom (T254, [OnlineTiles.WIDER]).
      */
-    enum class Column { PACK, NETWORK_PUBLIC, NETWORK_SERVER, NETWORK_PEER, CACHE_KEPT, CACHE, WIDER, NO_DATA }
+    enum class Column { PACK, NETWORK_PUBLIC, NETWORK_SERVER, NETWORK_PEER, CACHE_KEPT, CACHE, WIDER, WORLD, NO_DATA }
 
     /** T236: the online tile cache's figures for the card, read with [TileCache]'s getters (never a whole-index method). */
     class CacheFigures(val bytes: Long, val pinnedBytes: Long, val capMb: Long, val partial: Boolean)
@@ -118,6 +118,7 @@ class OnlineUi(
         OnlineService.ONLINE -> if (direct) Column.NETWORK_PUBLIC else if (serverSet) Column.NETWORK_SERVER else Column.NETWORK_PEER
         OnlineService.CACHED -> if (view.kept) Column.CACHE_KEPT else Column.CACHE
         OnlineTiles.WIDER -> Column.WIDER // T255: drawn, so never "no data here"
+        OnlineTiles.WORLD -> Column.WORLD // T264: the built-in world overview
         else -> Column.NO_DATA
     }
 
@@ -132,6 +133,7 @@ class OnlineUi(
         Column.NETWORK_PEER -> if (fromNetwork) "from a nearby phone" else VIEWED
         Column.CACHE -> VIEWED
         Column.WIDER -> WIDER_ZOOM
+        Column.WORLD -> WORLD_OVERVIEW
     }
 
     /** T236: the chip's whole text. */
@@ -158,6 +160,7 @@ class OnlineUi(
         column == Column.PACK -> SAVED_OFFLINE_MAP
         column == Column.CACHE_KEPT -> KEPT_TILES
         column == Column.WIDER -> CUT_FROM_WIDER
+        column == Column.WORLD -> FROM_WORLD
         sourceText == NO_DATA -> "Nothing on this phone covers this view."
         sourceText == VIEWED -> "You viewed this part earlier. It stays until space is needed."
         else -> "This part of the map is coming over the network and is kept only until space is needed."
@@ -221,6 +224,9 @@ class OnlineUi(
         const val SAVED_OFFLINE_MAP = "This part of the map is saved on this phone as an offline map."
         const val KEPT_TILES = "This part of the map is kept on this phone as map tiles only, so search and routes do not work here."
         const val CUT_FROM_WIDER = "This part of the map is cut from a wider zoom kept on this phone, so it shows less detail."
+        /** T264 (ADR 0031: listed for the owner): the chip's source and the card's sentence over the built-in world overview. */
+        const val WORLD_OVERVIEW = "from the world overview"
+        const val FROM_WORLD = "This view comes from the world overview built into the app: coasts, borders and the names of countries and large cities. Zoom in or download an area for more."
         /** T255 (T236's follow-up): the grey Offline row's first sentence when the phone has a network and the public sources fail. */
         const val SOURCES_NOT_ANSWERING = "The public map sources are not answering. The map still works where it is on this phone."
         /** T236: the overlay's button (ADR 0056: "area", not "region"). */

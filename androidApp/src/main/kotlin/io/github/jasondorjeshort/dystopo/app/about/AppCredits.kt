@@ -38,7 +38,8 @@ object AppCredits {
         }
         var osm = packs.osmPacks.filter(::inView)
         var dem = packs.demPacks.filter(::inView)
-        if (osm.isEmpty() && dem.isEmpty() && online.isEmpty()) {
+        // T264: the world overview covers every view, so it alone does not count as a pack in view.
+        if (osm.none { it !== packs.world } && dem.isEmpty() && online.isEmpty()) {
             osm = packs.osmPacks
             dem = packs.demPacks
         }

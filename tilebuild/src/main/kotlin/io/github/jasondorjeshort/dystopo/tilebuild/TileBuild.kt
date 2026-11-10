@@ -91,7 +91,8 @@ object TileBuild {
     fun run(req: BuildRequest): BuildReport {
         val started = System.nanoTime()
         val planetilerCache = File(req.cacheRoot, "planetiler").apply { mkdirs() }
-        req.input.path.absoluteFile.parentFile?.mkdirs()
+        val noOsm = req.input.kind == ExtractKind.NONE // T264: Natural Earth alone
+        if (!noOsm) req.input.path.absoluteFile.parentFile?.mkdirs()
         req.out.absoluteFile.parentFile?.mkdirs()
         val tmpDir = tempDirFor(planetilerCache, req.out)
 
@@ -114,9 +115,9 @@ object TileBuild {
             if (!xml.isFile) throw IllegalArgumentException("OSM XML file $xml does not exist")
             OsmXmlToPbf.convert(xml, req.input.path, req.bbox)
         }
-        val existedBefore = req.input.path.isFile
+        val existedBefore = noOsm || req.input.path.isFile
         val osmUrl = when {
-            req.input.url == null -> null
+            noOsm || req.input.url == null -> null
             existedBefore -> req.input.url
             req.input.kind == ExtractKind.GEOFABRIK_NAME ->
                 Geofabrik.getDownloadUrl(req.input.url.removePrefix("geofabrik:"), config)
@@ -148,8 +149,8 @@ object TileBuild {
                 kind = req.input.kind.name.lowercase(),
                 path = req.input.path.path,
                 url = osmUrl,
-                bytes = req.input.path.length(),
-                downloaded = !existedBefore && conversion == null,
+                bytes = if (noOsm) 0 else req.input.path.length(),
+                downloaded = !noOsm && !existedBefore && conversion == null,
             ),
             clipArea = req.clipArea,
             bbox = req.bbox?.toList(),
@@ -159,8 +160,8 @@ object TileBuild {
             output = OutputReport(req.out.path, req.out.length()),
             pmtiles = info,
             attribution = info.attribution,
-            attributionText = Attribution.TEXT,
-            license = Attribution.LICENSE,
+            attributionText = if (noOsm) Attribution.WORLD_TEXT else Attribution.TEXT,
+            license = setup.extraMetadata["dystopo:license"] ?: Attribution.LICENSE,
             extraMetadata = setup.extraMetadata,
             auxiliaryData = setup.auxiliaryData,
             stageSeconds = stages.seconds,
