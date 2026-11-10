@@ -419,7 +419,7 @@ def part_strings(args):
             "privateTermsConfigured": scan.get("privateTerms", 0), "note": scan.get("note", ""),
             "valueRule": "coordinateValueHits counts single decimals inside a local box's lat or lon range (the commit "
                          "hook's lenient rule); in compiled code and native libraries those are mostly constants, so "
-                         "they are reported, not failed",
+                         "they are reported, not failed (a diagnostic dump's log is scanned with scan --dump, T271)",
             **({"error": f"{hard} private hits in the APK's strings"} if hard else {})}
 
 
