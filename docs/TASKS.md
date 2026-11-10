@@ -122,6 +122,7 @@ Planned 2026-11-10 from the triage of 2026-11-10 (the Plans written into `docs/i
 **Owns:** `tools/PrivacyCheck.java`, a new `tools/test_privacy_check.py` [no-check: new file] (runs `java tools/PrivacyCheck.java` on fixtures), `docs/reference/diagnostic-dump.md`, `tools/android-ui.py` (the note's two lines; merged first, the lane tasks merge `main` in), `.claude/skills/wave/SKILL.md` (the dump line, if any).
 **Interacts with:** T262 and the later writers of `tools/android-ui.py` merge `main` in.
 **Done when:** `java tools/PrivacyCheck.java scan --dump < <a real dump from the emulator>` reads 0 hits where today it reads 49, and the same with one injected coordinate reads 1 and exits 1; the test green; the hooks' `staged` and `message` modes unchanged (the hook tests green).
+**Status: merged.** Verifier MERGE, no fix round. Follow-ups: a real dump from the emulator scanned with `--dump` (T262's verifier); `pairsOutsidePublicAreas` still counts logcat timing pairs (informational); the private-term check stays on for logcat on purpose.
 
 ## Browser demo follow-ups (tools/demo)
 - Contour labels in the live viewer are sparse (MapLibre line placement on unsimplified contour geometry); tune `symbol-spacing`/`text-max-angle`, or feed MapLibre simplified lines from T1's pipeline.

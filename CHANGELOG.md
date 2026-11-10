@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-10
+
+- T271: The privacy scanner reads a diagnostic dump without false positives (alongside; no Gradle; small)
+
 ## v0.1.26-alpha (2026-11-10)
 
 ### 2026-11-10
