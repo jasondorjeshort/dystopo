@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.25-alpha (2026-11-10)
+
 ### 2026-11-10
 
 - T258: Report a problem sends a diagnostic dump; a devtool command reads it (lane A, last)

@@ -37,3 +37,4 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 ## Open findings
 
 - `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: guarded; the snapshot loop is wave 32's.
+- `docs/findings/2026-11-10-range-cache-keeps-blocks-across-a-republish.md`: 56 stale cells deleted; a validator is wave 32's.
