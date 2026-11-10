@@ -66,8 +66,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.tracking.TRACK_GAPS_HELP +
             // end T260
             // T255: what search and routes need, beside the search box's line over a view with map tiles only.
-            io.github.jasondorjeshort.dystopo.app.search.SEARCH_COVERAGE_HELP
+            io.github.jasondorjeshort.dystopo.app.search.SEARCH_COVERAGE_HELP +
             // end T255
+            // T262: the Tracks and routes screen.
+            io.github.jasondorjeshort.dystopo.app.tracks.TRACKS_LIST_HELP
+            // end T262
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

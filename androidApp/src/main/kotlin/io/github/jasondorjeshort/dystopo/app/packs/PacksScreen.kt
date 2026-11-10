@@ -148,6 +148,7 @@ fun PacksOverlay() {
     LaunchedEffect(open) { if (!open) { PacksUi.catalogOpen = false; PacksUi.lowered = false; PacksUi.foldOpen = null } }
     Box(Modifier.fillMaxSize()) {
         if (!PacksUi.visible) {
+            if (io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.open) return@Box // T262: not over the Tracks and routes screen
             // T33: the top-right chips in one row (Settings, Offline maps); track controls sit in the row below (TrackControls).
             val density = androidx.compose.ui.platform.LocalDensity.current
             io.github.jasondorjeshort.dystopo.app.MapChrome { // T91: capped font scale, and the search box ends before this row

@@ -67,9 +67,20 @@ object Trips {
         onTap = { lat, lon -> tap(lat, lon) }
     }
 
-    /** The Routes list screen is open. */
-    var listOpen by mutableStateOf(false)
+    /**
+     * The Routes list is open. T262: the Tracks and routes screen ([io.github.jasondorjeshort.dystopo.app.tracks.TracksUi]); set
+     * true it opens on its Routes filter (the Routes chip, `POST /routes/ui?open=1`), set false it closes.
+     */
+    var listOpen: Boolean
+        get() = io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.open
+        set(v) {
+            if (v) io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.show(io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.Filter.ROUTES)
+            else io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.close()
+        }
     var list by mutableStateOf<List<RouteListItem>>(emptyList())
+        private set
+    /** T262: the routes hidden on this device's map (every other route is drawn, [Tracking.refreshOverlay]). */
+    var hiddenRoutes by mutableStateOf<Set<String>>(emptySet())
         private set
     /** The route open in the editor and its summary. */
     var editing by mutableStateOf<RoutePlan?>(null)
@@ -142,19 +153,19 @@ object Trips {
 
     // ---- reading ----
 
-    /** Small profiles for the Routes list, by route id (computed while the list is open). */
-    var listProfiles by mutableStateOf<Map<String, List<io.github.jasondorjeshort.dystopo.gpx.ProfileSample>>>(emptyMap())
-        private set
-
     fun refresh() {
         val items = store { it.routeList() }
+        val hidden = store { it.hidden(io.github.jasondorjeshort.dystopo.store.ShownKind.ROUTE) } // T262
         val readId = editingId
         val open = readId?.let { id -> store { it.routePlan(id) } }
-        val profiles = if (listOpen) store { it.routePlans() }.associate { it.id to RouteSummary.of(it, 40).profile } else null
-        if (items != lastItems) { lastItems = items; io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.request("routes changed") } // T130: synced, imported, renamed
+        if (items != lastItems) {
+            lastItems = items
+            io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.request("routes changed") // T130: synced, imported, renamed
+            tracking.refreshOverlay(force = true) // T262: the shown routes' lines follow
+        }
         ui {
             list = items
-            profiles?.let { listProfiles = it }
+            hiddenRoutes = hidden
             // T91 (the T65 race): apply the open route only if it is still the one this refresh read. A route
             // opened (or closed) after the read is newer than this answer, and its opener refreshes again.
             if (refreshApplies(readId, editingId)) {
@@ -268,6 +279,17 @@ object Trips {
     }
 
     fun rename(id: String, name: String): Boolean = store { it.setField(EntityKind.ROUTE, id, "name", name, System.currentTimeMillis()) }.also { refresh() }
+
+    /**
+     * T262: shows or hides route [id] on this device's map (the Tracks and routes list's eye); kept in the store, never
+     * synced. False for an unknown route.
+     */
+    fun setShown(id: String, shown: Boolean): Boolean {
+        val ok = store { s -> s.routePlan(id)?.also { s.setShown(io.github.jasondorjeshort.dystopo.store.ShownKind.ROUTE, id, shown) } != null }
+        refresh()
+        tracking.refreshOverlay(force = true)
+        return ok
+    }
 
     fun delete(id: String): Boolean {
         val ok = store { it.deleteRoute(id, System.currentTimeMillis()) }
@@ -448,6 +470,7 @@ object Trips {
         }
         overlay.show(p)
         refresh()
+        tracking.refreshOverlay(force = true) // T262: the editor draws this route; the shown routes leave it out
         return p
     }
 
@@ -464,6 +487,7 @@ object Trips {
     fun close() {
         ui { showPlan(null); message = null; offline = null; directionsOpen = false }
         overlay.show(null)
+        Tracking.readyOrNull?.refreshOverlay(force = true) // T262: a shown route closed in the editor is drawn with the others again
     }
 
     private fun tap(lat: Double, lon: Double): Boolean {

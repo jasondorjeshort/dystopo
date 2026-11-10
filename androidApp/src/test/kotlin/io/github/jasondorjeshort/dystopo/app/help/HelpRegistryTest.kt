@@ -157,6 +157,9 @@ class HelpRegistryTest {
             // T255: the search box's line over a view with map tiles only.
             "search.offlineMap",
             // end T255
+            // T262: the Tracks and routes screen.
+            "tracks.list",
+            // end T262
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
