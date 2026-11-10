@@ -589,11 +589,10 @@ object TrackBar {
  */
 internal val TRACK_BAR_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
     io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.bar", "Recording tracks", "The map, top right: Tracks, then the bar", show = { TrackBar.open = true }) {
-        "Record starts a track; it goes on with the screen off and the app in the background, its notification saying " +
-            "how (recording, waiting for GPS, paused). Pause holds it; then Resume goes on, or Finish ends it and keeps it " +
-            "in the Tracks list (Go to follow it, three dots for a GPX file); Discard deletes it, after asking. Hide, Back " +
-            "or a swipe on the panel puts the bar away and the recording goes on, its distance in red on the Tracks chip. " +
-            "Waypoint marks where you are; long-press the map for another place."
+        "Record starts a track; it goes on with the screen off. " +
+            "Pause holds it; then Resume goes on, or Finish ends it and keeps it in the Tracks list; " +
+            "Discard deletes it, after asking. Hide, Back or a swipe on the panel puts the bar away; the " +
+            "recording goes on, its distance in red on the chip. Waypoint marks where you are."
     },
 )
 
