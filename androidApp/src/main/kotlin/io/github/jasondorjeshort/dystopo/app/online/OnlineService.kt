@@ -212,6 +212,35 @@ class OnlineService private constructor(private val app: DystopoApp) {
 
     fun demSource(z: Int, x: Int, y: Int): String? = synchronized(demSources) { demSources[key(z, x, y)] }
 
+    /** T254: the ancestor each DEM tile answered from a wider zoom was cut from ([recordWider]), for [OnlineTiles.viewSource]. */
+    private val widerAncestors = object : LinkedHashMap<Long, Triple<Int, Int, Int>>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Triple<Int, Int, Int>>?) = size > 4096
+    }
+
+    /** T254: DEM tile z/x/y was answered with [ancestor] cut to it ([WIDER]). */
+    fun recordWider(z: Int, x: Int, y: Int, ancestor: Triple<Int, Int, Int>) {
+        recordDem(z, x, y, WIDER)
+        synchronized(widerAncestors) { widerAncestors[key(z, x, y)] = ancestor }
+    }
+
+    /** T254: the ancestor DEM tile z/x/y was last cut from, or null. */
+    fun widerAncestor(z: Int, x: Int, y: Int): Triple<Int, Int, Int>? = synchronized(widerAncestors) { widerAncestors[key(z, x, y)] }
+
+    /** T254: tiles answered from a wider zoom per route, and per how many levels up (`GET /online` `wider`). */
+    private val widerCounts = java.util.concurrent.ConcurrentHashMap<String, AtomicLong>()
+
+    fun widerServed(route: String, fromZoom: Int) {
+        widerCounts.getOrPut(route) { AtomicLong() }.incrementAndGet()
+        widerCounts.getOrPut("$route@z$fromZoom") { AtomicLong() }.incrementAndGet()
+    }
+
+    private fun widerJson(): Map<String, Any?> = linkedMapOf(
+        "served" to widerCounts.toSortedMap().mapValues { it.value.get() },
+        "osm" to runCatching { app.tiles.online?.widerOsm?.json() }.getOrNull(),
+        "dem" to runCatching { app.tiles.online?.widerDemTiming?.json() }.getOrNull(),
+        "pack" to runCatching { app.tiles.packWider.json() }.getOrNull(),
+    )
+
     /** Indicator state: `none` (no server), `online`, `offline` or `unknown` (not checked yet). */
     fun state(): String = fetcher?.state ?: "none"
 
@@ -699,6 +728,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "versionReloads" to versionReloads.get(),
         "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
+        "wider" to widerJson(), // T254: tiles cut from a wider zoom the phone holds
         "stalledOsm" to stalledOsm.json() + osmRefresh.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138; T144: settleMs, refreshes
         "stalledDem" to stalledDem.json() + demRefresh.json() + linkedMapOf( // T155
             "sourceRefreshes" to demSourceRefreshes.get(), "lastSourceRefresh" to lastDemRefresh, "retrying" to demRetrying.get(),
@@ -730,6 +760,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
         const val TAG = "DystopoOnline"
         const val ONLINE = "online"
         const val CACHED = "cached"
+        /** T254: [OnlineTiles.viewSource]'s value for a view whose terrain was cut from a wider zoom the phone holds. */
+        const val WIDER = "wider"
         const val PROBE_ONLINE_MS = 30_000L
         const val PROBE_OFFLINE_MS = 5_000L
         /** T155: the gap before the next canary DEM try ([retryStalledDem]): after one that stalled, and the most after quick failures. */

@@ -82,7 +82,7 @@ class Routes(private val app: DystopoApp) {
             requestLog.add(raw.method, raw.path, 500, 0, started)
             throw e
         }
-        requestLog.add(raw.method, raw.path, res.status, res.body.size, started, if (res.status == 200) packOf(raw.path) else null)
+        requestLog.add(raw.method, raw.path, res.status, res.body.size, started, if (res.status == 200) packOf(raw.path) else null, res.headers[TileResult.WIDER_HEADER]?.toIntOrNull()) // T254
         return res
     }
 
@@ -127,7 +127,7 @@ class Routes(private val app: DystopoApp) {
                 "osm" -> t.osmTile(z, x, y)
                 else -> t.contourTile(z, x, y)
             }
-            return Response(res.status, res.contentType, res.body)
+            return Response(res.status, res.contentType, res.body, res.headers) // T254: the wider-zoom header
         }
         glyph.matchEntire(r.path)?.let { m ->
             val res = app.tiles.glyph(m.groupValues[1], m.groupValues[2])
