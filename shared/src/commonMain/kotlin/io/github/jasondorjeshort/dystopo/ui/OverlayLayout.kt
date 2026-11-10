@@ -64,6 +64,12 @@ data class OverlayInput(
     val compass: OverlaySize? = null,
     val scaleBar: OverlaySize? = null,
     val strip: List<OverlaySize> = emptyList(),
+    /**
+     * T257: how many of [strip]'s first entries outrank the scale bar (the readout's own four, the course by its point);
+     * the rest (the pressure, the extended readout's, the course's degrees) are left out before the scale bar yields,
+     * and never come back once it has. Past [strip]'s size: every entry outranks it, as before T257.
+     */
+    val stripCore: Int = Int.MAX_VALUE,
     val buttons: Int = 1,
     val offCentre: Boolean = false,
     val navigation: OverlayCard? = null,
@@ -163,8 +169,10 @@ object OverlayIds {
  * - Never hidden and never shrunk: the credit line, the navigation instruction, a warning's headline, the position
  *   button while the map is off centre, Search (it narrows for the top row, to no less than [SEARCH_MIN]; its text does not shrink).
  * - Cards scroll and collapse, down to their least, before anything is hidden.
- * - Then hidden in this order, one rung at a time ([rungs]): the lock button, the orientation button, the scale bar, the
- *   readout's entries from the end of their drawn order with the elevation last, and (centred only) the position button.
+ * - Then hidden in this order, one rung at a time ([rungs]): the lock button, the orientation button, (T257) the
+ *   readout's extra entries past [OverlayInput.stripCore] from the end (the course's degrees, the fix age, the accuracy,
+ *   the pressure), the scale bar, the readout's entries from the end of their drawn order with the elevation last, and
+ *   (centred only) the position button.
  *   The ladder is global: a rung is taken for the whole screen, so the order holds where the two sides are short apart too.
  * - The Waypoint and Tracks bar, the Routes chip, the compass and the online indicator keep their size while they fit
  *   and hide rather than sit under a card or the credit line; they do not wait for the ladder.
@@ -221,7 +229,10 @@ object OverlayLayout {
     private fun rungs(i: OverlayInput): List<Rung> {
         val out = ArrayList<Rung>()
         for (b in i.buttons.coerceIn(1, 3) downTo 1) out += Rung(b, i.scaleBar != null, i.strip.size)
-        for (e in i.strip.size downTo 0) out += Rung(1, false, e)
+        // T257: the strip's extra entries go before the scale bar does; the bar never yields to them.
+        val core = if (i.scaleBar == null) i.strip.size else i.stripCore.coerceIn(0, i.strip.size)
+        if (i.scaleBar != null) for (e in i.strip.size - 1 downTo core) out += Rung(1, true, e)
+        for (e in core downTo 0) out += Rung(1, false, e)
         if (!i.offCentre) out += Rung(0, false, 0)
         return out.distinct()
     }

@@ -180,17 +180,30 @@ data class Readout(
     /** T177: the climb window in seconds and how much of it the mean covers so far; null in the air (a lag, no window). */
     val climbWindowS: Int? = null,
     val climbFilledS: Double? = null,
+    /**
+     * T257: the last barometer sample (hPa, [ReadoutValue.source] `sensor` or `replay`; a dash once it is older than the
+     * barometer's staleness window), the last fix's horizontal accuracy (m) and its age (s). Hidden while switched off or
+     * with nothing to show; the phone's bar draws the pressure from its own last sample ([PressureSample]s reach the
+     * estimator only once a fix has set the clock).
+     */
+    val pressure: ReadoutValue = ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = "no samples"),
+    val accuracy: ReadoutValue = ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = "no fix"),
+    val fixAge: ReadoutValue = ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "no fix"),
 ) {
     operator fun get(entry: ReadoutEntry): ReadoutValue = when (entry) {
         ReadoutEntry.SPEED -> speed
         ReadoutEntry.CLIMB -> climb
         ReadoutEntry.COURSE -> course
         ReadoutEntry.ELEVATION -> elevation
+        ReadoutEntry.PRESSURE -> pressure
+        ReadoutEntry.ACCURACY -> accuracy
+        ReadoutEntry.FIX_AGE -> fixAge
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "timeMs" to timeMs, "activity" to activity.code,
         "speed" to speed.json(), "climb" to climb.json(), "course" to course.json(), "elevation" to elevation.json(),
+        "pressure" to pressure.json(), "accuracy" to accuracy.json(), "fixAge" to fixAge.json(), // T257
         "gapS" to gapS?.let { r3(it) }, "heights" to heights.json(), "barometer" to barometer.json(),
         "fixSpeedMps" to fixSpeedMps?.let { r3(it) }, "routeSpeedMps" to routeSpeedMps?.let { r3(it) },
         "counters" to counters, "provenance" to provenance,
@@ -588,6 +601,25 @@ class ReadoutEstimator(
             b.copy(mode = mode, pinnedAt = pn?.tMs, pinnedName = pn?.name, pinnedSigmaM = pn?.sigmaM, pinnedEleM = pn?.eleM, pinnable = fused,
                 pinEnd = if (pn != null) null else if (filter.pin != null) (if (fused) "sigma" else "barometer") else filter.pinEnd)
         }
+        // T257: the pressure as last read, the fix's accuracy and its age.
+        val sampleMs = lastSampleMs
+        val pressure = when {
+            !options.pressure.shown -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = "off")
+            lastPressureHPa == null || sampleMs == null -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = "no samples")
+            nowMs - sampleMs > ElevationFilter.BARO_FRESH_MS -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.DASH, source = lastSampleSource?.code, reason = "silent")
+            else -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.SHOWN, lastPressureHPa, source = lastSampleSource?.code)
+        }
+        val accuracy = when {
+            !options.accuracy.shown -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = "off")
+            last == null -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = "no fix")
+            last.hAcc == null || !last.hAcc.isFinite() || last.hAcc <= 0 -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.DASH, dimmed = dim, reason = "not given")
+            else -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.SHOWN, last.hAcc, source = "fix", dimmed = dim)
+        }
+        val fixAge = when {
+            !options.fixAge.shown -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "off")
+            last == null -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "no fix")
+            else -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.SHOWN, ((nowMs - last.t) / 1000.0).coerceAtLeast(0.0), source = "fix")
+        }
         val heights = ReadoutHeights(
             last?.ele,
             filter.lastBaroAltM?.takeIf { filter.offsetKnown }?.let { it - filter.offsetM },
@@ -610,7 +642,8 @@ class ReadoutEstimator(
         return Readout(nowMs, activity, speed, climb, course, elevation, gapS, heights, baroState, fixSpeed?.first ?: pos?.first, route?.first, c,
             if (filter.priors > 0) listOf(STATION_SOURCE_ID) else emptyList(),
             climbWindowS = if (windowed) options.climbWindowS else null,
-            climbFilledS = if (windowed) minOf(climbSpanS, options.climbWindowS.toDouble()) else null)
+            climbFilledS = if (windowed) minOf(climbSpanS, options.climbWindowS.toDouble()) else null,
+            pressure = pressure, accuracy = accuracy, fixAge = fixAge)
     }
 
     /** The climb as the filter and the window give it at [nowMs] (also snapshotted at each fix for a gap, T192). */

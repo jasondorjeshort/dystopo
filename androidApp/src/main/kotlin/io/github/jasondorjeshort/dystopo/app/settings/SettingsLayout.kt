@@ -92,6 +92,8 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T203: the terrain estimate's switch (Navigation and tracking, last)
     ESTIMATE_POSITION(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_ESTIMATE_POSITION, SettingsGroup.NAVIGATION, "Estimate position when GPS is poor", "SettingsPages", "T203"),
     // end T203
+    // T257: the extended readout and the pressure (Navigation and tracking, last: the manifest's orders up to the map's elements are taken)
+    READOUT_EXTENDED("readoutExtended", SettingsGroup.NAVIGATION, "Extended readout", "SettingsPages", "T257"),
     // T213: the trail disagreements' layer switch (the Map page, last)
     SHOW_DIVERGENCE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SHOW_DIVERGENCE, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.routing.DivergenceText.SETTING, "SettingsPages", "T213"),
     // end T213

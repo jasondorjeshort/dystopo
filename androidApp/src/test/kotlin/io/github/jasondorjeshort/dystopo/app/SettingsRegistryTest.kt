@@ -79,20 +79,38 @@ class SettingsRegistryTest {
         AppSettings.load(FakePrefs(mapOf("server" to "", "cacheBudgetMb" to io.github.jasondorjeshort.dystopo.app.cachebudget.BudgetPlan.DEFAULT_MB)))
     }
 
+    /**
+     * T257 (ADR 0033: keys added, none changed): the readout's pressure, GPS accuracy and fix age entries add
+     * `app.readout.<activity>.<entry>` for each of six activities and three entries in `GET /settings`' `readout` map;
+     * the snapshot predates them, so they are taken out before the comparison and checked on their own.
+     */
+    private val t257Entries = listOf("pressure", "accuracy", "fixAge")
+
+    private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
+        m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) }
+            .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
+
+    private fun t257Synced(): Map<String, Any?> = SettingsSync.current().filterKeys { it !in beforeT257(SettingsSync.current()) }
+
     @Test
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
-        assertEquals(SEEDED_SYNCED, canon(SettingsSync.current()))
-        assertEquals(68, SettingsSync.current().size, "every synced key, none added or lost")
-        assertEquals(SEEDED_JSON, canon(AppSettings.json()))
+        assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
+        assertEquals(68 + 18, SettingsSync.current().size, "every synced key, none lost; T257 added 18")
+        assertEquals(18, t257Synced().size)
+        assertTrue(t257Synced().values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(SEEDED_JSON, canon(beforeT257(AppSettings.json())))
     }
 
     @Test
     fun anEmptyStoreHasTheSameDefaults() {
         val empty = FakePrefs(mapOf("server" to ""))
         AppSettings.load(empty)
-        assertEquals(DEFAULT_SYNCED, canon(SettingsSync.current()))
-        assertEquals(DEFAULT_JSON, canon(AppSettings.json()))
+        assertEquals(DEFAULT_SYNCED, canon(beforeT257(SettingsSync.current())))
+        assertEquals(DEFAULT_JSON, canon(beforeT257(AppSettings.json())))
+        @Suppress("UNCHECKED_CAST") val readout = AppSettings.json()["readout"] as Map<String, Any?>
+        assertEquals("shown=1;pace=0;damping=medium;pm=0;knots=0", readout["pressure"], "T257: the pressure on by default")
+        assertEquals("shown=0;pace=0;damping=medium;pm=0;knots=0", readout["accuracy"])
         assertEquals(listOf<Pair<String, Any?>>("cacheBudgetMb" to 1024L), empty.writes, "loading writes only the budget's migration")
     }
 
@@ -144,8 +162,8 @@ class SettingsRegistryTest {
         assertEquals(listOf<Pair<String, Any?>>("readoutBarometerMode" to "never", "readoutBarometer" to null), old.writes.filter { it.first.startsWith("readoutBarometer") })
         assertEquals("never", old.values["readoutBarometerMode"])
         assertTrue("readoutBarometer" !in old.values)
-        assertEquals(SEEDED_SYNCED, canon(SettingsSync.current()))
-        assertEquals(SEEDED_JSON, canon(AppSettings.json()))
+        assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
+        assertEquals(SEEDED_JSON, canon(beforeT257(AppSettings.json())))
         val on = FakePrefs(mapOf("server" to "", "readoutBarometer" to true))
         AppSettings.load(on)
         assertEquals(io.github.jasondorjeshort.dystopo.readout.BarometerMode.AUTO, AppSettings.barometerMode)

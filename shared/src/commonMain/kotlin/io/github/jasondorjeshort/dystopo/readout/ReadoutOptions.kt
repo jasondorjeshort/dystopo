@@ -14,7 +14,20 @@ enum class ReadoutEntry(val code: String) {
     COURSE("course"),
 
     /** Elevation above mean sea level (EGM2008). */
-    ELEVATION("elevation");
+    ELEVATION("elevation"),
+
+    /**
+     * T257: the barometer's air pressure as the sensor reads it (station pressure, not reduced to sea level), hPa;
+     * drawn only on a phone with a barometer (or while a replay feeds a pressure column), whether or not the readout
+     * uses it for the elevation.
+     */
+    PRESSURE("pressure"),
+
+    /** T257: the last fix's horizontal accuracy (its radius as the location provider gives it, metres): the extended readout. */
+    ACCURACY("accuracy"),
+
+    /** T257: how long ago the last fix came (seconds): the extended readout. */
+    FIX_AGE("fixAge");
 
     companion object {
         fun of(code: String?): ReadoutEntry? = entries.firstOrNull { it.code == code }
@@ -67,6 +80,11 @@ enum class Damping(val code: String) {
  * - [plusMinus]: the 1-sigma uncertainty is drawn after the value ("± 3 m").
  * - [knots]: [ReadoutEntry.SPEED] only, honoured for [Activity.BOAT] and [Activity.AIR] only (the owner's answer of
  *   2026-10-25: knots an option for boat and air, never a default).
+ * - [degrees]: T257, [ReadoutEntry.COURSE] only: the degrees after the compass point ("SSE 163°", the default; off: "SSE").
+ * - [magnetic]: T257, [ReadoutEntry.COURSE] only: degrees from magnetic north (by the WMM declination at the fix,
+ *   marked "M"); off, the default, degrees true, unmarked.
+ * - [extra]: T257 (ADR 0033): the `key=value` pairs of a stored or synced value this build does not know (a newer
+ *   build's), kept in their order and written back after the known ones, so an edit here does not drop them.
  */
 data class EntryOptions(
     val shown: Boolean,
@@ -74,25 +92,45 @@ data class EntryOptions(
     val damping: Damping = Damping.MEDIUM,
     val plusMinus: Boolean = false,
     val knots: Boolean = false,
+    val degrees: Boolean = true,
+    val magnetic: Boolean = false,
+    val extra: String = "",
 ) {
-    /** `shown=1;pace=0;damping=medium;pm=0;knots=0`: one settings value. */
+    /**
+     * `shown=1;pace=0;damping=medium;pm=0;knots=0`: one settings value. T257: `deg=0` and `mag=1` only when away from
+     * their defaults, so a value stored before T257 (or never changed since) stays byte for byte as it was; then [extra].
+     */
     fun encode(): String =
-        "shown=${b(shown)};pace=${b(pace)};damping=${damping.code};pm=${b(plusMinus)};knots=${b(knots)}"
+        "shown=${b(shown)};pace=${b(pace)};damping=${damping.code};pm=${b(plusMinus)};knots=${b(knots)}" +
+            (if (!degrees) ";deg=0" else "") + (if (magnetic) ";mag=1" else "") + (if (extra.isEmpty()) "" else ";$extra")
 
     companion object {
         private fun b(v: Boolean) = if (v) 1 else 0
 
-        /** Reads [encode]'s form; a key missing or not understood takes [default]'s value (a newer build may add keys). */
+        /** T257: the keys this build reads; anything else is kept in [extra]. */
+        val KNOWN = setOf("shown", "pace", "damping", "pm", "knots", "deg", "mag")
+
+        /**
+         * Reads [encode]'s form; a key missing or not understood takes [default]'s value (a newer build may add keys).
+         * T257: keys outside [KNOWN] are kept in [extra], after [default]'s own (a key given again takes the new value).
+         */
         fun decode(text: String?, default: EntryOptions): EntryOptions {
             if (text.isNullOrBlank()) return default
-            val m = text.split(';').mapNotNull { kv -> kv.indexOf('=').takeIf { it > 0 }?.let { kv.substring(0, it).trim() to kv.substring(it + 1).trim() } }.toMap()
+            val pairs = text.split(';').mapNotNull { kv -> kv.indexOf('=').takeIf { it > 0 }?.let { kv.substring(0, it).trim() to kv.substring(it + 1).trim() } }
+            val m = pairs.toMap()
             fun flag(k: String, def: Boolean) = when (m[k]) { "1" -> true; "0" -> false; else -> def }
+            val unknown = LinkedHashMap<String, String>()
+            for (kv in default.extra.split(';')) if (kv.indexOf('=') > 0) unknown[kv.substringBefore('=')] = kv.substringAfter('=')
+            for ((k, v) in pairs) if (k !in KNOWN) unknown[k] = v
             return EntryOptions(
                 shown = flag("shown", default.shown),
                 pace = flag("pace", default.pace),
                 damping = Damping.of(m["damping"]) ?: default.damping,
                 plusMinus = flag("pm", default.plusMinus),
                 knots = flag("knots", default.knots),
+                degrees = flag("deg", default.degrees),
+                magnetic = flag("mag", default.magnetic),
+                extra = unknown.entries.joinToString(";") { "${it.key}=${it.value}" },
             )
         }
     }
@@ -107,6 +145,11 @@ data class EntryOptions(
  * - road and rail: speed and elevation (a road app shows a speed badge and no vertical speed);
  * - boat: speed and course (the marine pair, speed and course over ground);
  * - air: ground speed, climb (ft/min), track and GPS altitude, the aviation instrument set.
+ *
+ * T257: the pressure shown for every activity (drawn only where the phone has a barometer) and the course with its
+ * degrees ("SSE 163°", true north); the GNSS accuracy and the fix age (the extended readout) off. The survey of
+ * 2026-11-09 (`out/wave31-research/readout-bar.md`): every app that offers these fields lets the user choose them, so
+ * each is an entry option (ADR 0044), today's set plus the pressure and the degrees the default.
  *
  * The ± is off by default everywhere (no surveyed watch or app shows an accuracy beside the value); damping is
  * medium; knots off ([EntryOptions.knots]). [barometer] is T250's mode ([BarometerMode], T161's on/off switch before it),
@@ -125,12 +168,20 @@ data class ReadoutOptions(
      * keeps its few seconds' lag (a vertical speed indicator, not a hiker's average).
      */
     val climbWindowS: Int = DEFAULT_CLIMB_WINDOW_S,
+    /** T257: the barometer's pressure, shown by default. */
+    val pressure: EntryOptions = EntryOptions(shown = true),
+    /** T257: the extended readout's GNSS accuracy and fix age, off by default. */
+    val accuracy: EntryOptions = EntryOptions(shown = false),
+    val fixAge: EntryOptions = EntryOptions(shown = false),
 ) {
     operator fun get(entry: ReadoutEntry): EntryOptions = when (entry) {
         ReadoutEntry.SPEED -> speed
         ReadoutEntry.CLIMB -> climb
         ReadoutEntry.COURSE -> course
         ReadoutEntry.ELEVATION -> elevation
+        ReadoutEntry.PRESSURE -> pressure
+        ReadoutEntry.ACCURACY -> accuracy
+        ReadoutEntry.FIX_AGE -> fixAge
     }
 
     /** These options with [entry]'s replaced. */
@@ -139,7 +190,13 @@ data class ReadoutOptions(
         ReadoutEntry.CLIMB -> copy(climb = options)
         ReadoutEntry.COURSE -> copy(course = options)
         ReadoutEntry.ELEVATION -> copy(elevation = options)
+        ReadoutEntry.PRESSURE -> copy(pressure = options)
+        ReadoutEntry.ACCURACY -> copy(accuracy = options)
+        ReadoutEntry.FIX_AGE -> copy(fixAge = options)
     }
+
+    /** T257: the extended readout (the "Extended readout" row's switch): the GNSS accuracy and the fix age both shown. */
+    val extended: Boolean get() = accuracy.shown && fixAge.shown
 
     /** Speed reads in knots: asked for, and the activity is boat or air. */
     val knots: Boolean get() = speed.knots && knotsAllowed(activity)

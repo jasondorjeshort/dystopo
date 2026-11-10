@@ -62,6 +62,17 @@ class OverlayLayoutTest {
     private fun OverlayPlacement.isShown(id: String) = this[id]?.rect != null
 
     @Test
+    fun theScaleBarNeverYieldsToTheStripsExtraEntries() = grid { i, o, at -> // T257
+        val k = i.strip[0].height / 40f
+        val extra = i.copy(strip = i.strip + List(3) { OverlaySize(90f * k, 40f * k) }, stripCore = i.strip.size)
+        val e = OverlayLayout.place(extra)
+        assertEquals(emptyList(), e.overlaps(), at)
+        if (o.isShown(OverlayIds.SCALE_BAR)) assertTrue(e.isShown(OverlayIds.SCALE_BAR), "the extra entries cost the scale bar at $at")
+        if (!e.isShown(OverlayIds.SCALE_BAR)) assertTrue(e.entriesDrawn <= i.strip.size, "extra entries kept with the scale bar gone at $at")
+        if (e.isShown(OverlayIds.SCALE_BAR) && o.isShown(OverlayIds.STRIP)) assertTrue(e.entriesDrawn >= o.entriesDrawn, "the core entries kept at $at")
+    }
+
+    @Test
     fun theRectanglesNeverIntersect() = grid { _, o, at ->
         assertEquals(emptyList(), o.overlaps(), at)
     }

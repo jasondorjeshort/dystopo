@@ -981,6 +981,19 @@
       }
     },
     {
+      "id": "readoutExtended",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 35,
+          "zone": "settings",
+          "row": "readoutExtended"
+        }
+      }
+    },
+    {
       "id": "syncStatus",
       "kind": "link",
       "platforms": ["android"],

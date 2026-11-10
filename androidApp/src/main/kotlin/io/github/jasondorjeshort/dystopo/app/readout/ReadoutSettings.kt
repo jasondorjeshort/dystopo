@@ -31,6 +31,15 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
  *
  * Pace and knots belong to speed only; knots is offered for boat and air only (the owner's answer of 2026-10-25), and a
  * value that asks for it elsewhere is kept but not honoured ([ReadoutOptions.knots]).
+ *
+ * T257: three more entries, each `readout.<activity>.<entry>` like the others and synced the same way: `pressure`
+ * (shown by default, drawn only on a phone with a barometer), `accuracy` and `fixAge` (off by default; the
+ * "Extended readout" row turns both on or off for the remembered activity, [EXTENDED]); and two course options,
+ * `deg` (the degrees after the compass point, default on) and `mag` (magnetic north, default off), written only when
+ * away from their defaults. ADR 0033: a value stored before T257 reads as before with the new options at their
+ * defaults (a course "SSE 163°", degrees true; the pressure shown; the extended entries off), and keys this build does
+ * not know are kept in the stored value ([EntryOptions.extra]). ADR 0044: the survey of 2026-11-09 found every app that
+ * offers these fields lets the user choose them.
  */
 object ReadoutSettings {
     const val BAROMETER = "readoutBarometer"
@@ -102,7 +111,13 @@ object ReadoutSettings {
 
     fun entryOfEditKey(key: String): ReadoutEntry? = ReadoutEntry.entries.firstOrNull { editKey(it) == key }
 
-    private val VALUE_KEYS = setOf("shown", "pace", "damping", "pm", "knots")
+    private val VALUE_KEYS = EntryOptions.KNOWN
+
+    /** T257: the entries the "Extended readout" row turns on and off together, for the remembered activity. */
+    val EXTENDED = listOf(ReadoutEntry.ACCURACY, ReadoutEntry.FIX_AGE)
+
+    /** T257: the row's id and its help key; its edits are [EXTENDED]'s `readout.<entry>` (`POST /settings?readout.accuracy=shown=1&readout.fixAge=shown=1`). */
+    const val EXTENDED_ROW = "readoutExtended"
 
     /**
      * Checks a value (whole or partial) and returns [base] with what it sets, or null when a known key has a value
@@ -112,21 +127,31 @@ object ReadoutSettings {
     fun merge(e: ReadoutEntry, raw: String, base: EntryOptions): EntryOptions? {
         val m = raw.split(';').mapNotNull { kv -> kv.indexOf('=').takeIf { it > 0 }?.let { kv.substring(0, it).trim() to kv.substring(it + 1).trim() } }.toMap()
         if (m.keys.none { it in VALUE_KEYS }) return null
-        for (k in listOf("shown", "pace", "pm", "knots")) m[k]?.let { v -> if (v != "0" && v != "1") return null }
+        for (k in listOf("shown", "pace", "pm", "knots", "deg", "mag")) m[k]?.let { v -> if (v != "0" && v != "1") return null }
         m["damping"]?.let { if (Damping.of(it) == null) return null }
         val o = EntryOptions.decode(m.filterKeys { it in VALUE_KEYS }.entries.joinToString(";") { "${it.key}=${it.value}" }, base)
         return normalize(e, o)
     }
 
-    /** Pace and knots only on speed; pace wins over knots. */
-    fun normalize(e: ReadoutEntry, o: EntryOptions): EntryOptions = when {
-        e != ReadoutEntry.SPEED -> o.copy(pace = false, knots = false)
-        o.pace && o.knots -> o.copy(knots = false)
-        else -> o
+    /** Pace and knots only on speed; pace wins over knots. T257: degrees and magnetic only on the course. */
+    fun normalize(e: ReadoutEntry, o: EntryOptions): EntryOptions {
+        val c = if (e != ReadoutEntry.COURSE) o.copy(degrees = true, magnetic = false) else o
+        return when {
+            e != ReadoutEntry.SPEED -> c.copy(pace = false, knots = false)
+            c.pace && c.knots -> c.copy(knots = false)
+            else -> c
+        }
     }
 
-    /** A stored or synced whole value in [EntryOptions.encode]'s form over [a]'s defaults, or null when it is refused ([merge]). */
-    fun parseValue(a: Activity, e: ReadoutEntry, raw: String): String? = merge(e, raw, ReadoutOptions.phoneDefaults(a)[e])?.encode()
+    /**
+     * A stored or synced whole value in [EntryOptions.encode]'s form over [a]'s defaults, or null when it is refused
+     * ([merge]). T257: keys this build does not know are kept ([EntryOptions.extra]).
+     */
+    fun parseValue(a: Activity, e: ReadoutEntry, raw: String): String? {
+        val d = ReadoutOptions.phoneDefaults(a)[e]
+        val o = merge(e, raw, d) ?: return null
+        return o.copy(extra = EntryOptions.decode(raw, d).extra).encode()
+    }
 
     /** [a]'s options: its defaults (T177: [ReadoutOptions.phoneDefaults]) with the [stored] values (by [key]) over them, the barometer's mode and the climb window. */
     fun options(a: Activity, stored: Map<String, String>, barometer: BarometerMode, climbWindowS: Int = ReadoutOptions.DEFAULT_CLIMB_WINDOW_S): ReadoutOptions {
@@ -142,11 +167,27 @@ object ReadoutSettings {
     fun offersPace(e: ReadoutEntry) = e == ReadoutEntry.SPEED
     fun offersKnots(a: Activity, e: ReadoutEntry) = e == ReadoutEntry.SPEED && ReadoutOptions.knotsAllowed(a)
 
+    /** T257: smoothing and the ± belong to the estimated entries (T161's four); the pressure, accuracy and age are raw readings. */
+    fun offersSmoothing(e: ReadoutEntry) = e in ESTIMATED
+
+    /** T257: the course's degrees and its north (true or magnetic). */
+    fun offersNorth(e: ReadoutEntry) = e == ReadoutEntry.COURSE
+
+    private val ESTIMATED = setOf(ReadoutEntry.SPEED, ReadoutEntry.CLIMB, ReadoutEntry.COURSE, ReadoutEntry.ELEVATION)
+
     /** The entry's name as the rows and the strip's captions say it (ADR 0031: the owner adjusts). */
     fun label(e: ReadoutEntry): String = when (e) {
         ReadoutEntry.SPEED -> "Speed"
         ReadoutEntry.CLIMB -> "Climb"
         ReadoutEntry.COURSE -> "Course"
         ReadoutEntry.ELEVATION -> "Elevation"
+        ReadoutEntry.PRESSURE -> "Pressure" // T257
+        ReadoutEntry.ACCURACY -> "GPS accuracy"
+        ReadoutEntry.FIX_AGE -> "Fix age"
     }
+
+    /** T257: the course row's north choices (ADR 0031: the owner adjusts). */
+    const val TRUE_NORTH = "True north"
+    const val MAGNETIC_NORTH = "Magnetic"
+    const val DEGREES = "Degrees"
 }

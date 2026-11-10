@@ -619,6 +619,7 @@ object MapLayout {
             compass = if (turned) CompassView.sizePx()?.let { OverlaySize(it[0] / d, it[1] / d) } else null,
             scaleBar = dp(c.sizeOf(nameOf(OverlayIds.SCALE_BAR))),
             strip = if (stripUp) StripLayout.entrySizesPx.map { OverlaySize(it[0] / d, it[1] / d) } else emptyList(),
+            stripCore = StripLayout.coreEntries, // T257: the extra entries go before the scale bar
             buttons = AppSettings.mapControls.coerceIn(1, 3),
             offCentre = offCentre,
             navigation = card(OverlayIds.NAV_CARD, NavCardBand.layout, 0f, 28f),

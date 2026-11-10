@@ -142,7 +142,8 @@ const val GLANCE_CLOSE_LABEL = "Return to the map"
  * [Glance.open].
  *
  * - **The figures** are the readout bar's own entries as it is set ([GlanceText]: each entry's on/off setting, in the
- *   fixed order elevation, climb, speed, course; the survey of 2026-11-02 found watches show 3 to 5 figures and let the
+ *   fixed order elevation, climb, speed, course, then T257's pressure, GPS accuracy and fix age, the course always with
+ *   its degrees; the survey of 2026-11-02 found watches show 3 to 5 figures and let the
  *   user pick them, and here every entry already has its switch, so there is no second list; no reordering, no pages),
  *   every one drawn whatever the bar left out for room, with the time to the turn-around deadline first while the clock
  *   runs (navigating: [NavSession]'s; recording: [WayBackClock]'s).

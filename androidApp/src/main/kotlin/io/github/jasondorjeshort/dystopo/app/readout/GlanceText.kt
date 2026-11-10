@@ -3,7 +3,9 @@ package io.github.jasondorjeshort.dystopo.app.readout
 /**
  * T210: one line of the glance view ([GlanceView]): a small [caption] over the big [value] with its [unit], the
  * elevation's [trend] arrow and the [plusMinus] when asked for, and the other unit system's [other] text in both-units
- * mode. [kind] is the readout entry's code (`elevation`, `climb`, `speed`, `course`) or [DEADLINE]. The templates are the
+ * mode. [kind] is the readout entry's code (`elevation`, `climb`, `speed`, `course`; T257 `pressure`, `accuracy`,
+ * `fixAge`) or [DEADLINE]. T257 (T238's note): a climb past four digits reads in thousands ("↑12k"), so a replayed
+ * jump's figure no longer outgrows the template the type is fitted on. The templates are the
  * widest texts the line can show (the bar's own, [StripText.template]), so the type size is fitted once and does not
  * change as the figures do. [colour] is the turn-around clock's (`normal`, `amber`, `red`).
  */
@@ -46,7 +48,8 @@ data class GlanceLine(
 
 /**
  * T210: the glance view's words (pure, `GlanceTextTest`). The figures are the readout bar's own entries as it is set
- * ([StripText.items]: each entry's on/off setting, in the fixed order elevation, climb, speed, course), so the view and
+ * ([StripText.items]: each entry's on/off setting, in the fixed order elevation, climb, speed, course; T257: then the
+ * pressure, the GPS accuracy and the fix age, the course as "SSE 163°" whatever the bar's room), so the view and
  * the bar never disagree and there is no second list of figures to keep (the survey of 2026-11-02, ADR 0044); while the
  * turn-around clock runs (navigating, or a recording's way back) the time to it comes first ([deadline]).
  */
