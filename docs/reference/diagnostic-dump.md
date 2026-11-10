@@ -87,9 +87,14 @@ in degrees, a lone decimal of a metre's precision, a box: `DumpScan.places`), na
 text, and so is a file that is not a dump; neither is read further, and any refusal makes the exit status 2 after the
 JSON. The phone scrubs before it writes, so a refusal is a defect to report.
 
-Check a dump with the privacy scanner too: `java tools/PrivacyCheck.java scan < dump.txt` must show no term, value or
-pair hits; its `pairsOutsidePublicAreas` counts timing pairs in log lines such as `avg=78.48ms min=1.04ms` and GC pauses,
-which are not places.
+Check a dump with the privacy scanner too: `java tools/PrivacyCheck.java scan --dump < dump.txt` must show no term,
+value or pair hits (exit 0; 1 on a hit; 2 when the first line is not a dump's). `--dump` (T271) reads the `== `
+sections: the header, `samples`, `starts`, `diagnostics` and any unknown section get the full rules, and the `logcat`
+section the private terms, the pair rule and the scrubber's lone-value rule (`Scrub.LONE`: five or more fraction
+digits) in place of the lenient one, which read log timestamps (`13:36:46.812`), timings and GC pauses as coordinates
+(49 such hits on T258's long dump, 0 places). The JSON adds `dump`, `logcatLines` and `logcatValueRule`. Its
+`pairsOutsidePublicAreas` still counts timing pairs in log lines such as `avg=78.48ms min=1.04ms`, which are not
+places and fail nothing. `python -I tools/test_privacy_check.py` runs the mode on a synthetic dump.
 
 ## Cost (T258, API 35 emulator)
 

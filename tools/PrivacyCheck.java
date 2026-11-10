@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
  *   java tools/PrivacyCheck.java message FILE    # check a commit message (commit-msg)
  *   git log -p --all | java tools/PrivacyCheck.java scan [--pairs FILE]   # whole history (or any text on stdin)
  *   git grep -I -n -e "" | java tools/PrivacyCheck.java scan              # every tracked text file
+ *   java tools/PrivacyCheck.java scan --dump < dystopo-diagnostics-....txt # a diagnostic dump (T271)
  *
  * scan prints counts only (never the matched text, so the private terms stay private): lines read,
  * private-term hits, single coordinate values in a local bbox's lat or lon range (the hook's lenient
@@ -31,6 +32,13 @@ import java.util.regex.Pattern;
  *
  * Without devtool.local.json the hooks pass and scan reports a clean result ("localFile": false,
  * "0 private terms configured"); the public-area pair counts are still made.
+ *
+ * scan --dump reads a diagnostic dump (DumpFormat, `dystopo-dump 1`: header lines, then `== <name>` sections each
+ * ended by an empty line) and scans its header, samples, starts, diagnostics and any unknown section with the full
+ * rules, but the `logcat` section with the private terms, the pair rule and the stricter lone-value rule of the app's
+ * scrubber (Scrub.LONE: a decimal with five or more fraction digits, a metre's precision) in place of the lenient
+ * DECIMAL rule, which reads log timestamps (13:36:46.123) and timings (avg=78.48ms) as coordinates. Input whose first
+ * line is not a dump's exits 2. scan --local FILE reads FILE in place of devtool.local.json (tests on fixtures).
  *
  * devtool.local.json may include  "privateTerms": ["Some Peak", "Some Range", ...]  at top level.
  */
@@ -49,6 +57,8 @@ public class PrivacyCheck {
         Path mainRoot = Path.of(run("git", "rev-parse", "--git-common-dir").trim()).toAbsolutePath().normalize().getParent();
         Path local = root.resolve("devtool.local.json");
         if (!Files.exists(local) && mainRoot != null) local = mainRoot.resolve("devtool.local.json");
+        // T271: scan only; the hooks' staged and message modes always read the real file.
+        if (args[0].equals("scan")) for (int i = 1; i + 1 < args.length; i++) if (args[i].equals("--local")) local = Path.of(args[i + 1]);
         boolean haveLocal = Files.exists(local);
         // T87: without the private file there is nothing private to check. The hooks pass; scan still reads its
         // input and reports a clean result with "0 private terms configured" (an empty output read as a failure).
@@ -129,11 +139,19 @@ public class PrivacyCheck {
     }
 
     private static final Pattern PAIR = Pattern.compile("(-?\\d{1,3}\\.\\d{2,})[^\\d\\n]{1,24}?(-?\\d{1,3}\\.\\d{2,})");
+    /** The app scrubber's lone-value rule (Scrub.LONE): five or more fraction digits, not inside a word, number or placeholder. */
+    private static final Pattern LONE = Pattern.compile("(?:^|[^\\w.\\-<])(-?\\d{1,3}\\.\\d{5,})(?![\\w.])");
+    private static final String DUMP_PREFIX = "dystopo-dump ", DUMP_SECTION = "== ", DUMP_LOGCAT = "logcat";
 
     /** Counts-only scan of stdin; see the class comment. Exit 1 when any private hit is found. */
     private static void scan(String[] args, Set<String> terms, List<double[]> boxes, Path root, boolean haveLocal) throws IOException {
         Path pairsOut = null;
-        for (int i = 1; i < args.length; i++) if (args[i].equals("--pairs") && i + 1 < args.length) pairsOut = Path.of(args[++i]);
+        boolean dump = false;
+        for (int i = 1; i < args.length; i++) {
+            if (args[i].equals("--pairs") && i + 1 < args.length) pairsOut = Path.of(args[++i]);
+            else if (args[i].equals("--local") && i + 1 < args.length) i++; // read in main
+            else if (args[i].equals("--dump")) dump = true;
+        }
         List<double[]> publicBoxes = new ArrayList<>();
         Path areas = root.resolve("areas.json");
         if (Files.exists(areas)) {
@@ -146,18 +164,30 @@ public class PrivacyCheck {
                 publicBoxes.add(b);
             }
         }
-        long lineCount = 0, termHits = 0, valueHits = 0, pairHits = 0, outsidePairs = 0;
+        long lineCount = 0, termHits = 0, valueHits = 0, pairHits = 0, outsidePairs = 0, logcatLines = 0;
+        String section = null; // --dump: the section being read; null in the header and between sections
         Set<String> hitCommits = new LinkedHashSet<>();
         Set<String> outside = new java.util.TreeSet<>();
         String commit = "-";
         var in = new java.io.BufferedReader(new java.io.InputStreamReader(System.in, StandardCharsets.UTF_8));
         for (String line; (line = in.readLine()) != null; ) {
             lineCount++;
+            boolean logcat = false;
+            if (dump) {
+                if (lineCount == 1 && !line.startsWith(DUMP_PREFIX)) {
+                    System.err.println("scan --dump: the first line is not a diagnostic dump's (\"" + DUMP_PREFIX + "1\")");
+                    System.exit(2);
+                }
+                if (line.isEmpty()) section = null;
+                else if (section == null && lineCount > 1 && line.startsWith(DUMP_SECTION)) section = line.substring(DUMP_SECTION.length()).strip();
+                else logcat = DUMP_LOGCAT.equals(section);
+                if (logcat) logcatLines++;
+            }
             if (line.startsWith("commit ") && line.length() >= 47) commit = line.substring(7, 19);
             String norm = normalize(line);
             boolean hit = false;
             for (String t : terms) if (norm.contains(t)) { termHits++; hit = true; break; }
-            if (coordinateHit(line, boxes) != null) { valueHits++; hit = true; }
+            if ((logcat ? loneHit(line, boxes) : coordinateHit(line, boxes)) != null) { valueHits++; hit = true; }
             Matcher p = PAIR.matcher(line);
             while (p.find()) {
                 double a = Double.parseDouble(p.group(1)), b = Double.parseDouble(p.group(2));
@@ -175,6 +205,7 @@ public class PrivacyCheck {
             + ", \"termHits\": " + termHits + ", \"coordinateValueHits\": " + valueHits + ", \"coordinatePairHits\": " + pairHits
             + ", \"commitsWithHits\": " + hitCommits.size() + ", \"publicAreas\": " + publicBoxes.size()
             + ", \"pairsOutsidePublicAreas\": " + outsidePairs + ", \"distinctPairsOutsidePublicAreas\": " + outside.size()
+            + (dump ? ", \"dump\": true, \"logcatLines\": " + logcatLines + ", \"logcatValueRule\": \"lone\"" : "")
             + ", \"localFile\": " + haveLocal + ", \"note\": \"" + (haveLocal ? terms.size() + " private terms configured" : "0 private terms configured: no devtool.local.json") + "\"}");
         if (termHits + pairHits + valueHits > 0) System.exit(1);
     }
@@ -188,14 +219,22 @@ public class PrivacyCheck {
     }
 
     private static String coordinateHit(String text, List<double[]> boxes) {
-        Matcher d = DECIMAL.matcher(text);
+        return valueHit(DECIMAL.matcher(text), 0, boxes);
+    }
+
+    /** The dump's logcat value rule (T271): only a lone decimal of a metre's precision is checked against the boxes. */
+    private static String loneHit(String text, List<double[]> boxes) {
+        return valueHit(LONE.matcher(text), 1, boxes);
+    }
+
+    private static String valueHit(Matcher d, int group, List<double[]> boxes) {
         while (d.find()) {
-            double v = Double.parseDouble(d.group());
+            double v = Double.parseDouble(d.group(group));
             for (double[] b : boxes) {
                 for (double c : new double[]{v, -v}) {
                     boolean lon = c >= b[0] - MARGIN_DEG && c <= b[2] + MARGIN_DEG;
                     boolean lat = c >= b[1] - MARGIN_DEG && c <= b[3] + MARGIN_DEG;
-                    if (lon || lat) return "coordinate " + d.group();
+                    if (lon || lat) return "coordinate " + d.group(group);
                 }
             }
         }
@@ -230,7 +269,7 @@ public class PrivacyCheck {
     }
 
     private static void usage() {
-        System.err.println("usage: PrivacyCheck staged | PrivacyCheck message FILE | PrivacyCheck scan [--pairs FILE] < text");
+        System.err.println("usage: PrivacyCheck staged | PrivacyCheck message FILE | PrivacyCheck scan [--pairs FILE] [--dump] [--local FILE] < text");
         System.exit(2);
     }
 }
