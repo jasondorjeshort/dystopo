@@ -104,8 +104,14 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * `jitter`, `no samples`, `silent`; null in use); `readout.climb.state` adds `unknown` ("?": `reason` `filling`,
  * `uncertain`, `no fix`) and its `dash` means only `contradiction`; `readout.counters` adds `disagreements` and
  * `agreements`; `bar.fields` and `drawn` `state` add `unknown`.
+ * T257: `bar` adds `entries` (the entries shown, in the bar's order: elevation, climb, speed, course, pressure,
+ * accuracy, fixAge), `drawn` and `dropped` (those the bar draws now and leaves out for room, `courseDegrees` first when
+ * the course is drawn as its point alone), `extended`, `course` (`degrees`, `north` `true` or `magnetic`,
+ * `declinationDeg`, `mark` null, `M` or `T`) and `pressure` (`drawn`, `hPa`, `source` `sensor` or `replay`, `ageS`);
+ * `bar.fields` add `compact`; `readout` adds `pressure`, `accuracy` and `fixAge`; `options` the three new entries.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
- * `climbWindow=300`, T178 `pressureFallWarning=more`; `SettingsRoutes`).
+ * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
+ * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).
  */
 object ScaleBarRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
