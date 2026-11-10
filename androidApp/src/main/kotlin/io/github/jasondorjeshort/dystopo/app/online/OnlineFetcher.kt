@@ -278,6 +278,30 @@ class OnlineFetcher(
         return unavailable ?: Fetch.Missing
     }
 
+    /**
+     * T254: tile [path] of [route] if the phone holds it: each source's cache at its current version, then the versions
+     * pinned areas hold; null otherwise. Never the network, and nothing is recorded: no request, no negative-cache entry
+     * (the wider-zoom fallback asks for the ancestors of a tile it could not fetch, [WiderZoom]).
+     */
+    fun cachedOnly(route: String, path: String): ByteArray? {
+        for (s in sourceList) {
+            cache.get("${s.prefix(route)}/$path")?.let { if (!(it.isEmpty() && route in EMPTY_IS_MISS)) return it }
+        }
+        val name = VERSION_OF[route] ?: return null
+        val p = pins.pins()
+        if (p.isEmpty) return null
+        for (s in sourceList) for (v in p.versions(s.key, name)) {
+            if (v == (s.versions[name] ?: "")) continue
+            val bytes = cache.get("${s.prefixAt(route, v)}/$path") ?: continue
+            if (bytes.isNotEmpty()) return bytes
+        }
+        return null
+    }
+
+    /** T254: true when [cachedOnly] would find tile [path] of [route] (the current versions without reading the bytes). */
+    fun hasCached(route: String, path: String): Boolean =
+        sourceList.any { cache.contains("${it.prefix(route)}/$path") } || (!pins.pins().isEmpty && cachedOnly(route, path) != null)
+
     private fun getFrom(s: Source, route: String, path: String, transform: (ByteArray) -> ByteArray): Fetch {
         val tile = "$route/$path"
         val now = clock()

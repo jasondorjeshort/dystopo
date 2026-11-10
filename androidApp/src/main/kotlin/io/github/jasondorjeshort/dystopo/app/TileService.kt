@@ -144,10 +144,20 @@ class Timing(private val keepRecent: Int = 20) {
 
 fun round1(d: Double) = Math.round(d * 10) / 10.0
 
-/** HTTP-ish result of a tile request. */
-class TileResult(val status: Int, val contentType: String, val body: ByteArray) {
+/**
+ * HTTP-ish result of a tile request. T254: [widerZoom] is set on a tile the phone lacked and answered with the tile cut
+ * from its nearest ancestor ([io.github.jasondorjeshort.dystopo.app.online.WiderZoom]): the ancestor's zoom, sent as the
+ * [WIDER_HEADER] header and logged in `GET /stats/requests` (`widerZoom`).
+ */
+class TileResult(val status: Int, val contentType: String, val body: ByteArray, val widerZoom: Int? = null) {
+    /** The response headers beyond the content type: [WIDER_HEADER] on a tile cut from a wider zoom. */
+    val headers: Map<String, String> get() = widerZoom?.let { mapOf(WIDER_HEADER to it.toString()) } ?: emptyMap()
+
     companion object {
         fun notFound() = TileResult(404, "text/plain", "not found\n".toByteArray())
+
+        /** T254: names the zoom of the ancestor a tile was cut from (absent on a tile the phone holds itself). */
+        const val WIDER_HEADER = "X-Dystopo-Wider-Zoom"
     }
 }
 
@@ -375,6 +385,7 @@ class TileService(
         val dropped = synchronized(pyramids) {
             pyramids.values.sumOf { p -> p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4 }.also { pyramids.clear() }
         }
+        runCatching { packWider.trimMemory() } // T254 (registered with the heap guard before it is made)
         return dropped + cliffs.trimMemory() + (online?.trimMemory() ?: 0L)
     }
 
@@ -572,10 +583,7 @@ class TileService(
             dem.notFound.incrementAndGet()
             return TileResult.notFound()
         }
-        val argb = TileWindows.encodeTerrarium(grid)
-        val bitmap = Bitmap.createBitmap(argb, grid.width, grid.height, Bitmap.Config.ARGB_8888)
-        val png = ByteArrayOutputStream(64 * 1024).also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-        bitmap.recycle()
+        val png = terrariumPng(grid)
         demSynthesized.incrementAndGet()
         demSynthesis.add((System.nanoTime() - started) / 1e6, mapOf("tile" to "$z/$x/$y"))
         return ok(dem, "image/png", png)
@@ -591,7 +599,14 @@ class TileService(
             val bytes = pack.tile(z, x, y) ?: continue
             return ok(osm, "application/x-protobuf", atGenerationPriority { cliffs.orient(z, x, y, bytes, cliffDir(pack, z, x, y)) })
         }
+        // T254: no pack stores it (no server set, or a pack's level missing the tile): cut from the nearest ancestor a pack holds.
+        packWider.vector(z, x, y)?.let { c -> return TileResult(200, "application/x-protobuf", c.bytes, widerZoom = c.fromZoom).also { osm.served.incrementAndGet(); osm.bytes.addAndGet(c.bytes.size.toLong()) } }
         return TileResult.notFound().also { osm.notFound.incrementAndGet() }
+    }
+
+    /** T254: vector tiles cut from the nearest ancestor a pack holds, for a tile no pack stores ([osmTile]). */
+    val packWider = io.github.jasondorjeshort.dystopo.app.online.WiderZoom { az, ax, ay ->
+        packs.osmCandidates(az, ax, ay).firstNotNullOfOrNull { it.tile(az, ax, ay) }?.let(io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher::gunzipIfNeeded)
     }
 
     /**
@@ -842,6 +857,15 @@ class TileService(
     }
 
     companion object {
+        /** A Terrarium PNG of [grid] (the pack path's synthesis; T254: the online cache's too). */
+        fun terrariumPng(grid: io.github.jasondorjeshort.dystopo.dem.ElevationGrid): ByteArray {
+            val argb = TileWindows.encodeTerrarium(grid)
+            val bitmap = Bitmap.createBitmap(argb, grid.width, grid.height, Bitmap.Config.ARGB_8888)
+            val png = ByteArrayOutputStream(64 * 1024).also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+            bitmap.recycle()
+            return png
+        }
+
         /**
          * DEM tile decoder (T42): `kotlin` (default), the shared pure-Kotlin [TerrariumPngDecoder] with the
          * pure-Kotlin [Inflate], straight to elevations, no Bitmap; `kotlin-zip`, the same decoder with zlib

@@ -42,7 +42,7 @@ class Request(
     fun copy(query: Map<String, String> = this.query) = Request(method, path, query, body, headers, loopback, peer)
 }
 
-class Response(val status: Int, val contentType: String, val body: ByteArray) {
+class Response(val status: Int, val contentType: String, val body: ByteArray, val headers: Map<String, String> = emptyMap()) { // T254: headers
     companion object {
         fun json(value: Any?, status: Int = 200) = Response(status, "application/json", (JsonWriter.write(value) + "\n").toByteArray())
         fun text(text: String, status: Int = 200) = Response(status, "text/plain; charset=utf-8", text.toByteArray())
@@ -417,6 +417,7 @@ class LocalServer(
             "Content-Type: ${r.contentType}\r\n" +
             "Content-Length: ${r.body.size}\r\n" +
             "Cache-Control: no-cache\r\n" +
+            r.headers.entries.joinToString("") { "${it.key}: ${it.value}\r\n" } + // T254: X-Dystopo-Wider-Zoom
             "Connection: close\r\n\r\n"
         out.write(header.toByteArray())
         if (!head) out.write(r.body)

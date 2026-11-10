@@ -17,11 +17,13 @@ class RequestLog(val capacity: Int = DEFAULT_CAPACITY, private val clock: () -> 
     class Entry(
         val atMs: Long, val method: String, val path: String, val route: String, val pack: String?,
         val status: Int, val bytes: Int, val ms: Long,
+        /** T254: the zoom of the ancestor a tile was cut from (the phone lacked it), else null. */
+        val widerZoom: Int? = null,
     ) {
-        fun json(): Map<String, Any?> = linkedMapOf(
+        fun json(): Map<String, Any?> = linkedMapOf<String, Any?>(
             "event" to "request", "ts" to iso(atMs), "method" to method, "path" to path, "route" to route,
             "pack" to pack, "status" to status, "bytes" to bytes, "ms" to ms,
-        )
+        ).also { m -> widerZoom?.let { m["widerZoom"] = it } }
     }
 
     private val ring = arrayOfNulls<Entry>(capacity)
@@ -32,8 +34,8 @@ class RequestLog(val capacity: Int = DEFAULT_CAPACITY, private val clock: () -> 
     }
 
     /** Records one answered request; [startedAtMs] is when its handler began (wall clock). */
-    fun add(method: String, path: String, status: Int, bytes: Int, startedAtMs: Long, pack: String? = null) {
-        val e = Entry(startedAtMs, method, path, routeOf(path), pack, status, bytes, (clock() - startedAtMs).coerceAtLeast(0))
+    fun add(method: String, path: String, status: Int, bytes: Int, startedAtMs: Long, pack: String? = null, widerZoom: Int? = null) {
+        val e = Entry(startedAtMs, method, path, routeOf(path), pack, status, bytes, (clock() - startedAtMs).coerceAtLeast(0), widerZoom)
         synchronized(ring) {
             ring[(next % capacity).toInt()] = e
             next++
@@ -54,6 +56,7 @@ class RequestLog(val capacity: Int = DEFAULT_CAPACITY, private val clock: () -> 
                 "requests" to list.size, "bytes" to list.sumOf { it.bytes.toLong() },
                 "statuses" to list.groupingBy { it.status.toString() }.eachCount().toSortedMap(),
                 "maxMs" to list.maxOf { it.ms },
+                "fromWiderZoom" to list.count { it.widerZoom != null }, // T254
             )
         }
         val lines = kept.takeLast(limit.coerceAtLeast(0))

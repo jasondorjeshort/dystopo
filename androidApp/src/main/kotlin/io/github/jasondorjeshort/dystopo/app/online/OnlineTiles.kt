@@ -4,6 +4,10 @@ import io.github.jasondorjeshort.dystopo.app.Pack
 import io.github.jasondorjeshort.dystopo.app.PackSet
 import io.github.jasondorjeshort.dystopo.app.TileResult
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.mvt.MvtDecoder
+import io.github.jasondorjeshort.dystopo.mvt.MvtEncoder
+import io.github.jasondorjeshort.dystopo.mvt.MvtOverzoom
+import io.github.jasondorjeshort.dystopo.mvt.VectorTile
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
@@ -126,7 +130,7 @@ class OnlineTiles(
                     if (direct) DirectTrace.mark("d404 $z/$x/$y")
                     service.demFailed("$z/$x/$y.png")
                 }
-                TileResult.notFound()
+                widerDem(z, x, y) ?: TileResult.notFound() // T254: from a wider zoom the phone holds, else 404
             }
         }
     }
@@ -144,8 +148,59 @@ class OnlineTiles(
         val f = fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded)
         service.served("osm", f)
         if (f is Fetch.Unavailable) service.osmFailed(path)
-        return if (f is Fetch.Hit) TileResult(200, "application/x-protobuf", f.bytes) else TileResult.notFound()
+        if (f is Fetch.Hit) return TileResult(200, "application/x-protobuf", f.bytes)
+        // T254: not on the phone and not fetched: cut from the nearest ancestor the phone holds; 404 only when none is.
+        return widerOsm.vector(z, x, y)?.let { c ->
+            service.widerServed("osm", c.fromZoom)
+            TileResult(200, "application/x-protobuf", c.bytes, widerZoom = c.fromZoom)
+        } ?: TileResult.notFound()
     }
+
+    /**
+     * T254: vector tiles cut from the nearest ancestor in the online cache (or a pack, where the ancestor lies in one), for
+     * [osmTile]. Cache reads only ([OnlineFetcher.cachedOnly]): nothing is fetched, cached or remembered as missing.
+     */
+    val widerOsm = WiderZoom { az, ax, ay ->
+        (if (packCoversOsm(az, ax, ay)) packs.osmFor(az, ax, ay)?.tile(az, ax, ay)?.let(OnlineFetcher::gunzipIfNeeded) else null)
+            ?: fetcher.cachedOnly("osm", "$az/$ax/$ay.pbf")
+    }
+
+    /**
+     * T254: DEM tile z/x/y the phone lacks, from the nearest ancestor within [WiderZoom.MAX_DEPTH] levels that the online
+     * cache or a pack holds, overzoomed bilinearly from that ancestor alone ([widerDemGrid]) as the pack path's
+     * synthesis does ([io.github.jasondorjeshort.dystopo.app.TileService.demTile]). Null when no ancestor is on the phone.
+     * Not cached; recorded for [viewSource] ([OnlineService.recordWider]).
+     */
+    private fun widerDem(z: Int, x: Int, y: Int): TileResult? {
+        val started = System.nanoTime()
+        var found: Triple<Int, Int, Int>? = null
+        for (d in 1..WiderZoom.MAX_DEPTH) {
+            val az = z - d
+            if (az < demMinZoom) break
+            val ax = x shr d
+            val ay = y shr d
+            val has = if (packCoversDem(az, ax, ay)) packs.demFor(az, ax, ay)?.tile(az, ax, ay) != null else fetcher.hasCached("dem", "$az/$ax/$ay.png")
+            if (has) {
+                found = Triple(az, ax, ay)
+                break
+            }
+        }
+        val from = found ?: return null
+        // A pyramid of its own over the ancestor's level, read from the phone only: the shared one ([pyramid]) would remember
+        // the missing deeper tiles, and a contour or shade tile made from it later would overzoom the ancestor without
+        // knowing a tile was missing, and be kept in the cache.
+        val grid = widerDemGrid(z, x, y, from.first, decoder) { tz, tx, ty ->
+            if (packCoversDem(tz, tx, ty)) packs.demFor(tz, tx, ty)?.tile(tz, tx, ty) else fetcher.cachedOnly("dem", "$tz/$tx/$ty.png")
+        } ?: return null
+        val png = io.github.jasondorjeshort.dystopo.app.TileService.terrariumPng(grid)
+        service.recordWider(z, x, y, from)
+        service.widerServed("dem", from.first)
+        widerDemTiming.add((System.nanoTime() - started) / 1e6, mapOf("tile" to "$z/$x/$y", "from" to from.first))
+        return TileResult(200, "image/png", png, widerZoom = from.first)
+    }
+
+    /** T254: [widerDem]'s times (`GET /online` `wider.dem`). */
+    val widerDemTiming = io.github.jasondorjeshort.dystopo.app.Timing(keepRecent = 12)
 
     /**
      * A glyph range the device does not have, from the server; null when the server has none either (the
@@ -218,6 +273,7 @@ class OnlineTiles(
 
     /** T127: drops the online pyramid's decoded DEM tiles (made again from the online cache); the bytes dropped. */
     fun trimMemory(): Long = synchronized(this) {
+        widerOsm.trimMemory() // T254: the decoded ancestors
         val p = current?.pyramid
         current = null
         p?.let { it.cachedTiles.toLong() * it.tileSize * it.tileSize * 4 } ?: 0L
@@ -332,7 +388,8 @@ class OnlineTiles(
 
     /**
      * Where the view centred at [lat], [lon] at map zoom [zoom] gets its terrain: `pack`, `online`
-     * (fetched this session), `cached` (from the online disk cache) or `none` (nothing loaded there yet).
+     * (fetched this session), `cached` (from the online disk cache), `wider` (T254: cut from a wider zoom the phone holds,
+     * [WIDER]; the tile returned is that ancestor) or `none` (nothing loaded there yet).
      * T236 (ADR 0056 B3): with the DEM tile it matched (z, x, y; null for `pack` and `none`), so the chip can ask whether that
      * tile lies in an offline map on the list ([io.github.jasondorjeshort.dystopo.app.areas.Areas.isRecorded]).
      */
@@ -344,7 +401,8 @@ class OnlineTiles(
         if (packCoversDem(z0, x0, y0)) return PACK to null
         for (z in listOf(zt, zt - 1, zt + 1, zt - 2).filter { it in 0..DEM_MAX_ZOOM }) {
             val t = tile(z)
-            service.demSource(t.first, t.second, t.third)?.let { return it to t }
+            // T254: a tile cut from a wider zoom names its ancestor (the tile the phone holds, which an offline map may record).
+            service.demSource(t.first, t.second, t.third)?.let { return it to (if (it == WIDER) service.widerAncestor(t.first, t.second, t.third) ?: t else t) }
         }
         return NONE to null
     }
@@ -404,6 +462,17 @@ class OnlineTiles(
         fun shadeReadZoom(floor: Int?, z: Int): Int? =
             floor?.takeIf { it > z && it - z <= io.github.jasondorjeshort.dystopo.tiles.ShadeTiles.MAX_OVERSAMPLE }
 
+        /**
+         * T254: DEM tile z/x/y overzoomed (bilinear) from zoom [fromZoom] alone, through a pyramid of its own whose only level
+         * is [fromZoom], read through [read] (the phone's cache and packs): the ancestor and the neighbours its edge needs,
+         * nothing deeper and nothing shared. Null when that level has no elevation in the tile. Pure, tested (`WiderZoomTest`).
+         */
+        fun widerDemGrid(z: Int, x: Int, y: Int, fromZoom: Int, decoder: ImageDecoder, read: (Int, Int, Int) -> ByteArray?): io.github.jasondorjeshort.dystopo.dem.ElevationGrid? {
+            val p = DemPyramid(fromZoom, fromZoom, decoder, cacheTiles = 9) { tz, tx, ty -> if (tz == fromZoom) read(tz, tx, ty) else null }
+            val ts = p.tileSize
+            return p.window(z, x * ts, y * ts, ts, ts).takeUnless { g -> g.values.all { it.isNaN() } }
+        }
+
         /** True when tile z/x/y and box [b] overlap (touching edges do not count). */
         fun tileOverlaps(b: PackBounds, z: Int, x: Int, y: Int): Boolean {
             val west = WebMercator.xToLon(x.toDouble(), z)
@@ -422,6 +491,8 @@ class OnlineTiles(
         const val OSM_MAX_ZOOM = 14
         const val PACK = "pack"
         const val NONE = "none"
+        /** T254: the view's terrain was cut from a wider zoom the phone holds ([WiderZoom]); T255 shows "from a wider zoom". */
+        const val WIDER = OnlineService.WIDER
 
         /**
          * The DEM tiles (z, x, y) a window of [size] global pixels at ([px], [py]) of zoom [z] samples,
@@ -445,5 +516,110 @@ class OnlineTiles(
             for (ty in ty0..ty1) for (tx in tx0..tx1) out += Triple(tz, tx.toInt(), ty.toInt())
             return out
         }
+    }
+}
+
+/**
+ * T254: a vector tile the phone lacks, cut from the nearest ancestor it holds. MapLibre Native paints a 404 as an empty
+ * tile and never stands the parent in (its `tile_loader_impl.hpp`; seen on the emulator: offline at z12 over a view
+ * cached at z9, every vector tile was answered 404 and nothing of them drew), so the loopback server answers such a tile
+ * with the ancestor's geometry cut to the child ([MvtOverzoom]) instead. [ancestor] reads tile z/x/y from the phone only
+ * (the online cache, a pack), never the network; the answer is never written to the cache and touches no negative cache:
+ * the tile itself is fetched as soon as the network allows, as before.
+ *
+ * Up to [maxDepth] levels up ([MAX_DEPTH], five: a view cached at z9 still has its roads at z14, the vector sources'
+ * deepest zoom; past that the geometry is too coarse to draw). The last few ancestors are kept decoded ([KEEP_DECODED]):
+ * the children of one ancestor come in a burst. Thread-safe. [json] reports the cuts and their times.
+ */
+class WiderZoom(private val maxDepth: Int = MAX_DEPTH, private val ancestor: (z: Int, x: Int, y: Int) -> ByteArray?) {
+    /** A cut tile: its bytes, the ancestor's zoom, and the ms the answer took (with the ancestor's decode when it was not kept). */
+    class Cut(val bytes: ByteArray, val fromZoom: Int, val ms: Double, val decoded: Boolean)
+
+    private val decoded = object : LinkedHashMap<Long, VectorTile>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, VectorTile>?) = size > KEEP_DECODED
+    }
+
+    val cuts = java.util.concurrent.atomic.AtomicLong()
+    val decodes = java.util.concurrent.atomic.AtomicLong()
+    val misses = java.util.concurrent.atomic.AtomicLong()
+    val failures = java.util.concurrent.atomic.AtomicLong()
+    /** Answers that waited for another thread's decode of the same ancestor. */
+    val decodeWaits = java.util.concurrent.atomic.AtomicLong()
+    private val decoding = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.CompletableFuture<VectorTile?>>()
+
+    /** The cut and encode of each answer, the ancestor decoded already (`answerMs` in each sample: the whole answer). */
+    val timing = io.github.jasondorjeshort.dystopo.app.Timing(keepRecent = 12)
+
+    /** Each ancestor's decode, once per ancestor kept. */
+    val decodeTiming = io.github.jasondorjeshort.dystopo.app.Timing(keepRecent = 6)
+
+    private fun key(z: Int, x: Int, y: Int) = (z.toLong() shl 58) or (x.toLong() shl 29) or y.toLong()
+
+    /** Tile z/x/y cut from the nearest ancestor [ancestor] has within [maxDepth] levels; null when none. */
+    fun vector(z: Int, x: Int, y: Int): Cut? {
+        val started = System.nanoTime()
+        for (d in 1..maxDepth) {
+            val az = z - d
+            if (az < 0) break
+            val ax = x shr d
+            val ay = y shr d
+            val k = key(az, ax, ay)
+            var fresh = false
+            val tile = synchronized(decoded) { decoded[k] } ?: run {
+                // One decode per ancestor: the children of a view come in a burst, and the others wait for the first.
+                val mine = java.util.concurrent.CompletableFuture<VectorTile?>()
+                val running = decoding.putIfAbsent(k, mine)
+                if (running != null) {
+                    decodeWaits.incrementAndGet()
+                    return@run running.get()
+                }
+                try {
+                    val t = ancestor(az, ax, ay)?.let { bytes ->
+                        val t0 = System.nanoTime()
+                        try {
+                            MvtDecoder.decode(bytes).also {
+                                decodes.incrementAndGet()
+                                fresh = true
+                                decodeTiming.add((System.nanoTime() - t0) / 1e6, mapOf("tile" to "$az/$ax/$ay", "bytes" to bytes.size))
+                            }
+                        } catch (e: IllegalArgumentException) {
+                            failures.incrementAndGet()
+                            null
+                        }
+                    }
+                    if (t != null) synchronized(decoded) { decoded[k] = t }
+                    mine.complete(t)
+                    t
+                } catch (e: Throwable) {
+                    mine.complete(null)
+                    throw e
+                } finally {
+                    decoding.remove(k, mine)
+                }
+            } ?: continue
+            val cutStarted = System.nanoTime()
+            val bytes = MvtEncoder.encode(MvtOverzoom.cut(tile, d, x - (ax shl d), y - (ay shl d)))
+            val now = System.nanoTime()
+            val ms = (now - started) / 1e6
+            cuts.incrementAndGet()
+            timing.add((now - cutStarted) / 1e6, mapOf("tile" to "$z/$x/$y", "from" to az, "bytes" to bytes.size, "answerMs" to Math.round(ms * 10) / 10.0))
+            return Cut(bytes, az, ms, fresh)
+        }
+        misses.incrementAndGet()
+        return null
+    }
+
+    /** Drops the decoded ancestors (the heap guard's trim); the entries dropped. */
+    fun trimMemory(): Int = synchronized(decoded) { decoded.size.also { decoded.clear() } }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "maxDepth" to maxDepth, "cuts" to cuts.get(), "decodes" to decodes.get(), "decodeWaits" to decodeWaits.get(),
+        "noAncestor" to misses.get(), "undecodable" to failures.get(), "kept" to synchronized(decoded) { decoded.size },
+        "cutMs" to timing.json(), "decodeMs" to decodeTiming.json(),
+    )
+
+    companion object {
+        const val MAX_DEPTH = 5
+        const val KEEP_DECODED = 4
     }
 }
