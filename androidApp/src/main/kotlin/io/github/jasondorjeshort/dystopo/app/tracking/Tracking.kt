@@ -292,6 +292,12 @@ class Tracking private constructor(private val app: DystopoApp) {
         io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.here(id, recordedPoints())
     }
 
+    /** T272: the waypoint [waypointId] as the way back's return point (`POST /tracks/wayback?waypoint=`). False when nothing records or no such waypoint. */
+    fun wayBackToWaypoint(waypointId: String): Boolean = call {
+        val id = recorder.activeId ?: return@call false
+        io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.toWaypoint(id, waypointId, recordedPoints())
+    }
+
     /** T180: the way back's start back to the rule (`POST /tracks/wayback?reset=1`). False when nothing records. */
     fun wayBackReset(): Boolean = call {
         val id = recorder.activeId ?: return@call false

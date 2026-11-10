@@ -16,7 +16,8 @@ import io.github.jasondorjeshort.dystopo.app.MainActivity
  * notification ([ID]) on the [CHANNEL] channel, the [TrackingService]'s foreground notification while the service
  * runs and a plain ongoing one while it cannot ([RecordingStatus.serviceDown]). It shows the state ([RecordingStatus]):
  * the title and text, the time since the start as the system's chronometer while recording (so the text is not
- * redrawn every second), Pause or Resume and Stop. A tap opens the app on the track ([EXTRA_TRACK], [handle]).
+ * redrawn every second), and the panel's actions ([notificationActions], T272): Pause while recording; Resume and Finish
+ * while paused; Finish alone when the system stopped the recording. No one-tap Stop. A tap opens the app on the track ([EXTRA_TRACK], [handle]).
  *
  * The channel is "Track recording" at low importance: silent, no heads-up, an icon in the status bar; the
  * foreground-service type is `location` (the only type under which a service started in the foreground keeps the
@@ -68,12 +69,10 @@ class TrackNotification(private val context: Context) {
             .setDeleteIntent(action(context, ACTION_DISMISSED, 3))
         if (s.state == RecState.RECORDING && startedAtWall != null) b.setWhen(startedAtWall).setShowWhen(true).setUsesChronometer(true)
         else b.setShowWhen(false)
-        if (s.state != RecState.IDLE) {
-            if (!s.serviceDown) {
-                if (s.state == RecState.PAUSED) b.addAction(Notification.Action.Builder(null as android.graphics.drawable.Icon?, "Resume", action(context, ACTION_RESUME, 1)).build())
-                else b.addAction(Notification.Action.Builder(null as android.graphics.drawable.Icon?, "Pause", action(context, ACTION_PAUSE, 1)).build())
-            }
-            b.addAction(Notification.Action.Builder(null as android.graphics.drawable.Icon?, "Stop", action(context, ACTION_STOP, 2)).build())
+        // T272: the panel's two steps (T253): Pause while recording; paused, Resume and Finish. No one-tap Stop.
+        for (label in notificationActions(s.state, s.serviceDown)) {
+            val (act, code) = when (label) { RESUME -> ACTION_RESUME to 1; PAUSE -> ACTION_PAUSE to 1; else -> ACTION_FINISH to 2 }
+            b.addAction(Notification.Action.Builder(null as android.graphics.drawable.Icon?, label, action(context, act, code)).build())
         }
         if (android.os.Build.VERSION.SDK_INT >= 31) b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         return b.build()
@@ -119,6 +118,7 @@ class TrackNotification(private val context: Context) {
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "channel" to CHANNEL, "id" to ID, "title" to shown?.title, "text" to shown?.text, "state" to shown?.state?.code,
+        "actions" to shown?.let { notificationActions(it.state, it.serviceDown) }, // T272
         "posts" to posts, "dismissals" to dismissals, "reposts" to reposts, "repostPending" to repostPending,
     )
 
@@ -129,7 +129,8 @@ class TrackNotification(private val context: Context) {
         const val EXTRA_TRACK = "io.github.jasondorjeshort.dystopo.track"
         const val ACTION_PAUSE = "io.github.jasondorjeshort.dystopo.track.PAUSE"
         const val ACTION_RESUME = "io.github.jasondorjeshort.dystopo.track.RESUME"
-        const val ACTION_STOP = "io.github.jasondorjeshort.dystopo.track.STOP"
+        /** T272: Finish, which saves the track as the panel's Finish does (the action string kept from T159's Stop, so an intent a notification posted before an update still lands). */
+        const val ACTION_FINISH = "io.github.jasondorjeshort.dystopo.track.STOP"
         const val ACTION_DISMISSED = "io.github.jasondorjeshort.dystopo.track.DISMISSED"
 
         fun ensureChannel(context: Context) {
@@ -161,7 +162,7 @@ class TrackNotification(private val context: Context) {
     }
 }
 
-/** T159: the notification's Pause, Resume and Stop, and its dismissal ([TrackNotification]). Not exported. */
+/** T159: the notification's Pause, Resume and Finish (T272; Stop before), and its dismissal ([TrackNotification]). Not exported. */
 class TrackActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
@@ -173,7 +174,7 @@ class TrackActionReceiver : BroadcastReceiver() {
                 when (intent.action) {
                     TrackNotification.ACTION_PAUSE -> t.pause()
                     TrackNotification.ACTION_RESUME -> t.resume()
-                    TrackNotification.ACTION_STOP -> t.stop()
+                    TrackNotification.ACTION_FINISH -> t.stop() // T272: Finish saves, as the panel's does
                     TrackNotification.ACTION_DISMISSED -> t.notificationDismissed()
                 }
             } catch (e: Exception) {
@@ -183,4 +184,16 @@ class TrackActionReceiver : BroadcastReceiver() {
             }
         }.start()
     }
+}
+
+/**
+ * T272: the notification's actions for [state], in order, as the recording panel's record group has them (T253's
+ * [recordGroup]): Pause while recording (auto-paused or waiting for the GPS too); paused, Resume and Finish; when the
+ * system stopped the recording and the service is down, Finish alone (the old Stop, which saved); none when idle. Pure, tested.
+ */
+internal fun notificationActions(state: RecState, serviceDown: Boolean): List<String> = when {
+    state == RecState.IDLE -> emptyList()
+    serviceDown -> listOf(FINISH)
+    state == RecState.PAUSED -> listOf(RESUME, FINISH)
+    else -> listOf(PAUSE)
 }
