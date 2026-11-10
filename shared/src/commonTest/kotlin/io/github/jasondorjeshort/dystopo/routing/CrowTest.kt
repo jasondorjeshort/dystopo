@@ -36,7 +36,7 @@ class CrowTest {
     fun crowIsAStraightLineWithBearingProfileAndOneArrival() {
         val p = Crow.plan(0.0, 0.0, 0.01, 0.01, slope, "Line")
         assertEquals(TravelMode.CROW, p.mode)
-        assertEquals(1573.0, p.distanceM, 5.0)
+        assertEquals(1569.0, p.distanceM, 1.0) // T256: the geodesic on the ellipsoid (haversine gave 1572.5)
         assertEquals(45, Crow.bearingDeg(0.0, 0.0, 0.01, 0.01))
         assertEquals(100.0, p.ascentM!!, 1.0)
         assertEquals(0.0, p.descentM!!, 0.1)
@@ -89,7 +89,7 @@ class CrowTest {
     @Test
     fun aModeThisBuildDoesNotKnowIsNamedAsItIsAndNotEdited() {
         assertEquals("hike", TravelMode.labelOf("hike"))
-        assertEquals("crow", TravelMode.labelOf("crow"))
+        assertEquals("line", TravelMode.labelOf("crow"), "T256: shown as Line, stored as crow")
         assertEquals("bushwhack (unknown mode)", TravelMode.labelOf("bushwhack"))
         assertNotEquals("hike", TravelMode.labelOf("bushwhack"))
         assertTrue(TravelMode.known("crow"))

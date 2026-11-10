@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: feature
-related: [2026-11-07-offline-zoom-keeps-what-wider-zooms-showed.md, 2026-11-07-line-routing-as-a-geodesic-with-no-limits.md]
+related: [2026-11-07-offline-zoom-keeps-what-wider-zooms-showed.md]
 ---
 
 # More of the world on one screen: a flight halfway round it tracked in one view
@@ -21,8 +21,9 @@ the whole world, with the known stretching near the poles.
 
 - The minimum zoom lowered to 0 or 1 with a world basemap on the phone (the sibling idea), and what breaks at
   those zooms (the contour and shade layers, the scale bar's figure, label density).
-- Tracks and line routes drawn across the antimeridian correctly (longitude unwrapping in the overlay, or the
-  geodesic's samples split at the seam), with a test on a track that crosses it.
+- Tracks drawn across the antimeridian correctly (longitude unwrapping in the overlay), with a test on a track that
+  crosses it. Line routes are done: T256 splits the geodesic's samples at the seam (`Geodesic.withSeamPoints`,
+  `Geodesic.splitPieces`, used by the route overlay and the browser's trip editor); a track can use the same split.
 - "Fit the track" on the track card and the route card at any length, so one tap shows the whole flight.
 - Not azimuthal: the owner's own ruling, for the caching's sake; revisit only as a one-off overlay, never as the
   map's projection.

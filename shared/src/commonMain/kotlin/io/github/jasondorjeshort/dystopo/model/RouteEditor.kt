@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.model
 
+import io.github.jasondorjeshort.dystopo.geo.Geodesic
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
@@ -8,7 +9,6 @@ import io.github.jasondorjeshort.dystopo.routing.RouteFailure
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
-import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -22,7 +22,7 @@ import kotlin.math.sqrt
  * leg starts and ends exactly at its via points; elsewhere it stays where it was put.
  *
  * Straight legs get a point every [STRAIGHT_STEP_M] with elevation from [elevation] when there is a
- * sampler (the DEM pack), else only their two ends. Results are [RoutePath.quantized], so what the
+ * sampler (the DEM pack), else a point every [GEODESIC_STEP_M] (a short leg: its two ends); T256: along the geodesic. Results are [RoutePath.quantized], so what the
  * editor returns is exactly what the store keeps.
  *
  * T108: crow ([TravelMode.CROW]) never snaps and never asks the router: every leg is straight, with no note. A path
@@ -116,20 +116,22 @@ class RouteEditor(
 
     /**
      * A straight leg, with DEM elevations every [STRAIGHT_STEP_M] when there is a sampler (T108: at most
-     * [MAX_STRAIGHT_POINTS] points, so a long crow line stays well inside the path's size cap).
+     * [MAX_STRAIGHT_POINTS] points, so a long crow line stays well inside the path's size cap). T256: the points follow
+     * the geodesic ([Geodesic], the shortest line over the ellipsoid), not a line in latitude and longitude; without a
+     * sampler a point every [GEODESIC_STEP_M] keeps a long line on the geodesic (a short leg stays its two ends); where
+     * the line crosses longitude 180 the seam's two points are inserted ([Geodesic.withSeamPoints]) so maps and GPX
+     * files draw it in two pieces.
      */
     fun straight(a: ViaPoint, b: ViaPoint): RouteLeg {
-        val d = TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon)
-        val sampler = elevation ?: return RouteLeg(LegKind.STRAIGHT, listOf(RoutePoint(a.lat, a.lon), RoutePoint(b.lat, b.lon)))
-        val n = min(MAX_STRAIGHT_POINTS - 1, max(1, ceil(d / STRAIGHT_STEP_M).toInt()))
-        val pts = (0..n).map { i ->
-            val f = i.toDouble() / n
-            val lat = a.lat + (b.lat - a.lat) * f
-            val lon = a.lon + (b.lon - a.lon) * f
-            val e = sampler.elevation(lat, lon)
-            RoutePoint(if (i == 0) a.lat else if (i == n) b.lat else lat, if (i == 0) a.lon else if (i == n) b.lon else lon, e.takeUnless { it.isNaN() })
+        val d = Geodesic.distanceM(a.lat, a.lon, b.lat, b.lon)
+        val sampler = elevation
+        val n = Geodesic.samples(d, if (sampler != null) STRAIGHT_STEP_M else GEODESIC_STEP_M, MAX_STRAIGHT_POINTS)
+        val line = Geodesic.points(a.lat, a.lon, b.lat, b.lon, n)
+        val pts = Geodesic.withSeamPoints(line, { it.first }, { it.second }) { lat, lon -> lat to lon }.mapIndexed { i, (lat, lon) ->
+            val e = sampler?.elevation(lat, lon)?.takeUnless { it.isNaN() }
+            if (i == 0) RoutePoint(a.lat, Geodesic.normalizeLon(a.lon), e) else RoutePoint(lat, lon, e)
         }
-        return RouteLeg(LegKind.STRAIGHT, pts)
+        return RouteLeg(LegKind.STRAIGHT, pts.dropLast(1) + RoutePoint(b.lat, Geodesic.normalizeLon(b.lon), pts.last().ele))
     }
 
     /** A new path through [points] (snapped), every leg routed. */
@@ -215,6 +217,9 @@ class RouteEditor(
 
         /** T108: the most points a straight leg gets (beyond 50 km the samples spread out). */
         const val MAX_STRAIGHT_POINTS = 2_001
+
+        /** T256: spacing of the points of a straight leg with no elevation sampler, so a long one follows the geodesic. */
+        const val GEODESIC_STEP_M = 10_000.0
 
         /** The leg of [path] passing nearest to ([lat], [lon]) and its distance in metres; (-1, inf) when there are no legs. */
         fun nearestLeg(path: RoutePath, lat: Double, lon: Double): Pair<Int, Double> {

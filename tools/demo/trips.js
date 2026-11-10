@@ -43,9 +43,9 @@
 // window.dystopoTrips is the scripting surface (tools/demo-check.py --route and --long-route drive the real mouse and read it).
 
 const KEY = "dystopo.trips";
-// T111: the line under the mode picker when crow is chosen: TravelMode.CROW_NOTICE in shared/.../routing/Router.kt
+// T111: the line under the mode picker when crow (T256: shown as "Line") is chosen: TravelMode.CROW_NOTICE in shared/.../routing/Router.kt
 // (BrowserTripsTextTest keeps the two equal; the server also sends it as the crow route's `notice`).
-const CROW_NOTICE = "A crow route is a straight line between the points, not a path to walk.";
+const CROW_NOTICE = "A Line route is the shortest line between the points, not a path to walk.";
 
 function uuid4() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -144,7 +144,7 @@ export function install({ map, base, units, panel, token }) {
   box.id = "trips";
   box.innerHTML = `<summary data-control="routesChip">Trips</summary>
     <div class="row" data-control="flow:planningCard"><button id="trip-plan" type="button" aria-pressed="false" data-control="planningCard">Plan a route</button>
-      <label>Mode <select id="trip-mode"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option><option value="crow">Crow</option></select></label></div>
+      <label>Mode <select id="trip-mode"><option value="hike">Hike</option><option value="bike">Bike</option><option value="drive">Drive</option><option value="crow">Line</option></select></label></div>
     <div class="hint" id="trip-mode-note" hidden>${CROW_NOTICE}</div>
     <div class="hint">Click the start, then the end. Click again to add a stop; drag a numbered point to move it, right-click it to remove it.</div>
     <div id="trip-status" role="status"></div>
@@ -225,11 +225,18 @@ export function install({ map, base, units, panel, token }) {
     } finally { st.busy--; }
   }
 
+  // T256: a leg cut where it crosses longitude 180 (Geodesic.splitPieces), so a long line never spans the whole map.
+  function pieces(cs) {
+    const out = [[]];
+    cs.forEach((c, i) => { if (i > 0 && Math.abs(c[0] - cs[i - 1][0]) > 180) out.push([]); out[out.length - 1].push(c); });
+    return out.filter(p => p.length >= 2);
+  }
+
   function show(reply, fit) {
     st.reply = reply;
     st.error = null;
     const fc = { type: "FeatureCollection", features: reply.legs.map((l, i) => ({ type: "Feature", properties: { kind: l.kind, leg: i },
-      geometry: { type: "LineString", coordinates: l.coordinates.map(c => [c[0], c[1]]) } })) };
+      geometry: { type: "MultiLineString", coordinates: pieces(l.coordinates.map(c => [c[0], c[1]])) } })) };
     setLine(fc);
     drawMarkers(reply.via.map(([lat, lon]) => [lat, lon]));
     const s = reply.summary;
@@ -560,7 +567,7 @@ export function install({ map, base, units, panel, token }) {
       if (t.id === st.id) li.className = "open";
       const label = document.createElement("span");
       label.textContent = t.name + " · " + fmtDist(t.distanceM || 0) + (t.pulled ? " (from the server)" : "");
-      label.title = t.mode ? t.mode + (t.pack ? ", map " + t.pack : "") : "";
+      label.title = t.mode ? (t.mode === "crow" ? "line" : t.mode) + (t.pack ? ", map " + t.pack : "") : "";
       const open = document.createElement("button"); open.type = "button"; open.dataset.control = "flow:routesChip"; open.textContent = "Open"; open.onclick = () => api.load(t.id);
       const del = document.createElement("button"); del.type = "button"; del.dataset.control = "flow:routesChip"; del.textContent = "Delete"; del.onclick = () => api.del(t.id);
       li.append(label, open, del);

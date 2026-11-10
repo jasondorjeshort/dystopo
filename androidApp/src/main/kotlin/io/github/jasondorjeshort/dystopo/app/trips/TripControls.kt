@@ -240,7 +240,7 @@ private fun TripCard(modifier: Modifier) {
             for ((t, label) in listOf("none" to "Drag", "via" to "+Via", "waypoint" to "+Waypoint")) {
                 if (known || t != "via") Toggle(label, Trips.tool == t) { Trips.tool = t } // T108: no via edits in an unknown mode
             }
-            for (m in TravelMode.entries.map { it.label }) Toggle(m.replaceFirstChar { it.uppercase() }, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } } // T108: crow too
+            for (m in TravelMode.entries.map { it.label }) Toggle(TravelMode.of(m)!!.display, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } } // T108: crow too
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (p.path.via.size > 2) {

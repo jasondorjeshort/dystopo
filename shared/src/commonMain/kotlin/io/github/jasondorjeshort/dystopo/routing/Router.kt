@@ -16,10 +16,11 @@ import kotlin.math.roundToLong
 /**
  * How the route is travelled; picks the [CostModel]. Hiking (and biking) first, [DRIVE] (T73) a full second mode
  * (ADR 0032): what drive does and does not do is said once, in [Router.DRIVE_NOTICE]. [CROW] (T108): a straight line
- * between the points ([Crow]), no graph and no trail; its line under the mode picker is [CROW_NOTICE].
+ * between the points ([Crow]), no graph and no trail; its line under the mode picker is [CROW_NOTICE]. T256: [label] is
+ * the stored value (ADR 0033: `crow` stays `crow`), [display] the word people read ("Line" for crow).
  */
-enum class TravelMode(val label: String) {
-    HIKE("hike"), BIKE("bike"), DRIVE("drive"), CROW("crow");
+enum class TravelMode(val label: String, val display: String) {
+    HIKE("hike", "Hike"), BIKE("bike", "Bike"), DRIVE("drive", "Drive"), CROW("crow", "Line");
 
     companion object {
         fun of(label: String?): TravelMode? = entries.firstOrNull { it.label == label?.lowercase() }
@@ -28,10 +29,11 @@ enum class TravelMode(val label: String) {
         val labels: String get() = entries.dropLast(1).joinToString(", ") { it.label } + " or " + entries.last().label
 
         /**
-         * T108 (ADR 0033 Decision 3): how a stored mode is named on a card: a known mode by its label; a mode this
-         * build does not know (a newer Dystopo's, synced here) plainly as itself, marked as unknown, never as hike.
+         * T108 (ADR 0033 Decision 3): how a stored mode is named on a card: a known mode by its word in lower case
+         * ([display]; T256: crow is "line"); a mode this build does not know (a newer Dystopo's, synced here) plainly as
+         * itself, marked as unknown, never as hike.
          */
-        fun labelOf(mode: String?): String = of(mode)?.label ?: "${mode?.trim()?.ifEmpty { null } ?: "no mode"} (unknown mode)"
+        fun labelOf(mode: String?): String = of(mode)?.display?.lowercase() ?: "${mode?.trim()?.ifEmpty { null } ?: "no mode"} (unknown mode)"
 
         /** T108: true for a mode this build can plan and edit; false for a newer Dystopo's (shown and followed, not edited). */
         fun known(mode: String?): Boolean = of(mode) != null
@@ -40,8 +42,8 @@ enum class TravelMode(val label: String) {
         fun unknownModeMessage(mode: String?): String =
             "this route's mode \"${mode ?: ""}\" is from a newer Dystopo: update this app to edit it (it can still be shown and followed)"
 
-        /** T108: the one line under the mode picker when crow is chosen. */
-        const val CROW_NOTICE = "A crow route is a straight line between the points, not a path to walk."
+        /** T108: the one line under the mode picker when crow is chosen. T256 (ADR 0031: listed): reworded for "Line". */
+        const val CROW_NOTICE = "A Line route is the shortest line between the points, not a path to walk."
     }
 }
 
