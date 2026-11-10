@@ -206,7 +206,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         refreshUi()
         refreshOverlay(force = true)
         if (resumed != null) {
-            post { watch.begin(SystemClock.elapsedRealtime()); startTicker() }
+            post { watch.begin(SystemClock.elapsedRealtime()); startTicker(); puck(null) } // T251
             // T180: the way back of the resumed recording, from what it holds (its override is per device, kept).
             post { runCatching { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.rebuild(resumed, recordedPoints()) } }
             // The system restarting the service goes on by itself from its onStartCommand. T229: this object is built on its own
@@ -305,7 +305,9 @@ class Tracking private constructor(private val app: DystopoApp) {
             if (fallback.listening) stopFallback("a GPS fix")
         }
         val before = state
-        if (recorder.onFix(fix)) {
+        val kept = recorder.onFix(fix)
+        puck(if (kept) fix else null) // T251
+        if (kept) {
             wayBackPoint(fix) // T180
             io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.onFix(fix) // T178: the pressure trend's heights
             if (recorder.accepted % 10 == 1L || stateNow() != before) refreshUi() else refreshUiThrottled()
@@ -327,11 +329,23 @@ class Tracking private constructor(private val app: DystopoApp) {
         }
         runCatching { LastFix.record(fix) }
         watch.fallback(now, fix.accuracyM)
-        if (recorder.onFix(fix)) {
+        val kept = recorder.onFix(fix)
+        puck(if (kept) fix else null) // T251
+        if (kept) {
             wayBackPoint(fix) // T180
             refreshUi()
             refreshOverlay()
         }
+    }
+
+    /**
+     * T251 (tracking thread): one position on the map. While a recording takes fixes (not paused, not auto-paused) the puck
+     * follows the fixes the recorder keeps ([kept], drawn flagged as the recorder flagged it) and the map's own listener does
+     * not move it ([io.github.jasondorjeshort.dystopo.app.MapController.onRecorder]); otherwise the map's listener serves.
+     */
+    private fun puck(kept: LocationFix?) {
+        val drives = io.github.jasondorjeshort.dystopo.app.PuckRule.recorderDrives(recorder.recording, recorder.paused, recorder.autoPaused)
+        runCatching { app.map.onRecorder(drives, kept, recorder.lastKept?.flags ?: 0) }
     }
 
     /** The state now (tracking thread). */
@@ -350,6 +364,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             fallbackAccuracyM = if (watch.fallbackRecent(now)) watch.lastFallbackAccuracyM else null,
             startedAt = active?.createdAt?.let(::clock), stoppedAt = stoppedBySystemAt?.let(::clock), serviceDown = serviceDown,
             estimate = TerrainSource.statusLine(AppSettings.units), // T203
+            counts = recorder.counts(), // T251
         )
     }
 
@@ -500,6 +515,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             stoppedBySystemAt = null
             watch.begin(SystemClock.elapsedRealtime())
             recorder.start(n, profile).also { shownId = it.id; io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStart(it.id) } // T180
+                .also { puck(null) } // T251
         }
         startService()
         TerrainSource.update() // T203: recording keeps it watching in the background
@@ -518,6 +534,7 @@ class Tracking private constructor(private val app: DystopoApp) {
                 stoppedBySystemAt = null
                 state = RecState.IDLE
                 notification.cancel()
+                puck(null) // T251: the map's listener again
             }
         }
         io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStop() // T180
@@ -531,14 +548,14 @@ class Tracking private constructor(private val app: DystopoApp) {
 
     /** Holds recording (fixes are ignored until [resume]); false when not recording. */
     fun pause(): Boolean {
-        val ok = call { if (recorder.recording) { recorder.pause(); true } else false }
+        val ok = call { if (recorder.recording) { recorder.pause(); puck(null); true } else false } // T251
         refreshUi()
         return ok
     }
 
     /** Continues a paused recording in a new segment; false when not recording. */
     fun resume(): Boolean {
-        val ok = call { if (recorder.recording) { recorder.resume(); watch.resumed(SystemClock.elapsedRealtime()); true } else false }
+        val ok = call { if (recorder.recording) { recorder.resume(); watch.resumed(SystemClock.elapsedRealtime()); puck(null); true } else false } // T251
         refreshUi()
         return ok
     }

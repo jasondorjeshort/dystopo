@@ -54,8 +54,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.routing.BEST_START_HELP +
             // end T209
             // T213: the long-press card's lines on a stretch the tracks leave the trail.
-            io.github.jasondorjeshort.dystopo.app.divergence.DIVERGENCE_HELP
+            io.github.jasondorjeshort.dystopo.app.divergence.DIVERGENCE_HELP +
             // end T213
+            // T251: the marks on the map, beside the long-press card's line on the position marker.
+            io.github.jasondorjeshort.dystopo.app.tracking.MAP_MARKS_HELP
+            // end T251
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

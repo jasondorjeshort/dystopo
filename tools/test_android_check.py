@@ -3,7 +3,8 @@ expectation per source from the tiles that overlap the pack's bounds, and the re
 count when the view's own delta is 0, with the cases that must not count (the online fallback, a tile outside the view,
 another zoom or source, an error status, an empty log). T170: a contour delta proven by the view's own pack-answered lines.
 T185: Server._open on a local HTTP server: a GET cut short is asked once more, a POST never; a refused port is forwarded
-again (a stand-in for adb that starts the listener) and the request sent once more, both counted.
+again (a stand-in for adb that starts the listener) and the request sent once more, both counted. T251: the puck's look
+against its age.
 
     python -I tools/test_android_check.py
 """
@@ -244,5 +245,15 @@ assert [(d["place"], d["id"]) for d in cmp["onlyNow"]] == [("view summit-z12", "
 assert [(d["place"], d["id"]) for d in cmp["onlyBase"]] == [("cards 2.0/1 planning", "M59")], cmp
 assert cmp["placesOnlyBase"] == [] and cmp["placesOnlyNow"] == [], "a view whose read failed is no place"
 assert ac.layout_compare(base, now, 3)["differs"] == []
+
+# T251: the puck's look against its age and the gap rule.
+assert ac.puck_ok(None), "an app without the puck's state"
+assert ac.puck_ok({"mode": "gps", "ageS": 3.0, "staleAfterS": 300.0})
+assert ac.puck_ok({"mode": "stale", "ageS": 301.0, "staleAfterS": 300.0})
+assert ac.puck_ok({"mode": "gps", "ageS": None, "staleAfterS": 300.0}), "no fix yet"
+assert not ac.puck_ok({"mode": "gps", "ageS": 400.0, "staleAfterS": 300.0}), "blue well past the gap rule"
+assert not ac.puck_ok({"mode": "stale", "ageS": 20.0, "staleAfterS": 300.0}), "grey before it"
+assert ac.puck_ok({"mode": "lost", "ageS": 20.0, "staleAfterS": 300.0}), "the estimate's give-up is grey at any age"
+assert not ac.puck_ok({"mode": "blue", "ageS": 1.0, "staleAfterS": 300.0}) and not ac.puck_ok({"error": "timed out"})
 
 print("test_android_check: ok")

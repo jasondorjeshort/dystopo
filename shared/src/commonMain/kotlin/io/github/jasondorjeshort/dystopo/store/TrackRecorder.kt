@@ -33,6 +33,24 @@ data class LocationFix(
 )
 
 /**
+ * T251: the recorder's counts at one moment ([TrackRecorder.counts]): fixes kept ([accepted]), kept but flagged as poor
+ * ([flagged], estimates included; [lastFlaggedAccuracyM] the last such fix's accuracy), dropped as teleports
+ * ([rejectedSpeed]) or as not newer than the last kept one ([rejectedTime]), and segments started by the gap rule
+ * ([gapSplits]). [dropped] is what the recording card calls dropped: the teleports (a repeat of a fix already kept is
+ * not data lost).
+ */
+data class RecorderCounts(
+    val accepted: Long,
+    val flagged: Long,
+    val rejectedSpeed: Long,
+    val rejectedTime: Long,
+    val gapSplits: Long,
+    val lastFlaggedAccuracyM: Double? = null,
+) {
+    val dropped: Long get() = rejectedSpeed
+}
+
+/**
  * Turns a stream of [LocationFix]es into a track in a [TrackStore]: [start] creates the track,
  * [onFix] appends each kept fix (written through at once, so a kill loses nothing already
  * kept), [pause] and [resume] hold recording, [stop] closes it. It also keeps the active track's points in
@@ -118,6 +136,18 @@ class TrackRecorder(
     /** Gap records written on the active track since [start] (or [recoverInterrupted]). */
     var gapsWritten = 0L
         private set
+    /** T251: the accuracy of the last fix kept flagged over the profile's bound (estimates aside), or null. */
+    var lastFlaggedAccuracyM: Double? = null
+        private set
+    /** T251: the point [onFix] appended last (its flags say how the puck draws it), or null before the first. */
+    var lastKept: TrackPoint? = null
+        private set
+
+    /**
+     * T251: what happened to the recording's fixes, as one value: for the recording card's waiting line and `GET /tracks`,
+     * so a lost fix (nothing arrived) can be told from fixes that arrived and were flagged or dropped.
+     */
+    fun counts(): RecorderCounts = RecorderCounts(accepted, flagged, rejectedSpeed, rejectedTime, gapSplits, lastFlaggedAccuracyM)
 
     val recording: Boolean get() = activeId != null
 
@@ -147,6 +177,8 @@ class TrackRecorder(
         skippedAutoPaused = 0
         gapSplits = 0
         gapsWritten = 0
+        lastFlaggedAccuracyM = null // T251
+        lastKept = null
     }
 
     /** Starts recording into a new track (stopping the current one first) with [profile], which is remembered. */
@@ -216,6 +248,7 @@ class TrackRecorder(
         if (acc != null && bound != null && acc > bound) {
             flags = flags or TrackPoint.INACCURATE
             flagged++
+            if (fix.source != ESTIMATE_SOURCE) lastFlaggedAccuracyM = acc // T251
         }
         if (fix.source == "network" || fix.source == "passive") flags = flags or TrackPoint.NETWORK
         if (fix.source == ESTIMATE_SOURCE) { // T203
@@ -232,6 +265,7 @@ class TrackRecorder(
         store.append(id, point, newSegment, clock())
         if (newSegment || live.isEmpty()) live += ArrayList<TrackPoint>()
         live.last() += point
+        lastKept = point // T251
         newSegment = false
         lastAccepted = fix.copy(accuracyM = acc)
         accepted++
@@ -366,6 +400,7 @@ class TrackRecorder(
         val last = t.points.lastOrNull()
         val lastTime = last?.time ?: s.updatedAt
         lastAccepted = last?.let { LocationFix(it.lat, it.lon, it.ele, lastTime, it.accuracyM) }
+        lastKept = last // T251
         lastFix = lastAccepted
         pending = Pending(GapReason.STOPPED_BY_SYSTEM, lastTime)
     }

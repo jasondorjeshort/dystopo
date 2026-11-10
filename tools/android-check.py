@@ -1206,6 +1206,31 @@ def strip_drawn_check(path, rect, night=False):
     return {"rectPx": rect, "drawnPx": edges, "maxDiffPx": diff}
 
 
+def puck_state(server):
+    """T251: GET /location's `puck` (the look, its source, its age against the gap rule), or None from an app without it."""
+    try:
+        return server.json("/location", timeout=30).get("puck")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return {"error": str(e)[:200]}
+
+
+PUCK_MODES = ("gps", "estimate", "lost", "flagged", "stale")
+
+
+def puck_ok(p, slack_s=5.0):
+    """T251: the puck greys only past the gap rule and is grey well past it; a known look. None (an older app) passes."""
+    if p is None:
+        return True
+    if "error" in p or p.get("mode") not in PUCK_MODES:
+        return False
+    age, after = p.get("ageS"), p.get("staleAfterS")
+    if age is None or not after:
+        return True
+    if p["mode"] == "stale" and age < after - slack_s:
+        return False
+    return not (age > after + slack_s and p["mode"] not in ("stale", "lost"))
+
+
 def screencap(exe, serial, path):
     """T212: the whole screen as the user sees it (the cards are Compose, which `/screenshot`'s map snapshot leaves out)."""
     r = subprocess.run([exe, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
@@ -1777,6 +1802,8 @@ def main():
         if not c["idle"]:  # T115: what held it (pendingTiles: a request still open at the loopback server, an OpenFreeMap fetch for one)
             rep["notIdleBecause"] = m.get("notIdleBecause")
         c["errors"] = all(tiles[s]["errors"] == 0 for s in tiles)
+        rep["puck"] = puck_state(server)  # T251: the position marker's look, source and age at this view
+        c["puck"] = puck_ok(rep["puck"])
         rep["warnings"] = []
         over = [t for t in times if t > args.contour_budget_ms]
         if args.strict:

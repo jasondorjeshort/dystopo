@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: feature
-related: [2026-11-07-turn-back-card-toggle-and-its-clock-in-the-air.md, 2026-11-07-climb-reads-zero-when-the-data-is-contradictory.md]
+related: [2026-11-07-turn-back-card-toggle-and-its-clock-in-the-air.md]
 ---
 
 # The current activity is the app's mode, not a setting of the recording

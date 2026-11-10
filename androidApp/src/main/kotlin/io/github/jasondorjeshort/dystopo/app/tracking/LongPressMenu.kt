@@ -58,6 +58,10 @@ import java.util.Locale
  * tagged height (shared `readout/KnownHeights`) within 100 m of the phone's fix, the barometer in use: one tap sets the
  * readout's height from it ([LiveReadout.pin]) and says "Height set from <name>". The height is in the user's units, so a
  * wrong tag shows before the tap. Offered before Cancel; `GET /map/longpress` › `knownHeight` says why it is or is not.
+ *
+ * T251: a press on the position marker names it in the card's first line ([mark], `MapController.puckMark`: "Your position
+ * (GPS, ±8 m)", "Your position, roughly (a poor GPS fix, ±120 m)", "No position, last known 7 min ago"), with the marks'
+ * help ([MAP_MARKS_HELP]) beside it.
  */
 object LongPressMenu {
     private var pointState by mutableStateOf<Pair<Double, Double>?>(null)
@@ -68,6 +72,7 @@ object LongPressMenu {
         private set(v) {
             val moved = v != pointState
             pointState = v
+            mark = v?.let { markAt(it.first, it.second) } // T251
             if (v == null) {
                 sunRuns.incrementAndGet()
                 sun = null
@@ -97,6 +102,18 @@ object LongPressMenu {
 
     /** A press counts as on a feature within this of it, or a fingertip at the map's zoom when that is wider. */
     const val FINGER_DP = 24.0
+
+    /** T251: the card's first line when the press is on the position marker (what the marker is), else null. */
+    var mark by mutableStateOf<String?>(null)
+        private set
+
+    /** T251: the marker under a fingertip at [lat], [lon] (main thread). */
+    private fun markAt(lat: Double, lon: Double): String? = runCatching {
+        val app = DystopoApp.instance
+        val metersPerDp = app.map.map?.projection?.getMetersPerPixelAtLatitude(lat) ?: return@runCatching null
+        app.map.puckMark(lat, lon, metersPerDp * FINGER_DP)
+    }.getOrNull()
+    // end T251
 
     private fun startKnown(lat: Double, lon: Double) {
         val run = knownRuns.incrementAndGet()
@@ -267,6 +284,7 @@ object LongPressMenu {
         "actions" to actions(), // T114; T213: with T197's "I am at" item when the card draws it
         "sun" to sun?.json(), // T188: the sun line and the terrain day behind it
         "knownHeight" to (if (point != null) knownInfo else null), // T197: "I am at <name>, <height>" and why (not)
+        "mark" to mark, // T251: the position marker's name when the press is on it
     )
 }
 
@@ -294,6 +312,12 @@ internal fun LongPressCard() {
         Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(8.dp)).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        LongPressMenu.mark?.let { m -> // T251: the position marker under the finger, named first
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicText(m, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                HelpIcon("map.marks")
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(String.format(Locale.US, "%.5f, %.5f", p.first, p.second), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 12.sp))
             HelpIcon("longPress.menu") // T109: dropping a waypoint, which was hard to find
@@ -357,3 +381,18 @@ private fun MenuAction(text: String, onClick: () -> Unit) {
         modifier = Modifier.clickable(onClick = onClick).padding(vertical = 6.dp),
     )
 }
+
+/**
+ * T251: what the marks on the map are (the owner's "why do blue dots appear at times on the map?"), shown beside the
+ * long-press card's first line when the press is on the position marker; gathered by `HelpRegistry` (`help/Help.kt`).
+ */
+internal val MAP_MARKS_HELP: List<HelpText> = listOf(
+    HelpText("map.marks", "Marks on the map", "The map: long-press the position marker", show = {
+        val l = DystopoApp.instance.map.lastLocation
+        if (l != null) LongPressMenu.longPress(l.latitude, l.longitude) else LongPressMenu.showAtCentre()
+    }) {
+        "Blue dot: your GPS position, the pale disc its accuracy. Hollow dot in a dashed ring: a rough position (a poor " +
+            "fix, network location or an estimate). Grey dot: last known, no fix for a while. While a track records, the " +
+            "dot sits on its newest point (magenta); it starts at a green one. Yellow dots are waypoints."
+    },
+)

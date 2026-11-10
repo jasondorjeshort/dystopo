@@ -1,7 +1,6 @@
 ---
 date: 2026-11-07
 kind: feature
-related: [2026-11-07-climb-reads-zero-when-the-data-is-contradictory.md]
 ---
 
 # The readout shows the barometer's pressure when the phone has one, even when it is not used

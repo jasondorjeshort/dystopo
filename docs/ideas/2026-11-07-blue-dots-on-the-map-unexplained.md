@@ -20,7 +20,7 @@ known; the screenshot shows the recorded track's start (green) and current (mage
 
 ## Open
 
-- One position on the map: the puck and the track's head draw from one source while a recording runs (the sibling
-  idea), and the puck says "no fix" rather than vanishing.
+- ~~One position on the map~~: built by T251 (the puck follows the recorder's kept fixes while a recording runs, greys
+  after the activity's gap rule, and the long-press card's first line names it; `docs/reference/android-app.md`).
 - Every mark on the map answers a tap with its name (a small label or the long-press menu's first line), so an
   unexplained dot can explain itself; the help registry (T218's `help/Help.kt`) lists the marks.
