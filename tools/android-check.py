@@ -165,16 +165,19 @@ def read_views(args):
 
 
 def read_offline(args):
-    """T254: the tour file's `@offline <z/lat/lon>;<z/lat/lon>` lines (offline_step): the first view is looked at online,
-    the second offline, inside the first's tiles."""
+    """T254: the tour file's `@offline <z/lat/lon>;<z/lat/lon>[ | <z/lat/lon>;<z/lat/lon>]` lines (offline_step): in each
+    pair the first view is looked at online, the second offline, inside the first's tiles; a second pair is the retry."""
     steps = []
     if args.views_file:
         with open(args.views_file, encoding="utf-8") as f:
             for line in f:
                 line = line.split("#", 1)[0].strip()
                 if line.startswith("@offline"):
-                    a, b = line[len("@offline"):].strip().split(";")
-                    steps.append({"online": parse_view(a.strip() + ":online"), "offline": parse_view(b.strip() + ":offline")})
+                    pairs = []
+                    for pair in line[len("@offline"):].split("|"):
+                        a, b = pair.strip().split(";")
+                        pairs.append({"online": parse_view(a.strip() + ":online"), "offline": parse_view(b.strip() + ":offline")})
+                    steps.append({"pairs": pairs})
     return steps
 
 
@@ -1107,7 +1110,7 @@ def cache_kinds(paths):
     return dict(sorted(out.items()))
 
 
-def online_tiles_fetched(server, base, z, wait_s):
+def online_tiles_fetched(server, base, z, wait_s, want=None):
     """T254: the vector tiles at zoom `z` the online phase fetched (answered 200 and not cut from a wider zoom) since request
     log line `base`, waited for up to `wait_s` while vector requests are still coming (a cold view's tiles queue behind the
     DEM renders for minutes)."""
@@ -1119,19 +1122,78 @@ def online_tiles_fetched(server, base, z, wait_s):
         new = lines[max(0, len(lines) - (total - base)):]
         seen = {tile_of_path(l["path"]) for l in new if l.get("route") == "osm" and l.get("status") == 200
                 and l.get("widerZoom") is None and tile_of_path(l["path"]).split("/")[0] == str(z)}
-        inflight = (server.json("/health").get("server") or {}).get("inFlight", {}).get("osm", 0)
-        if (seen and not inflight and total == last_total) or time.time() > deadline:
+        tiles = sum(1 for l in new if l.get("route") in ("osm", "dem", "contours", "shade"))  # the step's own polls are logged too
+        h = server.json("/health").get("server") or {}
+        inflight = (h.get("inFlight") or {}).get("osm", 0) + (h.get("queued") or 0)
+        if (want in seen and not inflight) or (not inflight and tiles == last_total and time.time() > deadline - wait_s + 20) or time.time() > deadline:
             return seen
-        last_total = total
+        last_total = tiles
         time.sleep(5)
 
 
+def online_diagnosis(server, base):
+    """T254: why the online phase saw no tile: the vector and DEM lines since `base` by zoom and status, the loopback
+    server's requests in flight and queued, and the fetcher's and the direct reader's in flight."""
+    total = request_log_total(server)
+    lines = server.json("/stats/requests?limit=4096").get("lines") or []
+    new = lines[max(0, len(lines) - (total - base)):]
+    by = {}
+    for l in new:
+        if l.get("route") in ("osm", "dem", "contours"):
+            k = f"{l['route']} z{tile_of_path(l['path']).split('/')[0]} {l.get('status')}"
+            by[k] = by.get(k, 0) + 1
+    h = server.json("/health").get("server") or {}
+    on = server.json("/online")
+    f = on.get("fetcher") or {}
+    d = on.get("direct") or {}
+    return {"base": base, "total": total, "linesSince": len(new), "tiles": dict(sorted(by.items())),
+            "server": {k: h.get(k) for k in ("inFlight", "active", "queued", "genActive", "genQueued")},
+            "fetcher": {k: f.get(k) for k in ("state", "inFlight", "maxInFlight", "fetchMsAvg", "fetchMsMax")},
+            "direct": {k: d.get(k) for k in ("inFlight", "demRendered", "demMsAvg", "osmFetched")}}
+
+
+def loopback_quiet(server, limit_s):
+    """T254: waits until the loopback server has no map request in flight or queued and the online fetcher none in flight
+    (the direct step's renders go on for minutes after its screenshot and hold the fetcher's slots, so a new view's vector
+    tiles queue behind them); the seconds waited and whether it went quiet."""
+    t0 = time.time()
+    while True:
+        h = server.json("/health").get("server") or {}
+        f = server.json("/online").get("fetcher") or {}
+        busy = sum((h.get("inFlight") or {}).values()) + (h.get("queued") or 0) + (f.get("inFlight") or 0)
+        if not busy:
+            return round(time.time() - t0, 1), True
+        if time.time() - t0 > limit_s:
+            return round(time.time() - t0, 1), False
+        time.sleep(3)
+
+
 def offline_step(server, exe, serial, step, first_wait_ms, wait_ms, shot):
+    """T254: `offline_attempt` for the line's first pair; when its online phase could not put the ancestor on the phone
+    (`onlineViewFetchedNothing`, `offlineViewOutsideFetchedTiles`), once more with the line's second pair. The step is the
+    last attempt's result with every attempt listed (`attempts`); it never passes on a precondition."""
+    attempts = []
+    for k, pair in enumerate(step["pairs"][:2]):
+        r = offline_attempt(server, exe, serial, pair, first_wait_ms, wait_ms, shot if k == 0 else shot.replace(".png", f"-retry.png"))
+        attempts.append(r)
+        if r.get("ok") or not set(r.get("failed") or []) & {"onlineViewFetchedNothing", "offlineViewOutsideFetchedTiles"}:
+            break
+    out = dict(attempts[-1])
+    out["attempts"] = len(attempts)
+    if len(attempts) > 1:
+        out["firstAttempt"] = {k: attempts[0].get(k) for k in ("online", "offline", "ancestor", "onlineOsm", "failed", "diagnosis", "quiet")}
+    return out
+
+
+def offline_attempt(server, exe, serial, step, first_wait_ms, wait_ms, shot):
     """T254 (idea 2026-11-07-offline-zoom-keeps-what-wider-zooms-showed): the online view (the tour file's `@offline`
     line, a z9 view no earlier step shows: MapLibre asks nothing for tiles it still holds in memory) is looked at with the
     network on after the online cache is cleared (pinned tiles stay), so its vector tiles and none of the closer view's are
-    in the cache. It fails at once unless the request log shows the online phase fetched the z9 tile the offline view lies
-    in (`ancestor`; waited for while vector requests still come). Then airplane mode, the offline view (z14 inside that
+    in the cache, after the loopback server and the fetcher went quiet (`quiet`). The z9 tile the offline view lies in
+    (`ancestor`) must then reach the cache: from the map's own request (waited for while vector requests still come), or,
+    when the map asked for none (it still held the view, e.g. one the app restored at launch: seen as `fetchedAtZoom []`),
+    from the step's request of the same `/osm` route (`ancestorFetchedBy` `step`); else the attempt fails with a
+    `diagnosis` and `offline_step` tries the line's second pair. Then airplane mode, the offline view (z14 inside that
     tile), a screenshot, and airplane mode off again (always). ok: offline, every vector tile request of the view was
     answered 200 and at least
     one was cut from a wider zoom (`widerZoom` in the request log; MapLibre Native draws a 404 as an empty tile, so
@@ -1149,14 +1211,29 @@ def offline_step(server, exe, serial, step, first_wait_ms, wait_ms, shot):
         if not airplane(exe, serial, False):
             rep.update(ok=False, error="airplane mode would not turn off")
             return rep
+        rep["quiet"] = loopback_quiet(server, 300)
         # The closer zoom's own tiles must not be on the phone already (a view the network reached earlier): start empty.
         rep["onlineCacheCleared"] = server.json("/online/cache/clear", method="POST")
         base = request_log_total(server)
         server.json(f"/camera?lat={a['lat']}&lon={a['lon']}&zoom={a['z']}&bearing=0&tilt=0", method="POST")
         server.get(f"/screenshot?wait={first_wait_ms}", timeout=first_wait_ms / 1000 + 60)
-        fetched = online_tiles_fetched(server, base, az, first_wait_ms / 1000)
-        rep["onlineOsm"] = {"fetchedAtZoom": sorted(fetched), "ancestorFetched": want in fetched}
+        t0 = time.time()
+        fetched = online_tiles_fetched(server, base, az, max(first_wait_ms / 1000, 300), want)
+        rep["onlineOsm"] = {"fetchedAtZoom": sorted(fetched), "ancestorFetched": want in fetched, "waitedS": round(time.time() - t0, 1),
+                            "ancestorFetchedBy": "map" if want in fetched else None}
+        if want not in fetched:
+            # The map did not ask for it in time (a view MapLibre holds already, or its requests still queued): the step asks
+            # the same route MapLibre does, which fetches into the same cache; the offline phase is MapLibre's either way.
+            try:
+                body = server.get(f"/osm/{want}.pbf", timeout=180)
+                lines = server.json("/stats/requests?limit=50").get("lines") or []
+                mine = [l for l in lines if l.get("path") == f"/osm/{want}.pbf"]
+                if body and mine and mine[-1].get("status") == 200 and mine[-1].get("widerZoom") is None:
+                    rep["onlineOsm"].update(ancestorFetched=True, ancestorFetchedBy="step")
+            except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+                rep["onlineOsm"]["stepFetchError"] = str(e)[:200]
         if not rep["onlineOsm"]["ancestorFetched"]:
+            rep["diagnosis"] = online_diagnosis(server, base)
             # A precondition that silently passes proves nothing: a view MapLibre still holds in memory asks for nothing,
             # and an offline view outside the fetched tiles has no ancestor to cut from.
             rep.update(ok=False, failed=["onlineViewFetchedNothing" if not fetched else "offlineViewOutsideFetchedTiles"])
@@ -2154,7 +2231,11 @@ def main():
     for r in summary["offlineStep"].get("steps", []):  # T254
         o = r.get("offlineOsm") or {}
         print(f"offline {r.get('online')} -> {r.get('offline')}: {'ok' if r['ok'] else 'FAIL'}; vector {o.get('statuses')}, "
-              f"{o.get('fromWiderZoom')} from zoom {o.get('widerZooms')}; roads {r.get('roadFeatures')}; cut ms {r.get('cutMs')}"
+              f"{o.get('fromWiderZoom')} from zoom {o.get('widerZooms')}; roads {r.get('roadFeatures')}; cut ms {r.get('cutMs')}; "
+              f"z9 fetched {(r.get('onlineOsm') or {}).get('fetchedAtZoom')} by {(r.get('onlineOsm') or {}).get('ancestorFetchedBy')} "
+              f"after {(r.get('onlineOsm') or {}).get('waitedS')} s; dem {(r.get('offlineDem') or {}).get('statuses')} "
+              f"{(r.get('offlineDem') or {}).get('fromWiderZoom')} wider; attempts {r.get('attempts')}; "
+              f"cache writes offline {(r.get('cacheWritesOffline') or {}).get('byRoute')}"
               + (f"; failed {' '.join(r.get('failed') or [])}" if r.get("failed") else "") + (f"; error {r['error']}" if r.get("error") else ""),
               file=sys.stderr)
     if "skipped" in summary["offlineStep"]:
