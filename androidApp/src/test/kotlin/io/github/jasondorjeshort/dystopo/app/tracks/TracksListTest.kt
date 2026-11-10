@@ -42,7 +42,7 @@ class TracksListTest {
     fun selectModesWords() {
         assertEquals("3 selected", selectedLine(3))
         assertEquals("Delete 2 tracks and 1 route? They are deleted on your other devices when they sync.", bulkDeleteQuestion(2, 1))
-        assertEquals("Delete 1 track? They are deleted on your other devices when they sync.", bulkDeleteQuestion(1, 0))
+        assertEquals("Delete 1 track? It is deleted on your other devices when they sync.", bulkDeleteQuestion(1, 0))
         assertEquals("Delete 3 routes? They are deleted on your other devices when they sync.", bulkDeleteQuestion(0, 3))
         assertEquals(listOf("Show", "Hide", "Export GPX", "Share GPX", "Delete"), SELECT_ACTIONS)
     }

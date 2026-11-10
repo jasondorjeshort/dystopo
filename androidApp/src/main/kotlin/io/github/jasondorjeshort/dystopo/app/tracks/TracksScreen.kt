@@ -231,7 +231,7 @@ internal fun selectedLine(n: Int): String = "$n selected"
 internal fun bulkDeleteQuestion(tracks: Int, routes: Int): String {
     fun n(k: Int, one: String) = "$k $one" + if (k == 1) "" else "s"
     val what = listOfNotNull(n(tracks, "track").takeIf { tracks > 0 }, n(routes, "route").takeIf { routes > 0 }).joinToString(" and ")
-    return "Delete $what? They are deleted on your other devices when they sync."
+    return "Delete $what? " + (if (tracks + routes == 1) "It is" else "They are") + " deleted on your other devices when they sync."
 }
 
 /** T272: the select bar's actions, in order. */
