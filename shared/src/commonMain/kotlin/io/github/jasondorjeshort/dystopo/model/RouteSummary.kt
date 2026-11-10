@@ -56,9 +56,12 @@ data class RouteSummary(
             val track = listOf(pts.map { TrackPoint(it.lat, it.lon, it.ele) })
             val stats = TrackStats.of(track)
             val travel = TravelMode.of(path.mode) ?: TravelMode.HIKE
-            val time = if (travel == TravelMode.DRIVE && path.legs.isNotEmpty()) driveTimeS(path) else CostModel(travel).pathTimeS(if (stats.ascentM != null) track[0] else emptyList(), stats.distanceM, stats.ascentM ?: 0.0) // T164: the user's fitted pace when there is one
+            // T256: a line route's length is the geodesic's (haversine hops run up to 0.5% short or long over a long line).
+            val distance = if (travel == TravelMode.CROW) path.legs.sumOf { io.github.jasondorjeshort.dystopo.routing.Crow.lengthM(it.points) } else stats.distanceM
+            val time = if (travel == TravelMode.DRIVE && path.legs.isNotEmpty()) driveTimeS(path) else CostModel(travel).pathTimeS(if (stats.ascentM != null) track[0] else emptyList(), distance, stats.ascentM ?: 0.0) // T164: the user's fitted pace when there is one
             val straight = path.legs.filter { it.kind == LegKind.STRAIGHT }.sumOf { leg ->
-                leg.points.zipWithNext { a, b -> TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon) }.sum()
+                if (travel == TravelMode.CROW) io.github.jasondorjeshort.dystopo.routing.Crow.lengthM(leg.points) // T256
+                else leg.points.zipWithNext { a, b -> TrackStats.distanceM(a.lat, a.lon, b.lat, b.lon) }.sum()
             }
             val profile = if (samples >= 2 && pts.size >= 2) TrackStats.profile(track, samples) else emptyList()
             val along = waypoints.map { w ->
@@ -68,10 +71,10 @@ data class RouteSummary(
             val bearings = path.legs.map { leg ->
                 val a = leg.points.first()
                 val b = leg.points.last()
-                LegBearing(leg.points.zipWithNext { p, q -> TrackStats.distanceM(p.lat, p.lon, q.lat, q.lon) }.sum(), io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(a.lat, a.lon, b.lat, b.lon))
+                LegBearing(io.github.jasondorjeshort.dystopo.routing.Crow.lengthM(leg.points), io.github.jasondorjeshort.dystopo.routing.Crow.bearingDeg(a.lat, a.lon, b.lat, b.lon))
             }
             return RouteSummary(
-                path.mode, stats.distanceM, stats.ascentM, stats.descentM, stats.minEleM, stats.maxEleM, time,
+                path.mode, distance, stats.ascentM, stats.descentM, stats.minEleM, stats.maxEleM, time,
                 pts.size, path.via.size, path.legs.size, straight, profile, along, bearings,
             )
         }

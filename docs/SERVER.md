@@ -649,7 +649,8 @@ until a restart.
   offline map built before the road data; rebuild it), `search_limit` (the search gave up at its node budget, which is no
   proof there is no way)), `messages` (T73: the router's sentence for each note, e.g. "no road open to cars within
   300 m of the end point (the nearest is 3192 m away)"), `notice` (for `mode=drive`: it follows the offline maps' roads and
-  is not a road navigator, the one sentence `Router.DRIVE_NOTICE`, ADR 0032; T111: for `mode=crow` the phone's line
+  is not a road navigator, the one sentence `Router.DRIVE_NOTICE`, ADR 0032; T111: for `mode=crow` (shown as "Line"; T256: the
+  geodesic on the ellipsoid, a point every 10 km without heights, cut at longitude 180) the phone's line
   under its mode picker, `TravelMode.CROW_NOTICE`; null otherwise), `waypointsValue` (the empty `waypoints` value a page saves with a new
   trip), `directionsValue` (T116: the turn directions below as the route's `directions` field value, keyed to this
   `path` as the phone's Keep writes them, ADR 0033, for the page to save with the trip; null when no offline map's graph

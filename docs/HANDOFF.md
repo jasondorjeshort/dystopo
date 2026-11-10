@@ -1,16 +1,17 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-10, by main session (wave 31 open: sixteen of seventeen merged; v0.1.25-alpha published; T256 and T257 running)
+Updated: 2026-11-10, by main session (wave 31 open: all but T257 merged; v0.1.25-alpha published; T257 in a fix round)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 31, `out/wave31-research/` [no-check: gitignored].
 
 ## Now
 
 - **Wave 31 is open** (plan at e184b663; T261 added): seventeen tasks, two lanes plus three alongside. Merged: all
-  but T256 and T257. **v0.1.25-alpha published** 2026-11-10 09:48 UTC (tag on 947d1e71, versionCode 1421; the
+  but T257 (T256 at e08e9c2b, 2026-11-10). **v0.1.25-alpha published** 2026-11-10 09:48 UTC (tag on 947d1e71, versionCode 1421; the
   mid-wave sweep green after a cache repair, `out/sweep-20261110-0254`; notes in `out/wave31-reports/` [no-check: gitignored]).
-- Running since 04:55: T256's implementer in lane A (Opus; AVD `dystopo35-T256`, console 5570, host 8694) and
-  T257's in lane B (Opus; `dystopo35-T257`, 5572, 8696). Verifier ports: 5574/8698 for A, 5576/8700 for B.
+- Running: T257's implementer (Opus; `dystopo35-T257`, console 5572, host 8696) on a fix round (its verifier's FIX:
+  at font scale 2.0 upright with the route card the pressure entry made the strip taller and the scale bar yielded,
+  so the tour's cards step failed); then its verifier again (5576/8700, the steps it skipped); T256's cleanup chore.
 - Rules learned: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line of its
   own; `git worktree remove` fails with "Filename too long", so cleanup chores get the `\\?\` delete; a
   deterministic LZW or Deflate error in a cached DEM cell is a stale range cache: delete that cell's directory.
@@ -19,8 +20,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. T256 and T257 report: a verifier each (Sonnet, `tools/verify-task.ps1`), the `wave` skill's merge sequence, the
-   log, a cleanup chore. Then the close by the `wave` skill: the post-wave sweep (`-Prev out/sweep-20261110-0254`),
+1. T257's fix reports: the verifier resumes (SendMessage), the `wave` skill's merge sequence, the log, a cleanup
+   chore. Then the close by the `wave` skill: the post-wave sweep (`-Prev out/sweep-20261110-0254`),
    the second release (v0.1.26-alpha, ADR 0024), the meter against 53 (revised if five points off), a Haiku chore
    moving wave 31 to `docs/tasks/wave-31.md` [no-check: not yet written], then plan wave 32 from the wave
    paragraph's Not-taken list, the build orders in ADR 0060 and ADR 0061, and this wave's Later follow-ups.

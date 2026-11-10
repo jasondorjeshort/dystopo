@@ -72,7 +72,10 @@ class RouteOverlay {
     fun show(points: List<RoutePoint>?, start: LatLng?, end: LatLng?) {
         val fs = ArrayList<Feature>()
         if (points != null && points.size >= 2) {
-            fs += Feature.fromGeometry(LineString.fromLngLats(points.map { Point.fromLngLat(it.lon, it.lat) })).apply { addStringProperty("kind", "route") }
+            // T256: one feature per piece, cut where the line crosses longitude 180, so it never spans the whole map.
+            for (piece in io.github.jasondorjeshort.dystopo.geo.Geodesic.splitPieces(points) { it.lon }) {
+                fs += Feature.fromGeometry(LineString.fromLngLats(piece.map { Point.fromLngLat(it.lon, it.lat) })).apply { addStringProperty("kind", "route") }
+            }
         }
         val s = points?.firstOrNull()?.let { LatLng(it.lat, it.lon) } ?: start
         val e = points?.lastOrNull()?.let { LatLng(it.lat, it.lon) } ?: end
