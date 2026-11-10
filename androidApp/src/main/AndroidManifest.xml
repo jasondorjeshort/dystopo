@@ -82,5 +82,14 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
         <receiver android:name=".areas.DownloadCancelReceiver" android:exported="false" />
+        <!-- T272: Share GPX hands the share sheet's app a content URI for a GPX file in cacheDir/share/ (app/SaveFile.kt,
+             ShareGpx); not exported, read permission granted per share. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.gpxshare"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/share_paths" />
+        </provider>
     </application>
 </manifest>

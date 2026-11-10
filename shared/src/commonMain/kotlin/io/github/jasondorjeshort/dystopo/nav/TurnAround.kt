@@ -553,7 +553,10 @@ enum class AnchorSource(val key: String) {
     WALK("walk"),
 
     /** "The way back starts here" on the recording card. */
-    HERE("here");
+    HERE("here"),
+
+    /** T272: a chosen waypoint, at the recorded point nearest it. */
+    WAYPOINT("waypoint");
 }
 
 /**
@@ -900,7 +903,7 @@ class Retrace(
  * from it, and the clock (`retraceOnly`, the arrival clock once heading back). Pure; the phone feeds it the recorder's
  * fixes, `devtool nav --turn-around --replay` a GPX's points.
  */
-class WayBack(pace: TurnPace, private val override: Int? = null) {
+class WayBack(pace: TurnPace, private val override: Int? = null, private val overrideSource: AnchorSource = AnchorSource.HERE) {
     /** The pace the way back is timed at; T252: replaced when the recording's activity changes. */
     var pace: TurnPace = pace
         set(v) {
@@ -936,7 +939,7 @@ class WayBack(pace: TurnPace, private val override: Int? = null) {
     }
 
     private fun anchor(): Pair<Int, AnchorSource> {
-        override?.let { if (it in all.indices) return it to AnchorSource.HERE }
+        override?.let { if (it in all.indices) return it to overrideSource }
         while (scanner.next()) Unit
         val walk = scanner.anchor
         return if (walk != null) walk to AnchorSource.WALK else WalkStart.firstGood(all) to AnchorSource.START
@@ -1035,6 +1038,7 @@ object TurnActivity {
         AnchorSource.START -> "the recording's start"
         AnchorSource.WALK -> "where the drive ended"
         AnchorSource.HERE -> "where you set it"
+        AnchorSource.WAYPOINT -> "the waypoint"
     }
 
     /**
@@ -1042,14 +1046,15 @@ object TurnActivity {
      * line recorded, at the standard walking pace (Naismith's rule), to be out 30 min before sunset, flat horizon
      * (19:12)."
      */
-    fun basis(source: AnchorSource, pace: TurnPace, marginMin: Int, deadlineLabel: String, deadlineAt: String?): String {
+    fun basis(source: AnchorSource, pace: TurnPace, marginMin: Int, deadlineLabel: String, deadlineAt: String?, target: String? = null): String {
         val how = when {
             pace.fitted -> " (fitted from your recorded tracks)"
             pace.mode == TravelMode.BIKE -> " (a touring pace)"
             else -> " (Naismith's rule)"
         }
         val by = if (deadlineAt == null) "" else " ($deadlineAt)"
-        return "Timed back to ${goesTo(source)} along the line recorded, at the ${pace.label}$how, to be out $marginMin min before $deadlineLabel$by."
+        val to = if (source == AnchorSource.WAYPOINT && target != null) "the waypoint $target" else goesTo(source) // T272: named
+        return "Timed back to $to along the line recorded, at the ${pace.label}$how, to be out $marginMin min before $deadlineLabel$by."
     }
 }
 

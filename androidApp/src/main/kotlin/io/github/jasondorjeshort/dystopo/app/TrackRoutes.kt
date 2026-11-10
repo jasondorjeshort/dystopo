@@ -44,7 +44,13 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   `here`, `index` of the recording's point, `lat`, `lon`, `timeMs`, the card's `line`, `override`), `retrace`
  *   (`returning`, `headingBack`, `flips`, `flipsAt`, `alongM`, `totalM`, `offM`), the `clock`, `text`, `label`, `ui`.
  *   `POST /tracks/wayback?here=1` is the recording card's "The way back starts here" (the recording's last point; kept per
- *   device, never synced); `POST /tracks/wayback?reset=1` goes back to the rule. 409 when nothing records.
+ *   device, never synced); `POST /tracks/wayback?reset=1` goes back to the rule (T272: and forgets a waypoint). 409 when nothing records.
+ *   T272: `POST /tracks/wayback?waypoint=<id>` makes a waypoint the return point, as the waypoint card's "Turn back to here":
+ *   the way back goes to the recorded point nearest it (among the points recorded so far; `anchor.source` `waypoint`), the
+ *   card's label, the panel's line, the chip and the basis name it; kept per device beside "here" (one or the other), looked
+ *   up again every 5 s (a rename shows, a move re-resolves, a delete falls back to the start). `anchor.waypoint` has `id`,
+ *   `name`, `missing`, `lat`, `lon`, `pointIndex`, `offTrackM` (the waypoint from that point), `upToMs`, `setAtMs`, `checks`.
+ *   409 when nothing records, before a point, or for an unknown waypoint.
  *   T252: the card is off until turned on for the recording: `POST /tracks/wayback?on=1|0` is the recording panel's
  *   "Turn-back time" chip (kept per track beside the override), `basis=1|0` (with it or alone) opens or closes the card's
  *   basis, as a tap on the card does. `wayBack` gains `on`, `activity`,
@@ -59,11 +65,20 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   `rename` with `name=` renames as Save does, `delete` with `confirm=1` deletes as the question's Delete does, without either
  *   they open the row's name field or question; `eye=<id>` taps a row's eye (shown to hidden or back). T253: `&bar=1|0` unfolds
  *   the bar or hides it as Hide does; `&importHoldMs=` holds the next import after its start line, for a screenshot.
+ *   T272: `sort=newest|name|length` orders the list; `select=1|0` turns select mode on or off (off clears the ticks), `tick=<id,
+ *   or kind:id>` ticks or unticks a row (turning select mode on), `tickAll=1|0` ticks every row under the filter or none;
+ *   `bulk=show|hide|export|share|delete` taps the select bar's action on the ticked rows (`export` opens the system's folder
+ *   picker; `share` the share sheet; `delete` asks unless `confirm=1`; 409 with nothing ticked); the row menu's `action=share`
+ *   is Share GPX (the share sheet with the one file).
  *   `GET /tracks/ui` answers `open`, `title`, `filter`, `filters` (`code`, `label` with its count, `selected`), `moreOpen`,
  *   `overflow`, `importOpen`, `message`, `menu` (the row's key) and `menuEntries`, `renaming`, `deleteAsk` and
  *   `deleteQuestion`, `counts` (`tracks`, `routes`, `shown`, `hidden`), `rows` under the filter, newest first (`kind`, `id`,
  *   `name`, `line`, `activity`, `shown`, `state` "Shown" or "Hidden", `recording`, `counts`), `saveFile`
- *   ([io.github.jasondorjeshort.dystopo.app.SaveFile.json]) and `bar` (`open`, `recordGroup`, `discardAsk`).
+ *   ([io.github.jasondorjeshort.dystopo.app.SaveFile.json]) and `bar` (`open`, `recordGroup`, `discardAsk`). T272: `sort`,
+ *   `sorts` (`code`, `label`, `selected`), `selecting`, `selected` (row keys), `selectedLine`, `selectActions`,
+ *   `bulkDeleteAsk` and `bulkDeleteQuestion`, each row's `lengthM` and `ticked`, and `share`
+ *   ([io.github.jasondorjeshort.dystopo.app.ShareGpx.json]: `launches`, `last` with `files`, `bytes`, `uris`, `mime`,
+ *   `action`, or a folder export's `saved`).
  * - `GET /tracks/settings`; `POST /tracks/settings?gapS=600`: the automatic new-segment gap in
  *   seconds (0 = never split on time), persisted.
  * - `GET /tracks/{id}` (summary, stats, waypoints, T159 `gaps`), `GET /tracks/{id}.gpx` (the GPX export, ids in
@@ -207,14 +222,16 @@ object TrackRoutes {
                 if ((on != null && on != "0" && on != "1") || (basis != null && basis != "0" && basis != "1")) return Response.json(mapOf("error" to "on and basis take 0 or 1"), 400)
                 val ok = when {
                     p.s("here") == "1" -> t.wayBackHere()
+                    p.s("waypoint") != null -> t.wayBackToWaypoint(p.s("waypoint")!!) // T272
                     p.s("reset") == "1" -> t.wayBackReset()
                     on != null || basis != null -> (on == null || nav.setOn(on == "1")).also { ok ->
                         if (ok && basis != null) java.util.concurrent.CountDownLatch(1).let { l -> android.os.Handler(android.os.Looper.getMainLooper()).post { nav.basisOpen = basis == "1"; l.countDown() }; l.await(2, java.util.concurrent.TimeUnit.SECONDS) }
                         if (ok) Thread.sleep(300) // a tick publishes the card
                     }
-                    else -> return Response.json(mapOf("error" to "here=1, reset=1, on=0|1 or basis=0|1"), 400)
+                    else -> return Response.json(mapOf("error" to "here=1, waypoint=<id>, reset=1, on=0|1 or basis=0|1"), 400)
                 }
-                if (!ok) return Response.json(mapOf("error" to "not recording, or no point recorded yet"), 409)
+                if (!ok) return Response.json(mapOf("error" to if (p.s("waypoint") != null) "not recording, no point recorded yet, or no waypoint ${p.s("waypoint")}" else "not recording, or no point recorded yet"), 409)
+                if (p.s("waypoint") != null) Thread.sleep(300) // a tick publishes the card
                 return Response.json(mapOf("wayBack" to io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.json()))
             }
             "GET" to "/tracks/settings" -> return Response.json(settingsJson(t))
@@ -393,7 +410,9 @@ object TrackRoutes {
         return io.github.jasondorjeshort.dystopo.app.tracks.listRows(
             ui.tracks, ui.distances, ui.activeId, ui.distanceM, ui.hidden, trips.list, trips.hiddenRoutes, filter, AppSettings.units,
             { ms -> io.github.jasondorjeshort.dystopo.app.trips.shortDate(ms) },
-        ) { r -> io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.figures(r.distanceM, r.ascentM, r.descentM, r.timeS, io.github.jasondorjeshort.dystopo.routing.TravelMode.of(r.mode)) }
+            { r -> io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.figures(r.distanceM, r.ascentM, r.descentM, r.timeS, io.github.jasondorjeshort.dystopo.routing.TravelMode.of(r.mode)) },
+            io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.sort, // T272
+        )
     }
 
     /** T262: waits until the tracker's and the routes' state reached the main thread, so an answer reads what a change did. */
@@ -410,6 +429,8 @@ object TrackRoutes {
         val filters = io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.Filter.entries
         p.s("importHoldMs")?.toLongOrNull()?.let { io.github.jasondorjeshort.dystopo.app.routing.ImportText.holdMs = it.coerceIn(0, 30_000) }
         val filter = p.s("filter")?.let { code -> filters.firstOrNull { it.code == code } ?: return Response.json(mapOf("error" to "filter must be all, tracks or routes"), 400) }
+        val sort = p.s("sort")?.let { code -> io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.Sort.entries.firstOrNull { it.code == code } ?: return Response.json(mapOf("error" to "sort must be newest, name or length"), 400) } // T272
+        val bulk = p.s("bulk")?.let { code -> BULK_ACTIONS[code] ?: return Response.json(mapOf("error" to "bulk must be one of ${BULK_ACTIONS.keys}"), 400) }
         settle(t)
         app.map.onMain {
             val bar = io.github.jasondorjeshort.dystopo.app.tracking.TrackBar
@@ -421,9 +442,24 @@ object TrackRoutes {
             when (p.s("more")) { "1" -> ui.moreOpen = true; "0" -> ui.moreOpen = false }
             when (p.s("import")) { "1" -> ui.importOpen = true; "0" -> ui.importOpen = false }
             when (p.s("bar")) { "1" -> bar.open = true; "0" -> bar.hide() } // T253: unfold, or Hide
+            sort?.let { ui.sort = it } // T272
+            when (p.s("select")) { "1" -> if (!ui.selecting) ui.select(true); "0" -> ui.select(false) }
         }
         val all = app.map.onMain { screenRows(io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.Filter.ALL) }
         fun row(ref: String) = all.firstOrNull { it.key == ref || it.id == ref }
+        p.s("tick")?.let { ref -> // T272: a row's tick in select mode
+            val r = row(ref) ?: return Response.json(mapOf("error" to "no row $ref"), 404)
+            app.map.onMain { if (!ui.selecting) ui.select(true); ui.toggle(r.key) }
+        }
+        when (p.s("tickAll")) {
+            "1" -> app.map.onMain { if (!ui.selecting) ui.select(true); ui.selected = ui.selected + screenRows(ui.filter).map { it.key } }
+            "0" -> app.map.onMain { ui.selected = emptySet() }
+        }
+        bulk?.let { label ->
+            val done = app.map.onMain { io.github.jasondorjeshort.dystopo.app.tracks.bulkAction(label, all, confirmed = p.s("confirm") == "1") }
+            if (!done) return Response.json(mapOf("error" to "nothing ticked (or no folder picker while the screen is closed)"), 409)
+            Thread.sleep(300) // the stores' writes reach the main thread before the answer is read
+        }
         p.s("eye")?.let { ref ->
             val r = row(ref) ?: return Response.json(mapOf("error" to "no row $ref"), 404)
             if (r.kind == "route") io.github.jasondorjeshort.dystopo.app.trips.Trips.setShown(r.id, !r.shown) else t.setShown(r.id, !r.shown)
@@ -452,10 +488,18 @@ object TrackRoutes {
         return Response.json(screenJson(t))
     }
 
+    /** T272: the `bulk=` words of `POST /tracks/ui` and the select bar's actions they tap. */
+    private val BULK_ACTIONS = linkedMapOf(
+        "show" to io.github.jasondorjeshort.dystopo.app.tracks.SHOW, "hide" to io.github.jasondorjeshort.dystopo.app.tracks.HIDE,
+        "export" to io.github.jasondorjeshort.dystopo.app.tracks.EXPORT_GPX, "share" to io.github.jasondorjeshort.dystopo.app.tracks.SHARE_GPX,
+        "delete" to io.github.jasondorjeshort.dystopo.app.tracks.DELETE,
+    )
+
     /** T262: the `action=` words of `POST /tracks/ui` and the menu entries they tap. */
     private val MENU_ACTIONS = linkedMapOf(
         "statistics" to io.github.jasondorjeshort.dystopo.app.tracks.STATISTICS, "open" to io.github.jasondorjeshort.dystopo.app.tracks.OPEN,
         "rename" to io.github.jasondorjeshort.dystopo.app.tracks.RENAME, "export" to io.github.jasondorjeshort.dystopo.app.tracks.EXPORT_GPX,
+        "share" to io.github.jasondorjeshort.dystopo.app.tracks.SHARE_GPX, // T272
         "go" to io.github.jasondorjeshort.dystopo.app.tracks.GO, "activity" to io.github.jasondorjeshort.dystopo.app.tracks.ACTIVITY,
         "report" to io.github.jasondorjeshort.dystopo.app.tracks.REPORT, "shareLink" to io.github.jasondorjeshort.dystopo.app.tracks.SHARE_LINK,
         "delete" to io.github.jasondorjeshort.dystopo.app.tracks.DELETE,
@@ -486,13 +530,26 @@ object TrackRoutes {
                     "tracks" to all.count { it.kind == "track" }, "routes" to all.count { it.kind == "route" },
                     "shown" to all.count { it.shown }, "hidden" to all.count { !it.shown },
                 ),
+                // T272: the order, select mode and the share sheet.
+                "sort" to tu.sort.code,
+                "sorts" to io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.Sort.entries.map { linkedMapOf("code" to it.code, "label" to it.label, "selected" to (it == tu.sort)) },
+                "selecting" to tu.selecting, "selected" to tu.selected.toList(),
+                "selectedLine" to tu.selecting.takeIf { it }?.let { if (tu.selected.isEmpty()) io.github.jasondorjeshort.dystopo.app.tracks.NOTHING_SELECTED else io.github.jasondorjeshort.dystopo.app.tracks.selectedLine(all.count { it.key in tu.selected }) },
+                "selectActions" to io.github.jasondorjeshort.dystopo.app.tracks.SELECT_ACTIONS,
+                "bulkDeleteAsk" to tu.bulkDeleteAsk,
+                "bulkDeleteQuestion" to tu.bulkDeleteAsk.takeIf { it }?.let {
+                    val going = all.filter { it.key in tu.selected && !it.recording }
+                    io.github.jasondorjeshort.dystopo.app.tracks.bulkDeleteQuestion(going.count { it.kind == "track" }, going.count { it.kind == "route" })
+                },
                 "rows" to rows.map { r ->
                     linkedMapOf(
                         "kind" to r.kind, "id" to r.id, "name" to r.name, "line" to r.line, "activity" to r.activity, "shown" to r.shown,
                         "state" to io.github.jasondorjeshort.dystopo.app.tracks.shownWord(r.shown), "recording" to r.recording, "counts" to r.counts,
+                        "lengthM" to r.lengthM?.let { Math.round(it) }, "ticked" to (r.key in tu.selected),
                     )
                 },
                 "saveFile" to io.github.jasondorjeshort.dystopo.app.SaveFile.json(),
+                "share" to io.github.jasondorjeshort.dystopo.app.ShareGpx.json(),
                 // T253: the unfolded bar and its record group (Hide first, the group last), and Discard's question.
                 "bar" to linkedMapOf(
                     "open" to io.github.jasondorjeshort.dystopo.app.tracking.TrackBar.open,

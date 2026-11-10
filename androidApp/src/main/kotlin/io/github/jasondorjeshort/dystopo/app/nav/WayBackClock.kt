@@ -53,6 +53,11 @@ import io.github.jasondorjeshort.dystopo.store.LocationFix
  *   [NavAlerts]), and the one spoken line through [NavSpeech.sayTurnAround] (the spoken-directions setting and its mute);
  *   none while the card is off or shows no clock. Navigating, navigation's own clock runs instead and this one is quiet.
  *
+ * - **Where to** (T272): the start by the rule, "here", or a chosen waypoint ([toWaypoint], [WayBackAnchor.ToWaypoint]):
+ *   the way back retraces the line to the recorded point nearest the waypoint; the card's label, the recording panel's
+ *   line, the chip and the basis name it ([Target]). The waypoint is looked up again every [WAYPOINT_CHECK_MS] on the
+ *   tracking thread, so a rename shows, a move re-resolves and a delete falls back to the start.
+ *
  * Fed by `tracking/Tracking.kt` on its thread ([onPoint], [onStart], [onStop]); read every second on the main thread
  * ([tick]). Debug: `GET /nav/turnaround` without navigation, `GET /tracks` `wayBack`, `POST /tracks/wayback`.
  */
@@ -60,6 +65,9 @@ import io.github.jasondorjeshort.dystopo.store.LocationFix
 object WayBackUiState {
     var basisOpen by mutableStateOf(false)
     var chipOn by mutableStateOf(false)
+
+    /** T272: the waypoint the way back goes to, by name, for the chip; null for the start or "here". */
+    var target by mutableStateOf<String?>(null)
 }
 
 object WayBackClock {
@@ -79,12 +87,26 @@ object WayBackClock {
         val basis: String? = null,
     )
 
-    /** The recording card's words for each source (ADR 0031: the owner's to adjust). */
-    fun sourceLine(s: AnchorSource): String = when (s) {
+    /** The recording card's words for each source (ADR 0031: the owner's to adjust); T272: a waypoint by its [name]. */
+    fun sourceLine(s: AnchorSource, name: String? = null): String = when (s) {
         AnchorSource.START -> "Way back to the recording's start"
         AnchorSource.WALK -> "Way back to where the drive ended"
         AnchorSource.HERE -> "Way back to where you set it"
+        AnchorSource.WAYPOINT -> "Way back to the waypoint " + (name ?: "")
     }
+
+    fun cardLabel(label: String, target: String?): String = wayBackCardLabel(label, target)
+
+    fun chipText(target: String?): String = wayBackChipText(target)
+
+    /** T272: the waypoint card's action while the turn-back card is on (ADR 0031). */
+    const val TURN_BACK_TO_HERE = "Turn back to here"
+
+    /**
+     * T272: the waypoint the way back goes to as last looked up: its name and place, the recorded point nearest it
+     * ([index]) and how far that point is from it; [missing] when it was deleted (the way back then goes to the start).
+     */
+    data class Target(val waypointId: String, val name: String?, val lat: Double?, val lon: Double?, val index: Int?, val offTrackM: Double?, val missing: Boolean)
 
     const val HEADING_BACK = "Heading back"
     const val STARTS_HERE = "The way back starts here"
@@ -101,6 +123,10 @@ object WayBackClock {
     private var trackId: String? = null
     private var wayBack: WayBack? = null
     private var override: WayBackAnchor.Here? = null
+    private var toWaypoint: WayBackAnchor.ToWaypoint? = null
+    private var target: Target? = null
+    private var waypointCheckedAt = 0L
+    private var waypointChecks = 0
     @Volatile private var on = false
     private val alerts = TurnAlerts()
     private var spoken: String? = null
@@ -117,7 +143,11 @@ object WayBackClock {
     /** T252: [isOn] for the chip to draw (main thread, Compose state). */
     val chipOn: Boolean get() = WayBackUiState.chipOn
 
-    private fun publishOn() { val v = on; main.post { WayBackUiState.chipOn = v } }
+    private fun publishOn() {
+        val v = on
+        val name = target?.takeIf { !it.missing && it.index != null }?.name
+        main.post { WayBackUiState.chipOn = v; WayBackUiState.target = name }
+    }
 
     /**
      * T252: the activity the clock runs on: the recording's while a track records (its track's, as the tracker publishes
@@ -138,6 +168,8 @@ object WayBackClock {
     fun onStart(id: String) {
         trackId = id
         override = WayBackAnchor.get(id)
+        toWaypoint = WayBackAnchor.waypoint(id) // T272: kept only for the recording track; a new one has none
+        target = null
         on = WayBackAnchor.on(id)
         wayBack = WayBack(pace())
         alerts.reset()
@@ -190,7 +222,7 @@ object WayBackClock {
     fun onPoint(id: String, fix: LocationFix, flagged: Boolean, points: () -> List<TrackPoint>) {
         synchronized(this) {
             val p = WayPoint(fix.lat, fix.lon, fix.ele, fix.time, fix.speedMps, flagged)
-            if (trackId != id || wayBack == null) {
+            if (trackId != id || wayBack == null || waypointChanged()) {
                 rebuild(id, points())
             } else {
                 wayBack!!.add(p)
@@ -211,9 +243,12 @@ object WayBackClock {
         }
         trackId = id
         override = WayBackAnchor.get(id)
+        toWaypoint = WayBackAnchor.waypoint(id)
         on = WayBackAnchor.on(id)
-        val idx = override?.let { h -> points.indexOfFirst { (it.time ?: Long.MIN_VALUE) >= h.pointTimeMs }.takeIf { it >= 0 } ?: (points.size - 1) }
-        val wb = WayBack(pace(), idx)
+        target = toWaypoint?.let { resolve(it, points) }
+        val wpIdx = target?.index
+        val idx = wpIdx ?: override?.let { h -> points.indexOfFirst { (it.time ?: Long.MIN_VALUE) >= h.pointTimeMs }.takeIf { it >= 0 } ?: (points.size - 1) }
+        val wb = WayBack(pace(), idx, if (wpIdx != null) AnchorSource.WAYPOINT else AnchorSource.HERE)
         for (tp in points) wb.add(WayPoint(tp.lat, tp.lon, tp.ele, tp.time, tp.speedMps, tp.flags != 0))
         wayBack = wb
         lastPoint = wb.points.lastOrNull()
@@ -232,6 +267,53 @@ object WayBackClock {
         rebuild(id, points)
         refreshNow()
         return true
+    }
+
+    /**
+     * T272: the waypoint [waypointId] becomes the return point of [id] (tracking thread, through `Tracking.wayBackToWaypoint`):
+     * the recorded point nearest it among [points] so far; kept per device. False with no point yet or no such waypoint.
+     */
+    fun toWaypoint(id: String, waypointId: String, points: List<TrackPoint>): Boolean {
+        val last = points.lastOrNull() ?: return false
+        lookup(waypointId) ?: return false
+        WayBackAnchor.setWaypoint(WayBackAnchor.ToWaypoint(id, waypointId, last.time ?: Long.MAX_VALUE, System.currentTimeMillis()))
+        rebuild(id, points)
+        refreshNow()
+        return true
+    }
+
+    /** T272: the waypoint as stored (tracking thread; the store is the tracker's). */
+    private fun lookup(waypointId: String): io.github.jasondorjeshort.dystopo.model.Waypoint? =
+        runCatching { io.github.jasondorjeshort.dystopo.app.tracking.Tracking.readyOrNull?.store?.waypoint(waypointId)?.waypoint }.getOrNull()
+
+    /** T272: [w] looked up and placed on [points] (under the lock, tracking thread). */
+    private fun resolve(w: WayBackAnchor.ToWaypoint, points: List<TrackPoint>): Target {
+        waypointCheckedAt = android.os.SystemClock.elapsedRealtime()
+        waypointChecks++
+        val wp = lookup(w.waypointId) ?: return Target(w.waypointId, null, null, null, null, null, missing = true)
+        val i = io.github.jasondorjeshort.dystopo.app.tracking.nearestIndex(points, wp.lat, wp.lon, w.upToMs)
+        val off = i?.let { io.github.jasondorjeshort.dystopo.app.tracking.metresBetween(wp.lat, wp.lon, points[it].lat, points[it].lon) }
+        return Target(w.waypointId, waypointName(wp.name), wp.lat, wp.lon, i, off, missing = false)
+    }
+
+    private fun waypointName(name: String): String = name.ifBlank { "Waypoint" }
+
+    /**
+     * T272: every [WAYPOINT_CHECK_MS], whether the chosen waypoint moved or was deleted (a rebuild is due); a rename is
+     * taken in place. Under the lock, on the tracking thread.
+     */
+    private fun waypointChanged(): Boolean {
+        val w = toWaypoint ?: return false
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - waypointCheckedAt < WAYPOINT_CHECK_MS) return false
+        waypointCheckedAt = now
+        waypointChecks++
+        val t = target
+        val wp = lookup(w.waypointId) ?: return t?.missing != true
+        if (t == null || t.missing || t.lat != wp.lat || t.lon != wp.lon) return true
+        val name = waypointName(wp.name)
+        if (name != t.name) { target = t.copy(name = name); publishOn() }
+        return false
     }
 
     /** Back to the rule's start (`POST /tracks/wayback?reset=1`; tracking thread). */
@@ -273,25 +355,29 @@ object WayBackClock {
     private fun ui(now: Long, a: Activity): Ui? {
         val wb = wayBack ?: return null
         val src = wb.anchorSource
+        val name = targetName(src)
         val mode = TurnActivity.mode(a)
         if (mode == null) {
             lastClock = null
-            return wb.anchor?.let { Ui(TurnActivity.noClockText(a), TurnActivity.NO_CLOCK_WHY, NORMAL, false, src.key, sourceLine(src), clock = false) }
+            return wb.anchor?.let { Ui(TurnActivity.noClockText(a), TurnActivity.NO_CLOCK_WHY, NORMAL, false, src.key, sourceLine(src, name), clock = false) }
         }
         val model = CostModel(mode)
         if (wb.pace.mode != mode || wb.pace.fitted != model.fitted) wb.pace = TurnPace.forRecording(model) // the activity changed
         val c = reading(now) ?: return null
         if (c.retraceS > TurnActivity.MAX_WAY_BACK_S) {
             lastClock = null
-            return Ui(TurnActivity.NO_CLOCK, TurnActivity.tooFar(mode), NORMAL, false, src.key, sourceLine(src), clock = false)
+            return Ui(TurnActivity.NO_CLOCK, TurnActivity.tooFar(mode), NORMAL, false, src.key, sourceLine(src, name), clock = false)
         }
         val clock = dated(now)
         return Ui(
-            c.text(clock), c.label(clock), c.colour, c.state == TurnState.RETURNING && wb.retrace.headingBack,
-            src.key, sourceLine(src), clock = true,
-            basis = TurnActivity.basis(src, wb.pace, c.marginMin, c.deadline.label, c.deadline.atMs?.let(clock)),
+            c.text(clock), cardLabel(c.label(clock), name), c.colour, c.state == TurnState.RETURNING && wb.retrace.headingBack,
+            src.key, sourceLine(src, name), clock = true,
+            basis = TurnActivity.basis(src, wb.pace, c.marginMin, c.deadline.label, c.deadline.atMs?.let(clock), name),
         )
     }
+
+    /** T272: the waypoint's name while the way back goes to it. */
+    private fun targetName(src: AnchorSource): String? = if (src == AnchorSource.WAYPOINT) target?.name else null
 
     /** The clock now, kept as [lastClock]; null with nothing recording or no point yet. */
     private fun reading(now: Long): TurnClock? {
@@ -356,7 +442,18 @@ object WayBackClock {
             "source" to "recording", "id" to id, "on" to on, "points" to wb.points.size,
             "activity" to a.code, "activitySource" to activitySource, "paceMode" to mode?.label,
             "noClock" to when { !on -> "off"; mode == null -> "activity"; tooFar -> "tooFar"; else -> null },
-            "anchor" to (wb.json()["anchor"] as Map<*, *>) + mapOf("line" to sourceLine(wb.anchorSource), "override" to override?.let { linkedMapOf("pointTimeMs" to it.pointTimeMs, "setAtMs" to it.setAtMs) }),
+            "anchor" to (wb.json()["anchor"] as Map<*, *>) + mapOf(
+                "line" to sourceLine(wb.anchorSource, targetName(wb.anchorSource)),
+                "override" to override?.let { linkedMapOf("pointTimeMs" to it.pointTimeMs, "setAtMs" to it.setAtMs) },
+                "waypoint" to toWaypoint?.let { w -> // T272
+                    val t = target
+                    linkedMapOf(
+                        "id" to w.waypointId, "name" to t?.name, "missing" to (t?.missing ?: false), "lat" to t?.lat, "lon" to t?.lon,
+                        "pointIndex" to t?.index, "offTrackM" to t?.offTrackM?.let { Math.round(it) }, "upToMs" to w.upToMs,
+                        "setAtMs" to w.setAtMs, "checks" to waypointChecks,
+                    )
+                },
+            ),
             "retrace" to wb.retrace.json(), "headingBack" to wb.retrace.headingBack,
             "deadlineSetting" to AppSettings.turnDeadline, "marginMin" to AppSettings.turnMarginMin, "pace" to wb.pace.label,
             "retraceS" to c?.retraceS?.let { Math.round(it) }, "maxWayBackS" to TurnActivity.MAX_WAY_BACK_S.toLong(),
@@ -392,4 +489,13 @@ object WayBackClock {
 
     private const val NORMAL = "normal"
     const val TICK_MS = 1000L
+
+    /** T272: how often the chosen waypoint is looked up again (a rename, a move, a delete). */
+    const val WAYPOINT_CHECK_MS = 5000L
 }
+
+/** T272: the card's label with the waypoint it goes to first ("Back to Camp. Sunset 19:12, ..."). Pure, tested. */
+internal fun wayBackCardLabel(label: String, target: String?): String = if (target == null) label else "Back to $target. $label"
+
+/** T272: the chip's words, naming the waypoint while one is the return point ("Turn-back time to Camp"). Pure, tested. */
+internal fun wayBackChipText(target: String?): String = if (target == null) WayBackClock.CHIP else "${WayBackClock.CHIP} to $target"

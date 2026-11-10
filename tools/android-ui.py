@@ -18,7 +18,7 @@ Parts:
                search (type, pick a hit), routing (long-press start and end, the card, T219: its Export GPX through the
                system's save dialog, Save (Keep before T217) as a trip, the Routes list under the route's place names; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
                "From: Your location"; T243: tapped at its node's centre, no other element's node inside the card), a waypoint with no recording (long-press, Waypoint here,
-               the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Pause then Finish (T253; Stop on an older build), the Tracks sheet, T219: a row's Export GPX through the save dialog, the file listed with `adb shell ls`), the sync sheet
+               the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Pause then Finish (T253; Stop on an older build), the Tracks sheet, T219: a row's Export GPX through the save dialog, the file listed with `adb shell ls`; T272: the second recording ended through its notification, Pause then Resume and Finish read from `dumpsys notification`, and a row's Share GPX opening the system's share sheet), the sync sheet
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
@@ -936,9 +936,85 @@ def close_tracks(dev):
         dev.tap(n)
 
 
-def finish_recording(dev):
+def notification_actions(dump):
+    """T272: the app's recording notification's action labels, in order, from `dumpsys notification --noredact` (the
+    record with `pkg=<PACKAGE>` and `id=31`, its `actions={ [0] "Pause" ...}`); None when it is not posted."""
+    i = dump.find(f"pkg={PACKAGE} ")
+    while i >= 0:
+        head = dump[i:dump.find("\n", i)]
+        nxt = dump.find("NotificationRecord(", i + 1)
+        block = dump[i:nxt if nxt > 0 else len(dump)]
+        if " id=31 " in head:
+            m = re.search(r"actions=\{(.*?)\n\s*\}", block, re.S)
+            return re.findall(r'\[\d+\] "([^"]*)"', m.group(1)) if m else []
+        i = dump.find(f"pkg={PACKAGE} ", i + 1)
+    return None
+
+
+def read_notification_actions(dev):
+    return notification_actions(dev.shell("dumpsys", "notification", "--noredact", check_ok=False))
+
+
+def wait_actions(dev, done, timeout=8):
+    """T272: the notification's actions once [done] accepts them, or the last read after [timeout] s."""
+    deadline = time.time() + timeout
+    while True:
+        a = read_notification_actions(dev)
+        if done(a) or time.time() > deadline:
+            return a
+        time.sleep(0.5)
+
+
+def shade_tap(dev, label, timeout=8):
+    """T272: opens the notification shade and taps the action [label]; True when it was found. The shade cannot be dumped
+    while the recording's chronometer runs (uiautomator finds it never idle), so a miss is not an error here."""
+    dev.shell("cmd", "statusbar", "expand-notifications", check_ok=False)
+    time.sleep(1.5)
+    n = None
+    deadline = time.time() + timeout
+    while not n and time.time() < deadline:  # the shade's own button, never the app's chip of the same name under it
+        n = next((x for x in dev.nodes() if x["text"] == label and "systemui" in (x.get("pkg") or "") and x["bounds"]), None)
+        if not n:
+            time.sleep(1)
+    if n:
+        dev.tap(n)
+        time.sleep(1.5)
+    dev.shell("cmd", "statusbar", "collapse", check_ok=False)
+    time.sleep(0.8)
+    return bool(n)
+
+
+def finish_from_notification(dev):
+    """T272: ends the recording through its notification: it reads Pause alone (no Stop) while recording; Pause (from the
+    shade, or from the panel when the shade cannot be read while the chronometer runs); then the notification reads Resume
+    and Finish, and Finish in the shade saves. Returns what was read and done; raises when the recording does not end."""
+    recording = read_notification_actions(dev)
+    paused_via = "notification" if shade_tap(dev, "Pause") else None
+    if not paused_via:
+        nodes = tracks_bar(dev)
+        dev.tap(dev.find("^Pause$", nodes))
+        paused_via = "panel"
+    paused = wait_actions(dev, lambda a: a == ["Resume", "Finish"])
+    finished = shade_tap(dev, "Finish", timeout=10)
+    after = wait_actions(dev, lambda a: a is None)
+    n, nodes = dev.wait_for("^Record$", 10) if finished else (None, None)
+    r = {"recordingActions": recording, "pausedVia": paused_via, "pausedActions": paused, "finishTapped": finished, "afterActions": after}
+    if recording != ["Pause"] or paused != ["Resume", "Finish"] or not finished or after is not None:
+        raise RuntimeError(f"the notification did not read Pause, then Resume and Finish, or Finish did not end it: {r}")
+    if not n:
+        tracks_bar(dev)
+        n, nodes = dev.wait_for("^Record$", 10)
+        if not n:
+            raise RuntimeError(f"the recording did not end after the notification's Finish (texts: {dev.texts(nodes)[:20]})")
+    return r
+
+
+def finish_recording(dev, via="panel"):
     """T253: ends the recording as a user does: Pause, then Finish (which saves at once); a build before T253: Stop.
+    T272: [via] "notification" does it through the recording notification ([finish_from_notification]).
     Raises when the bar does not come back to Record."""
+    if via == "notification":
+        return finish_from_notification(dev)
     nodes = tracks_bar(dev)
     if dev.find("^Stop$", nodes):
         dev.tap_text("^Stop$")
@@ -969,8 +1045,9 @@ def start_recording(dev, allow=True, dialog_timeout=4):
     return asked
 
 
-def record_track(dev, points, interval=1.0):
-    """Record, feed the fixes, Pause and Finish (T253; Stop before it); returns the points count the panel showed just before."""
+def record_track(dev, points, interval=1.0, finish_via="panel", out=None):
+    """Record, feed the fixes, Pause and Finish (T253; Stop before it); returns the points count the panel showed just before.
+    T272: [finish_via] "notification" ends it through the notification; what it read goes into [out] (a dict)."""
     lat, lon, *_ = points[0]
     dev.adb("emu", "geo", "fix", str(lon), str(lat), check_ok=False)  # the first fix is already here, not the image's default place
     time.sleep(2)
@@ -981,7 +1058,9 @@ def record_track(dev, points, interval=1.0):
     geo_fixes(dev, points, interval)
     n = dev.find(r"\d+ pts")
     pts = int(PTS.search(n["text"]).group(1)) if n else None
-    finish_recording(dev)
+    r = finish_recording(dev, finish_via)
+    if out is not None and r:
+        out.update(r)
     return pts
 
 
@@ -1424,14 +1503,16 @@ def part_features(args):
 
     def two_tracks():
         # T262: a second recording leaves the first on the map: the list has both, newest first, and both read Shown.
-        pts = record_track(dev, walk(46.7880, -121.7280, 46.7872, -121.7290, 10))
+        # T272: this one ends through the notification: Pause, then Resume and Finish; Finish saves.
+        notif = {}
+        pts = record_track(dev, walk(46.7880, -121.7280, 46.7872, -121.7290, 10), finish_via="notification", out=notif)
         nodes = tracks_list(dev)
         texts = dev.texts(nodes)
         rows = parse_track_rows(texts)
         states = track_states(texts)
         png = dev.screencap("tracks-two-shown")[0]
         ok = len(rows) >= 2 and states[:2] == ["Shown", "Shown"] and "Hidden" not in states
-        return {"ok": ok, "pointsWhileRecording": pts, "tracks": rows[:3], "states": states[:3], "png": png,
+        return {"ok": ok, "pointsWhileRecording": pts, "tracks": rows[:3], "states": states[:3], "png": png, "notification": notif,
                 **({} if ok else {"error": "the list does not read two tracks, both Shown"})}
 
     def gpx():
@@ -1447,6 +1528,20 @@ def part_features(args):
         png = dev.screencap("tracks-row-overflow")[0]
         dev.tap_text("^Export GPX$", timeout=5)
         return {**save_dialog(dev, "track"), "png": png}
+
+    def share_gpx():
+        # T272: a row's Share GPX opens the system's share sheet on the one file (its chooser screencapped), Back closes it.
+        nodes = tracks_list(dev)
+        dev.tap(dev.find("^More actions for ", nodes))
+        dev.tap_text("^Share GPX$", timeout=5)
+        n, nodes = dev.wait_for(r"(?i)^Sharing 1 file$|\.gpx$|^Share GPX$", 15)
+        png = dev.screencap("share-gpx-chooser")[0]
+        chooser = next((x["pkg"] for x in nodes if x.get("pkg") and x["pkg"] != PACKAGE and "systemui" not in x["pkg"]), None)
+        file_name = next((t for t in dev.texts(nodes) if t.endswith(".gpx")), None)
+        close_overlays(dev, 1)
+        ok = bool(n) and bool(chooser)
+        return {"ok": ok, "chooser": chooser, "file": file_name, "png": png,
+                **({} if ok else {"error": "no share sheet after Share GPX", "texts": dev.texts(nodes)[:20]})}
 
     def sync():
         if not args.server:
@@ -1498,7 +1593,7 @@ def part_features(args):
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
-                     ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
+                     ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings)):
         run.step(name, fn)
     run.step("alive", lambda: alive_and_clean(dev))

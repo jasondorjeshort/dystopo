@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-10
 
+- T272: The manager's second pass, the notification's Pause and Finish, a waypoint as the return point (lane A, after T262)
 - T269: A validator for the COG range-block cache (lane B, after T264; no emulator)
 - T264: A bundled world overview, measured first (lane B, first)
 - T262: The tracks and routes manager, and the vanished track (lane A, first)

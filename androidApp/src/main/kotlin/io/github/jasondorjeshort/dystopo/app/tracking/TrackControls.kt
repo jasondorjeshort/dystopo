@@ -326,7 +326,7 @@ private fun TurnBackChip() {
     val on = nav.chipOn
     Row(verticalAlignment = Alignment.CenterVertically) {
         BasicText(
-            (if (on) "✓ " else "") + nav.CHIP,
+            (if (on) "✓ " else "") + nav.chipText(if (on) io.github.jasondorjeshort.dystopo.app.nav.WayBackUiState.target else null), // T272: names a waypoint
             style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
             modifier = Modifier
                 .background(if (on) Ink else Color.Transparent, RoundedCornerShape(14.dp))
@@ -345,9 +345,9 @@ internal const val TURN_BACK_OFF = "Hide the turn-back time"
 /** T252: the chip's help text (ADR 0031: the owner's to adjust). */
 internal val TURN_BACK_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
     io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.turnBack", "Turn-back time", "The map, top right: Tracks, then the recording panel", needs = "recording", show = { TrackBar.open = true }) {
-        "Off until you turn it on for a recording. It times the walk or ride back to the recording's start at the pace of " +
-            "its activity and says when to turn back to be out before sunset or your deadline in Settings. No time while " +
-            "driving, on a train or boat, or flying. Tap the card to see how it is worked out."
+        "Off until you turn it on for a recording. It times the walk or ride back to the recording's start, or to a " +
+            "waypoint (Turn back to here on its card), at its activity's pace, and says when to turn back to be out " +
+            "before sunset or your deadline. No time while driving, on a train or boat, or flying. Tap the card to see how."
     },
 )
 
@@ -375,6 +375,9 @@ private fun WayBackLine() {
         }.start()
     }
 }
+
+/** T272: the toast after "Turn back to here" on a waypoint (ADR 0031). Pure. */
+internal fun wayBackToWaypoint(name: String): String = "The way back now goes to ${name.ifBlank { "the waypoint" }}"
 
 /** T180: the toasts of "The way back starts here" (ADR 0031: the owner's to adjust). */
 internal const val WAY_BACK_SET = "The way back now starts here"
@@ -517,6 +520,16 @@ private fun WaypointSheet(w: io.github.jasondorjeshort.dystopo.store.StoredWaypo
             Action("Rename") { val n = name.trim(); if (n.isNotEmpty()) Thread { tracker().renameWaypoint(wp.id, n) }.start() }
             Action("Delete", RecordRed) { Thread { tracker().deleteWaypoint(wp.id) }.start() }
             Action("Close") { Thread { tracker().selectWaypoint(null) }.start() }
+        }
+        // T272: while a recording's turn-back card is on, this waypoint can be the way back's return point.
+        if (io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.chipOn) Action(io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.TURN_BACK_TO_HERE) {
+            Thread {
+                val ok = tracker().wayBackToWaypoint(wp.id)
+                if (ok) tracker().selectWaypoint(null)
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(DystopoApp.instance, if (ok) wayBackToWaypoint(wp.name) else WAY_BACK_NO_POINT, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }.start()
         }
     }
 }
