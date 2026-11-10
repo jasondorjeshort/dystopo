@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.lazy.LazyColumn
@@ -62,7 +63,7 @@ private val Magenta = Color(0xFFD01C8B)
 private val SheetPaper = Color(0xFFFFFCF5)
 
 /**
- * The track controls on the map (T31, T40): record/pause/resume/stop with the live distance, point
+ * The track controls on the map (T31, T40; T253: Hide, then Record, or Pause, then Resume or Finish) with the live distance, point
  * count and time; a Waypoint chip, always shown (T91: at the current fix, recording or not; a long-press
  * on the map offers one too, [LongPressMenu]); the "Tracks" chip, which opens the Tracks sheet ([TracksSheet]); the
  * waypoint sheet (rename or delete; opened by tapping a waypoint on the map); and the elevation profile panel. Also binds the [TrackOverlay] to the map view. T180: the recording panel has
@@ -94,6 +95,11 @@ private fun BoxScope.Controls() {
     // T49: the track chips fold into one chip, so they cover as little of the map (and its peak labels) as the Packs button.
     // T109: held in [TrackBar], so `POST /help/open?key=tracks.bar` can unfold it.
     var barOpen by TrackBar::open
+    // T253: Back hides the unfolded bar (and its panel), as Hide does; composed first in MapScreen, so every sheet's own
+    // Back handler, and the Tracks sheet's, comes before it. The recording goes on.
+    androidx.activity.compose.BackHandler(enabled = barOpen && !TrackBar.listOpen) {
+        if (ActivityPicker.target == ActivityPicker.NEW) ActivityPicker.close() else TrackBar.hide()
+    }
     // T81: POST_NOTIFICATIONS (Android 13+), asked once at the first recording; when allowed, the running
     // recording's notification is posted at once. Refused: recording goes on without it.
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -129,31 +135,28 @@ private fun BoxScope.Controls() {
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 itemVerticalAlignment = Alignment.CenterVertically, // T109: the chips centred on the help icon's taller target
             ) {
+                // T253: Hide (the old "\u00D7" read as Stop) first, at the row's far edge from the record group, which comes last.
+                if (barOpen) HideChip { TrackBar.hide() }
                 // T91: a waypoint at the current fix at any time, folded or not, recording or not.
                 Chip("Waypoint") { Thread { dropHere(tracker()) }.start() }
                 if (!barOpen) {
-                    // Folded: one chip; while recording it shows the live distance in red.
+                    // Folded: one chip; while recording it shows the live distance in red, so a hidden panel visibly records on.
                     Chip(if (ui.recording) "\u25CF " + UnitFormat.distance(ui.distanceM, AppSettings.units) else "Tracks", if (ui.recording) RecordRed else Ink) { barOpen = true }
                 } else {
-                    if (ui.recording) {
-                        Chip(if (ui.paused) "Resume" else "Pause") { Thread { val t = tracker(); if (t.ui.paused) t.resume() else t.pause() }.start() }
-                    }
                     Chip("Tracks") { if (TrackBar.listOpen) TrackBar.closeList() else TrackBar.listOpen = true }
-                    Chip(recordChipLabel(ui.recording, TrackingUiState.starting), if (ui.recording) RecordRed else Ink) {
-                        // T172: Record opens the activity picker (the remembered activity marked); a choice starts the recording.
-                        // T229: "Starting" while a choice waits for the tracker (Tracking.once); a tap then changes nothing.
-                        if (TrackingUiState.starting) return@Chip
-                        if (TrackingUiState.ui.recording) Thread { tracker().stop() }.start()
-                        else if (ActivityPicker.target == ActivityPicker.NEW) ActivityPicker.close() else { TrackBar.closeList(); ActivityPicker.openForRecord() }
+                    io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.bar") // T109: record, pause, finish and keep
+                    // T253: the record group: Record; while recording Pause; paused Resume and Finish. Two steps end a recording
+                    // (the ADR 0039 survey's common practice); Finish saves, so it asks nothing; only Discard asks.
+                    for (label in recordGroup(ui.recording, ui.paused, TrackingUiState.starting)) {
+                        Chip(label, recordGroupColour(label)) { recordGroupTap(label) }
                     }
-                    io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.bar") // T109: record, pause, stop and keep
-                    Chip("\u00D7") { barOpen = false; TrackBar.closeList() }
                 }
             }
             EstimateChip() // T203: the terrain estimate, recording or not
             if (barOpen && !TrackBar.listOpen) ActivityPickerPanel(onRecordStarted) // T172; T219: a track's in the Tracks sheet
             if (barOpen && ui.recording) {
-                Panel {
+                // T253: a vertical swipe on the panel hides it, as Hide and Back do; the recording goes on.
+                Panel(Modifier.hideOnSwipe()) {
                     BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                     // T172: the recording's activity; a tap changes it (the recording then uses that activity's settings).
                     ActivityLine(ui.activeId, ui.activeName, ui.activeActivity)
@@ -162,6 +165,7 @@ private fun BoxScope.Controls() {
                         style = TextStyle(color = Ink, fontSize = 13.sp),
                     )
                     RecordingStateLine(ui)
+                    if (ui.paused) DiscardLine() // T253: paused only, and it asks first
                     TurnBackChip() // T252: the card off by default, on with this chip
                     WayBackLine() // T180
                 }
@@ -328,11 +332,88 @@ internal fun tracksTitle(count: Int): String = "Tracks · $count"
 internal const val TRACKS_STARTING = "Starting…"
 internal const val RECORD_STARTING = "Starting"
 
-/** T229: the Record chip's word: Stop while recording, [RECORD_STARTING] while a recording waits for the tracker, else Record. Pure, tested. */
-internal fun recordChipLabel(recording: Boolean, starting: Boolean): String = when {
-    recording -> "Stop"
-    starting -> RECORD_STARTING
-    else -> "Record"
+/** T253: the record group's words (ADR 0031: the owner's to adjust); Hide is the unfolded bar's fold. */
+internal const val RECORD = "Record"
+internal const val PAUSE = "Pause"
+internal const val RESUME = "Resume"
+internal const val FINISH = "Finish"
+internal const val HIDE = "Hide"
+internal const val HIDE_ACTION = "Hide the track controls; a recording goes on"
+internal const val DISCARD = "Discard"
+internal const val DISCARD_QUESTION = "Discard this recording? The track is deleted, not saved."
+internal const val KEEP = "Keep"
+
+/**
+ * T253 (T229 before): the record group, last in the unfolded bar: Record, or [RECORD_STARTING] while a recording waits for
+ * the tracker; while recording only Pause; paused Resume and Finish. No one-tap stop: ending takes Pause, then Finish (the
+ * ADR 0039 survey, `recording-panel.md`). Pure, tested.
+ */
+internal fun recordGroup(recording: Boolean, paused: Boolean, starting: Boolean): List<String> = when {
+    recording && paused -> listOf(RESUME, FINISH)
+    recording -> listOf(PAUSE)
+    starting -> listOf(RECORD_STARTING)
+    else -> listOf(RECORD)
+}
+
+/** T253: red while it acts on a recording (Pause, Resume), ink for Record and for Finish, which ends it. */
+private fun recordGroupColour(label: String): Color = if (label == PAUSE || label == RESUME) RecordRed else Ink
+
+/** T253: a record-group chip's tap; the recorder's calls on a thread of their own ([tracker] waits there for it). */
+private fun recordGroupTap(label: String) {
+    when (label) {
+        // T172: Record opens the activity picker (the remembered activity marked); a choice starts the recording.
+        RECORD -> if (ActivityPicker.target == ActivityPicker.NEW) ActivityPicker.close() else { TrackBar.closeList(); ActivityPicker.openForRecord() }
+        PAUSE -> Thread { tracker().pause() }.start()
+        RESUME -> { TrackBar.discardAsk = false; Thread { tracker().resume() }.start() }
+        FINISH -> { TrackBar.discardAsk = false; Thread { tracker().stop() }.start() } // saves at once: nothing is lost
+        else -> {} // T229: "Starting" while a choice waits for the tracker (Tracking.once); a tap then changes nothing
+    }
+}
+
+/** T253: Hide, with a chevron pointing where the panel goes (up, into the Tracks chip); it never ends a recording. */
+@Composable
+private fun HideChip(onClick: () -> Unit) {
+    Row(
+        Modifier.background(Ink, RoundedCornerShape(16.dp)).clickable(onClickLabel = HIDE_ACTION, onClick = onClick)
+            .padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Canvas(Modifier.padding(top = 1.dp).size(12.dp, 8.dp)) {
+            val p = Path().apply { moveTo(0f, size.height); lineTo(size.width / 2, 0f); lineTo(size.width, size.height) }
+            drawPath(p, Color.White, style = Stroke(width = 2.dp.toPx()))
+        }
+        BasicText(HIDE, style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+    }
+}
+
+/** T253: a vertical swipe of a thumb's length on the panel hides the bar, as Hide and Back do. */
+private fun Modifier.hideOnSwipe(): Modifier = pointerInput(Unit) {
+    var dragged = 0f
+    androidx.compose.foundation.gestures.detectVerticalDragGestures(
+        onDragStart = { dragged = 0f },
+        onDragEnd = { if (kotlin.math.abs(dragged) >= 48.dp.toPx()) TrackBar.hide() },
+    ) { change, dy -> change.consume(); dragged += dy }
+}
+
+/**
+ * T253: Discard on the paused panel, in red and apart from the chips; a tap asks first ([DISCARD_QUESTION], Discard or
+ * Keep), since it deletes the track. Finish never asks.
+ */
+@Composable
+private fun DiscardLine() {
+    if (!TrackBar.discardAsk) {
+        Action(DISCARD, RecordRed) { TrackBar.discardAsk = true }
+        return
+    }
+    BasicText(DISCARD_QUESTION, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        Action(DISCARD, RecordRed) {
+            TrackBar.discardAsk = false
+            Thread { val t = tracker(); t.stop()?.let { t.delete(it.id) } }.start()
+        }
+        Action(KEEP) { TrackBar.discardAsk = false }
+    }
 }
 
 /** T229: the tracker on a thread the caller started (it waits there until the tracker is ready); never on the main thread. */
@@ -464,7 +545,7 @@ private fun ActivityLine(id: String?, name: String?, activity: io.github.jasondo
     )
 }
 
-/** T109: whether the track bar is unfolded (Record, Pause, Tracks); T219: and the Tracks sheet's state. Compose state, main thread. */
+/** T109: whether the track bar is unfolded (Hide, Tracks, Record or Pause); T219: and the Tracks sheet's state. Compose state, main thread. */
 object TrackBar {
     var open by mutableStateOf(false)
 
@@ -478,11 +559,21 @@ object TrackBar {
     /** T219: the track whose row has its overflow open. */
     var rowMore by mutableStateOf<String?>(null)
 
+    /** T253: Discard's question is up on the paused panel. */
+    var discardAsk by mutableStateOf(false)
+
     fun closeList() {
         listOpen = false
         importOpen = false
         moreOpen = false
         rowMore = null
+    }
+
+    /** T253: Hide, Back or a swipe: the bar folds into its one chip; a recording goes on. */
+    fun hide() {
+        open = false
+        discardAsk = false
+        closeList()
     }
 }
 
@@ -493,8 +584,10 @@ object TrackBar {
 internal val TRACK_BAR_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
     io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.bar", "Recording tracks", "The map, top right: Tracks, then the bar", show = { TrackBar.open = true }) {
         "Record starts a track; it goes on with the screen off and the app in the background, its notification saying " +
-            "how (recording, waiting for GPS, paused). Pause holds it; Stop ends it and keeps it in the Tracks list " +
-            "(Go to follow it, three dots for a GPX file). Waypoint marks where you are; long-press the map for another place."
+            "how (recording, waiting for GPS, paused). Pause holds it; then Resume goes on, or Finish ends it and keeps it " +
+            "in the Tracks list (Go to follow it, three dots for a GPX file); Discard deletes it, after asking. Hide, Back " +
+            "or a swipe on the panel puts the bar away and the recording goes on, its distance in red on the Tracks chip. " +
+            "Waypoint marks where you are; long-press the map for another place."
     },
 )
 

@@ -47,7 +47,8 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   shows), `retraceS`, `maxWayBackS`, `deadlineDate` (the deadline's own date, the recording's day), `basisOpen`, and
  *   `ui.clock`, `ui.basis`; the reading (`text`, `label`, `clock`) is null while no clock shows.
  * - T219, the Tracks sheet ([io.github.jasondorjeshort.dystopo.app.tracking.TracksSheet]): `POST /tracks/ui?open=1|0` opens or
- *   closes it (and unfolds the bar), `&more=1|0` its overflow, `&rowMore=<track id or none>` a row's overflow,
+ *   closes it (and unfolds the bar), T253: `&bar=1|0` unfolds the bar or hides it as Hide does (`bar` in the answer: `open`,
+ *   `recordGroup`, Record or Pause or Resume and Finish, and `discardAsk`), `&more=1|0` its overflow, `&rowMore=<track id or none>` a row's overflow,
  *   `&importHoldMs=` holds the next import after its start line, for a screenshot; `GET /tracks/ui` answers `open`, `title`,
  *   `count`, `moreOpen`, `overflow`, `rowMore`, `rowOverflow`, `message`, `rows` (`id`, `name`, `line`, `activity`, `shown`,
  *   `action`), `saveFile` ([io.github.jasondorjeshort.dystopo.app.SaveFile.json]).
@@ -144,6 +145,7 @@ object TrackRoutes {
                         "0" -> bar.moreOpen = false
                     }
                     p.s("rowMore")?.let { bar.rowMore = it.takeUnless { id -> id == "none" } }
+                    when (p.s("bar")) { "1" -> bar.open = true; "0" -> bar.hide() } // T253: unfold, or Hide
                 }
                 return Response.json(sheetJson(t))
             }
@@ -396,6 +398,8 @@ object TrackRoutes {
                 )
             },
             "saveFile" to io.github.jasondorjeshort.dystopo.app.SaveFile.json(),
+            // T253: the unfolded bar and its record group (Hide first, the group last), and Discard's question.
+            "bar" to linkedMapOf("open" to bar.open, "recordGroup" to io.github.jasondorjeshort.dystopo.app.tracking.recordGroup(ui.recording, ui.paused, io.github.jasondorjeshort.dystopo.app.tracking.TrackingUiState.starting), "discardAsk" to bar.discardAsk),
         )
     }
 

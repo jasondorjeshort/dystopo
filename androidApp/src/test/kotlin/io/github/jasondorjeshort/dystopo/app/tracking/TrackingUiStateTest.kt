@@ -135,9 +135,10 @@ class TrackingUiStateTest {
         assertEquals(listOf(true, false), waiting.toList(), "no Starting once ready")
     }
 
-    @Test fun theRecordChipSaysStartingWhileARecordingWaits() {
-        assertEquals("Record", recordChipLabel(recording = false, starting = false))
-        assertEquals(RECORD_STARTING, recordChipLabel(recording = false, starting = true))
-        assertEquals("Stop", recordChipLabel(recording = true, starting = true))
+    @Test fun theRecordGroupSaysStartingWhileARecordingWaitsAndNeverStopsInOneTap() { // T229, T253
+        assertEquals(listOf("Record"), recordGroup(recording = false, paused = false, starting = false))
+        assertEquals(listOf(RECORD_STARTING), recordGroup(recording = false, paused = false, starting = true))
+        assertEquals(listOf(PAUSE), recordGroup(recording = true, paused = false, starting = true), "recording: Pause only")
+        assertEquals(listOf(RESUME, FINISH), recordGroup(recording = true, paused = true, starting = false), "paused: Resume and Finish")
     }
 }
