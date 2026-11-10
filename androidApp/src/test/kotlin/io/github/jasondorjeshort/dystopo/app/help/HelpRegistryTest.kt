@@ -146,6 +146,9 @@ class HelpRegistryTest {
             // T251: the marks on the map.
             "map.marks",
             // end T251
+            // T252: the recording panel's turn-back chip.
+            "tracks.turnBack",
+            // end T252
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

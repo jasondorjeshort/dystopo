@@ -245,4 +245,99 @@ class TurnAroundTest {
         assertNull(margin.lateMin)
         assertEquals("Turn back by ${style(turnBack)} to be out by 6:00${s}PM.", margin.spoken(style))
     }
+
+    // T252: every deadline carries its date. UTC stands in for the phone's zone; Mont Blanc's mean solar day is within
+    // half an hour of it.
+    private val day = 86_400_000L
+    private val utcMidnight: (Long) -> Long = { ms -> ms - ((ms % day) + day) % day }
+    private val day0 = Sun.epochDay(2026, 7, 15) * day
+
+    private fun resolvedFor(setting: DeadlineSetting, lat: Double, lon: Double, startMs: Long, nowMs: Long): Deadline {
+        val ref = Deadline.dayFor(setting, lat, lon, startMs, nowMs, utcMidnight)
+        return Deadline.resolve(setting, lat, lon, ref, utcMidnight(ref))
+    }
+
+    @Test
+    fun aTypedDeadlineAcrossMidnightKeepsTheRecordingsDay() {
+        val ten = DeadlineSetting.parse("22:00")!!
+        // Started at 20:00, read at 01:00 the next night: the deadline is the 22:00 just gone, three hours late.
+        val d = resolvedFor(ten, 45.83, 6.86, day0 + 20 * h, day0 + day + 1 * h)
+        assertEquals(day0 + 22 * h, d.atMs)
+        // Before T252 the clock put 22:00 on the reading's own day: 21 hours ahead, a turn-back time with no hurry.
+        assertEquals(day0 + day + 22 * h, Deadline.resolve(ten, 45.83, 6.86, day0 + day + 1 * h, utcMidnight(day0 + day + 1 * h)).atMs)
+        // A typed 01:00 for a recording started at 20:00 is the night's, not the morning already gone.
+        assertEquals(day0 + day + 1 * h, resolvedFor(DeadlineSetting.parse("01:00")!!, 45.83, 6.86, day0 + 20 * h, day0 + 21 * h).atMs)
+        // Read before it on the same day: that day's.
+        assertEquals(day0 + 22 * h, resolvedFor(ten, 45.83, 6.86, day0 + 9 * h, day0 + 12 * h).atMs)
+    }
+
+    @Test
+    fun aSunsetDeadlineAcrossADay() {
+        val (lat, lon) = 45.83 to 6.86
+        val sunset0 = Sun.dayAt(lat, lon, day0 + 12 * h).sunsetMs!!
+        val sunset1 = Sun.dayAt(lat, lon, day0 + day + 12 * h).sunsetMs!!
+        assertTrue(sunset0 in day0 + 18 * h..day0 + 21 * h, "$sunset0")
+        // Started in the morning, read at 22:00: the evening's sunset, a little late.
+        assertEquals(sunset0, resolvedFor(DeadlineSetting.SUNSET, lat, lon, day0 + 8 * h, day0 + 22 * h).atMs)
+        // Read at 01:00 the next night: still that sunset (within the late window), not the next evening's.
+        assertEquals(sunset0, resolvedFor(DeadlineSetting.SUNSET, lat, lon, day0 + 8 * h, day0 + day + 1 * h).atMs)
+        // The second morning of a long recording, past the late window: that day's sunset, never the first day's.
+        assertEquals(sunset1, resolvedFor(DeadlineSetting.SUNSET, lat, lon, day0 + 8 * h, day0 + day + 9 * h).atMs)
+        // A deadline set the day before a recording started today reads today's sunset.
+        assertEquals(sunset1, resolvedFor(DeadlineSetting.SUNSET, lat, lon, day0 + day + 7 * h, day0 + day + 10 * h).atMs)
+    }
+
+    @Test
+    fun theWayBackFromAFlightWasHundredsOfHoursOnFoot() {
+        // T252, the owner's 348 hours: a flight recorded on foot. Three hours at 500 km/h, one fix a minute, timed back at
+        // the standard walking pace: the turn-back time falls weeks before now, the deadline itself being today's.
+        val wb = WayBack(TurnPace.forRecording(CostModel(TravelMode.HIKE, pace = null)))
+        val degPerM = 1 / 111_195.0
+        val t0 = day0 + 12 * h
+        for (i in 0..180) wb.add(WayPoint(45.0 + i * 8333.0 * degPerM, 6.86, 1000.0, t0 + i * m, 139.0))
+        val now = t0 + 180 * m
+        val c = wb.clock(now, deadline(day0 + 19 * h), 30)!!
+        assertEquals(TurnState.TURN, c.state)
+        assertTrue(c.retraceS > TurnActivity.MAX_WAY_BACK_S, "${c.retraceS}")
+        assertTrue(c.lateMin!! > 200 * 60, "${c.lateMin}")
+        assertEquals("standard walking pace", wb.pace.label)
+        // Flying has no clock: the card says why instead.
+        assertNull(TurnActivity.mode(io.github.jasondorjeshort.dystopo.model.Activity.AIR))
+        assertEquals("No turn-back time while flying", TurnActivity.noClockText(io.github.jasondorjeshort.dystopo.model.Activity.AIR))
+    }
+
+    @Test
+    fun theWayBacksPaceFollowsTheActivity() {
+        val foot = io.github.jasondorjeshort.dystopo.model.Activity.FOOT
+        val bike = io.github.jasondorjeshort.dystopo.model.Activity.BIKE
+        assertEquals(TravelMode.HIKE, TurnActivity.mode(foot))
+        assertEquals(TravelMode.BIKE, TurnActivity.mode(bike))
+        for (a in listOf("road", "rail", "boat", "air")) assertNull(TurnActivity.mode(io.github.jasondorjeshort.dystopo.model.Activity.of(a)!!))
+        assertEquals("standard cycling pace", TurnPace.forRecording(CostModel(TravelMode.BIKE, pace = null)).label)
+        assertEquals("your walking pace", TurnActivity.paceName(TravelMode.HIKE, fitted = true))
+        // Navigation's label is unchanged.
+        assertEquals(TurnPace.STANDARD_PACE, TurnPace.of(CostModel(TravelMode.HIKE, pace = null)).label)
+        // A pace replaced mid-recording times the same line anew.
+        val wb = WayBack(TurnPace.forRecording(CostModel(TravelMode.HIKE, pace = null)))
+        val degPerM = 1 / 111_195.0
+        for (i in 0..20) wb.add(WayPoint(46.78 + i * 100 * degPerM, -121.73, 1600.0, sixPm - 3 * h + i * m, 1.5))
+        val walk = wb.clock(sixPm - 2 * h, deadline(), 30)!!.retraceS
+        wb.pace = TurnPace.forRecording(CostModel(TravelMode.BIKE, pace = null))
+        val ride = wb.clock(sixPm - 2 * h, deadline(), 30)!!.retraceS
+        assertTrue(ride < walk / 2, "walk $walk s, ride $ride s")
+        // The basis, one tap from the card.
+        assertEquals(
+            "Timed back to the recording's start along the line recorded, at the standard cycling pace (a touring pace), to be out 30 min before sunset, flat horizon (19:12).",
+            TurnActivity.basis(AnchorSource.START, wb.pace, 30, "sunset, flat horizon", "19:12"),
+        )
+        assertEquals("The way back to the start is more than a day on foot.", TurnActivity.tooFar(TravelMode.HIKE))
+    }
+
+    @Test
+    fun aTimeOffTodayCarriesItsDay() {
+        assertEquals("21:10", DatedClock.text("21:10", 0, "15 Jul"))
+        assertEquals("21:10 yesterday", DatedClock.text("21:10", -1, "14 Jul"))
+        assertEquals("05:36 tomorrow", DatedClock.text("05:36", 1, "16 Jul"))
+        assertEquals("08:51 on 1 Jul", DatedClock.text("08:51", -14, "1 Jul"))
+    }
 }
