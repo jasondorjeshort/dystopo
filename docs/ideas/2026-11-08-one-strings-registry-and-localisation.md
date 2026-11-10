@@ -1,7 +1,6 @@
 ---
 date: 2026-11-08
 kind: feature
-related: [2026-11-07-report-a-problem-with-a-full-diagnostic-dump.md]
 ---
 
 # One registry of every user-visible string, a per-release diff for the owner, and the step that makes translation trivial
@@ -28,3 +27,13 @@ message catalogue, the units and clock already have their own rules (ADR 0022, T
   so wordings get one reading before testers see them.
 - The intl step itself: the English catalogue as the source, a second language as the proof (the owner's choice),
   and the rules that stay code (units by region, the clock by the phone's setting).
+
+Plan: one no-Gradle pass, the `proposal` skill (a format other clients read, so a major choice): proposal 0062 on
+the string catalogue and localisation, the technical research first (ADR 0044: Android resources with
+`stringResource` against a Kotlin Multiplatform catalogue in `shared` that the web page and a later iOS app read;
+plurals, placeholders, right-to-left; community translation without a server of our own, ADR 0059), options at equal
+depth with exit costs, critic, revision. It also specifies the registry test (the `RetiredNounsTest` lexer failing
+`check` on a literal outside the catalogue, with an allow file), the per-release diff's place in the `release`
+skill, and the migration order by screen. Owns `docs/design/proposals/0062-*.md` and its critic review and the
+proposals README line. Done when: as T244's (critic filed, every objection answered, Prior art with sources, the
+reversal named); the second language stays the owner's choice, asked in the proposal. Out of scope: any code.

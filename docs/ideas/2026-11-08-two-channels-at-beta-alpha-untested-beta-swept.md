@@ -24,3 +24,9 @@ sweep for testers who opt in, while beta carries the swept, released build.
 - What the alpha build must still pass before publishing: `check` and the privacy scan at least, so an untested
   build is never an unsafe one; the release notes generated from the changelog's Unreleased section.
 - Revise ADR 0024 when this is built (the policy says one channel).
+
+Question: Should this wait for the Play registration and the first beta (a `Waits:` line of yours naming that
+trigger), or should the untested alpha channel be built now on GitHub prereleases beside today's swept alphas?
+Recommended: wait; until beta exists the swept alpha is the only tested build, and a second GitHub channel now would
+need the updater's channel switch and ADR 0024's revision twice, once now and again when Play arrives.
+Answer:

@@ -32,3 +32,14 @@ as the ride; the research question below has to answer that first, and this idea
 - Recordings for comparison: a few of the owner's own tracks with the raw accelerometer logged beside the fixes
   (a debug route to log it; the replay idea's export), on foot, by bike, by car and in the air.
 - Power: the sensor's cost over a long recording against the battery idea.
+
+2026-11-10 (triage): T250 took the case that started this (the barometer off in the air: Barometer Automatic keys on
+a flying activity, then on a disagreement with GNSS); its follow-ups name a flying detector and the pressure-rate
+tripwire, which are the cheaper paths to the same end.
+
+Question: Should a read-only research pass (ADR 0044, technical variant) settle whether a phone's accelerometer can
+tell the vehicle from the carrier's handling, before anything else, or is this idea dropped after your second
+thought? Recommended: the research pass only, one no-Gradle agent writing a finding; build nothing unless it shows a
+published method that survives a phone in a pocket or cup holder, since T250's flying rule already covers the case
+that prompted it.
+Answer:

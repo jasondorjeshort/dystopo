@@ -37,3 +37,6 @@ app, when it comes, runs the same `Launch`.
   first.
 - A snapshot of app state for a faster restart is a different idea and is not this one: the owner notes it
   "can also lead to synchronization issues so we have to be careful".
+
+Plan: decided in ADR 0061 (T245, 2026-11-09); build by its order of moves, step 1 first (the list, validator, runner
+and bindings with no move, measured by the runner's overhead), and delete this file on step 1's branch.

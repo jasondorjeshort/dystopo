@@ -26,3 +26,19 @@ walk to the car, so the planner's mode is a different thing from the moment's ac
 - The planner's mode stays separate and defaults from the current activity with the walk-to-the-car exception the
   owner names.
 - A benchmark (ADR 0039) of how the established apps hold an activity outside a recording, before the design.
+
+2026-11-10 (triage): the benchmark is done, `out/wave31-research/tracks-manager.md` [no-check: gitignored],
+recommendations 5 and 6 (one app-wide mode as the surveyed outlier that has one; the planner's default from it,
+overridable per route; the recording's own value editable after). T250 made the readout follow the recording's
+activity; outside a recording it still reads the remembered `AppSettings.trackActivity`.
+
+Plan: one pass, after the tracks and routes manager lands. The remembered activity becomes the app's current
+activity (the same stored key, synced as today, so no migration): a small chip on the map (in the readout strip's
+row, placed by the layout rule) shows and changes it; T158's detection may suggest a change on the chip, never
+switch it silently; the readout, the way-back clock, the alert rules and a new recording's profile read it when no
+recording runs; the route planner's travel mode defaults from it (hike for any walking activity, drive for drive,
+bike for bike) and stays changeable per route. A setting "Ask for the activity when recording starts", default off
+(the survey's split, ADR 0044). `GET /readout` and `GET /tracks` report the current activity; strings and
+screenshots listed. Done when: `check` green with a test that the planner's default follows the activity; on the
+emulator with no recording, setting flying on the chip takes the barometer out (`GET /readout`), and a new route
+defaults to the mapped mode. Out of scope: per-segment activities in a recording (unchanged).

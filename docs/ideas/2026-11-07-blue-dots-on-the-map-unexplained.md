@@ -24,3 +24,14 @@ known; the screenshot shows the recorded track's start (green) and current (mage
   after the activity's gap rule, and the long-press card's first line names it; `docs/reference/android-app.md`).
 - Every mark on the map answers a tap with its name (a small label or the long-press menu's first line), so an
   unexplained dot can explain itself; the help registry (T218's `help/Help.kt`) lists the marks.
+
+Plan: one pass, T251's mechanism widened. `tracking/LongPressMenu.kt`'s `markAt` asks, after `MapController.puckMark`,
+`queryRenderedFeatures` in the fingertip box (as `tracking/TrackOverlay.kt` already does for its points) over every
+overlay layer that draws a mark: the track's start, head and end marks, the dashed gap bridge, waypoints and their
+selection ring, the route's ends and water markers, the "I am at" and trail-disagreement marks, the terrain
+estimate's grey dot, peers' positions, the long-press marker; the first hit gives the card's first line (a name and
+one fact: "Track start, 07:12", "Water, from the route's sources"). Each mark gets an entry in `MAP_MARKS_HELP`; a
+test asserts every overlay layer id that draws a point has a name and a help entry, so a new mark cannot ship
+unnamed. `LongPressMenu.json()`'s `mark` (in the debug routes that return it) carries the name. Done when: `check` green with that test; on the
+emulator a press on each mark (a replayed track with a gap, a planned Rainier route with water, a waypoint) shows its
+line in a screenshot. Out of scope: MapLibre's own accuracy circle (the puck's line covers it).

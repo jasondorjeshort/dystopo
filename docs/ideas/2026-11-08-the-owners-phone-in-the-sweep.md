@@ -1,7 +1,7 @@
 ---
 date: 2026-11-08
 kind: chore
-related: [2026-11-07-report-a-problem-with-a-full-diagnostic-dump.md, 2026-11-07-a-launch-budget-per-mark-enforced-by-the-sweep.md]
+related: [2026-11-07-a-launch-budget-per-mark-enforced-by-the-sweep.md]
 ---
 
 # The owner's phone on USB runs the sweep's device parts beside the emulator
@@ -28,3 +28,14 @@ emulator's cold start is over the 5 s limit on its own. The release skill alread
   touching the release install, and never clears data; the privacy rule holds (nothing read off the phone goes in a
   tracked file; the second PC has no private-terms file).
 - The owner's part: a USB cable, developer options on, the mock location app chosen once.
+
+Plan: one pass, `tools/sweep.ps1` and `tools/sweep-summary.py` only (plus `docs/reference/` sweep page's paragraph):
+a `-Phone <serial>` option that, after the emulator parts, runs on that serial `tools/android-check.py` with the
+tour's fixes sent as `POST /location` on the debug port (never `adb emu geo fix`), `tools/android-startup.py
+--launches 5` (cold), and `GET /diagnostics`, each a part of its own in `steps.tsv` with a `phone` section in
+`summary.json` and the sheet. Safety as code: the debug build and the release build share one package
+(`androidApp/build.gradle.kts`, no suffix), so the part refuses to install over an installed release and names the
+step for the owner, never clears data, and writes nothing read off the phone outside `out/`. Done when:
+a run with a serial that is not attached stops at the named step; one run on the owner's phone at a sweep the
+owner attends, its figures in the report. Out of scope: the launch budget's ceilings (that idea) and the release
+parts on the phone (the `release` skill already has them).

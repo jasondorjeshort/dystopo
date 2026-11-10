@@ -26,3 +26,16 @@ then an eye on the screenshots. The first five are scripts whose output is JSON;
   T240, a tool fix), Sonnet where an eye is needed; the `wave` skill's roles say which, and the brief template
   carries the script.
 - The measurement: the next wave's close against 2.5 a task.
+
+2026-11-10 (triage): ~~the verifier script~~: built by T246 (`tools/verify-task.ps1`, `verify-summary.json`,
+`.claude/skills/brief/verifier.md`, `docs/reference/verifying-a-task.md`). Left: the machine-readable Done-when,
+the Haiku-class verifier, and the measurement (wave 31's close reads T246's saving).
+
+Plan: one no-Gradle pass after wave 31's close has read the per-task figure. `tools/verify-task.ps1` gains
+`-Checks <file>`: a small JSON list of commands with the expected value (a JSON path and its value, an exit code, a
+test count), run after the tour, each a step in the summary; `tools/test_verify_task.py` covers it from a fixture.
+The `brief` skill's task template gets a "Checks:" block beside Done when; `.claude/skills/wave/SKILL.md`'s roles and
+`CLAUDE.md`'s model line say a task whose Done-when is wholly in Checks (docs-only, test-only, a tool fix) gets a
+Haiku-class verifier that runs the script and reports its summary, Sonnet-class where a screenshot needs an eye;
+`docs/reference/verifying-a-task.md` updated. Done when: the script's test green; a dry run over a past task's
+Checks written by hand passes; the rule's lines in place. Measured at wave 32's close against wave 31's figure.

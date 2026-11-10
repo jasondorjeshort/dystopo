@@ -27,3 +27,13 @@ the whole world, with the known stretching near the poles.
 - "Fit the track" on the track card and the route card at any length, so one tap shows the whole flight.
 - Not azimuthal: the owner's own ruling, for the caching's sake; revisit only as a one-off overlay, never as the
   map's projection.
+
+Plan: one pass, after the sibling idea's world basemap lands. `tracking/TrackOverlay.kt` and the track's dashed gap
+layer split their lines with `shared`'s `geo/Geodesic.splitPieces`, as `routing/RouteOverlay.kt` does, with a test
+on a track that crosses 180°; a "Fit" action on the track card and the route card that fits the camera to the whole
+line, unwrapping longitudes so a line across 180° fits its short way round (T256's follow-up, the camera fit);
+`app/MapController.kt`'s minimum zoom lowered from 3 to 1, the contour and shade layers hidden below their useful
+zoom, the scale bar's figure and label density read at z1 and z2 in screenshots. Done when: `check` green with the
+split test; on the emulator a replayed track from Rainier across the Pacific draws with no wrap-around line, Fit
+shows all of it in one view, and z1 shows the world from the bundled basemap offline. Out of scope: any other
+projection.

@@ -26,3 +26,14 @@ would be keyed by the style's version and the options, and emptied by the cache 
   settings are the lever before any new cache.
 - The owner's lazy clearing and settings invalidation as the rule, whichever layer is cached.
 - Measure first: the frame time and CPU at the cutoff on the emulator and on a phone, to say what the redraw costs.
+
+2026-11-10 (triage): wave 31's survey (`out/wave31-research/offline-fallback.md` [no-check: gitignored], part 3,
+read in MapLibre Native's source) found no disk cache of drawn tiles and no public setting for the in-memory tile
+cache; the levers are the prefetch delta (kept at 4 by T254), the parent-overscale cap and the source's tile size.
+
+Question: Do you want a disk cache of drawn map pieces even though it can only be a raster cache made by the
+loopback server (losing rotation and tilt, and label placement per view), or a measurement pass first that times
+the redraw at the cutoff on the emulator and your phone and tries the renderer's own levers? Recommended: the
+measurement pass, one agent, a finding with frame times before and after; a raster cache only if the redraw is
+shown to cost what you saw and the levers do not move it.
+Answer:

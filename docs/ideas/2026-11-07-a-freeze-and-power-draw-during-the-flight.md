@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: bug
-related: [2026-11-07-report-a-problem-with-a-full-diagnostic-dump.md, 2026-10-13-battery-efficiency.md]
+related: [2026-10-13-battery-efficiency.md]
 ---
 
 # The app appeared to freeze once during the flight and may have drawn a lot of power
@@ -20,4 +20,12 @@ on a debug build (T146); the diagnostic dump idea would add the sampled history 
 - The flight's conditions for a freeze: a long recording with the screen on, airplane mode (every online fetch
   failing fast or slowly?), the way-back clock recomputing over a growing track each second (T180), the readout's
   terrain lookups along a fast-moving position (T203's terrain source).
-- The dump idea's memory and CPU history, so the next flight has data.
+- ~~The dump idea's memory and CPU history~~: built by T258 (the minute sampler, "Send diagnostics" inside Report a
+  problem, `devtool dump-scan`; `docs/reference/diagnostic-dump.md`), 2026-11-10. T250 also took the barometer off
+  in the air and T252 the turn-back clock's per-second recompute for flying, two of the suspects above.
+
+Question: Does Report a problem on your phone list a `freeze-` report from the 2026-11-07 flight, and will you send
+it, or a "Send diagnostics" dump from the next long flight on v0.1.25-alpha or later? Recommended: send whichever
+exists; nothing here can be built or ruled out without that data, and if the next flight shows no freeze and a flat
+sampler line, this file is deleted on your word.
+Answer:

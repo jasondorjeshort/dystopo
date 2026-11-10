@@ -25,3 +25,14 @@ contrast.
 - The same walk with TalkBack's reading order, so the app can be used by ear; the findings become tasks.
 - Which screens: the map with each card up, the Offline maps list, Settings and its pages, the recording panel,
   the share screen, the first-run card.
+
+Plan: one pass, a report-only part first. A new `tools/android-a11y.py` [no-check: new file] with its test drives
+the listed screens through the debug routes (the tour's own steps), takes `uiautomator dump` and a screencap at each,
+and lists per screen: clickable nodes under 48 dp in either side, clickable nodes with no text and no content
+description, overlapping clickable nodes, and nodes whose bounds hold none of their own text's pixels (T243's
+case, with `GET /layout`'s `semanticsAway` where the layout rule places the element); each node is tapped at its
+centre only where the tour already knows the effect to read back (a sheet opened, a route planned). The JSON and a
+sheet with the offending nodes outlined; `tools/sweep.ps1` runs it as part `a11y`, red only on a node the previous
+sweep did not list (a baseline file in `tools/`). Done when: the part run on `main` at font scales 1.0 and 2.0,
+its list in the report with the sheet viewed, `python -I` test green. Out of scope: fixing the nodes (each finding
+becomes a task) and the TalkBack order (a second pass once this list is short).

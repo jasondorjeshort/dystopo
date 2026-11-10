@@ -34,3 +34,17 @@ us look at them on the desktop app."
   app keeps in sync, so the desktop tooling and the web page read the same files.
 - A hidden track's trace never silently vanishes: the sheet says it is hidden, and the map's long-press menu
   can show it again.
+
+Plan: one pass (Opus-class, a full screen), from the survey `out/wave31-research/tracks-manager.md` [no-check:
+gitignored], recommendations 1 to 3. First the reproduction: record, start a second recording, read `GET /tracks`
+and the overlay's shown set at each step, name the action that hid the first track and fix it in the same branch.
+Then a full-screen "Tracks and routes" list built like Offline maps (`packs/PacksScreen.kt`'s pattern), opened from
+where the Tracks sheet (`tracking/TrackControls.kt`, `TracksSheet`) is opened today and replacing it: one list with
+a Tracks / Routes / All filter chip, sorted newest first (name and length as other sorts), each row with the
+activity, date, length and a visible "Hidden" or "Shown" with its eye toggle; a row menu with rename, export GPX,
+share (the system share sheet), statistics, delete; a select mode for show, hide, export and delete. A debug route
+for the screen's state and the tour's step in `tools/android-check.py`; help text; strings listed and screenshots
+(ADR 0031). Done when: `check` green; on the emulator the reproduction before and after, the list in each filter at
+font scales 1.0 and 2.0, hide and show from the list reflected on the map. Out of scope, flagged for the owner in
+the report: the kept folder sync (a new data flow; the survey's recommendation 4, export-only first), whether
+Settings also becomes a full screen, and the activity as the app's mode (its own idea, after this).

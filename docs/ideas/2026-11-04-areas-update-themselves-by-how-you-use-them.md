@@ -60,3 +60,7 @@ asked.
 The owner wants a fuller research pass on this later (more apps established from primary sources, the real
 update cadence of the upstream data, battery and data cost of the polling, how use-weighting could be measured);
 this survey is the starting point, not the answer.
+
+Plan: build by ADR 0060's build order, step 3 (cells with S1 and the refresh settings, after the owner's defaults
+listed under its "Waiting on the owner"); the use-weighted priority is that step's refresh policy, and this file is
+deleted on that step's branch.

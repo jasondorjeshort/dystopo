@@ -44,3 +44,18 @@ burst of slow tiles, T188's note) rather than at the cache.
   stay.
 - The discard balance the owner names: what the budget evicts first when a view has both a wide and a close
   zoom cached (the cells idea's "sufficiently out of date" and pins).
+
+2026-11-10 (triage): T254 built the ancestor cut (vector and DEM, `MvtOverzoom`, `X-Dystopo-Wider-Zoom`, never
+cached) and the tour's offline step, and found the disappearing view came from tiles never cached, not from cached
+tiles dropped; T255 put "from a wider zoom" on the chip. Left: the world basemap, the lowest zoom on the area's row,
+and the discard balance (ADR 0060's store and its eviction, not this file).
+
+Plan: one pass, the bundled world basemap (cut from T254 by the wave 31 critic). First step measures: a tilebuild
+recipe for a z0 to z5 vector world (`tilebuild/`, a layer subset in `tilebuild/PROFILE.md`; the extract sizes and a
+Natural Earth build compared, as `out/wave31-research/offline-fallback.md` [no-check: gitignored] part 4 lists)
+and a coarse DEM, their sizes reported; build only near that survey's target (under 10 MB for the vector set),
+else the report proposes the zoom cap. Then a `sources.json` entry, the files added by `bundleMapAssets` in
+`androidApp/build.gradle.kts`, the loopback server answering any tile at those zooms from the bundle when the cache
+and packs lack it (`app/TileService.kt`), and the downloaded area's lowest zoom shown on its row in Offline maps.
+Done when: `check` green with the licence check, the APK's size growth stated, the tour's offline step zoomed out
+to z2 over Rainier with land drawn (screenshot). Out of scope: the minimum zoom under 3 (the whole-world idea).

@@ -49,3 +49,6 @@ address of the owner's (ADR 0059: the application is distributed, with no centra
   catches up within the visible data limits (ADR 0023), and the sweep's own server as the test instance.
 - The real-phone checks still owed from T151 and T156: a long download with the app closed and the screen off,
   one over a service loss, and one over a reboot without the network.
+
+Plan: decided in ADR 0060 (T244, 2026-11-09); build by its build order, one task per step from step 2 (the move),
+and delete this file on the branch of the last step built (H2, after the owner allows it).

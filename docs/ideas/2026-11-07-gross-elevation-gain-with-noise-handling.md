@@ -24,3 +24,17 @@ whose follow-up already names "GPS height drift adding a few percent of gain".
 - The same figure on the planning card while a path is drawn, updating with each vertex (the hillmap behaviour),
   and on the track card and the trip report.
 - A test with a synthetic profile (2000 up, 1000 down, 2000 up with jitter) giving 3000 within a stated tolerance.
+
+2026-11-10 (triage): gross gain already exists: `shared`'s `gpx/TrackStats.kt` (`ascentDescent`, turning-point
+hysteresis, one 3 m threshold for every source), used by the planning card's summary (`model/RouteSummary.kt`),
+`nav/NavPath.kt` and `nav/TurnAround.kt`. What is missing is the per-source rule and saying it.
+
+Plan: one pass in `shared` plus the track card's line. `StatsOptions.elevationThresholdM` chosen by the source:
+from the track's stored profile (`model/ActivityProfile.kt`, `ElevationSource` FUSED or GNSS) for a recorded track,
+terrain for a planned path; the three thresholds in one place with their reasons (barometer-fused small, GNSS
+larger, terrain smallest), set by a replay of the existing smoothing tests' fixtures rather than guessed; the
+statistics line (track card, trip report) names the rule in a few words ("gain from barometer, 2 m steps
+ignored"), strings listed. Tests: the synthetic 2000 up, 1000 down, 2000 up profile with each source's jitter gives
+3000 m within the stated tolerance; the existing `TrackSmoothingTest` and route summary tests unchanged. Done when:
+`check` green, the Rainier route's card figure and a replayed track's card viewed. Out of scope: a per-vertex figure
+while drawing (the planning card already recomputes on each edit; a separate idea if it does not feel live).

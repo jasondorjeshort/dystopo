@@ -32,3 +32,17 @@ and a route that is not found read as the data's fault.
   graph, ADR 0049); which, after a measurement of the index's and graph's size for a city-sized tile area on the
   phone (T149's limits).
 - A device test: a view over an online-only airport, the gate drawn, `GET /search?q=` naming the reason.
+
+2026-11-10 (triage): ~~say why, first~~ and the device test: built by T255 (`MapCoverage`, "Search needs an offline
+map here; this area has map tiles only" with its Offline maps link, the route card's sentence, reason codes in
+`GET /search` and the route reply). Left: searching and routing on tiles alone.
+
+Plan: one pass, search first. Measure, on the emulator, a city-sized tile area saved by "Download this region" as
+tiles: the tile count at the index's zooms, the time and heap to build `search/PlaceSearch.kt`'s index by decoding
+those tiles from the online cache (the same decode `ensure` runs over a pack's archive), and the index's size; then
+build it: `PlaceSearch` indexes a recorded tile area (`Areas.isRecorded`) from the cache, off the main thread,
+cached on disk beside the area and rebuilt when the area's version changes, so `MapCoverage` reports such a view as
+searchable. The routing graph from tiles is not this pass: the report gives the graph's projected size from the
+same tile count against T149's limits and ADR 0049's server-built graph, for the coordinator to choose the next
+pass. Done when: `check` green with an index-from-tiles test over fixture tiles; on the emulator a search inside a
+tile-only Rainier-area region finds Paradise; the measurements in the report.
