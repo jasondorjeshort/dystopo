@@ -57,8 +57,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.divergence.DIVERGENCE_HELP +
             // end T213
             // T251: the marks on the map, beside the long-press card's line on the position marker.
-            io.github.jasondorjeshort.dystopo.app.tracking.MAP_MARKS_HELP
+            io.github.jasondorjeshort.dystopo.app.tracking.MAP_MARKS_HELP +
             // end T251
+            // T252: the recording panel's turn-back chip.
+            io.github.jasondorjeshort.dystopo.app.tracking.TURN_BACK_HELP
+            // end T252
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

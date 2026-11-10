@@ -336,13 +336,18 @@ private fun WayBackCard(w: WayBackClock.Ui, chips: io.github.jasondorjeshort.dys
                     chips.edge(c, density).let { if (it != chips.navCardBottom) chips.navCardBottom = it }
                     c.boundsInRoot().let { b -> floatArrayOf(b.left, b.top, b.right, b.bottom).let { px -> chips.navCardPx = px; WayBackLayout.boundsPx = px } }
                 }
-                .background(Paper, RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = padV),
+                .background(Paper, RoundedCornerShape(12.dp))
+                .clickable(enabled = w.basis != null, onClickLabel = WAY_BACK_BASIS) { WayBackClock.basisOpen = !WayBackClock.basisOpen } // T252
+                .padding(horizontal = 10.dp, vertical = padV),
             header = { TurnBack(w.text, w.label, w.colour) },
-            body = { if (w.headingBack) HeadingBack() },
+            body = { if (w.headingBack) HeadingBack(); if (WayBackClock.basisOpen) w.basis?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) } }, // T252: the basis
             footer = {},
         )
     }
 }
+
+/** T252: what a tap on the free-tracking card does, for a screen reader. */
+private const val WAY_BACK_BASIS = "Show how the turn-back time is worked out"
 
 /** T180: where the free-tracking card was last laid out (px; `GET /nav/turnaround` `layout`), null while hidden. */
 internal object WayBackLayout {

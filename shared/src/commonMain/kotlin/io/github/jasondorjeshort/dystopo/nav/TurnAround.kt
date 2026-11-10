@@ -2,7 +2,9 @@ package io.github.jasondorjeshort.dystopo.nav
 
 import io.github.jasondorjeshort.dystopo.gpx.StatsOptions
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.model.Activity
 import io.github.jasondorjeshort.dystopo.routing.CostModel
+import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToLong
@@ -13,10 +15,19 @@ import kotlin.math.sqrt
  * [ascentM] and descends [descentM], and whether it is the user's own fitted pace ([fitted]) or the standard estimate,
  * which the card's label says.
  */
-class TurnPace(val fitted: Boolean, private val stretchTimeS: (lengthM: Double, ascentM: Double, descentM: Double) -> Double) {
+class TurnPace(
+    val fitted: Boolean,
+    /** T252: the label naming the pace and its activity ("standard walking pace"); null keeps navigation's [YOUR_PACE] or [STANDARD_PACE]. */
+    private val named: String?,
+    /** T252: the routing mode the pace is timed in, when known (the way back's card names it). */
+    val mode: TravelMode?,
+    private val stretchTimeS: (lengthM: Double, ascentM: Double, descentM: Double) -> Double,
+) {
+    constructor(fitted: Boolean, stretchTimeS: (lengthM: Double, ascentM: Double, descentM: Double) -> Double) : this(fitted, null, null, stretchTimeS)
+
     fun timeS(lengthM: Double, ascentM: Double, descentM: Double): Double = stretchTimeS(lengthM, ascentM, descentM)
 
-    val label: String get() = if (fitted) YOUR_PACE else STANDARD_PACE
+    val label: String get() = named ?: if (fitted) YOUR_PACE else STANDARD_PACE
 
     companion object {
         const val YOUR_PACE = "your pace"
@@ -28,6 +39,13 @@ class TurnPace(val fitted: Boolean, private val stretchTimeS: (lengthM: Double, 
          * label says "your pace"), else the standard estimate (Naismith for hiking, the touring pace for bikes).
          */
         fun of(model: CostModel): TurnPace = TurnPace(model.fitted) { l, up, down -> model.timeS(l, up, down) }
+
+        /**
+         * T252: the way back's pace on a recording: [of] with the label naming the activity's pace ("standard walking
+         * pace", "your cycling pace"), so the card says what its figure stands on.
+         */
+        fun forRecording(model: CostModel): TurnPace =
+            TurnPace(model.fitted, TurnActivity.paceName(model.mode, model.fitted), model.mode) { l, up, down -> model.timeS(l, up, down) }
     }
 }
 
@@ -150,6 +168,29 @@ data class Deadline(
             DeadlineKind.CIVIL -> Sun.dayAt(lat, lon, nowMs).let { d -> Deadline(DeadlineKind.CIVIL, d.civilEndMs, "${DeadlineKind.CIVIL.label}, $FLAT_HORIZON", d.sunsetMs) }
             DeadlineKind.TERRAIN -> terrain(Sun.dayAt(lat, lon, nowMs), terrain, noTerrainData)
         }
+
+        /**
+         * T252: a deadline more than this far past gives way to the next day's: a recording that runs through the night
+         * meets the next evening's sunset in the morning, and a late clause never runs past half a day.
+         */
+        const val LATE_WINDOW_MS = 12 * 3_600_000L
+
+        /**
+         * T252, every deadline carries its date: an instant on the day whose [setting] a recording that began at
+         * [startMs] counts to at [nowMs]; pass it to [resolve] as its `nowMs` (with its own local midnight). The day is
+         * that of the first deadline at or after the later of [startMs] and [nowMs] less [LATE_WINDOW_MS]: a recording
+         * started at 20:00 with a typed 22:00 still counts to that 22:00 at 01:00 the next night (late, as it is), a
+         * typed 01:00 at 20:00 is the next night's, and the second morning of a long recording counts to that day's
+         * sunset, never the first day's. [localMidnightOf] is the phone's own zone's midnight of the day of an instant.
+         * A day the sun does not set (no deadline) is kept as it is.
+         */
+        fun dayFor(setting: DeadlineSetting, lat: Double, lon: Double, startMs: Long, nowMs: Long, localMidnightOf: (Long) -> Long): Long {
+            val from = maxOf(startMs, nowMs - LATE_WINDOW_MS)
+            val at = resolve(setting, lat, lon, from, localMidnightOf(from)).atMs ?: return from
+            return if (at >= from) from else from + DAY_MS
+        }
+
+        private const val DAY_MS = 86_400_000L
 
         private fun terrain(flat: Sun.Day, day: Sun.TerrainDay?, noData: Boolean): Deadline {
             val fs = flat.sunsetMs
@@ -859,7 +900,14 @@ class Retrace(
  * from it, and the clock (`retraceOnly`, the arrival clock once heading back). Pure; the phone feeds it the recorder's
  * fixes, `devtool nav --turn-around --replay` a GPX's points.
  */
-class WayBack(val pace: TurnPace, private val override: Int? = null) {
+class WayBack(pace: TurnPace, private val override: Int? = null) {
+    /** The pace the way back is timed at; T252: replaced when the recording's activity changes. */
+    var pace: TurnPace = pace
+        set(v) {
+            field = v
+            turn = null
+            turnAt = -1
+        }
     private val all = ArrayList<WayPoint>()
     private val scanner = WalkStart.Scanner(all)
     var retrace = Retrace()
@@ -942,4 +990,78 @@ class WayBack(val pace: TurnPace, private val override: Int? = null) {
         ),
         "retrace" to retrace.json(),
     )
+}
+
+/**
+ * T252: what the way back's clock on a recording times, from the recording's activity: a walk back for on foot and a ride
+ * back for a bike (their routing cost models, [CostModel]); no clock for the others, whose way back is neither (a card
+ * that timed a walk home from a flight read hundreds of hours late), with a line saying why. The words are ADR 0031's:
+ * the owner's to adjust.
+ */
+object TurnActivity {
+    /** The routing mode the way back is timed in for [a], or null when the clock does not run for it. */
+    fun mode(a: Activity): TravelMode? = when (a) {
+        Activity.FOOT -> TravelMode.HIKE
+        Activity.BIKE -> TravelMode.BIKE
+        else -> null
+    }
+
+    /** "standard walking pace", "your cycling pace". */
+    fun paceName(mode: TravelMode, fitted: Boolean): String =
+        (if (fitted) "your " else "standard ") + (if (mode == TravelMode.BIKE) "cycling" else "walking") + " pace"
+
+    /** The card's line for an activity with no clock ("No turn-back time while flying"). */
+    fun noClockText(a: Activity): String = NO_CLOCK + " " + when (a) {
+        Activity.ROAD -> "while driving"
+        Activity.RAIL -> "on a train"
+        Activity.BOAT -> "on a boat"
+        Activity.AIR -> "while flying"
+        Activity.FOOT, Activity.BIKE -> "for this activity"
+    }
+
+    const val NO_CLOCK = "No turn-back time"
+
+    /** Under [noClockText]: why. */
+    const val NO_CLOCK_WHY = "It times a way back on foot or by bike. Change the recording's activity if you are walking or riding."
+
+    /** T252: a way back longer than this is not a figure the card stands behind (a day of walking or riding). */
+    const val MAX_WAY_BACK_S = 24 * 3600.0
+
+    /** Under [NO_CLOCK] when the way back is longer than [MAX_WAY_BACK_S]. */
+    fun tooFar(mode: TravelMode?): String = "The way back to the start is more than a day " + (if (mode == TravelMode.BIKE) "by bike" else "on foot") + "."
+
+    /** Where the way back goes, in the basis ("the recording's start"). */
+    fun goesTo(s: AnchorSource): String = when (s) {
+        AnchorSource.START -> "the recording's start"
+        AnchorSource.WALK -> "where the drive ended"
+        AnchorSource.HERE -> "where you set it"
+    }
+
+    /**
+     * The basis, one tap from the card (as the planning card's, T217): "Timed back to the recording's start along the
+     * line recorded, at the standard walking pace (Naismith's rule), to be out 30 min before sunset, flat horizon
+     * (19:12)."
+     */
+    fun basis(source: AnchorSource, pace: TurnPace, marginMin: Int, deadlineLabel: String, deadlineAt: String?): String {
+        val how = when {
+            pace.fitted -> " (fitted from your recorded tracks)"
+            pace.mode == TravelMode.BIKE -> " (a touring pace)"
+            else -> " (Naismith's rule)"
+        }
+        val by = if (deadlineAt == null) "" else " ($deadlineAt)"
+        return "Timed back to ${goesTo(source)} along the line recorded, at the ${pace.label}$how, to be out $marginMin min before $deadlineLabel$by."
+    }
+}
+
+/**
+ * T252: a clock time with its day when it is not today's ("21:10 yesterday", "08:51 on 26 Oct"): every time the way back's
+ * card shows carries its date. [dayDiff] is the time's local day less today's; [date] the day's short date.
+ */
+object DatedClock {
+    fun text(time: String, dayDiff: Int, date: String): String = when (dayDiff) {
+        0 -> time
+        -1 -> "$time yesterday"
+        1 -> "$time tomorrow"
+        else -> "$time on $date"
+    }
 }
