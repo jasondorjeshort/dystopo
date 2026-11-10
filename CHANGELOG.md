@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-10
+
+- T256: "Line": the straight route follows the geodesic and works anywhere (lane A, after T255)
+
 ## v0.1.25-alpha (2026-11-10)
 
 ### 2026-11-10
