@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-09
 
+- T251: The recorded track in the air: one position on the map, the flagged fixes counted (lane B)
 - T250: The barometer: Automatic, Always or Never; off in the air; a climb that says what it knows (lane A, after T248)
 - T261: The device tour's cards step fails at font scale 2.0 in landscape on `main` (lane A, after T247; small; blocks the release)
 - T249: The tile index kept on disk, and the walk made cheap (lane B; T242's follow-ups)
