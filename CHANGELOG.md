@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-10
 
+- T254: Offline: a missing tile is cut from the nearest tile on the phone, never blank (lane B)
 - T253: The recording panel: Hide, not X; Pause, then Finish (lane A, after T252 and T251)
 
 ### 2026-11-09
