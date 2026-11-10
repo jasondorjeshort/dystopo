@@ -26,7 +26,7 @@ A release stack reads without a tool: `proguard-rules.pro` has `-dontobfuscate`,
 
 The cost, measured on an API 35 x86_64 emulator with the Rainier pack: the APK grows by 2.08 MB (arm64 23.32 MB to 25.39 MB, 8.9%; names alone are 0.13 MB of it); cold start `am start -W`, 20 starts each in four interleaved rounds, median 1086 ms optimised and 1124 ms not, within the noise; frame times over 12 pans, 50th percentile 18 to 21 ms and 90th 34 to 48 ms in both. A real phone has not been compared.
 
-APK size (T264): the bundled world overview (`assets/world/world-outdoors.pmtiles`, 1,748,638 bytes, 1,723,683 in the zip) takes the arm64 release APK from 25.57 MB to 27.30 MB (27,298,657 bytes, measured 2026-11-10; the "before" is the same APK less the entry).
+APK size (T264): the bundled world overview (`assets/world/world-outdoors.pmtiles`, 1,748,638 bytes, 1,723,683 in the zip) takes the arm64 release APK from 25.57 MB to 27.30 MB (27,298,657 bytes, measured 2026-11-10; the "before" is the same APK less the entry). T274 rebuilt it at 1,750,461 bytes (1,726,723 in the zip): about 3 kB more, the APK not re-measured.
 
 To check a build: `adb root` (a `google_apis` image), `kill -3 <pid>`, then pull the newest file of `/data/anr/` and read the `"ui-watchdog"` thread (Git Bash needs `MSYS_NO_PATHCONV=1`, or it rewrites `/data/...`).
 
