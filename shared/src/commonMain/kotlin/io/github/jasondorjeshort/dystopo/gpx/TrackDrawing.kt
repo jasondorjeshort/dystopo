@@ -2,6 +2,8 @@ package io.github.jasondorjeshort.dystopo.gpx
 
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.model.Route
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
@@ -14,6 +16,16 @@ import kotlin.math.sqrt
 /** A direction arrow on a line: position in pixels and the line's heading there (radians, atan2 of dy/dx, y down). */
 data class LineArrow(val x: Double, val y: Double, val angle: Double)
 
+/**
+ * T260: a hole between two segments of a track that the map bridges with a dashed straight line: from the last point of
+ * one segment ([from]) to the first of the next ([to]). The path walked there is unknown; [straightM] is only the
+ * distance between the two ends, and distances never include it.
+ */
+data class GapBridge(val from: TrackPoint, val to: TrackPoint) {
+    val durationMs: Long get() = (to.time ?: 0L) - (from.time ?: 0L)
+    val straightM: Double get() = TrackStats.distanceM(from.lat, from.lon, to.lat, to.lon)
+}
+
 /** Platform-neutral geometry for drawing tracks on a map; renderers do the actual painting. */
 object TrackDrawing {
     /**
@@ -22,6 +34,55 @@ object TrackDrawing {
      * as recorded. The raw points stay in the store.
      */
     fun line(track: Track, options: SmoothingOptions = SmoothingOptions()): List<List<TrackPoint>> = TrackSmoothing.line(track, options)
+
+    /**
+     * T260: the gaps to bridge on the map: between each segment (empty ones skipped) and the next, when both ends have
+     * times and the next starts more than [intervalMs] after the last ends (the recorder's own interval, so a gap is a
+     * time the recorder should have kept a fix and did not: a lost fix, a pause, the app stopped). A track without times
+     * (an import of a planned line) gets none: two segments there say nothing about a hole in time.
+     */
+    fun gaps(track: Track, intervalMs: Long = intervalOf(track)): List<GapBridge> = gaps(track.segments.map { it.points }, intervalMs)
+
+    fun gaps(segments: List<List<TrackPoint>>, intervalMs: Long): List<GapBridge> {
+        val out = ArrayList<GapBridge>()
+        var last: TrackPoint? = null
+        for (seg in segments) {
+            if (seg.isEmpty()) continue
+            val prev = last
+            val first = seg.first()
+            if (prev != null) {
+                val a = prev.time
+                val b = first.time
+                if (a != null && b != null && b - a > intervalMs) out += GapBridge(prev, first)
+            }
+            last = seg.last()
+        }
+        return out
+    }
+
+    /** The recorder's interval for [track]: its own profile's, else its activity's default, else on foot's. */
+    fun intervalOf(track: Track): Long = track.profile?.intervalMs ?: ActivityProfile.of(track.activity ?: Activity.FOOT).intervalMs
+
+    /**
+     * T260: the gaps for a statistics line, "1 gap, 10 min" or "3 gaps, 1 h 5 min" (their count and total time); null
+     * with none.
+     */
+    fun gapText(gaps: List<GapBridge>): String? {
+        if (gaps.isEmpty()) return null
+        val n = gaps.size
+        return "$n ${if (n == 1) "gap" else "gaps"}, ${gapDuration(gaps.sumOf { it.durationMs })}"
+    }
+
+    /** "40 s" under a minute, "10 min" under an hour, "1 h 5 min" (minutes rounded down). */
+    fun gapDuration(ms: Long): String {
+        val s = (ms / 1000).coerceAtLeast(0)
+        return when {
+            s < 60 -> "$s s"
+            s < 3600 -> "${s / 60} min"
+            s % 3600 < 60 -> "${s / 3600} h"
+            else -> "${s / 3600} h ${s % 3600 / 60} min"
+        }
+    }
 
     /**
      * Arrows along a pixel polyline ([xy] = x0, y0, x1, y1...), one every [spacing] pixels of line

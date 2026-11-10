@@ -4,6 +4,7 @@ import android.graphics.PointF
 import android.os.Handler
 import android.os.Looper
 import io.github.jasondorjeshort.dystopo.app.AppSettings
+import io.github.jasondorjeshort.dystopo.gpx.TrackDrawing
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.Waypoint
@@ -32,6 +33,10 @@ import org.maplibre.geojson.Point
  * glyph route serves; they never hide behind or hide the style's own labels' collisions
  * (`text-allow-overlap` off, `text-optional`), so a crowded view drops a waypoint name before a dot.
  *
+ * T260: a gap between two segments longer than the recorder's interval ([TrackDrawing.gaps]) is bridged by a dashed
+ * straight line in the track's colour, under the track: the colour stays the track's, the dash says the path there is
+ * unknown (the owner: colours could come to mean older tracks, so a gap is not told by colour).
+ *
  * Tapping a waypoint dot (or its label) calls [onWaypointTap] with its id (T40's rename/delete sheet).
  *
  * The overlay survives style reloads: [bind] listens for "style loaded" on the map view and re-adds
@@ -53,6 +58,11 @@ class TrackOverlay {
     @Volatile var labels = 0
         private set
     @Volatile var installedOnStyle = false
+        private set
+    /** T260: the dashed bridges drawn now, and their total time (`GET /tracks` `overlay`). */
+    @Volatile var bridges = 0
+        private set
+    @Volatile var bridgedMs = 0L
         private set
 
     /** Attaches to [mapView] (main thread). A new view (activity recreated) replaces the old one. */
@@ -84,6 +94,13 @@ class TrackOverlay {
             val geometry = if (segments.size == 1) LineString.fromLngLats(segments[0]) else MultiLineString.fromLngLats(segments)
             fs += Feature.fromGeometry(geometry).apply { addStringProperty("kind", "track") }
         }
+        val gaps = track?.let { TrackDrawing.gaps(it) }.orEmpty()
+        for (g in gaps) {
+            fs += Feature.fromGeometry(LineString.fromLngLats(listOf(Point.fromLngLat(g.from.lon, g.from.lat), Point.fromLngLat(g.to.lon, g.to.lat))))
+                .apply { addStringProperty("kind", "gap") }
+        }
+        bridges = gaps.size
+        bridgedMs = gaps.sumOf { it.durationMs }
         val pts = track?.points.orEmpty()
         pts.firstOrNull()?.let { fs += marker(it.lon, it.lat, "start") }
         // While recording the "end" is the current position.
@@ -112,8 +129,19 @@ class TrackOverlay {
         if (style.getSource(SOURCE) == null) {
             style.addSource(GeoJsonSource(SOURCE, data))
             val isLine = Expression.eq(Expression.get("kind"), Expression.literal("track"))
-            val isPoint = Expression.neq(Expression.get("kind"), Expression.literal("track"))
+            val isGap = Expression.eq(Expression.get("kind"), Expression.literal("gap"))
+            val isPoint = Expression.all(
+                Expression.neq(Expression.get("kind"), Expression.literal("track")),
+                Expression.neq(Expression.get("kind"), Expression.literal("gap")),
+            )
             val isWaypoint = Expression.eq(Expression.get("kind"), Expression.literal("waypoint"))
+            // T260: the gap's dash, under the track's casing so the solid line's ends cover the dash's.
+            style.addLayer(
+                LineLayer(GAP, SOURCE).withFilter(isGap).withProperties(
+                    PropertyFactory.lineColor("#d01c8b"), PropertyFactory.lineWidth(3f), PropertyFactory.lineOpacity(0.9f),
+                    PropertyFactory.lineDasharray(arrayOf(2f, 1.5f)), PropertyFactory.lineCap(Property.LINE_CAP_BUTT),
+                ),
+            )
             style.addLayer(
                 LineLayer(CASING, SOURCE).withFilter(isLine).withProperties(
                     PropertyFactory.lineColor("#ffffff"), PropertyFactory.lineWidth(7f), PropertyFactory.lineOpacity(0.9f),
@@ -198,6 +226,7 @@ class TrackOverlay {
     companion object {
         const val SOURCE = "dystopo-track"
         const val CASING = "dystopo-track-casing"
+        const val GAP = "dystopo-track-gap"
         const val LINE = "dystopo-track-line"
         const val POINTS = "dystopo-track-points"
         const val LABELS = "dystopo-track-labels"

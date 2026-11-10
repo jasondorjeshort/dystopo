@@ -28,6 +28,11 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   T251: in `recording`, `counts` (`accepted`, `flagged`, `rejectedSpeed`, `rejectedTime`, `gapSplits`, `dropped`,
  *   `lastFlaggedAccuracyM` and the waiting line's words, `line`), `head` (the recorder's last kept point: position,
  *   accuracy, `flags`) and `puck` (`GET /location`'s `puck`, with `toHeadM`, its distance from the head).
+ *   T260: the gaps the map bridges with a dashed line ([io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gaps]): in
+ *   `recording`, `bridged` (`count`, `totalS`, `text` as the panel's statistics line says it, `intervalMs` the threshold,
+ *   and `list`: each gap's `from` and `to` as `[lat, lon]`, `startTime`, `endTime`, `durationS`, `straightM`); `overlay`
+ *   gains `bridges` and `bridgedS` (what the map draws now); `GET /tracks/{id}` gains the same `bridged`; `ui.gapText` and
+ *   `ui.profileGapText` are the two statistics lines' gap words.
  * - `POST /tracks/record?name=&source=all|gps|injected[&activity=foot|bike|road|rail|boat|air]`: start recording (stops the
  *   current track); T172: with that activity's profile from the settings rows (default: the remembered activity, which
  *   this does not change). Tracks and the recording carry `activity`; the recording also `profile` (its four choices and the
@@ -266,7 +271,10 @@ object TrackRoutes {
         val summary = t.call { t.store.summary(id) } ?: return Response.json(mapOf("error" to "no track $id"), 404)
         return when (r.method to suffix) {
             "GET" to "" -> Response.json(
-                trackJson(t, summary) + mapOf("waypoints" to t.call { t.store.waypoints(id) }.map(::waypointJson), "gaps" to t.call { t.store.gaps(id) }.map(::gapJson)),
+                trackJson(t, summary) + mapOf(
+                    "waypoints" to t.call { t.store.waypoints(id) }.map(::waypointJson), "gaps" to t.call { t.store.gaps(id) }.map(::gapJson),
+                    "bridged" to t.call { t.store.track(id) }?.let(::bridgedJson), // T260
+                ),
             )
             "DELETE" to "" -> Response.json(mapOf("deleted" to t.delete(id)))
             "GET" to ".gpx" -> {
@@ -455,7 +463,24 @@ object TrackRoutes {
                 pk + mapOf("toHeadM" to if (head != null && la != null && lo != null) Math.round(TrackStats.distanceM(la, lo, head.lat, head.lon) * 10) / 10.0 else null)
             }.getOrNull(),
             "gaps" to rec.activeId?.let { id -> t.store.gaps(id).map(::gapJson) },
+            "bridged" to rec.activeId?.let { bridgedJson(io.github.jasondorjeshort.dystopo.model.Track(it, "", rec.livePoints().map { s -> io.github.jasondorjeshort.dystopo.model.TrackSegment(s) }, profile = rec.profile)) }, // T260
             "liveStats" to rec.liveStats()?.let(::statsJson),
+        )
+    }
+
+    /** T260: the gaps [track]'s line bridges on the map. */
+    private fun bridgedJson(track: io.github.jasondorjeshort.dystopo.model.Track): Map<String, Any?> {
+        val gaps = io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gaps(track)
+        return linkedMapOf(
+            "count" to gaps.size, "totalS" to gaps.sumOf { it.durationMs } / 1000.0,
+            "text" to io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gapText(gaps),
+            "intervalMs" to io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.intervalOf(track),
+            "list" to gaps.map { g ->
+                linkedMapOf(
+                    "from" to listOf(g.from.lat, g.from.lon), "to" to listOf(g.to.lat, g.to.lon), "startTime" to g.from.time, "endTime" to g.to.time,
+                    "durationS" to g.durationMs / 1000.0, "straightM" to Math.round(g.straightM * 10) / 10.0,
+                )
+            },
         )
     }
 
@@ -486,8 +511,14 @@ object TrackRoutes {
                 "shown" to t.shownId,
                 "selectedWaypoint" to t.selectedWaypointId,
                 "profile" to t.profileId,
-                "ui" to mapOf("paused" to ui.paused, "sheetOpen" to (ui.selectedWaypoint != null), "profileSamples" to ui.profile?.samples?.size),
-                "overlay" to mapOf("features" to t.overlay.features, "labels" to t.overlay.labels, "installed" to t.overlay.installedOnStyle),
+                "ui" to mapOf(
+                    "paused" to ui.paused, "sheetOpen" to (ui.selectedWaypoint != null), "profileSamples" to ui.profile?.samples?.size,
+                    "gapText" to ui.gapText, "profileGapText" to ui.profile?.gapText, // T260
+                ),
+                "overlay" to mapOf(
+                    "features" to t.overlay.features, "labels" to t.overlay.labels, "installed" to t.overlay.installedOnStyle,
+                    "bridges" to t.overlay.bridges, "bridgedS" to t.overlay.bridgedMs / 1000.0, // T260
+                ),
                 "replay" to t.replay.json(),
                 "settings" to settingsJson(t),
                 "interruptedAtStartup" to t.interrupted,

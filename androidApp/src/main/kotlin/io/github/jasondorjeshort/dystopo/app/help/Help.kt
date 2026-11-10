@@ -60,8 +60,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.tracking.MAP_MARKS_HELP +
             // end T251
             // T252: the recording panel's turn-back chip.
-            io.github.jasondorjeshort.dystopo.app.tracking.TURN_BACK_HELP
+            io.github.jasondorjeshort.dystopo.app.tracking.TURN_BACK_HELP +
             // end T252
+            // T260: the gaps a track's dashed line bridges, beside the statistics lines.
+            io.github.jasondorjeshort.dystopo.app.tracking.TRACK_GAPS_HELP
+            // end T260
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

@@ -1,9 +1,14 @@
 package io.github.jasondorjeshort.dystopo.gpx
 
+import io.github.jasondorjeshort.dystopo.model.Activity
+import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.model.Track
 import io.github.jasondorjeshort.dystopo.model.TrackPoint
 import io.github.jasondorjeshort.dystopo.model.TrackSegment
 import io.github.jasondorjeshort.dystopo.model.Waypoint
+import io.github.jasondorjeshort.dystopo.store.InMemoryTrackStore
+import io.github.jasondorjeshort.dystopo.store.LocationFix
+import io.github.jasondorjeshort.dystopo.store.TrackRecorder
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.test.Test
@@ -43,5 +48,56 @@ class TrackDrawingTest {
         assertEquals(kmDeg, small.north - small.south, 1e-9)
         assertEquals(kmDeg, small.east - small.west, 1e-9)
         assertNull(TrackDrawing.fitBounds(emptyList(), emptyList(), emptyList()))
+    }
+
+    @Test
+    fun gapsBridgeSegmentsApartLongerThanTheInterval() {
+        fun p(lat: Double, t: Long?) = TrackPoint(lat, -121.73, time = t)
+        val segs = listOf(
+            listOf(p(46.78, 0L), p(46.781, 1_000L)),
+            emptyList(), // skipped
+            listOf(p(46.79, 601_000L), p(46.791, 602_000L)), // 10 min later: bridged
+            listOf(p(46.792, 602_500L)), // half a second later: within the interval, not bridged
+            listOf(p(46.80, 700_000L)),
+        )
+        val g = TrackDrawing.gaps(segs, intervalMs = 1_000)
+        assertEquals(2, g.size)
+        assertEquals(p(46.781, 1_000L), g[0].from)
+        assertEquals(p(46.79, 601_000L), g[0].to)
+        assertEquals(600_000L, g[0].durationMs)
+        assertEquals(97_500L, g[1].durationMs)
+        assertTrue(abs(g[0].straightM - 0.009 * 111_195.0) < 10.0, "straight distance ${g[0].straightM}")
+        assertEquals("2 gaps, 11 min", TrackDrawing.gapText(g))
+        // No times (a planned line imported as two segments): nothing to bridge.
+        assertEquals(emptyList(), TrackDrawing.gaps(listOf(listOf(p(46.78, null)), listOf(p(46.79, null))), 1_000))
+        assertNull(TrackDrawing.gapText(emptyList()))
+        assertEquals("40 s", TrackDrawing.gapDuration(40_999))
+        assertEquals("1 h", TrackDrawing.gapDuration(3_600_000))
+        assertEquals("1 h 5 min", TrackDrawing.gapDuration(3_930_000))
+    }
+
+    @Test
+    fun aReplayWithAnInjectedTenMinuteGapIsBridgedOnce() {
+        // A walk on Rainier's flank, a fix a second, then nothing for ten minutes and 600 m on: the recorder's gap rule
+        // (on foot: 5 min and 50 m) starts a new segment, and the drawing bridges exactly that hole.
+        val t0 = 1_790_000_000_000L
+        val store = InMemoryTrackStore()
+        val rec = TrackRecorder(store, clock = { t0 })
+        val id = rec.start("gap", ActivityProfile.of(Activity.FOOT)).id
+        fun fix(i: Int, northM: Double, at: Long) = LocationFix(46.78 + northM / 111_195.0, -121.73, null, at, 5.0)
+        for (i in 0 until 60) assertTrue(rec.onFix(fix(i, i * 1.2, t0 + i * 1_000L)))
+        val resume = t0 + 59_000L + 600_000L
+        for (i in 0 until 60) assertTrue(rec.onFix(fix(i, 671.0 + i * 1.2, resume + i * 1_000L)))
+        assertEquals(1, rec.counts().gapSplits)
+        rec.stop()
+        val track = store.track(id)!!
+        assertEquals(2, track.segments.size)
+        val g = TrackDrawing.gaps(track)
+        assertEquals(1, g.size)
+        assertEquals(600_000L, g.single().durationMs)
+        assertTrue(abs(g.single().straightM - 600.2) < 1.0, "straight ${g.single().straightM}")
+        assertEquals("1 gap, 10 min", TrackDrawing.gapText(g))
+        // The recorder's own gap record says the same hole.
+        assertEquals(listOf(600_000L), store.gaps(id).map { it.durationMs })
     }
 }
