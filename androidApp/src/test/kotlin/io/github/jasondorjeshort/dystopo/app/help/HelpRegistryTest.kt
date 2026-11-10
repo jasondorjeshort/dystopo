@@ -149,6 +149,9 @@ class HelpRegistryTest {
             // T252: the recording panel's turn-back chip.
             "tracks.turnBack",
             // end T252
+            // T260: the gaps in a track.
+            "tracks.gaps",
+            // end T260
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

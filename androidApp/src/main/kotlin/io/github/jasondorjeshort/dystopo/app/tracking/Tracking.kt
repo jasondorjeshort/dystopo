@@ -89,7 +89,7 @@ class Tracking private constructor(private val app: DystopoApp) {
     enum class Mode(val gps: Boolean, val injected: Boolean) { ALL(true, true), GPS(true, false), INJECTED(false, true) }
 
     /** The elevation profile panel: [samples] along the track, plus its stats. */
-    data class ProfileView(val trackId: String, val name: String, val samples: List<ProfileSample>, val stats: TrackStats)
+    data class ProfileView(val trackId: String, val name: String, val samples: List<ProfileSample>, val stats: TrackStats, val gapText: String? = null)
 
     /** What the Compose controls show; replaced (on the main thread) after each change. */
     data class UiState(
@@ -114,6 +114,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         /** T172: the recording track and its activity (the recording panel's activity line). */
         val activeId: String? = null,
         val activeActivity: Activity? = null,
+        /** T260: the recording's gaps bridged on the map, for the panel's statistics line ("1 gap, 10 min"); null with none. */
+        val gapText: String? = null,
     )
 
     private val worker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-tracks").apply { isDaemon = true } }
@@ -711,7 +713,7 @@ class Tracking private constructor(private val app: DystopoApp) {
     }
 
     private fun trackFor(id: String): Track? =
-        if (id == recorder.activeId) Track(id, "", recorder.livePoints().map { TrackSegment(it) }) else store.track(id)
+        if (id == recorder.activeId) Track(id, "", recorder.livePoints().map { TrackSegment(it) }, profile = recorder.profile) else store.track(id) // T260: its interval
 
     /** Imports GPX text into the store and shows the first new track. Throws IllegalArgumentException for a bad file. */
     fun importGpx(text: String, fallbackName: String, file: String = fallbackName): TrackImport.Result {
@@ -777,7 +779,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             val s = tracks.firstOrNull { it.id == id } ?: return@let null
             val key = id to (if (id == recorder.activeId) recorder.accepted.toInt() else s.points)
             val samples = profileCache?.takeIf { it.first == key }?.second ?: (profileOf(id) ?: emptyList()).also { profileCache = key to it }
-            ProfileView(id, s.name, samples, statsOf(s) ?: return@let null)
+            ProfileView(id, s.name, samples, statsOf(s) ?: return@let null, trackFor(id)?.let { io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gapText(io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gaps(it)) }) // T260
         }
         val state = UiState(
             recording = recorder.recording,
@@ -795,6 +797,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             gapS = gapSeconds,
             activeId = recorder.activeId, // T172
             activeActivity = active?.activity,
+            gapText = recorder.activeId?.let { trackFor(it) }?.let { io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gapText(io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gaps(it)) }, // T260
         )
         val status = if (recorder.recording) statusNow() else null
         val withState = state.copy(state = status?.state ?: RecState.IDLE, stateLine = status?.controlsLine)
