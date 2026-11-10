@@ -182,6 +182,8 @@ object DefaultOsmStyle {
     {"id": "steps", "type": "line", "source-layer": "transportation", "filter": {"class": "path", "subclass": "steps"},
      "minzoom": 14, "geometry": "line", "color": "#c0392b", "width": [[14, 1.6], [16, 2.6]], "dash": [0.4, 0.5]},
 
+    {"id": "countries", "type": "symbol", "source-layer": "place", "filter": {"class": "country"}, "maxzoom": 7,
+     "text": "{name}", "size": 12, "color": "#5a4a3c", "halo-color": "#f6f1e4dd", "halo-width": 1.6, "spacing": 600},
     {"id": "places", "type": "symbol", "source-layer": "place",
      "filter": {"class": ["city", "town", "village", "hamlet", "suburb", "locality", "isolated_dwelling"]},
      "text": "{name}", "size": [[10, 13], [15, 14]], "color": "#1f1a17", "halo-color": "#f6f1e4dd", "halo-width": 1.6, "sort": "rank", "spacing": 600},

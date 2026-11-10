@@ -19,6 +19,9 @@ enum class ExtractKind {
 
     /** A bare region name such as `liechtenstein`; resolved through Geofabrik's index at download time. */
     GEOFABRIK_NAME,
+
+    /** T264: no OpenStreetMap input at all (`--natural-earth-only`): the archive is Natural Earth's world, z0 to z5. */
+    NONE,
 }
 
 /**
@@ -33,6 +36,9 @@ enum class ExtractKind {
 data class OsmInput(val label: String, val path: File, val url: String?, val kind: ExtractKind, val xml: File? = null)
 
 object Extracts {
+    /** T264: the input of a `--natural-earth-only` build; nothing is read from [OsmInput.path]. */
+    val NONE = OsmInput("natural-earth", File("natural-earth"), null, ExtractKind.NONE)
+
     const val GEOFABRIK = "https://download.geofabrik.de"
     private val pathPattern = Regex("[a-z0-9][a-z0-9/_-]*")
 

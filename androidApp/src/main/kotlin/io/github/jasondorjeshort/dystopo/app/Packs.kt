@@ -76,7 +76,7 @@ class Pack(val name: String, val file: File) : AutoCloseable {
  * [io.github.jasondorjeshort.dystopo.app.packs.PackManager.activate]) is where the map starts, what the
  * contour warm-up prepares and a tie-breaker in the ranking; [dem] and [osm] are its archives.
  */
-class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? = null) {
+class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? = null, val world: Pack? = null) {
     /** One pack's opened archives. */
     class Region(val name: String, val dem: Pack?, val osm: Pack?, val primary: Boolean) {
         val demCoverage: PackCoverage? = dem?.let { coverage(name, it, primary, vector = false) }
@@ -93,14 +93,20 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
     private val demRegions = PackPrecedence.sort(regions.filter { it.dem != null }) { it.demCoverage!! }
     private val osmRegions = PackPrecedence.sort(regions.filter { it.osm != null }) { it.osmCoverage!! }
     private val demCoverage = demRegions.map { it.demCoverage!! }
-    private val osmCoverage = osmRegions.map { it.osmCoverage!! }
 
-    /** DEM and vector archives of every pack, in precedence order. */
+    /** T264: the world overview's coverage, last: it answers a tile only where no pack ahead of it holds the whole tile. */
+    private val worldCoverage: PackCoverage? = world?.let { coverage(WORLD_NAME, it, primary = false, vector = true) }
+    private val osmCoverage = osmRegions.map { it.osmCoverage!! } + listOfNotNull(worldCoverage)
+
+    /** DEM and vector archives of every pack, in precedence order; T264: the built-in world overview last among the vector ones. */
     val demPacks: List<Pack> = demRegions.map { it.dem!! }
-    val osmPacks: List<Pack> = osmRegions.map { it.osm!! }
+    val osmPacks: List<Pack> = osmRegions.map { it.osm!! } + listOfNotNull(world)
 
-    /** The pack name an archive belongs to. */
-    fun packOf(p: Pack): String? = regions.firstOrNull { it.dem === p || it.osm === p }?.name
+    /** The pack name an archive belongs to (T264: [WORLD_NAME] for the world overview). */
+    fun packOf(p: Pack): String? = if (p === world) WORLD_NAME else regions.firstOrNull { it.dem === p || it.osm === p }?.name
+
+    /** T264: the archive answering vector tile z/x/y is the built-in world overview (the chip's "from the world overview"). */
+    fun worldAnswers(z: Int, x: Int, y: Int): Boolean = world != null && osmFor(z, x, y) === world
 
     /** The DEM archive that answers tile z/x/y (role DEM, or CONTOUR for 512-px contour tiles); null outside every pack. */
     fun demFor(z: Int, x: Int, y: Int, role: PackRoleZooms = PackRoleZooms.DEM): Pack? =
@@ -121,12 +127,15 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
     fun osmCandidates(z: Int, x: Int, y: Int): List<Pack> =
         PackPrecedence.candidates(osmCoverage, z, x, y, PackRoleZooms.VECTOR).map { osmPacks[it] }
 
-    /** Every opened archive. */
+    /** Every opened archive of the downloaded packs (T264: the world overview is not one; [close] closes it too). */
     val archives: List<Pack> get() = regions.flatMap { listOfNotNull(it.dem, it.osm) }
 
-    fun close() = archives.forEach { runCatching { it.close() } }
+    fun close() = (archives + listOfNotNull(world)).forEach { runCatching { it.close() } }
 
-    /** `/health`, `/stats`: the packs in use, in DEM precedence order, with their ranking facts. */
+    /**
+     * `/health`, `/stats`, `GET /packs`'s `inUse`: the packs in use, in DEM precedence order, with their ranking facts. T264: the
+     * built-in world overview last, `builtIn` true (no area row, Storage row or delete reaches it).
+     */
     fun json(): List<Map<String, Any?>> = regions.map { r ->
         linkedMapOf(
             "name" to r.name, "primary" to (r === primary),
@@ -134,11 +143,27 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
             "osmProfile" to r.osmCoverage?.profile?.label,
             "dem" to r.dem?.file?.name, "osm" to r.osm?.file?.name,
         )
-    }
+    } + listOfNotNull(
+        world?.let { w ->
+            linkedMapOf(
+                "name" to WORLD_NAME, "primary" to false, "demRank" to null, "osmRank" to osmRegions.size,
+                "osmProfile" to worldCoverage?.profile?.label, "dem" to null, "osm" to w.file.name, "builtIn" to true,
+                "minZoom" to w.header.minZoom, "maxZoom" to w.header.maxZoom, "bytes" to w.file.length(),
+            )
+        },
+    )
 
     companion object {
         const val PACKS_DIR = "packs"
         const val ACTIVE_FILE = "active"
+
+        /**
+         * T264: the built-in world overview (Natural Earth, z0 to z5, `tilebuild --natural-earth-only`), copied from the APK into
+         * the files dir by [io.github.jasondorjeshort.dystopo.app.firstrun.WorldOverview], outside [PACKS_DIR] so no pack list,
+         * Storage row or delete sees it.
+         */
+        const val WORLD_FILE = "world-outdoors.pmtiles"
+        const val WORLD_NAME = "world"
 
         private fun coverage(pack: String, p: Pack, primary: Boolean, vector: Boolean): PackCoverage {
             val h = p.header
@@ -196,7 +221,9 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
                 Region(set.name, dem, osm, primary = dem != null && set.name == stored)
             }
             val primary = stored?.takeIf { s -> regions.any { it.name == s && it.dem != null } } ?: regions.firstOrNull { it.dem != null }?.name
-            return PackSet(regions, glyphs, primary)
+            // T264: the world overview, from the first root only (where the copy puts it); absent until the first start's copy lands.
+            val world = roots.firstOrNull()?.let { File(it, WORLD_FILE) }?.takeIf { it.isFile }?.let { open(it, WORLD_NAME) }
+            return PackSet(regions, glyphs, primary, world)
         }
     }
 }

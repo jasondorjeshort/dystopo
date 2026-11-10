@@ -166,6 +166,12 @@ class OnlineOverlaySnapshotTest {
         assertEquals("wider", wider["column"])
         assertEquals(listOf("No connection. The map still works where it is on this phone.", OnlineUi.CUT_FROM_WIDER), wider["detail"])
         assertEquals("Offline maps ›", wider["link"])
+        // T264: the built-in world overview names itself.
+        val world = OnlineUi("offline", view(OnlineTiles.WORLD), emptyMap(), false, direct = true, network = false).chipJson(open = true)
+        assertEquals("Offline · from the world overview", world["text"])
+        assertEquals("world", world["column"])
+        assertEquals(listOf("No connection. The map still works where it is on this phone.", OnlineUi.FROM_WORLD), world["detail"])
+        assertEquals("Offline maps ›", world["link"])
     }
 
     /** T236 with T242: the card's figure reads the cache's getters, and says the indexing line while they are partial. */

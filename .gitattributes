@@ -5,3 +5,4 @@
 *.jpg binary
 *.jar binary
 *.ttf binary
+*.pmtiles binary

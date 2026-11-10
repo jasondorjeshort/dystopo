@@ -4,6 +4,7 @@ import com.onthegomap.planetiler.FeatureCollector
 import com.onthegomap.planetiler.FeatureMerge
 import com.onthegomap.planetiler.Profile
 import com.onthegomap.planetiler.VectorTile
+import com.onthegomap.planetiler.geo.GeoUtils
 import com.onthegomap.planetiler.reader.SourceFeature
 import com.onthegomap.planetiler.reader.osm.OsmElement
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo
@@ -25,6 +26,11 @@ class OutdoorsProfile(
     private val extra: Map<String, String>,
     /** Zoom from which features are written at full detail (no merging); Planetiler's max zoom. */
     private val maxZoom: Int = 14,
+    /**
+     * T264: a build with no OSM extract (`--natural-earth-only`, the bundled world overview): the country borders run to
+     * z5 (OSM's take over from z5 otherwise) and the country and city labels come from Natural Earth.
+     */
+    private val naturalEarthOnly: Boolean = false,
 ) : Profile {
 
     companion object {
@@ -117,6 +123,13 @@ class OutdoorsProfile(
             "ne_10m_admin_1_states_provinces_lines" to Triple("boundary", 4, 4),
         )
 
+        /** T264: the Natural Earth tables only a `--natural-earth-only` build reads: country and city labels. */
+        const val NE_COUNTRIES = "ne_50m_admin_0_countries"
+        const val NE_PLACES = "ne_10m_populated_places"
+
+        /** T264: the highest zoom of the world overview (Natural Earth's own `min_zoom` for a city decides its first). */
+        const val NE_MAX_ZOOM = OSM_WATER_MIN_ZOOM - 1
+
         fun elevationMeters(value: Any?): Double? = runCatching { Parse.meters(value) }.getOrNull()
 
         /** T230: airport gates are written at this zoom only (the profile's top zoom). */
@@ -144,10 +157,14 @@ class OutdoorsProfile(
 
     override fun name(): String = OutdoorsSchema.NAME
     override fun version(): String = OutdoorsSchema.VERSION
-    override fun attribution(): String = Attribution.HTML
-    override fun description(): String =
+    override fun attribution(): String = if (naturalEarthOnly) Attribution.WORLD_HTML else Attribution.HTML
+    override fun description(): String = if (naturalEarthOnly) {
+        "Dystopo world overview: water, country borders and country and city labels from Natural Earth (public domain), z0 to " +
+            "z$NE_MAX_ZOOM, built by Dystopo tilebuild with Planetiler. Made with Natural Earth."
+    } else {
         "Dystopo outdoors vector tiles (trails, land cover, peaks, backcountry POIs) of OpenStreetMap extract '$extract', " +
             "built by Dystopo tilebuild with Planetiler. Data © OpenStreetMap contributors, ODbL 1.0."
+    }
 
     override fun extraArchiveMetadata(): Map<String, String> =
         extra + ("dystopo:layers" to OutdoorsSchema.metadataJson()) + ("dystopo:profile_version" to OutdoorsSchema.VERSION)
@@ -182,7 +199,15 @@ class OutdoorsProfile(
 
     private fun processNaturalEarth(feature: SourceFeature, features: FeatureCollector) {
         val table = feature.sourceLayer ?: return
-        val (layer, minZoom, maxZoom) = NATURAL_EARTH[table] ?: return
+        if (naturalEarthOnly) {
+            when (table) {
+                NE_COUNTRIES -> return naturalEarthCountry(feature, features)
+                NE_PLACES -> return naturalEarthPlace(feature, features)
+            }
+        }
+        val (layer, minZoom, tableMax) = NATURAL_EARTH[table] ?: return
+        // T264: with no OSM boundaries above it, the 1:10m borders also draw z5.
+        val maxZoom = if (naturalEarthOnly && layer == "boundary" && tableMax == 4) NE_MAX_ZOOM else tableMax
         if (layer == "water" && feature.canBePolygon()) {
             features.polygon("water").setAttr("class", if ("ocean" in table) "ocean" else "lake")
                 .setZoomRange(minZoom, maxZoom).setMinPixelSize(2.0)
@@ -190,6 +215,37 @@ class OutdoorsProfile(
             features.line("boundary").setAttr("admin_level", if ("admin_0" in table) 2 else 4)
                 .setZoomRange(minZoom, maxZoom)
         }
+    }
+
+    /**
+     * T264: a country's label at Natural Earth's label point (`label_x`, `label_y`), from its `min_label` zoom (at least 1),
+     * as the `place` layer's class `country`, the class OSM country nodes carry.
+     */
+    private fun naturalEarthCountry(f: SourceFeature, features: FeatureCollector) {
+        val name = f.getString("name")?.takeIf { it.isNotBlank() } ?: return
+        val x = (f.getTag("label_x") as? Number)?.toDouble() ?: return
+        val y = (f.getTag("label_y") as? Number)?.toDouble() ?: return
+        val minZoom = ((f.getTag("min_label") as? Number)?.toDouble() ?: 3.0).toInt().coerceIn(1, NE_MAX_ZOOM)
+        val point = features.geometry("place", GeoUtils.latLonToWorldCoords(GeoUtils.point(x, y)))
+            .setAttr("class", "country").setAttr("name", name).setMinZoom(minZoom).setBufferPixels(LABEL_BUFFER)
+            .setSortKey(((f.getTag("labelrank") as? Number)?.toInt() ?: 10).coerceIn(0, 100))
+        f.getString("name_en")?.takeIf { it != name }?.let { point.setAttr("name_en", it) }
+    }
+
+    /**
+     * T264: a populated place from Natural Earth: class `city`, `capital` 2 for a country's capital, from Natural Earth's own
+     * `min_zoom` (places it puts past z[NE_MAX_ZOOM] are left out).
+     */
+    private fun naturalEarthPlace(f: SourceFeature, features: FeatureCollector) {
+        val minZoom = ((f.getTag("min_zoom") as? Number)?.toDouble() ?: return).toInt()
+        if (minZoom > NE_MAX_ZOOM) return
+        val name = f.getString("name")?.takeIf { it.isNotBlank() } ?: return
+        val population = (f.getTag("pop_max") as? Number)?.toLong() ?: 0L
+        val point = features.point("place").setAttr("class", "city").setAttr("name", name)
+            .setMinZoom(minZoom.coerceAtLeast(2)).setBufferPixels(LABEL_BUFFER)
+            .setSortKeyDescending((population / 1000).coerceIn(0, 100_000).toInt())
+        f.getString("name_en")?.takeIf { it != name }?.let { point.setAttr("name_en", it) }
+        if ((f.getTag("adm0cap") as? Number)?.toInt() == 1) point.setAttr("capital", 2)
     }
 
     private fun processOsm(f: SourceFeature, features: FeatureCollector) {

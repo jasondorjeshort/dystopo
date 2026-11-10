@@ -33,4 +33,15 @@ class AttributionTest {
         assertTrue(meta.keys.all { it.startsWith("dystopo:") })
         assertTrue("dystopo:clip_bbox" !in Attribution.extraMetadata("x", null))
     }
+
+    /** T264: the world overview holds no OSM data: Natural Earth's credit and licence, the schema's credit kept. */
+    @Test
+    fun naturalEarthOnlyCreditsNaturalEarth() {
+        val meta = Attribution.extraMetadata("natural-earth", null, Attribution.WORLD_CREDIT_IDS, Attribution.OUTDOORS_SCHEMA, "outdoors", naturalEarthOnly = true)
+        assertEquals("LicenseRef-PublicDomain", meta["dystopo:license"])
+        assertTrue("Natural Earth" in meta.getValue("dystopo:attribution"))
+        assertTrue("OpenStreetMap" !in meta.getValue("dystopo:attribution"))
+        assertTrue("© OpenMapTiles" in Attribution.WORLD_TEXT)
+        assertEquals("natural-earth,openmaptiles", meta["dystopo:provenance"])
+    }
 }

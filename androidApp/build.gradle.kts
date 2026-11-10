@@ -3,6 +3,7 @@
 // debug endpoints in debug builds. Only included when an Android SDK is installed (settings.gradle.kts).
 import java.net.HttpURLConnection
 import java.net.URI
+import java.security.MessageDigest
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.Properties
@@ -120,10 +121,17 @@ fun varint(v: Int): ByteArray {
     out += x.toByte()
     return out.toByteArray()
 }
+// T264: the world overview (Natural Earth's water, country borders and country and city labels, z0 to z5, about 2.2 MB) is
+// bundled as assets/world/world-outdoors.pmtiles and copied to the files dir on first start, off the main thread
+// (firstrun/BundledAssets.kt, WorldOverview). The file is committed beside its recipe (tilebuild/PROFILE.md, "World
+// overview"): ./gradlew :tilebuild:run --no-daemon --args="--natural-earth-only --profile outdoors --max-zoom 5
+// --out tilebuild/world/world-outdoors.pmtiles". A rebuild changes the SHA-256 below on purpose, in the same commit.
+val worldOverview = rootProject.file("tilebuild/world/world-outdoors.pmtiles")
+val worldOverviewSha256 = "b95dc137ce3c0a10731be621f0bd825bc733d9e7ea2ddaf8688843e7af77ba1f"
 val mapAssetsDir = layout.buildDirectory.dir("generated/mapAssets")
 val bundleMapAssets by tasks.registering {
     group = "build"
-    description = "Collects the label glyphs and draws the sprite sheet into the APK's assets."
+    description = "Collects the label glyphs, draws the sprite sheet and adds the world overview into the APK's assets."
     dependsOn(":devtool:installDist")
     val out = mapAssetsDir
     val devtoolHome = rootProject.layout.projectDirectory.dir("devtool/build/install/devtool")
@@ -132,6 +140,10 @@ val bundleMapAssets by tasks.registering {
     inputs.property("fonts", glyphFonts)
     inputs.property("ranges", glyphRanges)
     inputs.files(fileTree(rootProject.file("shared/src/commonMain/kotlin/io/github/jasondorjeshort/dystopo/style")))
+    val world = worldOverview
+    val worldSha = worldOverviewSha256
+    inputs.file(world)
+    inputs.property("worldSha256", worldSha)
     outputs.dir(out)
     doLast {
         val root = out.get().asFile
@@ -187,6 +199,10 @@ val bundleMapAssets by tasks.registering {
         val log = proc.inputStream.bufferedReader().readText()
         check(proc.waitFor() == 0) { "devtool sprite failed: $log" }
         for (f in listOf("sprite.json", "sprite.png", "sprite@2x.json", "sprite@2x.png")) check(File(sprites, f).isFile) { "devtool sprite wrote no $f" }
+        // T264: the world overview, checked against the hash recorded above.
+        val sha = MessageDigest.getInstance("SHA-256").digest(world.readBytes()).joinToString("") { "%02x".format(it) }
+        check(sha == worldSha) { "${world.path}: SHA-256 $sha, the build file records $worldSha (update it when the overview is rebuilt)" }
+        world.copyTo(File(root, "world/world-outdoors.pmtiles"), overwrite = true)
     }
 }
 android.sourceSets.getByName("main").assets.srcDir(bundleMapAssets) // the task's output dir, with the task as its builder

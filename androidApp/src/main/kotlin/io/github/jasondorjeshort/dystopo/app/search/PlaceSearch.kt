@@ -292,7 +292,8 @@ object PlaceSearch {
     fun coverage(app: DystopoApp, lat: Double, lon: Double, zoom: Double, source: String? = null): MapCoverage {
         val packs = app.tiles.packs.regions
         if (MapCoverage.inside(packs.mapNotNull { it.osmCoverage?.bounds }, lat, lon)) return MapCoverage.VECTOR
-        val s = source ?: runCatching { app.tiles.online?.viewSource(lat, lon, zoom)?.first }.getOrNull()
+        // T264: the world overview draws but holds nothing to search or route on: read as if it were not there.
+        val s = (source ?: runCatching { app.tiles.online?.viewSource(lat, lon, zoom)?.first }.getOrNull())?.takeUnless { it == OnlineTiles.WORLD }
         // With no online tiles (or before the chip has read the view) the source says only that some pack exists: ask its box.
         val pack = MapCoverage.inside(packs.mapNotNull { it.demCoverage?.bounds }, lat, lon)
         return MapCoverage.of(false, if (s == null || s == OnlineTiles.PACK) (if (pack) OnlineTiles.PACK else OnlineTiles.NONE) else s)

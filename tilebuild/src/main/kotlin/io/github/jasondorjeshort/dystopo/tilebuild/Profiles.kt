@@ -73,15 +73,24 @@ object Profiles {
                 )
             }
             ProfileKind.OUTDOORS -> {
+                // T264: --natural-earth-only, the bundled world overview: no OSM extract, no ocean polygons (they start at z6).
+                val noOsm = req.input.kind == ExtractKind.NONE
                 // Natural Earth only feeds z0 to 5 here (below OSM_WATER_MIN_ZOOM). A build starting at z6 or
                 // later skips it: unpacking the 430 MB sqlite was 20 of the 39 s of a small server-side build.
                 val naturalEarthUsed = req.minZoom < OutdoorsProfile.OSM_WATER_MIN_ZOOM
                 // T50: a box gets only the ocean polygons that reach it (none inland), not the whole 1.27 GB file.
-                val water = req.bbox?.let { WaterPolygons.forBox(waterPolygons.toFile(), planetilerCache, it) } ?: WaterPolygons.Full
-                val ids = outdoorsSourceIds(naturalEarthUsed, waterPolygons = water !is WaterPolygons.Skip) + req.extraSourceIds
-                val extra = Attribution.extraMetadata(req.input.label, req.bbox, ids, Attribution.OUTDOORS_SCHEMA, kind.cliName)
+                val water = when {
+                    noOsm -> WaterPolygons.Skip(0)
+                    else -> req.bbox?.let { WaterPolygons.forBox(waterPolygons.toFile(), planetilerCache, it) } ?: WaterPolygons.Full
+                }
+                val ids = if (noOsm) {
+                    listOf("natural-earth", "openmaptiles") + req.extraSourceIds
+                } else {
+                    outdoorsSourceIds(naturalEarthUsed, waterPolygons = water !is WaterPolygons.Skip) + req.extraSourceIds
+                }
+                val extra = Attribution.extraMetadata(req.input.label, req.bbox, ids, Attribution.OUTDOORS_SCHEMA, kind.cliName, naturalEarthOnly = noOsm)
                 val planetiler = Planetiler.create(arguments)
-                    .setProfile(OutdoorsProfile(req.input.label, extra, req.maxZoom))
+                    .setProfile(OutdoorsProfile(req.input.label, extra, req.maxZoom, naturalEarthOnly = noOsm))
                 when (water) {
                     is WaterPolygons.Skip -> Unit
                     is WaterPolygons.Clipped -> planetiler.addShapefileSource(OutdoorsProfile.WATER_POLYGON_SOURCE, water.shp.toPath())
@@ -93,10 +102,11 @@ object Profiles {
                     "${OutdoorsSchema.NAME} ${OutdoorsSchema.VERSION}",
                     listOfNotNull(WATER_POLYGONS_URL.takeIf { water !is WaterPolygons.Skip }, NATURAL_EARTH_URL.takeIf { naturalEarthUsed }),
                     extra,
-                    water.describe,
+                    if (noOsm) "not used: Natural Earth only (ocean polygons start at z6)" else water.describe,
                 )
             }
         }
+        if (req.input.kind == ExtractKind.NONE) return setup // T264: Natural Earth alone
         val osmSource = if (kind == ProfileKind.OPENMAPTILES) OpenMapTilesProfile.OSM_SOURCE else OutdoorsProfile.OSM_SOURCE
         if (osmUrl != null) {
             setup.planetiler.addOsmSource(osmSource, req.input.path.toPath(), osmUrl)
