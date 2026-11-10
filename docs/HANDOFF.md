@@ -8,7 +8,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 - **Wave 31 is closed** (record `docs/tasks/wave-31.md`; the log's "Wave 31 closes" entry of 2026-11-10): seventeen
   tasks, two alphas. **v0.1.26-alpha published** 2026-11-10 13:36 UTC (tag on e5331b9c, versionCode 1445, the
-  before-and-after sheet attached); v0.1.25-alpha at 09:48 UTC. Nothing runs; no worktree but main and the carry-backs.
+  before-and-after sheet attached). Nothing runs. Meter at the close: 5-hour 11, 7-day 55 (the allowance's 53 held).
 - **Wave 32 is planned** (298987de; twelve tasks T262 to T273 in two lanes plus one alongside, in two halves against
   the 7-day reset of 2026-11-13; the critic's 22 objections answered in the wave paragraph; research in
   `out/wave32-research/` [no-check: gitignored], the critic's report beside it) and **not launched: the owner's go is
@@ -16,7 +16,6 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 - Rules learned this wave: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line
   of its own; an LZW error in a cached DEM cell is a stale range cache (delete the cell; T269); a sweep part can lose
   its emulator right after a guard reboot (one rerun; T273 adds the storage wait).
-- **Gate:** 5-hour 11, 7-day 55 at 13:17 UTC (the allowance's 53 at the close, within the band; 2.5 a task stands).
 
 ## Next
 
