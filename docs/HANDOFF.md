@@ -1,15 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-09, by main session (wave 31 open: twelve of seventeen merged; T254's verifier in lane B, T260 in A)
+Updated: 2026-11-09, by main session (wave 31 open: thirteen of seventeen merged; T260's verifier in lane A, T255 in B)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 31, `out/wave31-research/` [no-check: gitignored].
 
 ## Now
 
 - **Wave 31 is open** (plan at e184b663; T261 added): seventeen tasks, two lanes plus three alongside. Merged:
   T259, T245 (ADR 0061), T244 (ADR 0060), T248, T246 (the verifier script, used since), T247, T249, T261 (the
-  cards step, which guards the release), T250, T251, T252, T253. Running: T254's verifier on its second fix round
-  (ae2da42a; the code verified earlier, the offline tour step made reliable), T260 (lane A, console 5570).
+  cards step, which guards the release), T250, T251, T252, T253, T254 (two fix rounds on its tour step). Running:
+  T260's verifier (lane A, console 5574; built at 9e0c5cbb), T255 (lane B, console 5572).
   The lane order and the release point are the wave paragraph's; within a lane: implementer, verifier (ports
   5574/8698 for A, 5576/8700 for B), merge, then the next implementer.
 - Rules learned: no force push works here (merge `main` in, never rebase a pushed branch); a push on a line of its
@@ -20,9 +20,9 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. As T254's verifier reports MERGE: the merge sequence of the `wave` skill (body in the scratchpad), its chore,
-   T255 in B, then T257; as T260 reports: its verifier, merge, chore, then T258 and T256 (after T255) in A;
-   `-UiArgs --apk` for the features part on a debug build; the push on its own line in every brief.
+1. As T260's verifier reports MERGE: the merge sequence of the `wave` skill (body in the scratchpad), its chore,
+   then T258 in A (T256 waits for T255). As T255 reports: its verifier, merge, chore, then the mid-wave release
+   (item 2) with lane B idle; T257 after it. `-UiArgs --apk` for a debug build's features part; the push on its own line.
 2. At T253 and T255 merged: the `sweep` skill, then the `release` skill (ADR 0024). At the wave's end: close by the
    `wave` skill (the meter against 53; the figure revised if five points off), then plan wave 32 from the wave
    paragraph's Not-taken list and the build orders in ADR 0060 and ADR 0061.
