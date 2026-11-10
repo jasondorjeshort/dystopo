@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.26-alpha (2026-11-10)
+
 ### 2026-11-10
 
 - T257: The readout: course as a point and degrees, pressure when the phone has it, an extended readout (lane B, after T250)
