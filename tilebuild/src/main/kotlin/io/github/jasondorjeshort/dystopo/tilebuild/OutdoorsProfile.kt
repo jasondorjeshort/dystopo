@@ -206,8 +206,9 @@ class OutdoorsProfile(
             }
         }
         val (layer, minZoom, tableMax) = NATURAL_EARTH[table] ?: return
-        // T264: with no OSM boundaries above it, the 1:10m borders also draw z5.
-        val maxZoom = if (naturalEarthOnly && layer == "boundary" && tableMax == 4) NE_MAX_ZOOM else tableMax
+        // T264: with no OSM boundaries above it, the 1:10m country borders also draw z5 (state and province lines stay at
+        // z4: at z5 France's departments and the like crowd the view, seen on the emulator over Europe).
+        val maxZoom = if (naturalEarthOnly && table == "ne_10m_admin_0_boundary_lines_land") NE_MAX_ZOOM else tableMax
         if (layer == "water" && feature.canBePolygon()) {
             features.polygon("water").setAttr("class", if ("ocean" in table) "ocean" else "lake")
                 .setZoomRange(minZoom, maxZoom).setMinPixelSize(2.0)

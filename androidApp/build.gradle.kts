@@ -121,13 +121,13 @@ fun varint(v: Int): ByteArray {
     out += x.toByte()
     return out.toByteArray()
 }
-// T264: the world overview (Natural Earth's water, country borders and country and city labels, z0 to z5, about 2.2 MB) is
+// T264: the world overview (Natural Earth's water, country borders and country and city labels, z0 to z5, about 1.75 MB) is
 // bundled as assets/world/world-outdoors.pmtiles and copied to the files dir on first start, off the main thread
 // (firstrun/BundledAssets.kt, WorldOverview). The file is committed beside its recipe (tilebuild/PROFILE.md, "World
 // overview"): ./gradlew :tilebuild:run --no-daemon --args="--natural-earth-only --profile outdoors --max-zoom 5
 // --out tilebuild/world/world-outdoors.pmtiles". A rebuild changes the SHA-256 below on purpose, in the same commit.
 val worldOverview = rootProject.file("tilebuild/world/world-outdoors.pmtiles")
-val worldOverviewSha256 = "b95dc137ce3c0a10731be621f0bd825bc733d9e7ea2ddaf8688843e7af77ba1f"
+val worldOverviewSha256 = "d770d290259e9b0fa8142de1047a00dda7a1e9d17790a9b878c629404a7e0360"
 val mapAssetsDir = layout.buildDirectory.dir("generated/mapAssets")
 val bundleMapAssets by tasks.registering {
     group = "build"

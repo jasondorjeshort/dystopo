@@ -319,6 +319,11 @@ class OutdoorsProfileTest {
             emptyMap(), OutdoorsProfile.NATURAL_EARTH_SOURCE, "ne_10m_admin_0_boundary_lines_land", 3,
         )
         assertEquals(5, run(world, border).layer("boundary").maxZoom)
+        val states = SimpleFeature.create(
+            GeoUtils.JTS_FACTORY.createLineString(arrayOf(Coordinate(6.0, 46.0), Coordinate(7.0, 46.5))),
+            emptyMap(), OutdoorsProfile.NATURAL_EARTH_SOURCE, "ne_10m_admin_1_states_provinces_lines", 4,
+        )
+        assertEquals(4, run(world, states).layer("boundary").maxZoom)
         // A build with OSM keeps Natural Earth's borders to z4 and reads no Natural Earth labels.
         assertEquals(4, process(border).layer("boundary").maxZoom)
         assertTrue(process(country).isEmpty())
