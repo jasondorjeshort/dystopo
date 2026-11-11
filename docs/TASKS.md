@@ -142,6 +142,7 @@ Planned 2026-11-10 from the triage of 2026-11-10 (the Plans written into `docs/i
 **Owns:** the source word and its selection (`online/OnlineTiles.kt`, `online/OnlineOverlay.kt`, `online/OnlineService.kt`'s chip lines, `app/Packs.kt`, `firstrun/BundledAssets.kt` if the overview's registration is the cause), `tools/android-check.py` (the world check, only if it is wrong), `tools/sweep.ps1` (the `device-tour` ceiling), `tools/android-probe.py` (only if the probe is wrong), tests, `docs/reference/android-app.md`, the sweep skill's ceiling line.
 **Interacts with:** T264 (the overview), T265 (the minzooms), T274 (the file).
 **Done when:** the cause stated with evidence; `check` green; `sweep.ps1 -Only device-boot,device-tour,probe` green from the task's worktree on its own ports, the europe-z5 chip reading "from the world overview" offline in both runs.
+**Status: merged.** The chip's world fallback for a gone tile, the tour's 1200 s a run, the probe unchanged; verifier MERGE, no fix round. Follow-ups: none.
 
 ## Browser demo follow-ups (tools/demo)
 - Contour labels in the live viewer are sparse (MapLibre line placement on unsimplified contour geometry); tune `symbol-spacing`/`text-max-angle`, or feed MapLibre simplified lines from T1's pipeline.
