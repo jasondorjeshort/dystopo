@@ -202,7 +202,9 @@ built-in pack `world`: last in vector precedence (a downloaded pack holding the 
 network for the widest zooms); deeper tiles offline may be cut from it (`from a wider zoom`). Where it draws the view and
 no terrain does, the Online chip reads "from the world overview" and its card "This view comes from the world overview
 built into the app: coasts, borders and the names of countries and large cities. Zoom in or download an area for more."
-(`GET /online` › `chip`, column `world`); search and routes read as if it were not there (`MapCoverage`). The credits
+(`GET /online` › `chip`, column `world`; T275: also where the terrain tile the chip matched was fetched earlier in the
+session and has since left the cache, as after a cache clear: in server mode MapLibre prefetches DEM tiles four zooms out,
+so a z9 view records z6 tiles that a z5 view shares, and those read "no data here" before); search and routes read as if it were not there (`MapCoverage`). The credits
 name Natural Earth and the OpenMapTiles schema from its metadata. The style draws country names (`countries`) below z7.
 T265: the map zooms out to z1 (`MapController.MIN_ZOOM`; z3 before), the whole world on one screen. The terrain layers
 start where their sources do (`MapLibreStyle`'s layer `minzoom`): the hillshade and the shade one map zoom below the DEM's

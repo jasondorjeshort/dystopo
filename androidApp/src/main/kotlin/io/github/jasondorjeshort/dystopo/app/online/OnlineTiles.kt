@@ -405,11 +405,18 @@ class OnlineTiles(
             // T254: a tile cut from a wider zoom names its ancestor (the tile the phone holds, which an offline map may record).
             service.demSource(t.first, t.second, t.third)?.let { return it to (if (it == WIDER) service.widerAncestor(t.first, t.second, t.third) ?: t else t) }
         }
-        // T264: a 512-px vector tile at the map's zoom; the world overview answers it (z0 to z5, where no pack holds the tile).
-        val zv = floor(zoom).toInt().coerceAtLeast(0)
-        val (vz, vx, vy) = tile(zv)
-        if (packs.worldAnswers(vz, vx, vy)) return WORLD to null
-        return NONE to null
+        return (if (worldDraws(lat, lon, zoom)) WORLD else NONE) to null
+    }
+
+    /**
+     * T264: the view's 512-px vector tile at the map's zoom is answered by the built-in world overview (z0 to z5, where no
+     * pack holds the tile). T275: also asked by [OnlineView.resolve] when the DEM tile [viewSource] matched is no longer on
+     * the phone, so a stale record of terrain fetched earlier does not hide the overview the map draws.
+     */
+    fun worldDraws(lat: Double, lon: Double, zoom: Double): Boolean {
+        val z = floor(zoom).toInt().coerceAtLeast(0)
+        val n = 1 shl z
+        return packs.worldAnswers(z, WebMercator.lonToX(lon, z).toInt().coerceIn(0, n - 1), WebMercator.latToY(lat, z).toInt().coerceIn(0, n - 1))
     }
 
     companion object {

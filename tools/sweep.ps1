@@ -78,7 +78,7 @@
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only server,notices -InjectHang server -PartTimeouts server=30   # T191: test the ceiling
 #
 # Time limits (T191, finding 2026-10-31: one stuck child once held the sweep 9.5 h). Every part has a ceiling,
-# -PartTimeout (900 s) unless the table $ceilings below (device-tour 750 s a run, device-boot 1500, update 1500, check
+# -PartTimeout (900 s) unless the table $ceilings below (device-tour 1200 s a run, device-boot 1500, update 1500, check
 # 2400, matrix 2400) or -PartTimeouts says otherwise (the release build has 1800 s of its own, not the part's); the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
 # at the deadline the running program's process tree is killed by its PID (taskkill /PID <pid> /T /F), the part's
 # steps.tsv line reads "timeout" with what was killed, and the sweep goes on with the next part. Cleanup after a part
@@ -194,7 +194,8 @@ foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allP
 
 # T191: the per-part ceilings, from the parts' timings in the sweeps of waves 20 to 23 (steps.tsv of out\sweep-w20,
 # -w21, -wave22, -20261031-0254 and its reruns): no other part took more than 322 s (features), so 900 s is the default,
-# about 2.8 times the slowest. device-tour took 500 to 565 s for its two runs, so 750 s a run (1500 s for the default two);
+# about 2.8 times the slowest. device-tour took 500 to 565 s for its two runs, so 750 s a run (1500 s for the default two); T275: T264's world views
+# took a run to about 650 s (the sweep of fb0a6463 killed its second run at 1500 s), so 1200 s a run (2400 s for two);
 # update took 230 to 513 s and builds a second release APK inside the part, which alone takes minutes under load: 1500 s;
 # check took 27 to 246 s warm, but a fresh worktree compiles everything and the part may run check twice (the
 # stale-compile retry after :androidApp:clean): 2400 s; matrix has no timing on record and boots two fresh emulators
@@ -203,7 +204,7 @@ foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allP
 # PC (a 226 s boot and the whole style wait), so 1500 s. Code outside a part (the devtool build, the cleanup) gets 1800 s,
 # and the release build its own 1800 s wherever it runs (Build-Release).
 if ($PartTimeout -lt 1) { throw '-PartTimeout must be a number of seconds' }
-$ceilings = @{ 'device-tour' = 750 * [math]::Max(1, $DeviceTourRuns); 'update' = 1500; 'check' = 2400; 'matrix' = 2400; 'device-boot' = 1500 }
+$ceilings = @{ 'device-tour' = 1200 * [math]::Max(1, $DeviceTourRuns); 'update' = 1500; 'check' = 2400; 'matrix' = 2400; 'device-boot' = 1500 }
 $releaseBuildS = 1800
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {

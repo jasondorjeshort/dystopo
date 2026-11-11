@@ -58,7 +58,7 @@ stale build state of finding `docs/findings/2026-10-14-debug-test-compile-loses-
 and says so on its `steps.tsv` line.
 
 T191 (finding `docs/findings/2026-10-31-sweep-hung-when-the-paging-file-ran-out.md`, a 9.5 h hang): every part
-has a ceiling, 900 s by default (`-PartTimeout`), with `device-tour` 750 s a run, `device-boot` 1500, `update` 1500,
+has a ceiling, 900 s by default (`-PartTimeout`), with `device-tour` 1200 s a run, `device-boot` 1500, `update` 1500,
 `check` 2400 and `matrix` 2400 built in (the release build has 1800 s of its own) and `-PartTimeouts part=seconds`
 overriding any; at the ceiling the running program's process
 tree is killed by its PID, the part's `steps.tsv` line reads `timeout` and names the PIDs, and the sweep goes on
