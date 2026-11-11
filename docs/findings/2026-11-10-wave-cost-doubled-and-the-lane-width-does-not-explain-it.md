@@ -31,6 +31,12 @@ published, one critic, five research agents, a triage and a day's idea work, and
 - What changed between wave 28 and wave 30 that the figure does not separate: a verifier per task running the
   device tour (T246's script from wave 31; by hand in wave 30), fix rounds with a second verification, reports
   that became merge bodies (ADR 0043), and research agents per open choice (ADR 0044). Unproven which weighs most.
+- Wave 32's first half (2026-11-10, the agents' token counts at hand-back): implementers of T271, T262, T264, T269,
+  T272, T265 and T274 about 1.96 M tokens (106k to 458k each, the emulator tasks 265k to 458k), their verifiers
+  about 0.91 M (64k to 182k each), so the implementer is about two thirds of a task; five cleanup chores about 0.28 M
+  (50k to 61k each, mostly fixed context); the sweep agent 0.13 M over two hours. The meter moved about 19 points
+  for the seven tasks, the sweep and the plan's edits (68 to 74 on one account, then 74 to 87 on the account the
+  session moved to at 19:40 UTC), about 2.7 a task with the sweep in.
 
 ## Next
 
