@@ -31,4 +31,4 @@ Question: does a browser at home count as "between copies of the signed app" (yo
 keeps the server blind but lets anyone with the code watch. Recommendation: hold until stage 1b is built;
 then, if you say a contact's browser may watch, a proposal that amends ADR 0051 (a `GROUP` frame the
 page can read, the page's lifetime tied to the plan's end). Not before.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

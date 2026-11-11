@@ -22,4 +22,4 @@ proposal: the hPa, the GNSS height and the estimator's sigma, adding little to a
 only after stage 1 of group positions and after the storm warning has run on real hikes. `PressureSource.kt` would then take
 peers as a second prior beside the station, through the same `StationPressure`-style sigma by distance and age. Nothing is
 buildable before the proposal.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

@@ -32,4 +32,4 @@ Question: is a paired sheet still wanted once ADR 0053's check exists, as a huma
 not as its own build; after ADR 0053's step 2, one sweep chore pairs the 390 px page shot and the
 emulator's shot of the same view, with the panel and the settings screen open on each, into one image
 beside the sweep's sheet. The settings-screen capture is the only new piece (today's capture is the map).
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

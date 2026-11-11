@@ -33,4 +33,4 @@ Question: wanted, given that the packs are rebuilt by you by hand today and no r
 Recommendation: not now. It is a new derived file format both sides read, a catalog field, an update
 protocol and a graph rebuild that depends on C: a proposal, worth writing when the site rebuilds its
 packs on a schedule and the phones' update traffic is measured.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

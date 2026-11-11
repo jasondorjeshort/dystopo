@@ -33,4 +33,4 @@ and the trip report, no format phones exchange); the group record after stage 1b
 in its proposal's format, sent automatically only while the group sharing you turned on for the trip is
 running (then it is the same flow, not a new one), and carrying the point, its time, heading and spread,
 not the path.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

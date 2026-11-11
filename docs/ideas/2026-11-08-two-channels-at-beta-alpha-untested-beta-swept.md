@@ -29,4 +29,4 @@ Question: Should this wait for the Play registration and the first beta (a `Wait
 trigger), or should the untested alpha channel be built now on GitHub prereleases beside today's swept alphas?
 Recommended: wait; until beta exists the swept alpha is the only tested build, and a second GitHub channel now would
 need the updater's channel switch and ADR 0024's revision twice, once now and again when Play arrives.
-Answer:
+Answer: wait for the Play registration and the first beta, as recommended (owner, 2026-11-11).

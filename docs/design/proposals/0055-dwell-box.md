@@ -3,6 +3,13 @@
 Date: 2026-11-02
 Status: under review (revised on the critic's review of 2026-11-02; the decision is the owner's, ADR 0031)
 
+The owner, 2026-11-11: **option E**; the trigger constants as proposed; the strings built as proposed and shown in the
+report. The 100 MB a day and 500 MB defaults were accepted, but the owner called ADR 0060's 100 MB daily limit "a
+decade out of date" the same day, so these two defaults follow that research's answer. The owner asked why an area
+already downloaded is not simply in the cache: it is (a pinned area is never refetched); the dwell box is for a place
+viewed online and never downloaded, whose viewed tiles otherwise sit only in the evictable view cache, at the zooms
+seen. Next: the ADR (`adr` skill).
+
 ## Question
 
 When the user browses the map online and lingers zoomed in on a place, the phone should fetch and keep the

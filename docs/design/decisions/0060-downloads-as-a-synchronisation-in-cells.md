@@ -1,7 +1,7 @@
 # 0060. Downloads as a synchronisation in cells: the store out of the cache, cells with a ledger, listings, a consented helper
 
 Date: 2026-11-09
-Status: accepted (the technical decision after the critic; three items wait on the owner, below)
+Status: accepted (the technical decision after the critic; the owner answered 2026-11-11, below; the daily limit's default waits on research)
 
 Record: proposal `../proposals/0060-downloads-as-a-synchronisation-in-cells.md` (T244, wave 31; the specification:
 the procedure of the move, the cell sizes, the ledger, the stale tests, the routes, the settings table, the formats)
@@ -81,6 +81,14 @@ public instance to 3,000 tiles or 50 MB per area.
   background", or Only when I tap Update, as ADR 0030 and the survey have it); H2's keep-warm list as a new data flow
   (ADR 0031, ADR 0059; H1 until allowed) and the consent's words; the daily limit's default (100 MB proposed, low
   confidence past a corridor) and today's direct-mode country downloads, which pass OpenFreeMap's public limit.
+- **The owner's answers, 2026-11-11.** Refresh: **automatically in the background**. H2's keep-warm list: allowed,
+  with its consent's words built as proposed and shown in the report (ADR 0031). The daily limit: 100 MB "sounds a
+  decade out of date" (the owner keeps the limits at their maximum and downloads gigabytes routinely), so the default
+  waits on fresh research (ADR 0044) into what today's users and apps download and on what plans. Country downloads in
+  direct mode: no central server can be assumed, so a country is split into areas; the research first reads
+  OpenFreeMap's published terms, and the split respects them (a split that only evades a per-area limit is not built).
+  Over all of it, the owner's requirement: separate downloads work together for search and routing, and an area that
+  overlaps one already kept never fetches the overlap again (the cells' content addressing, P1's store).
 - **Deferred, with triggers.** P2 (a block-hash list as a `derived` entry): a measured repair case or peer serving of
   packs by block. C3 (a cell as one file): T249's numbers show the file count limits phones. P3 (packs as cells, one
   store on disk): a bug fixed twice, once per store, in two consecutive waves, or pack updates the larger share of

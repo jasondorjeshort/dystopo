@@ -27,4 +27,4 @@ Decisions sends through a proposal, and a large one. A cheap middle step if you 
 perspective image of the view ahead rendered in `shared` from the DEM and the hillshade (no interaction), useful for
 the trip report page, not a map mode.
 
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

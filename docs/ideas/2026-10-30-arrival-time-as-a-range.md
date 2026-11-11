@@ -23,4 +23,4 @@ out over a route's many pieces, so the range needs a whole-track statistic: each
 prediction, measured with `devtool pace-fit` before the survey (ADR 0039) sets the width. And `NavPath` has projection, not an
 overlap measure; the match goes through T164's `routing/TrackMatch.kt`. Second pass, on your answer: the clock reads the
 slow end, and the margin's default drops to match.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

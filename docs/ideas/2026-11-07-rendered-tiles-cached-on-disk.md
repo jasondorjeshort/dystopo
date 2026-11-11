@@ -36,4 +36,4 @@ loopback server (losing rotation and tilt, and label placement per view), or a m
 the redraw at the cutoff on the emulator and your phone and tries the renderer's own levers? Recommended: the
 measurement pass, one agent, a finding with frame times before and after; a raster cache only if the redraw is
 shown to cost what you saw and the levers do not move it.
-Answer:
+Answer: the measurement pass first, as recommended (owner, 2026-11-11).

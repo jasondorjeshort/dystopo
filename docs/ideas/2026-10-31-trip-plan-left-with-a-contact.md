@@ -28,4 +28,4 @@ withdraws a card, and the wording (advice, never an alarm). A no-app fallback (a
 share sheet with the route link and the expected return, no automatic messages) needs no new flow and could ship
 first as one task in `app/share/`; that is the piece to approve separately if wanted.
 
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

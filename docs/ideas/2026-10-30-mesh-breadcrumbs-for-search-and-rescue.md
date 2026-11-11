@@ -24,4 +24,4 @@ encrypted end to end to the user's own contacts; a carrier holds an opaque blob 
 the sync relay stores `EncryptedBundle` frames today (`shared/.../sync/EncryptedBundle.kt`). Build after stage 1 of group
 positions has shipped. Start with contacts' phones as the only receivers: a rescue-service endpoint would add a third party
 and a server the project does not run, so it is a later question.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

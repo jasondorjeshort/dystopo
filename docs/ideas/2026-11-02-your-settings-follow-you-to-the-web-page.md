@@ -31,4 +31,4 @@ token (the sync peer, no crypto)? Recommendation: wait for ADR 0053's steps 1 an
 token path, read-only: the page pulls the settings ops for the token's user and applies units, text size
 and map options; writing from the page and the share-code path only if you want the page to work
 without a token. A shared computer keeps nothing: the token is already in the browser only.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

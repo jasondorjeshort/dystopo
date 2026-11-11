@@ -30,4 +30,4 @@ may a link the phone opens register an area by itself? Recommendation: the tile 
 drawing tool on the page with the size line from the manifest, `tools/demo` only; (2) a `dystopo://area`
 link and QR the phone opens to a confirmation card, nothing registered without a tap (the `dystopo://share`
 rule). A polygon pack file is a pack-format change and a proposal; not now.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

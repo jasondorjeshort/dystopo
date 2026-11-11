@@ -27,4 +27,4 @@ add "60 percent above 2,500 m". The row in `app/routing/RouteWater.kt` and the s
 clause for crossings over `WaterParams.flowingFromKm2`; small catchments say nothing, as the idea says. The rain-spike
 pairing with T178's trend is a separate question (a falling-pressure line already exists).
 
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

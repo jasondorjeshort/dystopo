@@ -33,4 +33,4 @@ a "Share this view" action that emits that link and the site's https equivalent,
 to the view only (your settings untouched), offline with no pack showing the place over whatever is
 cached; https App Links (the phone opening the site's URLs) later as its own task, since that URL form is
 read by other tools.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

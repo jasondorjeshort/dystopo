@@ -25,4 +25,4 @@ Question: should the pressure minutes and the turn events be stored with the tra
 report with the recomputed strips enough? Recommendation: one pass now for the recomputed items (the
 sun and shade strip, "Walked before", the water count; no format change), and a proposal for the stored
 two afterwards, with the retention question (3 h 40 min is shorter than a long day) settled there.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

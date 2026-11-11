@@ -45,4 +45,4 @@ synthetic skyline frames and a handful of photos you take at a known public summ
 skyline, reporting the position error and the failure cases (canopy, fog, a flat horizon)? Recommendation:
 yes, as T166 was for the terrain fix; the camera screen, the fix as a terrain-fix measurement and the
 viewshed's stage 3 then share one proposal built on the numbers.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

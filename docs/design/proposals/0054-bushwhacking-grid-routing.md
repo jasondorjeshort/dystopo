@@ -4,6 +4,12 @@ Date: 2026-11-02
 Status: under review (revised on the critic's 22 objections, all taken; the owner decides the strings, the
 glacier default and the two slope numbers before the ADR)
 
+The owner, 2026-11-11: the label is **"bushwhack"**; **glaciers are impassable** (the coordinator reads this as the
+pack's glacier polygons, as recommended; WorldCover's permanent-snow class without a pack glacier stays a question for
+the ADR's author to put to the owner, since it covers snowfields too); the two slope numbers come from the avalanche
+slope-angle research, as proposed; a phone without the mode: "no idea", so the coordinator takes the recommendation,
+refused. Next: the ADR (`adr` skill).
+
 ## Question
 
 The router plans along the trail graph only; a point more than `DEFAULT_SNAP_M` (300 m) from a line

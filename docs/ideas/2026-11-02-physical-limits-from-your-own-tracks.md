@@ -34,4 +34,4 @@ sync, ADR 0033, a few bytes a point), which is what a fitted climb cap needs? Re
 first pass of this idea and the prerequisite of the self-test idea's honesty too; the fitting (the 99th
 percentile per activity with the constants as the floor, shown in Diagnostics with the track count) as the
 second pass, always on, no setting: a limit from your own data has no wrong default to escape.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

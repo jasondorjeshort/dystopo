@@ -34,4 +34,4 @@ Question: still wanted knowing it tests the trails, not the sensors, until press
 tracks (the physical-limits idea's first pass)? Recommendation: yes, after that pass: a Tracks-list action
 with its own result screen (one line per cut, the aggregate over recent tracks), recomputed on demand
 and not stored, run as a foreground job with progress since a track takes about a minute; two passes.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

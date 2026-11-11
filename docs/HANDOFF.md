@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-11 01:50 UTC, by main session (stopped for a Windows restart: the first half merged, T275 paused)
+Updated: 2026-11-11 13:50 UTC, by main session (the owner's answers recorded; T275 still paused)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32, `out/wave32-research/` [no-check: gitignored].
 
 ## Now
@@ -25,13 +25,11 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Waiting on user
 
-- Wave 32's choices: T263's picker setting default (the research says skip the Record-as step; the
-  plan keeps it until you say); the course entry off by default in the readout (seen on the v0.1.26 install).
-- ADR 0060: the refresh default, the keep-warm list as a new data flow, the daily limit's default, country downloads.
-- ADR 0061: the first-run card while the pack list loads (F1 wait, F2 unknown until known, F3, F4); F1 built first.
-- The Menu choice (Layout C); T220; proposals 0054 and 0055; the owner's-eye items of wave 31's merges (ADR 0031,
-  the record's Status lines); the four triage Questions (the flight's freeze report, the accelerometer, a raster
-  cache, two channels at beta); the real-phone checks of v0.1.26-alpha.
+- Answered 2026-11-11 (`docs/TASKS.md` › Owner actions pending, "Answered 2026-11-11", and Later's first entry).
+- The owner's-eye items of wave 31's merges (ADR 0031, the record's Status lines) and the real-phone checks of
+  v0.1.26-alpha: the owner reads them "soon enough".
+- Next from the answers: the daily-limit research (ADR 0060); the 0054 glacier detail (permanent snow without a
+  mapped glacier) when its ADR is written.
 
 ## Open findings
 

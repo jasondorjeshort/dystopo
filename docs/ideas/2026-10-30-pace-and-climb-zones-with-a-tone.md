@@ -21,4 +21,4 @@ small, and after the readout bar. Build it as one more option in the existing pe
 smoothed value: out of band for a set time (default from the running and cycling survey, ADR 0039), then one tone through
 `nav/NavDevice.kt`'s tone and an optional spoken line, at most once per minute. `GET /readout` › `target` reports it, and
 `devtool readout --gpx` tests it on the replay.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).
