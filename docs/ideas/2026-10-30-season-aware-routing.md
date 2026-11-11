@@ -23,4 +23,4 @@ sun-and-shade task. After both, a proposal: the cost model is a routing-engine c
 proposal should start with the comfort factor (shade on summer ascents, an opt-in cost) and keep avalanche terrain as display
 only (the slope shading and its "not an avalanche forecast" line), not a router preference. The research ADR 0044 asks for
 then decides between one switch and one setting per factor.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

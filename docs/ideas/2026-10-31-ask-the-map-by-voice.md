@@ -30,4 +30,4 @@ peaks in view (`dem/Viewshed.kt`) and the pressure trend, spoken through `app/na
 needs no audio. The screen-off trigger (the headset button through a media session) is the part to measure on a phone
 first; the survey (ADR 0039) is how the established navigation apps start a voice query and what they answer offline.
 
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

@@ -32,4 +32,4 @@ server? Recommendation: yes, as a proposal with a critic (PDFBox, Apache-2.0, be
 public server leans on, and the renderer move is the first time the standalone server draws anything):
 pass 1 moves `/print` to serverlib and the box appears on the site; the route on the sheet and the
 turn-back times come with the paper-backup idea, which waits on your answer there.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

@@ -33,4 +33,4 @@ link carries a bearer token (a credential in a QR is a new data flow and a secur
 a QR encoder (a new dependency or a hand-written one), and the site-as-second-device question fixes how
 the browser's replica and the phone's share a user. The corridor pack pulled in the same pairing comes
 after.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

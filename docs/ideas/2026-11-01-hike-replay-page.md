@@ -32,4 +32,4 @@ Question: public by link, or under the user's token only? Recommendation: token 
 you were, hour by hour), and after the trip-report v2 question is answered, since the pressure and the
 decisions on this page need that storage; the slider over position, profile, speed and the sun recomputed
 from the DEM needs no new field and is two passes (a track-as-JSON route on the sync peer, then the page).
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

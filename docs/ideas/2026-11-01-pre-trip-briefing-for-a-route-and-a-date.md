@@ -26,4 +26,4 @@ on the route card, printed through the sheet dialog), a web page, or both? Recom
 and the devtool option first, two passes after the best-start-time idea lands (its sweep gives the start
 the briefing assumes), without the hot-day line for a future date; the web page when the site has
 `/print` (the print-from-the-site idea).
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

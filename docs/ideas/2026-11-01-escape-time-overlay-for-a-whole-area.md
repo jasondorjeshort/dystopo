@@ -24,4 +24,4 @@ the 100 m drop and 5 km window as constants or not, derived data in the pack for
 phone, and how "minutes to lower ground" is worded without saying safe)? Recommendation: not now; the
 point-wise answer on the pressure warning covers the case the idea names, and the layer's cost over a
 pack's DEM is millions of reads before anyone has asked for it.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

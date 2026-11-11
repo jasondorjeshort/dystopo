@@ -30,4 +30,4 @@ the error of the grid's terrain sunrise and sunset against `ShadeTiles.pointAnsw
 if the point error is a few minutes at a size under the graph's share. The sun-hours-per-month summary is derivable from
 the same horizon grid, so it should not be a second file.
 
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

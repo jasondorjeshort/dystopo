@@ -28,4 +28,4 @@ Question: Does Report a problem on your phone list a `freeze-` report from the 2
 it, or a "Send diagnostics" dump from the next long flight on v0.1.25-alpha or later? Recommended: send whichever
 exists; nothing here can be built or ruled out without that data, and if the next flight shows no freeze and a flat
 sampler line, this file is deleted on your word.
-Answer:
+Answer: no freeze report beyond what was already seen; the owner sent the last start from v0.1.26-alpha instead (issue 34: first frame 0.29 s cold, no stall) (owner, 2026-11-11). Unless a later flight shows a freeze, this file goes at the next triage.

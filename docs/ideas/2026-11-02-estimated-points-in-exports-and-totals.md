@@ -31,4 +31,4 @@ the export by default with an "Include estimated points" switch on the export, s
 take one for a measured point and no outside tool reads our flag; fill the totals and the profile (the
 walk happened), with the filled part drawn dashed. Each is one pass once answered; the export rule is an
 ADR 0033 line, not a format change.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

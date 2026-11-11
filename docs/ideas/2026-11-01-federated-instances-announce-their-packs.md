@@ -32,4 +32,4 @@ with hashes only, or packs signed by a publisher key)? Recommendation: not now. 
 change phones read, a trust scheme and a redistribution question (who is the publisher of a mirrored
 pack under ODbL attribution), so a proposal when a second instance exists; until then the phone's
 single server and the site's own packs are enough.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

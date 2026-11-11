@@ -5,7 +5,9 @@ Status: accepted
 
 Record: proposal `../proposals/0061-the-launch-as-a-staged-state-machine.md` and
 `../proposals/0061-critic-review.md` (0 blocking, 7 serious, 7 minor, all taken). The first frame's visible choice
-(F2 below) is the owner's and is not decided here.
+(F2 below) is the owner's: F2, the owner, 2026-11-11 ("#2 I guess"). The owner's last-start trace on v0.1.26-alpha
+(issue 34: first frame 0.29 s cold, no stall) was taken with about 1 MB of offline maps on the phone, so it does not
+yet test the many-GB case that froze, and the Revisit trigger below is not read as fired by it.
 
 ## Context
 

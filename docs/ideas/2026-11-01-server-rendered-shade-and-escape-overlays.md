@@ -32,4 +32,4 @@ the phone's T188 figures were 0.5 to 1.3 s a tile toward a low sun)? Recommendat
 passes: `/overlay/shade/{z}/{x}/{y}.png?at=` through `CastShadow`, cached by 15-minute bucket and day
 beside the derived files, measured first at the three zooms on the Rainier pack, then the page's slider;
 the escape overlay stays with its own idea, which needs a design.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

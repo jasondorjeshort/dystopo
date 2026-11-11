@@ -25,4 +25,4 @@ Recommendation: yes, one proposal for both when you answer the season-aware ques
 the router (a routing-engine choice under CLAUDE.md › Decisions) and both want a setting (ADR 0044); the
 two-pass approximation (shade sampled at the straight-line arrival time) is the shape to evaluate first.
 Not on its own.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

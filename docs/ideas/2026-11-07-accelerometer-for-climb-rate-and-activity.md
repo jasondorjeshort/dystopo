@@ -42,4 +42,4 @@ tell the vehicle from the carrier's handling, before anything else, or is this i
 thought? Recommended: the research pass only, one no-Gradle agent writing a finding; build nothing unless it shows a
 published method that survives a phone in a pocket or cup holder, since T250's flying rule already covers the case
 that prompted it.
-Answer:
+Answer: the research pass, as recommended, widened: a phone handled in a vehicle is a case the method must survive, not a reason to drop it, and the research also asks whether the accelerometer can tell the activity (walking, cycling, driving, flying) for the app's mode (owner, 2026-11-11).

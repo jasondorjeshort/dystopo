@@ -21,4 +21,4 @@ at the next junction only, and the single best bail-out from it. One reverse sea
 An exit is an `outdoor_poi` `trailhead` or `parking`, or any graph node on a drivable way. The search is costed by
 `CostModel`'s time with the fitted pace, and the deadline resolves as `TurnAround`'s does. The graph overlay of times, the
 battery and barometer inputs and a real horizon wait for the design doc.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

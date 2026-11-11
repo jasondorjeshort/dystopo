@@ -31,4 +31,4 @@ pushes on two failures), your own phone, or the sweep host, which is the same PC
 uptime monitor, which needs no code: you sign up and point it at the URL; a task then adds the setup
 lines to `docs/reference/home-site.md` and `docs/SERVER.md` › What to monitor without naming the host.
 Nothing from every user's phone (a new data flow for no gain).
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

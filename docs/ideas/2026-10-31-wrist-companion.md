@@ -25,4 +25,4 @@ one tile (not a full app) showing the readout strip's JSON as the phone's `GET /
 turn-back time; haptics for the margin and the turn from the same `TurnAlerts`. The proposal's survey (ADR 0039) is how
 the established hiking apps split phone and watch, and its measurement the watch's battery cost per hour.
 
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).

@@ -25,4 +25,4 @@ or waypoint, its distance, and the turn-back clock time for the deadline and pac
 The proposal then chooses the payload: a `dystopo:` deep link with an encoded, simplified line (`DeepLink.kt` exists; a QR code
 holds about 2.9 kB in binary), GPX text that any app reads, or a trip id fetched over the share. It also chooses a QR encoder:
 written in-house, or a permissive library in devtool. The phone's sheet stays the printable-sheet idea's Plan.
-Answer:
+Answer: as recommended (owner, 2026-11-11: "use recommendations" for every older open Question).
