@@ -30,7 +30,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
   v0.1.26-alpha: the owner reads them "soon enough".
 - The daily-limit research is in (`out/wave32-research/daily-limit-and-openfreemap.md` [no-check: gitignored]):
   OpenFreeMap's terms cap each download at 3,000 tiles or 50 MB, which a split would evade; asked the owner to
-  pick (email them, a server for big downloads, or both) and the limit (1 GB a day; a separate mobile one?). The 0054 glacier detail (permanent snow without a
+  pick (email them, a server for big downloads, or both); the daily limit is 1 GB (owner). The 0054 glacier detail (permanent snow without a
   mapped glacier) when its ADR is written.
 
 ## Open findings
