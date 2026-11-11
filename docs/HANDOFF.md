@@ -16,9 +16,9 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. Running: the post-wave sweep (main fb0a6463, `-Prev out\sweep-20261110-0656`, the v0.1.26 sweep) and a chore
-   cleaning up T265 and T274. The session is on another account since 19:40 UTC (7-day resets 2026-11-13 04:00 UTC).
-   The sweep reads `upgrade`'s tracksShown (T262's unrun check) and the tour's offline step (flaked on four branches).
+1. The sweep of fb0a6463 (`out/sweep-20261110-1815` [no-check: gitignored]) failed device-tour and probe; upgrade
+   passed (tracks shown). T275 fixes them (5570/8694, its sweep parts on 5572/8696, base 9000). The session is on
+   another account since 19:40 UTC: 7-day 87 at 01:17 UTC, resets 2026-11-13 04:00 UTC.
 2. Sweep green: the alpha by the `release` skill; then the second half after the 7-day reset of the account the
    session is on (read it fresh; 2026-11-13 04:00 UTC on this one).
 3. The owner removes the empty `C:\c` folder T264's first tilebuild run left (the safety check refused the agent).
