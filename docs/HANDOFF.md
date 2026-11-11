@@ -9,8 +9,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 - Wave 31 closed (`docs/tasks/wave-31.md`); **v0.1.26-alpha published** 2026-11-10 (tag on e5331b9c, versionCode 1445).
 - **Wave 32 first half** (launched 2026-11-10 17:40 UTC on the owner's go; plan 298987de, fixes 93636d62; research
   and the critic's report in `out/wave32-research/` [no-check: gitignored]): **T271, T262, T264, T269, T272, T265 merged**; T274 (the overview's water edge at 180) merged (log
-  entries of 2026-11-10). Nothing runs. Per-agent token counts for the close: the session scratchpad's
-  `wave32-costs.tsv` [no-check: scratchpad]. Usage gate shut at 19:09 UTC (5-hour 53, 7-day 74); 5-hour reset 20:40.
+  entries of 2026-11-10); T275 (the sweep's red parts) running. Per-agent token counts for the close: the session
+  scratchpad's `wave32-costs.tsv` [no-check: scratchpad].
 - Rules: no force push (merge `main` in); a push on its own line; an LZW error in a cached DEM cell is a stale range
   cache (T269); a sweep part can lose its emulator after a guard reboot (one rerun; T273).
 
