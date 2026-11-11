@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.27-alpha (2026-11-11)
+
 ### 2026-11-11
 
 - T275: The sweep's red parts: the overview's chip at z5 under a server, the tour's ceiling, the probe (first half, before the alpha)
