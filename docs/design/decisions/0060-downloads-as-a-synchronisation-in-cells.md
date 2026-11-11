@@ -1,7 +1,7 @@
 # 0060. Downloads as a synchronisation in cells: the store out of the cache, cells with a ledger, listings, a consented helper
 
 Date: 2026-11-09
-Status: accepted (the technical decision after the critic; the owner answered 2026-11-11, below; country downloads in direct mode wait on the owner)
+Status: accepted (the technical decision after the critic; the owner answered 2026-11-11, below)
 
 Record: proposal `../proposals/0060-downloads-as-a-synchronisation-in-cells.md` (T244, wave 31; the specification:
 the procedure of the move, the cell sizes, the ledger, the stale tests, the routes, the settings table, the formats)
@@ -94,7 +94,10 @@ public instance to 3,000 tiles or 50 MB per area.
   choices 250 MB, 500 MB, 1 GB, 2 GB, 5 GB and Unlimited, today's use shown against it. One limit for every network
   (a separate mobile-data limit was offered and not taken). OpenFreeMap's terms cap each offline download at 3,000
   tiles or 50 MB with at most 4 parallel requests and an identifying User-Agent, and say nothing of splitting: a split
-  that only evades the cap is not built, and the owner's choice (ask them, a server for large downloads, or both) is open.
+  that only evades the cap is not built. The owner chose both, 2026-11-11: direct mode keeps to the terms now (each
+  download at most 3,000 tiles or 50 MB, at most 4 parallel requests, the app's own User-Agent; no background refresh
+  from the public instance), larger areas and refresh go through a server, and the owner asks OpenFreeMap for leave;
+  their answer may lift the cap.
 - **Deferred, with triggers.** P2 (a block-hash list as a `derived` entry): a measured repair case or peer serving of
   packs by block. C3 (a cell as one file): T249's numbers show the file count limits phones. P3 (packs as cells, one
   store on disk): a bug fixed twice, once per store, in two consecutive waves, or pack updates the larger share of
