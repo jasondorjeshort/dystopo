@@ -1,12 +1,13 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-11 15:30 UTC, by main session (T275 merged; the post-wave sweep next)
+Updated: 2026-11-11 17:00 UTC, by main session (v0.1.27-alpha published; the second half waits for the reset)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32, `out/wave32-research/` [no-check: gitignored].
 
 ## Now
 
-- Wave 31 closed (`docs/tasks/wave-31.md`); **v0.1.26-alpha published** 2026-11-10 (tag on e5331b9c, versionCode 1445).
+- **v0.1.27-alpha published** 2026-11-11 (tag on 5d7b641d, versionCode 1501): wave 32's first half; sweep
+  `out/sweep-20261111-1012` [no-check: gitignored] green.
 - **Wave 32 first half** (launched 2026-11-10 17:40 UTC on the owner's go; plan 298987de, fixes 93636d62; research
   and the critic's report in `out/wave32-research/` [no-check: gitignored]): **T271, T262, T264, T269, T272, T265,
   T274 and T275 merged** (log entries of 2026-11-10 and -11). Nothing runs. Per-agent costs: the cost finding's wave 32 line.
@@ -15,10 +16,11 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 ## Next
 
-1. The cleanup chore for T275 (branch, worktree `dystopo-wt/T275`, the long-path `T275-verify` folder, AVD
-   `dystopo35-T275`), then the post-wave sweep (`sweep` skill) on `main` at 7b0fd2eb or later.
-2. Sweep green: the alpha by the `release` skill; then the second half after the 7-day reset (read it fresh;
-   2026-11-14 03:00 UTC on this account, 75 at 13:35 UTC on 11-11).
+1. Finish T275's cleanup: `dystopo-wt/T275` is held open by a process (find it by PID, not by name), then
+   `worktree prune`, `branch -d task/T275`, AVD `dystopo35-T275`. The draft check's stray emulator (AVD `dystopo35`,
+   emulator-5554, guard pid 52028): the classifier refused the agent's stop; the owner's call.
+2. Wave 32's second half after the 7-day reset (read it fresh; 2026-11-14 03:00 UTC on this account, 75 at 13:35 UTC
+   on 11-11): T263, T266, T268, T267, T270, T273, then a sweep and a release.
 3. The owner removes the empty `C:\c` folder T264's first tilebuild run left (the safety check refused the agent).
 
 ## Waiting on user
