@@ -19,7 +19,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 1. Finish T275's cleanup: `dystopo-wt/T275` is held open by a process (find it by PID, not by name), then
    `worktree prune`, `branch -d task/T275`, AVD `dystopo35-T275`.
 2. Wave 32's second half after the 7-day reset (read it fresh; 2026-11-14 03:00 UTC on this account, 75 at 13:35 UTC
-   on 11-11): T263, T266, T268, T267, T270, T273, then a sweep and a release.
+   on 11-11, 80 on 11-12): **T276 first** (the owner's priority for the next release, 2026-11-12: an everyday route
+   hides the backcountry lines), then T263, T266, T268, T267, T270, T273, then a sweep and a release.
 3. The owner removes the empty `C:\c` folder T264's first tilebuild run left (the safety check refused the agent).
 
 ## Waiting on user
