@@ -62,10 +62,10 @@ class TrackingUiStateTest {
         val onCreate = File(app, "DystopoApp.kt").readText().substringAfter("override fun onCreate()")
         val prepared = onCreate.indexOf("Tracking.prepare()")
         assertTrue(prepared >= 0, "Application.onCreate must call Tracking.prepare()")
-        assertTrue(prepared < onCreate.indexOf("openTiles()"), "openTiles() starts the online service, which starts the corridors' thread")
+        assertTrue(prepared < onCreate.indexOf("OnlineService.create("), "the online stage starts the online service, which starts the corridors' thread")
         // T229: the tracker's own thread starts after the state and the settings, before the corridors' thread can ask for it.
         val started = onCreate.indexOf("Tracking.start(")
-        assertTrue(started > prepared && started > onCreate.indexOf("AppSettings.load(") && started < onCreate.indexOf("openTiles()"), "Tracking.start after prepare and AppSettings.load, before openTiles")
+        assertTrue(started > prepared && started > onCreate.indexOf("AppSettings.load(") && started < onCreate.indexOf("OnlineService.create("), "Tracking.start after prepare and AppSettings.load, before the online stage")
         val controls = File(app, "tracking/TrackControls.kt").readText()
         assertFalse(Regex("""remember\s*\{\s*Tracking\.of""").containsMatchIn(controls), "the composition reads TrackingUiState.tracking; it never waits for the tracker")
     }

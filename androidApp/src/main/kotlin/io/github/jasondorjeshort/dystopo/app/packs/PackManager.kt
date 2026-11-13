@@ -426,9 +426,20 @@ class PackManager private constructor(private val app: DystopoApp) {
             return safe.takeIf { PackNames.isValidName(it) } ?: "imported"
         }
 
-        @Volatile private var instance: PackManager? = null
+        /**
+         * T266 (ADR 0061): built once by the launch's `downloads` stage ([create], from `DystopoApp.onCreate`) and read here from
+         * its slot, with the slot's rules (a failed check on the main thread before it is built, in debug builds).
+         */
+        fun get(@Suppress("UNUSED_PARAMETER") app: DystopoApp = DystopoApp.instance): PackManager =
+            slot.value ?: slot.get(io.github.jasondorjeshort.dystopo.app.tracking.Tracking.WAIT_MS) { caller() }
 
-        fun get(app: DystopoApp = DystopoApp.instance): PackManager =
-            instance ?: synchronized(this) { instance ?: PackManager(app).also { instance = it } }
+        private val slot by lazy { io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.slot<PackManager>(io.github.jasondorjeshort.dystopo.launch.Launch.DOWNLOADS) }
+
+        /** The `downloads` stage's body: the one constructor (T266). */
+        fun create(app: DystopoApp): PackManager = PackManager(app)
+
+        private fun caller(): String = Throwable().stackTrace.firstOrNull {
+            !it.className.startsWith(PackManager::class.java.name) && !it.className.startsWith("io.github.jasondorjeshort.dystopo.app.launch.")
+        }?.let { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.fileName}:${it.lineNumber})" } ?: "unknown"
     }
 }

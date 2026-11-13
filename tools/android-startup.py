@@ -9,8 +9,9 @@ the app does, so it also reads a build with the trace off and a release build, w
   python -I tools/android-startup.py --serial emulator-5574 --launches 10 --no-trace  # a release build, or a scratch build with the trace off
 
 Prints one JSON object: `launches` (per launch `amTotalMs`, `amWaitMs`, `launchState`, `kind`, `firstFrameMs`, `longestStallMs`,
-`reasons`, `marks`), `medians` (`amTotalMs`, `firstFrameMs`, `longestStallMs`) and, cold or warm, the marks' `markMedians` (ms by
-name, the slowest first). Each launch waits for `--wait` s (at most) for the trace's first frame, then `--settle` s before the next;
+`reasons`, `marks`, and T266's `launchOverheadMs`, the launch runner's own overhead from `GET /debug/startup` `launch.overheadMs`,
+ADR 0061), `medians` (`amTotalMs`, `firstFrameMs`, `longestStallMs`, `launchOverheadMs`) and, cold or warm, the marks'
+`markMedians` (ms by name, the slowest first). The stages themselves are `GET /debug/launch`'s. Each launch waits for `--wait` s (at most) for the trace's first frame, then `--settle` s before the next;
 a device that is still busy reads as slow, so run it on a quiet one (`android-emulator.md`).
 
 On an emulator with `-gpu host` every cold start of this app grows qemu by about 0.5 GB of private memory, trace on or off, and a
@@ -58,6 +59,7 @@ def parse_trace(j):
     return {
         "state": (j or {}).get("state"), "kind": w.get("kind"), "kindSource": w.get("kindSource"),
         "firstFrameMs": w.get("firstFrameMs"), "longestStallMs": w.get("longestStallMs"), "reasons": w.get("reasons"),
+        "launchOverheadMs": ((j or {}).get("launch") or {}).get("overheadMs"),  # T266: the launch runner's own overhead
         "marks": [{"name": m.get("name"), "atMs": m.get("atMs"), "ms": m.get("ms"), "samples": m.get("samples"), "cpuMs": m.get("cpuMs"), "frame": m.get("frame")} for m in w.get("marks") or []],
     }
 
@@ -81,7 +83,7 @@ def mark_medians(launches):
 def summary(launches, mode):
     return {
         "mode": mode, "launches": launches,
-        "medians": {k: median(ln.get(k) for ln in launches) for k in ("amTotalMs", "firstFrameMs", "longestStallMs")},
+        "medians": {k: median(ln.get(k) for ln in launches) for k in ("amTotalMs", "firstFrameMs", "longestStallMs", "launchOverheadMs")},
         "markMedians": mark_medians(launches),
     }
 
@@ -158,7 +160,7 @@ def run(args):
                 previous = (trace.read().get("window") or {}).get("id")
             except (RuntimeError, OSError, ValueError, urllib.error.URLError):
                 pass
-        log(f"launch {i + 1}: am {line.get('amTotalMs')} ms, {line.get('kind')}, first frame {line.get('firstFrameMs')} ms, longest stall {line.get('longestStallMs')} ms")
+        log(f"launch {i + 1}: am {line.get('amTotalMs')} ms, {line.get('kind')}, first frame {line.get('firstFrameMs')} ms, longest stall {line.get('longestStallMs')} ms, runner {line.get('launchOverheadMs')} ms")
         launches.append(line)
         time.sleep(args.settle)
     return summary(launches, mode)

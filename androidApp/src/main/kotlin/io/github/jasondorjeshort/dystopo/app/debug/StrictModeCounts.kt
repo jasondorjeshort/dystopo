@@ -19,6 +19,12 @@ import java.util.concurrent.atomic.AtomicLong
  * a violation with no such frame (MapLibre's, Compose's or the platform's own) is exempt, counted only as a total.
  * `GET /debug/strictmode` is [json]; `POST /debug/strictmode/violate` reads a file on the main thread for the check.
  * The listener needs Android 9 (API 28); below that nothing is installed (`installed` false).
+ *
+ * T266 (ADR 0061): each thread-policy violation (the main thread's) is also counted under the launch stage it happened in
+ * ([stageOf], `AppLaunch.stageOf`), exempt or not, by kind: `GET /debug/launch` gives each stage's counts and the kinds its
+ * declared work does not allow; [json] gives them as `byStage`. The platform hands a main-thread violation to the listener
+ * only after the message it happened in (StrictMode times it first), so the stage is read from the violation's own stack
+ * (the binding's body, the frame right above the runner's), not from what runs when the listener is called.
  */
 object StrictModeCounts {
     const val APP_PACKAGE = "io.github.jasondorjeshort.dystopo"
@@ -30,13 +36,17 @@ object StrictModeCounts {
     @Volatile var installed = false
         private set
 
+    /** T266: the launch stage in force on the main thread (set by `AppLaunch.install`); null leaves violations unattributed. */
+    @Volatile var stageOf: (Array<StackTraceElement>) -> String? = { null }
+    private val stages = ConcurrentHashMap<String, AtomicLong>()
+
     /** Main thread, from `DystopoApp.onCreate` in debug builds. */
     fun install() {
         if (Build.VERSION.SDK_INT < 28 || installed) return
         val direct = Executor { it.run() }
         val thread = StrictMode.ThreadPolicy.Builder()
             .detectDiskReads().detectDiskWrites().detectNetwork().detectCustomSlowCalls().detectResourceMismatches().detectUnbufferedIo()
-            .penaltyListener(direct) { v -> record(v.javaClass.simpleName, v.stackTrace) }
+            .penaltyListener(direct) { v -> recordStage(v.javaClass.simpleName, v.stackTrace); record(v.javaClass.simpleName, v.stackTrace) }
             .build()
         val vm = StrictMode.VmPolicy.Builder()
             .detectLeakedClosableObjects().detectLeakedSqlLiteObjects().detectLeakedRegistrationObjects().detectActivityLeaks()
@@ -63,6 +73,22 @@ object StrictModeCounts {
         return frame
     }
 
+    /** T266: one main-thread violation of [kind] under the stage in force. */
+    fun recordStage(kind: String, stack: Array<StackTraceElement>) {
+        val stage = runCatching { stageOf(stack) }.getOrNull() ?: return
+        stages.getOrPut("$stage|$kind") { AtomicLong() }.incrementAndGet()
+    }
+
+    /** T266: the main thread's violations by launch stage, then kind. */
+    fun byStage(): Map<String, Map<String, Long>> {
+        val out = LinkedHashMap<String, MutableMap<String, Long>>()
+        for ((k, n) in stages.entries.sortedBy { it.key }) {
+            val stage = k.substringBeforeLast('|'); val kind = k.substringAfterLast('|')
+            out.getOrPut(stage) { LinkedHashMap() }[kind] = n.get()
+        }
+        return out
+    }
+
     /** The topmost frame (first line) of [stack] in the app's own package, or null. Pure, tested. */
     fun appFrame(stack: List<String>): String? = stack.firstOrNull { it.startsWith("$APP_PACKAGE.") }
 
@@ -75,6 +101,7 @@ object StrictModeCounts {
             "counted" to rows.sumOf { it.third },
             "exempt" to exempt.get(),
             "exemptByKind" to exemptKinds.mapValues { it.value.get() }.toSortedMap(),
+            "byStage" to byStage(), // T266
             "byFrame" to rows.map { (kind, frame, n) -> linkedMapOf("frame" to frame, "kind" to kind, "count" to n) },
         )
     }
@@ -84,5 +111,6 @@ object StrictModeCounts {
         counts.clear()
         exempt.set(0)
         exemptKinds.clear()
+        stages.clear()
     }
 }

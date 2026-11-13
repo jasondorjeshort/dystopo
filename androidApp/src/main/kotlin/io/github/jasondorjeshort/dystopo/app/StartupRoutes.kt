@@ -18,6 +18,18 @@ import java.io.File
  *   monitor a thread `startup-test-holder` holds for that long, instead of sleeping ([holdLock] on both stacks). `?clear=1` forgets it.
  * - `POST /debug/startup/thresholds?coldMs=&warmMs=&hotMs=&stallMs=&mapMs=`: overrides what counts as slow, kept across launches
  *   until `?clear=1`.
+ * - T266: `GET /debug/startup` also gives `launch`: the launch runner's own overhead, `overheadMs` (ADR 0061 step 1's figure:
+ *   the sum over stages of start minus ready-to-start plus the runner's main-thread time), `mainMs` and `lagMs`, its two parts.
+ * - T266 (ADR 0061): `GET /debug/launch`: the declared launch (`shared` `launch.Launch`) as this process ran it ([AppLaunch.json]):
+ *   `stages` (each with `name`, `runs`, `bound`, `thread`, `needs`, `gate`, `work`, `marks`, `publishes`, `reads`, `allowed`,
+ *   `boundMs`, `readyMs`, `startMs`, `endMs`, `ms` (ms since the process started), `lagMs` (start minus ready-to-start),
+ *   `waitMs` (the main thread's wait on it), `delayedMs`, `beforeFirstFrame`, `failure`, `strictMode` (debug builds: the main
+ *   thread's violations under it, by kind) and `undeclared` (those kinds its declared work does not allow)), `overheadMs`,
+ *   `mainMs`, `gates` (`BEFORE_ACTIVITY`'s `atMs` and `waitMs`), `firstFrameMs`, `slots` (`name`, `stage`, `gate`, `onTimeout`,
+ *   `ready`, `failure`), `strictModeOutside` (violations under a boundary mark or after the launch), `delaysTaken`, `pendingDelays`.
+ * - `POST /debug/launch/delay?stage=<name>&ms=0..120000`: holds that stage that long at the next launch (before its body, on its
+ *   own thread), once; `ms=0` forgets it. A file, so a force-stop keeps it. `POST /debug/tracking/delay` is the alias for
+ *   `stage=tracking`; `stage=cacheIndex` is `POST /debug/cache/hold` (the walk held at its first file).
  */
 object StartupRoutes {
     private const val FILE = ".startup-test"
@@ -32,7 +44,23 @@ object StartupRoutes {
         "GET" to "/debug/startup" -> Response.json(StartupTrace.json())
         "POST" to "/debug/startup/stall" -> stall(app, r)
         "POST" to "/debug/startup/thresholds" -> thresholds(app, r)
+        "GET" to "/debug/launch" -> Response.json(io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.json(app)) // T266
+        "POST" to "/debug/launch/delay" -> delay(app, r) // T266
         else -> null
+    }
+
+    /** T266: `POST /debug/launch/delay?stage=&ms=`. */
+    private fun delay(app: DystopoApp, r: Request): Response {
+        val stage = r.query["stage"]?.let { io.github.jasondorjeshort.dystopo.launch.Launch.stage(it) }
+            ?.takeIf { it.bound == io.github.jasondorjeshort.dystopo.launch.Bound.RUNNER || it.name == "cacheIndex" }
+            ?: return Response.json(mapOf("error" to "stage must be one of ${io.github.jasondorjeshort.dystopo.launch.Launch.stages.filter { it.bound == io.github.jasondorjeshort.dystopo.launch.Bound.RUNNER }.map { it.name } + "cacheIndex"}"), 400)
+        val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 0..120_000 } ?: return Response.json(mapOf("error" to "ms must be 0..120000"), 400)
+        if (stage.name == "cacheIndex") io.github.jasondorjeshort.dystopo.app.online.OnlineService.holdNextIndex(app, ms)
+        else io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.setDelay(app, stage.name, ms)
+        return Response.json(linkedMapOf(
+            "pendingDelays" to io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.pendingDelays(app),
+            "pendingCacheHoldMs" to io.github.jasondorjeshort.dystopo.app.online.OnlineService.pendingIndexHoldMs(app),
+        ))
     }
 
     private fun file(app: DystopoApp) = File(File(app.filesDir, MainWatchdog.REPORTS_DIR).also { it.mkdirs() }, FILE)

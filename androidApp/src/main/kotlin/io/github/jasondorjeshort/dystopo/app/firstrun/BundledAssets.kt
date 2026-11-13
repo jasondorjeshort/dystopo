@@ -31,7 +31,6 @@ object BundledAssets {
             @Suppress("DEPRECATION")
             context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime.toString()
         }.getOrDefault("unknown")
-        WorldOverview.start(context, filesDir, version) // T264: on a thread of its own, never this one
         val marker = File(filesDir, MARKER)
         if (marker.isFile && marker.readText() == version && DIRS.all { File(filesDir, it).isDirectory }) {
             lastCopy = linkedMapOf("state" to "current", "version" to version)
@@ -74,14 +73,13 @@ object BundledAssets {
  * T264: the world overview (`tilebuild --natural-earth-only`: Natural Earth's water, country borders and country and city
  * labels, z0 to z5) travels in the APK as the asset [ASSET] (`bundleMapAssets`) and is copied to the files dir as
  * [PackSet.WORLD_FILE], outside `packs/`, where [PackSet.open] finds it as the built-in pack drawn where nothing else is.
- * The copy runs on a thread of its own ([THREAD]), never the main thread, on the first start of each installed build (a
- * marker holds the APK's update time, as [BundledAssets]); the map gains the overview when the copy lands (a reload).
+ * The copy is the launch's `world` stage (T266, ADR 0061: [copy], bound in `DystopoApp.onCreate` and run on the runner's
+ * worker, never the main thread), on the first start of each installed build (a marker holds the APK's update time, as
+ * [BundledAssets]); the map gains the overview when the copy lands (a reload, once the `tiles` slot holds the first service).
  */
 object WorldOverview {
     const val ASSET = "world/world-outdoors.pmtiles"
     const val MARKER = "world-outdoors.version"
-    const val THREAD = "world-overview-copy"
-
     /** How long the copy waits for the app's first tile service before reloading it (the copy can beat it). */
     private const val WAIT_FOR_TILES_MS = 60_000L
 
@@ -91,14 +89,20 @@ object WorldOverview {
 
     fun file(filesDir: File) = File(filesDir, PackSet.WORLD_FILE)
 
-    /** Starts the copy on [THREAD]; returns at once. */
-    fun start(context: Context, filesDir: File, version: String) {
-        Thread({
-            val r = install(filesDir, version) { context.assets.open(ASSET) }
-            last = r
-            Log.i("DystopoAssets", "world overview: $r")
-            if (r["state"] == "installed") reloadWhenUp()
-        }, THREAD).apply { isDaemon = true }.start()
+    /**
+     * T266: the `world` stage's body, on the launch runner's worker: the APK's update time (a binder call, off the main thread
+     * now), the copy, then a reload once the first tile service is published. Returns what the copy did (the stage's value).
+     */
+    fun copy(context: Context, filesDir: File = context.filesDir): Map<String, Any?> {
+        val version = runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime.toString()
+        }.getOrDefault("unknown")
+        val r = install(filesDir, version) { context.assets.open(ASSET) }
+        last = r
+        Log.i("DystopoAssets", "world overview: $r")
+        if (r["state"] == "installed") reloadWhenUp()
+        return r
     }
 
     /**
@@ -133,14 +137,11 @@ object WorldOverview {
         }
     }
 
-    /** Reopens the packs once the app's tile service exists, so the overview appears without a restart. */
+    /** Reopens the packs once the app's tile service exists (the `tiles` slot, T266), so the overview appears without a restart. */
     private fun reloadWhenUp() {
         val app = runCatching { DystopoApp.instance }.getOrNull() ?: return
-        val until = System.currentTimeMillis() + WAIT_FOR_TILES_MS
-        while (runCatching { app.tiles }.isFailure) {
-            if (System.currentTimeMillis() > until) return
-            Thread.sleep(50)
-        }
+        val tiles = io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.slot<Any>(io.github.jasondorjeshort.dystopo.launch.Launch.TILES)
+        if (runCatching { tiles.await(WAIT_FOR_TILES_MS, { "WorldOverview.reloadWhenUp" }) }.getOrNull() == null) return
         app.reload()
     }
 }

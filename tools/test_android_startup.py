@@ -22,6 +22,7 @@ assert m.parse_am_start("Warning: Activity not started\nTotalTime: x\n")["amTota
 
 TRACE = {
     "state": "open",
+    "launch": {"overheadMs": 6.5, "mainMs": 4.5, "lagMs": 2.0},
     "window": {
         "id": "42-1000", "kind": "cold", "kindSource": "startInfo", "firstFrameMs": 2100, "longestStallMs": 700, "reasons": [],
         "marks": [
@@ -33,6 +34,8 @@ TRACE = {
 line = m.parse_trace(TRACE)
 assert line["kind"] == "cold" and line["kindSource"] == "startInfo" and line["firstFrameMs"] == 2100 and line["longestStallMs"] == 700, line
 assert [x["name"] for x in line["marks"]] == ["PackSet.open", "first frame"]
+assert line["launchOverheadMs"] == 6.5, line  # T266
+assert m.parse_trace({"state": "none", "window": None})["launchOverheadMs"] is None
 assert "states" not in line["marks"][0], "the summary stays small"
 empty = m.parse_trace(None)
 assert empty["firstFrameMs"] is None and empty["marks"] == [], empty
@@ -43,12 +46,12 @@ assert m.median([None]) is None
 assert m.median([]) is None
 
 launches = [
-    {"amTotalMs": 1000, "firstFrameMs": 1100, "longestStallMs": 0, "marks": [{"name": "a", "ms": 10}, {"name": "b", "ms": 300}, {"name": "first frame", "ms": None}]},
-    {"amTotalMs": 1200, "firstFrameMs": 1300, "longestStallMs": 600, "marks": [{"name": "a", "ms": 30}, {"name": "b", "ms": 100}]},
+    {"amTotalMs": 1000, "firstFrameMs": 1100, "longestStallMs": 0, "launchOverheadMs": 7.0, "marks": [{"name": "a", "ms": 10}, {"name": "b", "ms": 300}, {"name": "first frame", "ms": None}]},
+    {"amTotalMs": 1200, "firstFrameMs": 1300, "longestStallMs": 600, "launchOverheadMs": 5.0, "marks": [{"name": "a", "ms": 30}, {"name": "b", "ms": 100}]},
     {"amTotalMs": 1100, "firstFrameMs": None, "longestStallMs": None},
 ]
 s = m.summary(launches, "cold")
-assert s["medians"] == {"amTotalMs": 1100, "firstFrameMs": 1200.0, "longestStallMs": 300.0}, s["medians"]
+assert s["medians"] == {"amTotalMs": 1100, "firstFrameMs": 1200.0, "longestStallMs": 300.0, "launchOverheadMs": 6.0}, s["medians"]
 assert [r["name"] for r in s["markMedians"]] == ["b", "a"], s["markMedians"]
 assert s["markMedians"][0] == {"name": "b", "medianMs": 200.0, "maxMs": 300, "launches": 2}, s["markMedians"]
 assert s["mode"] == "cold" and len(s["launches"]) == 3

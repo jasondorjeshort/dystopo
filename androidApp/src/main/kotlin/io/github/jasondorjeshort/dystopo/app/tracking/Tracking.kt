@@ -920,14 +920,17 @@ class Tracking private constructor(private val app: DystopoApp) {
         /** T229: how long a caller off the main thread (and a service callback, [awaitReady]) waits for the tracker, as [call] does. */
         const val WAIT_MS = 30_000L
 
-        /** T229: the debug builds' file holding the next launch's construction ([delayNextStart]). */
-        private const val DELAY_FILE = ".tracking-delay"
-
         private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
-        /** T229: the one [Tracking] of the process; see [start]. */
-        private val ready = TrackerReady<Tracking>({ Looper.myLooper() == Looper.getMainLooper() }) { t ->
-            mainHandler.post { TrackingUiState.tracking = t }
+        /**
+         * T229: the one [Tracking] of the process; see [start]. T266 (ADR 0061): the launch's `tracker` slot, which the
+         * `tracking` stage publishes; its rules are T229's, a release build's main-thread read a bounded wait instead of a crash.
+         */
+        private val ready: io.github.jasondorjeshort.dystopo.app.launch.Slot<Tracking> by lazy {
+            io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.slot<Tracking>(io.github.jasondorjeshort.dystopo.launch.Launch.TRACKER).also {
+                it.hint = "read TrackingUiState.tracking, or call it on a thread"
+                it.onReady = { t -> mainHandler.post { TrackingUiState.tracking = t } }
+            }
         }
 
         /** T229: when the tracker was ready (ms after the process started), how long its construction took, and the debug delay it waited. */
@@ -958,25 +961,23 @@ class Tracking private constructor(private val app: DystopoApp) {
         }
 
         /**
-         * T229: builds the tracker on a thread of its own (`dystopo-tracking-start`), from `Application.onCreate` after
-         * [prepare] and the settings' load, so no other thread builds it and the main thread never waits for it: the
+         * T229: builds the tracker, as the launch's `tracking` stage (T266: on the runner's worker, from `Application.onCreate`
+         * after [prepare] and the settings' load), so no other thread builds it and the main thread never waits for it: the
          * constructor opens the track database (migrating it after an update), scans the sync log and makes worker round
-         * trips. Once built it is [of]'s answer and, posted to the main thread, [TrackingUiState.tracking]. In debug builds
-         * a delay set by `POST /debug/tracking/delay` ([delayNextStart]) holds the construction first, once.
+         * trips. Once built it is [of]'s answer and, posted to the main thread, [TrackingUiState.tracking]. A failure is the
+         * stage's, published to the slot: the next caller off the main thread builds it again, as every caller did before
+         * T229. In debug builds a delay set by `POST /debug/tracking/delay` ([delayNextStart], the runner's stage delay) holds
+         * the stage first, once.
          */
-        fun start(app: DystopoApp, debug: Boolean) {
+        fun start(app: DystopoApp): Tracking {
             val t0 = SystemClock.elapsedRealtime()
-            Thread({
-                if (debug) runCatching { takeDelay(app) }.getOrDefault(0L).takeIf { it > 0 }?.let { delayedMs = it; Thread.sleep(it) }
-                try {
-                    build(app)
-                    Log.i(TAG, "tracker ready ${SystemClock.elapsedRealtime() - t0} ms after its start (built in $buildMs ms)")
-                } catch (e: Throwable) {
-                    // The next caller off the main thread builds it again, as every caller did before T229.
-                    Log.e(TAG, "the tracker could not be built", e)
-                    ready.failed(e)
-                }
-            }, "dystopo-tracking-start").apply { isDaemon = true }.start()
+            delayedMs = io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.delaysTaken["tracking"] ?: 0L
+            try {
+                return build(app).also { Log.i(TAG, "tracker ready ${SystemClock.elapsedRealtime() - t0} ms after its start (built in $buildMs ms)") }
+            } catch (e: Throwable) {
+                Log.e(TAG, "the tracker could not be built", e)
+                throw e
+            }
         }
 
         private fun build(app: DystopoApp): Tracking = synchronized(this) {
@@ -1035,19 +1036,17 @@ class Tracking private constructor(private val app: DystopoApp) {
             "startWaiting" to ready.waiting, "startError" to ready.failure?.let { "${it.javaClass.simpleName}: ${it.message}" },
         )
 
-        /** T229, debug builds: holds the next launch's construction [ms] (0 forgets it), once. A file, so a force-stop keeps it. */
-        fun delayNextStart(app: DystopoApp, ms: Long) {
-            val f = File(app.filesDir, DELAY_FILE)
-            if (ms <= 0) f.delete() else f.writeText(ms.toString())
-        }
+        /**
+         * T229, debug builds: holds the next launch's construction [ms] (0 forgets it), once. A file, so a force-stop keeps it.
+         * T266: the launch's stage delay for `tracking` (`POST /debug/launch/delay?stage=tracking`), this route its alias.
+         */
+        fun delayNextStart(app: DystopoApp, ms: Long) = io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.setDelay(app, "tracking", ms)
 
-        fun pendingDelayMs(app: DystopoApp): Long = File(app.filesDir, DELAY_FILE).takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() ?: 0L
-
-        private fun takeDelay(app: DystopoApp): Long = pendingDelayMs(app).also { if (it > 0) File(app.filesDir, DELAY_FILE).delete() }
+        fun pendingDelayMs(app: DystopoApp): Long = io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.pendingDelays(app)["tracking"] ?: 0L
 
         /** The first frame outside this file: the caller a failed [check] names. */
         private fun callerOf(): String = Throwable().stackTrace.firstOrNull {
-            !it.className.startsWith(Tracking::class.java.name) && !it.className.startsWith(TrackerReady::class.java.name)
+            !it.className.startsWith(Tracking::class.java.name) && !it.className.startsWith("io.github.jasondorjeshort.dystopo.app.launch.")
         }?.let { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.fileName}:${it.lineNumber})" } ?: "unknown"
     }
 }
@@ -1075,56 +1074,9 @@ internal object TrackingUiState {
 }
 
 /**
- * T229: a value built once on another thread, with the wait rules of [Tracking.of]; pure, so `TrackingUiStateTest` runs it.
- * [isMain] says whether the calling thread is the UI thread; [onReady] gets the value on the thread that [set] it.
+ * T229: a value built once on another thread, with the wait rules of [Tracking.of]. T266 (ADR 0061): the launch's
+ * [io.github.jasondorjeshort.dystopo.app.launch.Slot], generalised from this class; this factory keeps T229's tests.
+ * [isMain] says whether the calling thread is the UI thread; [onReady] gets the value on the thread that sets it.
  */
-internal class TrackerReady<T : Any>(private val isMain: () -> Boolean, private val onReady: (T) -> Unit = {}) {
-    private val latch = java.util.concurrent.CountDownLatch(1)
-    private val pending = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    @Volatile var value: T? = null
-        private set
-    @Volatile var failure: Throwable? = null
-        private set
-
-    /** An action of [once] is waiting. */
-    val waiting: Boolean get() = pending.get()
-
-    fun set(v: T) {
-        value = v
-        failure = null
-        latch.countDown()
-        onReady(v)
-    }
-
-    fun failed(e: Throwable) {
-        failure = e
-        latch.countDown()
-    }
-
-    /**
-     * The value, waiting at most [waitMs] for it; null when the build failed (the caller may build it). On the main thread
-     * before it is set, a failed check naming [caller], unless [allowMain].
-     */
-    fun await(waitMs: Long, caller: () -> String, allowMain: Boolean = false): T? {
-        value?.let { return it }
-        check(allowMain || !isMain()) { "Tracking.of on the main thread before the tracker is ready, from ${caller()}: read TrackingUiState.tracking, or call it on a thread" }
-        if (!latch.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            throw java.util.concurrent.TimeoutException("the tracker was not ready in $waitMs ms (${caller()})")
-        }
-        return value
-    }
-
-    /** See [Tracking.once]: [onWaiting] true when an action starts to wait, false once it ran (or failed). */
-    fun <R> once(waitMs: Long, caller: () -> String, build: () -> T, onWaiting: (Boolean) -> Unit, action: (T) -> R): R? {
-        value?.let { return action(it) }
-        if (!pending.compareAndSet(false, true)) return null
-        onWaiting(true)
-        try {
-            return action(await(waitMs, caller) ?: build())
-        } finally {
-            pending.set(false)
-            onWaiting(false)
-        }
-    }
-}
+internal fun <T : Any> TrackerReady(isMain: () -> Boolean, onReady: (T) -> Unit = {}): io.github.jasondorjeshort.dystopo.app.launch.Slot<T> =
+    io.github.jasondorjeshort.dystopo.app.launch.Slot(isMain, onReady, name = "tracker", stage = "tracking", hint = "read TrackingUiState.tracking, or call it on a thread")

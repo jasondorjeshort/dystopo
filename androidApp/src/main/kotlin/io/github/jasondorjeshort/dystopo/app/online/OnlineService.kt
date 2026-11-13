@@ -929,9 +929,21 @@ class OnlineService private constructor(private val app: DystopoApp) {
             }
         }
 
-        @Volatile private var instance: OnlineService? = null
+        /**
+         * T266 (ADR 0061): the service is built once, by the launch's `online` stage ([create], from `DystopoApp.onCreate`), and
+         * read here from its slot: at once when it is built; off the main thread a bounded wait for it; on the main thread before
+         * then a failed check naming the caller in debug builds, a bounded, traced wait in release builds.
+         */
+        fun get(@Suppress("UNUSED_PARAMETER") app: DystopoApp = DystopoApp.instance): OnlineService =
+            slot.value ?: slot.get(io.github.jasondorjeshort.dystopo.app.tracking.Tracking.WAIT_MS) { caller() }
 
-        fun get(app: DystopoApp = DystopoApp.instance): OnlineService =
-            instance ?: synchronized(this) { instance ?: OnlineService(app).also { instance = it } }
+        private val slot by lazy { io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.slot<OnlineService>(io.github.jasondorjeshort.dystopo.launch.Launch.ONLINE) }
+
+        /** The `online` stage's body: the one constructor of the service (T266). */
+        fun create(app: DystopoApp): OnlineService = OnlineService(app)
+
+        private fun caller(): String = Throwable().stackTrace.firstOrNull {
+            !it.className.startsWith(OnlineService::class.java.name) && !it.className.startsWith("io.github.jasondorjeshort.dystopo.app.launch.")
+        }?.let { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.fileName}:${it.lineNumber})" } ?: "unknown"
     }
 }
