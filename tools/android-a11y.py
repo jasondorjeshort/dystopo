@@ -557,6 +557,7 @@ class Ctx:
         self.track_id = None
         self.recorded = None
         self.packs_aside = False
+        self.best_start = None
 
 
 def scr_map(c):
@@ -571,14 +572,46 @@ def scr_online(c):
     c.srv.ok("POST", "/online/chip?open=1")
 
 
+# T280: Trip details' start-time line ("Start at 11:45 AM tomorrow for the most sun") is there or not by the clock: at some
+# hours every start ties (`bestStart` kind `any`) and the card draws no line, so the card was 54 dp shorter and the four
+# lines above it 54 dp lower in one sweep than in the baseline's. The route screens plan at a fixed instant (the debug
+# clock of `POST /nav/shade`, which the start-time sweep reads; 8:00 AM at Rainier) and a fixed air temperature (the
+# sun aim, whatever a weather station says), wait for the line to be worked out, and put the clock back after.
+BEST_START_AT = "2026-11-13T16:00:00Z"
+BEST_START_TEMP_C = 5
+
+
+def pin_clock(c):
+    c.srv.ok("POST", f"/nav/shade?at={BEST_START_AT}&tempC={BEST_START_TEMP_C}")
+
+
+def unpin_clock(c):
+    c.srv.call("POST", "/nav/shade?at=now&tempC=", timeout=20)
+
+
+def wait_best_start(c, timeout=120.0):
+    """The card's start-time line once it is worked out (`card.lines.bestStart` no longer `working`): its state and text."""
+    deadline = time.time() + timeout
+    line = {}
+    while time.time() < deadline:
+        line = (((c.srv.ok("GET", "/route?wait=0") or {}).get("card") or {}).get("lines") or {}).get("bestStart") or {}
+        if line.get("state") not in (None, "working"):
+            return line
+        time.sleep(1.0)
+    raise RuntimeError(f"the start-time line still working after {timeout:.0f} s: {json.dumps(line)[:200]}")
+
+
 def scr_route(c):
+    pin_clock(c)
     plan_route(c.srv)
     c.srv.ok("POST", "/route/details?open=0")
 
 
 def scr_route_details(c):
+    pin_clock(c)
     plan_route(c.srv)
     c.srv.ok("POST", "/route/details?open=1")
+    c.best_start = wait_best_start(c)
 
 
 def scr_nav(c):
@@ -684,8 +717,8 @@ SCREENS = [
     ("map", scr_map, None, "map"),
     ("longpress", scr_longpress, None, "map"),
     ("online-card", scr_online, None, "map"),
-    ("route", scr_route, None, "map"),
-    ("route-details", scr_route_details, None, "map"),
+    ("route", scr_route, unpin_clock, "map"),
+    ("route-details", scr_route_details, unpin_clock, "map"),
     ("navigation", scr_nav, None, "map"),
     ("profile", scr_profile, None, "map"),
     ("activity-picker", scr_activity, None, "map"),
@@ -858,9 +891,12 @@ def run(args):
                 ts = time.time()
                 close_all(srv)
                 try:
+                    c.best_start = None
                     setup(c)
                     raster, sem, findings, info = snapshot(c, sname, scale, layer, tags)
                     entry.update(info)
+                    if c.best_start is not None:  # T280: the start-time line the frame was taken with
+                        entry["bestStart"] = {"state": c.best_start.get("state"), "text": c.best_start.get("text")}
                     taps = []
                     for tap in TAPS.get(name, []) if not args.no_taps else []:
                         try:

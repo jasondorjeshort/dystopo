@@ -382,7 +382,10 @@ object StartupTrace {
         a.head["packs"] = packs.size.toString()
         a.head["packBytes"] = packs.sumOf { p -> p.files.sumOf { it.length() } }.toString()
         val dir = reportsDir() ?: return
+        val infoT0 = System.nanoTime()
         val info = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull()
+        a.head["packageInfoMs"] = ((System.nanoTime() - infoT0) / 100_000 / 10.0).toString() // T280: the call, and when it ended
+        a.head["packageInfoEndMs"] = (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime()).toString()
         val seen = File(dir, PACKAGE_SEEN)
         val update = info?.lastUpdateTime ?: 0L
         a.head["firstStart"] = StartupText.firstStart(runCatching { seen.readText().trim().toLong() }.getOrNull(), info?.firstInstallTime ?: 0L, update)

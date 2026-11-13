@@ -102,8 +102,27 @@ def mark_medians(launches):
 
 def parse_launch(j):
     """T268: one launch's stages from `GET /debug/launch`: name, ms (None when it has no end), thread, undeclared kinds."""
-    return [{"name": st.get("name"), "ms": st.get("ms"), "thread": st.get("thread"), "undeclared": list(st.get("undeclared") or [])}
+    return [{"name": st.get("name"), "ms": st.get("ms"), "thread": st.get("thread"), "undeclared": list(st.get("undeclared") or []),
+             "startMs": st.get("startMs"), "endMs": st.get("endMs")}
             for st in (j or {}).get("stages") or [] if st.get("name")]
+
+
+def parse_package_reads(trace, firstrun):
+    """T280: the APK's update time as each launch read it: `assets` (main thread) and `world` (its worker) from `GET /firstrun`
+    `assets` (`versionMs`, the `getPackageInfo` call; `checkMs`, the marker and folders after it; `versionShared`, the read
+    the stage found made), and the trace's own read (`GET /debug/startup` `head.packageInfoMs`, on its I/O thread)."""
+    a = (firstrun or {}).get("assets") or {}
+    w = a.get("world") or {}
+    head = ((trace or {}).get("head")) or {}
+
+    def num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    keys = ("versionMs", "checkMs", "versionShared")
+    return {"assets": {k: a.get(k) for k in keys if k in a}, "world": {k: w.get(k) for k in keys if k in w},
+            "trace": {"packageInfoMs": num(head.get("packageInfoMs")), "packageInfoEndMs": num(head.get("packageInfoEndMs"))}}
 
 
 def stage_medians(launches):
@@ -434,12 +453,19 @@ def run(args):
                 if full:
                     t = parse_trace(full)
                 t["stages"] = parse_launch(launch)
+                try:  # T280: how long the update-time read took in each place
+                    t["packageReads"] = parse_package_reads(full, trace.call("/firstrun", timeout=10.0))
+                except (RuntimeError, OSError, ValueError, urllib.error.URLError) as e:
+                    t["packageReads"] = {"error": str(e)[:200]}
             line.update(t)
             previous = None
             try:
                 previous = (trace.read().get("window") or {}).get("id")
             except (RuntimeError, OSError, ValueError, urllib.error.URLError):
                 pass
+        st = {x["name"]: x.get("ms") for x in line.get("stages") or []}
+        if "world" in st or "assets" in st:  # T280
+            log(f"launch {i + 1}: world {st.get('world')} ms, assets {st.get('assets')} ms, update-time reads {json.dumps(line.get('packageReads'))}")
         log(f"launch {i + 1}: am {line.get('amTotalMs')} ms, {line.get('kind')}, first frame {line.get('firstFrameMs')} ms, map drawn {line.get('fullyLoadedMs')} ms, longest stall {line.get('longestStallMs')} ms, runner {line.get('launchOverheadMs')} ms")
         launches.append(line)
         time.sleep(args.settle)

@@ -77,7 +77,16 @@ LAUNCH = {"stages": [
 ]}
 st = m.parse_launch(LAUNCH)
 assert [x["name"] for x in st] == ["prepare", "tracking", "style", "assets"], st
-assert st[2] == {"name": "style", "ms": None, "thread": "main", "undeclared": []} and st[3]["undeclared"] == ["DiskReadViolation"], st
+assert st[2] == {"name": "style", "ms": None, "thread": "main", "undeclared": [], "startMs": 900, "endMs": None} and st[3]["undeclared"] == ["DiskReadViolation"], st
+assert st[0]["startMs"] == 100 and st[0]["endMs"] == 140 and st[1]["startMs"] is None, st  # T280: when each ran
+
+# T280: the update-time reads of one launch, from GET /firstrun and the trace's header
+pr = m.parse_package_reads({"head": {"packageInfoMs": "41.5", "packageInfoEndMs": "1230"}},
+                           {"assets": {"state": "current", "versionMs": 40.2, "checkMs": 0.4, "versionShared": True,
+                                       "world": {"state": "current", "versionMs": 0.1, "checkMs": 0.3}}})
+assert pr == {"assets": {"versionMs": 40.2, "checkMs": 0.4, "versionShared": True}, "world": {"versionMs": 0.1, "checkMs": 0.3},
+              "trace": {"packageInfoMs": 41.5, "packageInfoEndMs": 1230.0}}, pr
+assert m.parse_package_reads(None, None) == {"assets": {}, "world": {}, "trace": {"packageInfoMs": None, "packageInfoEndMs": None}}
 assert m.parse_launch(None) == [] and m.parse_launch({"stages": None}) == []
 
 
