@@ -1,36 +1,36 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-13 09:00 UTC, at commit e0d40195, by main session (T276 merged; T277 and T267 with verifiers)
+Updated: 2026-11-13 11:40 UTC, at commit 2a84ae01, by main session (v0.1.28-alpha published; T267 in a third pass)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
 "Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
 
 ## Now
 
-- **Wave 32's second half runs** (the owner's go, 2026-11-13): nine tasks in two lanes. **T276 is merged**
-  (ec21da97). **T277** (`task/T277`, head e15c3d13) and **T267** (`task/T267`, head 90111f7b, after a fix round)
-  are each with a Sonnet verifier. The 7-day meter read 3 at 08:47 UTC (next reset 2026-11-20 04:00 UTC).
-- T267's fix round gated the trim and the budget until the kept areas' pins are attached (the cause: `Areas.load()`).
+- **v0.1.28-alpha is published** (2026-11-13 11:26 UTC, tag on 2a84ae01): the early release, T276 and T277. The
+  sweep before it was green without a rerun (`out/sweep-20261113-0446`, the next release's `-Prev`).
+- **T267** (`task/T267`, head 90111f7b) is held on its branch: its fix round verified (MERGE WITH NOTES), but the
+  tour's offline step failed twice there with no baseline. A third verifier is rerunning the tour; green twice
+  means merge, red on `main` too means merge with a note, red only on the branch goes back to the implementer.
+- Wave 32's second half continues: seven tasks left. The 7-day meter read 4 at 11:00 UTC (reset 2026-11-20 04:00 UTC).
 - The live viewer is wanted and runs from the installed distribution (`out/coordinator-pids.txt`).
-- Rules: no force push (merge `main` in); `check` can fail falsely at `:devtool:compileTestKotlin` (stale output;
-  `:devtool:clean check` with `"-Pkotlin.daemon.jvmargs=-Xmx4g"` clears it); the tour's z8 and z10 views flake on a
-  cold emulator beside another build (one rerun before a FIX).
+- Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with
+  `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
 
 ## Next
 
-1. Each verdict: MERGE means the merge sequence (`wave` skill), the cleanup chore and the log entry; FIX goes back.
-2. The **early release**: once T277 has merged (and T267, unless it needs another round: then it ships in the
-   closing alpha), launch nothing, run the sweep through an agent, publish the alpha (the owner's two fixes).
-3. Then lane A: T278 (its brief carries T276's keys and gates, from T276's Status line and merge body), T263,
-   T266, T268. Lane B after T267: T273, then T270 only after T263 has merged.
+1. T267's verdict, then its merge sequence, cleanup chore (`dystopo-wt/T267` and `T267-verify`) and log entry.
+2. Lane A: **T278** next (its brief carries T276's keys and gates, from T276's merge body ec21da97, and the card's
+   "Based on a typical hiking pace" under Walk), then T263, T266 (after T267), T268.
+3. Lane B after T267: T273, then T270 only after T263 has merged.
 4. The closing sweep and alpha, the wave's close (the allowance sentence's reading, the record chore).
 
 ## Waiting on user
 
-- The owner closes whatever window sits in the empty folders `dystopo-wt/T275` and `dystopo-wt/T267-verify`, then
+- The owner closes whatever window sits in the empty folders `dystopo-wt/T275` and `dystopo-wt/T277-verify`, then
   removes them; and removes the empty `C:\c` folder T264's first tilebuild run left.
-- The owner's-eye items (ADR 0031): T276's chip "Walk" and its help text; T277's and T267's strings at their
-  merges; the real-phone checks of v0.1.26-alpha and v0.1.27-alpha; T267's ownership pass on a real phone.
+- On the phone, v0.1.28-alpha: the profile's Close uncovered (T277's cause was found on an emulated Android 12
+  window, not on the phone), and Walk on a town route. The strings to read (ADR 0031) are in the two merge bodies.
 - OpenFreeMap's terms cap a download at 3,000 tiles or 50 MB (Later's first entry; the owner emails them).
 
 ## Open findings
