@@ -13,7 +13,8 @@ views ok, live DEM sources, sync convergence, device views (T105: with the app's
 device), probe count, release timings, the first-run steps (T105: and the --direct run's timings and screenshots), and
 T81's release realism parts: routing and search tours, APK string scan, features, recenter, upgrade, permissions,
 background, network, update, the device matrix with any known defects; T139: the two-emulator both-units check, its
-carries and screenshots, or the skip and its reason when the second emulator did not start); `ok` overall is
+carries and screenshots, or the skip and its reason when the second emulator did not start; T268: the launch budget's
+table, each stage's and frame's median against its ceiling); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -357,7 +358,29 @@ def bothunits(d, part):
     return out
 
 
+# T268: the launch budget (sweep.ps1's startup part, tools/android-startup.py --budget)
+def startup(d, part):
+    """The medians table against the ceilings of tools/launch-budget.json (`table`: name, kind stage or frame, medianMs,
+    ceilingMs, status ok, over, missing or unbudgeted), `red` and its reasons, the undeclared StrictMode kinds, the
+    launches' medians and the seeded store's size. The part's exit code decides `ok`, as for every part."""
+    r = load_last_json(os.path.join(d, "startup.json"))
+    if not isinstance(r, dict):
+        return {}
+    b = r.get("budget") or {}
+    seed = r.get("seed") or {}
+    out = {"launches": len(r.get("launches") or []),
+           "medians": {k: v for k, v in (r.get("medians") or {}).items() if v is not None},
+           "seed": {k: seed.get(k) for k in ("tracks", "seedPoints", "packs", "quiet", "seconds") if k in seed},
+           "table": [{k: row.get(k) for k in ("name", "kind", "medianMs", "ceilingMs", "status")} for row in b.get("rows") or []],
+           "budgetSet": b.get("set"), "red": b.get("red"), "reasons": b.get("reasons") or [], "undeclared": b.get("undeclared") or []}
+    if not b:
+        out["error"] = "no budget in the report"
+    return out
+# end T268
+
+
 PARTS = {
+    "startup": startup,  # T268
     "routes": tour_part,
     "search": tour_part,
     "apk-strings": apk_strings,

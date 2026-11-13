@@ -1,0 +1,36 @@
+{
+ "about": "T268: the launch budget. Ceilings in ms per stage of GET /debug/launch (shared launch/Launch.kt) and for the first frame and the map drawn, against the medians of tools/android-startup.py --launches 5 (cold, a seeded store) in the sweep's startup part; a median over its ceiling, or a StrictMode kind a stage's declared work does not allow, turns the part red.",
+ "rule": "Set by android-startup.py --set-budget from the medians of two sweeps: the larger times the factor, rounded up to whole ms, and never under that median plus floorMs (one frame at 60 Hz; a stage of a few ms swings by more than a quarter of itself). Lower a ceiling by hand in the commit that lands an improvement; never raise one without a line in the dated log. A renamed stage keeps its ceiling through aliases, {old name: new name}.",
+ "factor": 1.25,
+ "floorMs": 16,
+ "set": {"date": "2026-11-13", "from": ["C:/Users/Dorje/AppData/Local/Temp/claude/7f00c1a06515c067/67061273-a97a-433d-ab58-a168bc8cd72b/scratchpad/T268/run1.json"]},
+ "frames": {
+  "firstFrameMs": {"ceilingMs": 4212, "medianMs": [3369]},
+  "fullyLoadedMs": {"ceilingMs": 5803, "medianMs": [4642]}
+ },
+ "stages": {
+  "prepare": {"ceilingMs": 237, "medianMs": [189]},
+  "maplibre": {"ceilingMs": 223, "medianMs": [178]},
+  "settings": {"ceilingMs": 92, "medianMs": [73]},
+  "tracking": {"ceilingMs": 183, "medianMs": [146]},
+  "world": {"ceilingMs": 31, "medianMs": [15]},
+  "assets": {"ceilingMs": 27, "medianMs": [11]},
+  "packs": {"ceilingMs": 78, "medianMs": [62]},
+  "online": {"ceilingMs": 100, "medianMs": [80]},
+  "cacheIndex": {"ceilingMs": 19, "medianMs": [3]},
+  "tiles": {"ceilingMs": 66, "medianMs": [50]},
+  "watchers": {"ceilingMs": 41, "medianMs": [25]},
+  "downloads": {"ceilingMs": 28, "medianMs": [12]},
+  "server": {"ceilingMs": 39, "medianMs": [23]},
+  "updater": {"ceilingMs": 26, "medianMs": [10]},
+  "viewport": {"ceilingMs": 16, "medianMs": [0]},
+  "camera": {"ceilingMs": 31, "medianMs": [15]},
+  "mapview": {"ceilingMs": 77, "medianMs": [61]},
+  "activity": {"ceilingMs": 58, "medianMs": [42]},
+  "start": {"ceilingMs": 37, "medianMs": [21]},
+  "resume": {"ceilingMs": 16, "medianMs": [0]},
+  "composition": {"ceilingMs": 1343, "medianMs": [1074]},
+  "style": {"ceilingMs": 100, "medianMs": [80]}
+ },
+ "aliases": {}
+}
