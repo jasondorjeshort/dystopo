@@ -139,16 +139,16 @@ class LaunchRunner(
         worker("launch-${stage.name}") {
             for (n in stage.needs) span(n).done.await(Long.MAX_VALUE)
             s.readyAt = maxOf(t0, needsEnd(stage))
-            val delay = delayMs(stage)
-            if (delay > 0) {
-                s.delayedMs = delay
-                Thread.sleep(delay)
-            }
             val t = Thread.currentThread()
             val was = t.name
             t.name = "launch-${stage.name}" // what a freeze report's stacks show (a pool's thread is renamed while it runs the stage)
             s.thread = t
             s.threadName = t.name
+            val delay = delayMs(stage)
+            if (delay > 0) {
+                s.delayedMs = delay
+                Thread.sleep(delay)
+            }
             s.startAt = nanos()
             try {
                 finish(s, body(), null)
