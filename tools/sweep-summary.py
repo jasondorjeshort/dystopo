@@ -14,7 +14,8 @@ device), probe count, release timings, the first-run steps (T105: and the --dire
 T81's release realism parts: routing and search tours, APK string scan, features, recenter, upgrade, permissions,
 background, network, update, the device matrix with any known defects; T139: the two-emulator both-units check, its
 carries and screenshots, or the skip and its reason when the second emulator did not start; T268: the launch budget's
-table, each stage's and frame's median against its ceiling); `ok` overall is
+table, each stage's and frame's median against its ceiling; T270: the accessibility part's counts per screen and kind, the
+findings new against tools/a11y-baseline.json and the baseline's size); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -379,7 +380,33 @@ def startup(d, part):
 # end T268
 
 
+# T270: the accessibility part (sweep.ps1's a11y part, tools/android-a11y.py --baseline)
+def a11y(d, part):
+    """Per screen (`<name>:<font scale>`) the counts by kind, or the reason it was skipped; the totals; the baseline's size,
+    how many findings it matched and the new ones (screen, kind, label, bounds in dp: the part is red on these), the entries
+    no longer seen; the sheet. The part's exit code decides `ok`, as for every part."""
+    r = load_last_json(os.path.join(d, "a11y.json"))
+    if not isinstance(r, dict):
+        return {}
+    if r.get("error"):
+        return {"error": r["error"]}
+    b = r.get("baseline") or {}
+    out = {"fontScales": r.get("fontScales"), "screensChecked": r.get("screensChecked"), "seconds": r.get("seconds"),
+           "totals": r.get("totals"),
+           "screens": {s.get("screen"): (s.get("counts") if "counts" in s else {"skipped": s.get("skipped")}) for s in r.get("screens") or []},
+           "baseline": {"entries": b.get("entries"), "matched": b.get("matched"), "new": len(b.get("new") or []),
+                        "gone": len(b.get("gone") or [])} if b else None,
+           "new": (b.get("new") or [])[:30]}
+    if r.get("skipped"):
+        out["skipped"] = r["skipped"]
+    if r.get("errors"):
+        out["errors"] = r["errors"]
+    return out
+# end T270
+
+
 PARTS = {
+    "a11y": a11y,  # T270
     "startup": startup,  # T268
     "routes": tour_part,
     "search": tour_part,
@@ -451,6 +478,7 @@ def sheet_images(d):
         add(title, os.path.join("ui", part, "*.png"))
     add("Device matrix", os.path.join("ui", "matrix", "*", "*.png"))
     add("Both units, two phones through a sync peer", os.path.join("ui", "bothunits", "*.png"))  # T139
+    add("Accessibility, offending nodes outlined", os.path.join("a11y", "a11y-sheet.png"), label="a11y sheet")  # T270 (end T270)
     for part, title in (("live", "Live views (serve --live)"), ("demo-static", "Demo tour, static page"),
                         ("demo-serve", "Demo tour, devtool serve")):
         add(title, os.path.join(part, "*.png"), shot_labels(d, part))

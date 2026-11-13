@@ -181,6 +181,9 @@ class Routes(private val app: DystopoApp) {
         // T238
         ControlsRoutes.handle(app, r)?.let { return it } // GET /controls
         // end T238
+        // T270
+        io.github.jasondorjeshort.dystopo.app.debug.SemanticsRoutes.handle(app, r)?.let { return it } // GET /semantics
+        // end T270
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
