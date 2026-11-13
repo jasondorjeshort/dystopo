@@ -318,4 +318,68 @@ class TileCacheTest {
         }
         assertEquals(33, trims, "one trim every three puts (2000 B of slack, 1000 B tiles), not one per put")
     }
+
+    // --- T279: a file a hard stop left empty is a miss, removed and counted ---
+
+    private fun tornAfterPut(c: TileCache, key: String) {
+        c.put(key, byteArrayOf(1, 2, 3))
+        File(dir, key).writeBytes(ByteArray(0)) // what a stop leaves when the rename reached the disk and the data did not
+    }
+
+    @Test
+    fun anEmptyFileUnderAKnownKeyIsAMissRemovedAndCounted() {
+        val c = cache(1000)
+        c.awaitReady()
+        val key = "s/dem/12/654/1431.png"
+        tornAfterPut(c, key)
+        assertNull(c.get(key), "an empty file is never served")
+        assertFalse(File(dir, key).exists(), "the empty file is deleted")
+        assertFalse(c.contains(key), "and its index entry with it")
+        assertEquals(0, c.size)
+        assertEquals(0L, c.bytes)
+        assertEquals(1L, c.emptyDropped.get())
+        assertEquals(0L, c.emptyDroppedKept.get())
+        assertEquals(1L, c.misses.get())
+        c.put(key, byteArrayOf(4, 5)) // fetched again
+        assertContentEquals(byteArrayOf(4, 5), c.get(key))
+    }
+
+    @Test
+    fun aKeptKeyLeftEmptyIsAMissTooAndServesAgainAfterAPut() {
+        val c = cache(1000)
+        c.awaitReady()
+        c.keep = { true }
+        val key = "s/osm/14/1/1.pbf"
+        tornAfterPut(c, key)
+        assertEquals(1, c.pinnedSize)
+        assertNull(c.get(key))
+        assertEquals(0, c.pinnedSize)
+        assertEquals(0L, c.pinnedBytes)
+        assertEquals(1L, c.emptyDroppedKept.get())
+        c.put(key, byteArrayOf(9))
+        assertContentEquals(byteArrayOf(9), c.get(key))
+        assertEquals(1, c.pinnedSize)
+    }
+
+    @Test
+    fun anEmptyValueIsWrittenAsOneByteAndReadBackEmpty() {
+        val c = cache(1000)
+        c.put("s/osm/14/2/2.pbf", ByteArray(0)) // open ocean: content
+        assertEquals(1L, File(dir, "s/osm/14/2/2.pbf").length(), "never a file with no bytes")
+        assertContentEquals(ByteArray(0), c.get("s/osm/14/2/2.pbf"))
+        assertEquals(1L, c.hits.get())
+        assertEquals(0L, c.emptyDropped.get())
+    }
+
+    @Test
+    fun theWalkDropsAnEmptyFile() {
+        File(dir, "s/dem/9/1/1.png").apply { parentFile.mkdirs(); writeBytes(ByteArray(0)) }
+        File(dir, "s/dem/9/1/2.png").writeBytes(byteArrayOf(1, 2))
+        val c = cache(1000)
+        c.awaitReady()
+        assertEquals(1, c.size)
+        assertFalse(File(dir, "s/dem/9/1/1.png").exists())
+        assertEquals(1L, c.emptyDropped.get())
+        assertNull(c.get("s/dem/9/1/1.png"))
+    }
 }
