@@ -74,6 +74,8 @@ private bytes at the start, peak and end and any reboot (`device\emu-private.tsv
 that loses its emulator is killed 20 s later and reads `guard-stop` (with the guard's line) or `emulator-gone`; an
 empty report or an error outside the parts no longer keeps the summary and the sheet from being written.
 
+T273: a reboot's line in `device\emu-reboots.log` ends with `android-emu.ps1`'s wait for the guest's storage (the package manager and a writable `/sdcard`, so the next part's install finds it ready); the sweep reboots rather than loading a snapshot (a load leaves the emulator 0.3 to 0.8 GB over a reboot's level and undoes the guest's disk; finding `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`).
+
 From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) need the key: copy
 `tools\release.keystore` and `tools\release.properties` from the main checkout into the worktree's
 `tools\` (gitignored; confirm with `git status --ignored`) and never commit them (`release-realism.md`).
