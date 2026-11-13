@@ -57,6 +57,7 @@ object RouteExposure {
     /** The computation for [points] in [mode] (started now when new); null for drive, fewer than two points or no packs. */
     fun start(points: List<RoutePoint>, mode: TravelMode): Future<Result>? {
         if (!applies(mode) || points.size < 2) return null
+        if (RouteSession.isEveryday(points)) return null // T276: nothing is computed for an everyday route
         val p = packs() ?: return null
         val key = Triple(points, mode, System.identityHashCode(p))
         synchronized(cache) {
@@ -125,6 +126,7 @@ object RouteExposure {
     fun json(points: List<RoutePoint>?, mode: TravelMode?, open: Boolean, waitMs: Long = 10_000): Map<String, Any?> {
         if (points == null || points.size < 2 || mode == null) return linkedMapOf("state" to "noRoute")
         if (!applies(mode)) return linkedMapOf("state" to "mode", "mode" to mode.label)
+        if (RouteSession.isEveryday(points)) return linkedMapOf("state" to "everyday", "computed" to computed) // T276
         val r = await(points, mode, waitMs) ?: return linkedMapOf("state" to "computing")
         val e = r.exposure
         val state = when {
