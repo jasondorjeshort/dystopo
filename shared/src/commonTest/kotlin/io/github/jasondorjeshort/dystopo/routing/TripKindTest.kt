@@ -11,13 +11,12 @@ class TripKindTest {
     @Test
     fun theKindByMode() {
         assertEquals(TripKind.EVERYDAY, TripKinds.byMode(TravelMode.DRIVE))
-        assertEquals(TripKind.BACKCOUNTRY, TripKinds.byMode(TravelMode.BIKE)) // until T278 reads a bike route's share
+        assertNull(TripKinds.byMode(TravelMode.BIKE), "T278: a bike route decides by its share")
         assertEquals(TripKind.BACKCOUNTRY, TripKinds.byMode(TravelMode.CROW))
         assertNull(TripKinds.byMode(TravelMode.HIKE), "on foot the route decides")
         // The mode's kind wins over anything a route on foot would say, and over a tap meant for foot.
-        val streets = mapOf(WayClass.MINOR to 900.0)
-        assertEquals(KindChoice(TripKind.EVERYDAY, KindReason.MODE), TripKinds.choose(TravelMode.DRIVE, emptyMap()))
-        assertEquals(KindChoice(TripKind.BACKCOUNTRY, KindReason.MODE), TripKinds.choose(TravelMode.BIKE, streets, tapped = TripKind.EVERYDAY))
+        val trails = mapOf(WayClass.PATH to 900.0)
+        assertEquals(KindChoice(TripKind.EVERYDAY, KindReason.MODE), TripKinds.choose(TravelMode.DRIVE, trails, tapped = TripKind.BACKCOUNTRY))
         assertEquals(KindChoice(TripKind.BACKCOUNTRY, KindReason.MODE), TripKinds.choose(TravelMode.CROW, emptyMap()))
     }
 
@@ -90,6 +89,35 @@ class TripKindTest {
         assertEquals(TripKind.EVERYDAY, TripKind.of("Everyday"))
         assertEquals(KindReason.SHARE, KindReason.of("share"))
         assertNull(TripKind.of("walk"))
+    }
+
+    /**
+     * T278: a bike route is everyday when most of it runs on roads and streets ([TripKinds.BIKE_TOWN_SHARE], the T278
+     * report's table of `devtool route --mode bike`), backcountry on tracks and trails or when its share is not known.
+     */
+    @Test
+    fun aBikeRouteIsGuessedFromItsShareInTown() {
+        // Chamonix's streets and the valley cycleway on a bike (the table's cham-c): everyday.
+        val streets = mapOf(WayClass.CYCLEWAY to 2459.0, WayClass.FOOTWAY to 653.0, WayClass.MINOR to 414.0, WayClass.SERVICE to 189.0, WayClass.TRACK to 72.0)
+        val c = TripKinds.choose(TravelMode.BIKE, streets)
+        assertEquals(TripKind.EVERYDAY, c.kind)
+        assertEquals(KindReason.SHARE, c.reason)
+        // A valley track and trail (the table's Bossons): backcountry.
+        val trail = mapOf(WayClass.PATH to 1487.0, WayClass.TRACK to 969.0, WayClass.MINOR to 932.0, WayClass.SERVICE to 67.0)
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.choose(TravelMode.BIKE, trail).kind)
+        // A graded trail is a trail on a bike too.
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.guess(mapOf(WayClass.FOOTWAY to 1000.0), mapOf(WayClass.FOOTWAY to 900.0), TravelMode.BIKE).kind)
+        // No share known (a server's route, a restored one): backcountry, as before T278.
+        assertEquals(KindChoice(TripKind.BACKCOUNTRY, KindReason.UNKNOWN), TripKinds.choose(TravelMode.BIKE, emptyMap()))
+        // The threshold, both sides.
+        val t = TripKinds.BIKE_TOWN_SHARE
+        assertEquals(t, TripKinds.threshold(TravelMode.BIKE))
+        assertEquals(TripKinds.TOWN_SHARE, TripKinds.threshold(TravelMode.HIKE))
+        assertEquals(TripKind.EVERYDAY, TripKinds.guess(mapOf(WayClass.MINOR to t * 1000, WayClass.TRACK to (1 - t) * 1000), mode = TravelMode.BIKE).kind)
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.guess(mapOf(WayClass.MINOR to t * 1000 - 1, WayClass.TRACK to (1 - t) * 1000 + 1), mode = TravelMode.BIKE).kind)
+        // The Bike chip is lit whatever the kind (no chip overrides a bike's kind).
+        assertEquals(RouteChip.BIKE, RouteChip.of(TravelMode.BIKE, TripKind.EVERYDAY))
+        assertEquals(RouteChip.BIKE, RouteChip.of(TravelMode.BIKE, null))
     }
 
     @Test

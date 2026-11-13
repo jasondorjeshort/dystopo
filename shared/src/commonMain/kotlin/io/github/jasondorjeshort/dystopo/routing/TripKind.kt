@@ -29,7 +29,8 @@ data class KindChoice(val kind: TripKind, val reason: KindReason, val townShare:
 
 /**
  * T276: the route card's five chips. Walk and Hike are one pedestrian routing ([TravelMode.HIKE]); the chip a person taps
- * says which kind they mean. [label] is the chip's word.
+ * says which kind they mean. [label] is the chip's word. [kind] is the chip's own kind on foot; T278: a Bike route's kind
+ * comes from its share ([TripKinds.guess]), [BIKE]'s [kind] being only what a bike reads as when nothing else is known.
  */
 enum class RouteChip(val key: String, val label: String, val mode: TravelMode, val kind: TripKind) {
     WALK("walk", "Walk", TravelMode.HIKE, TripKind.EVERYDAY),
@@ -48,8 +49,9 @@ enum class RouteChip(val key: String, val label: String, val mode: TravelMode, v
 }
 
 /**
- * T276: the kind of a route (pure). By mode: Drive is everyday; Bike (until T278 reads its share) and Line are
- * backcountry. On foot the planner guesses from where the route runs ([guess]); a tapped Walk or Hike chip wins.
+ * T276: the kind of a route (pure). By mode: Drive is everyday and Line backcountry. On foot the planner guesses from where
+ * the route runs ([guess]); a tapped Walk or Hike chip wins. T278: a Bike route is guessed the same way from its share in
+ * town, at [BIKE_TOWN_SHARE] (no chip overrides it: an everyday Bike card keeps the folded Trip details row instead).
  *
  * The town classes and the threshold come from the table of `devtool route` over public areas in the T276 report (the
  * Chamonix streets and a valley trail at Mont Blanc, Greenwich's streets and park, a street at Sea-Tac, a trail and the
@@ -67,12 +69,33 @@ object TripKinds {
     /** The share of a route's metres in town from which a route on foot is a walk (see the class comment). */
     const val TOWN_SHARE = 0.75
 
-    /** The kind [mode] fixes by itself; null on foot, where the route decides. */
+    /**
+     * T278: the share of a bike route's metres in town from which it is everyday. From the table of `devtool route --mode
+     * bike` over public areas in the T278 report (Chamonix's streets and valley cycleway, Greenwich's streets and park,
+     * Sea-Tac's streets, Rainier's park road and its trails): the same classes as on foot.
+     */
+    const val BIKE_TOWN_SHARE = 0.75
+
+    /** T278: the share from which a route in [mode] is everyday ([TOWN_SHARE] on foot, [BIKE_TOWN_SHARE] on a bike). */
+    fun threshold(mode: TravelMode): Double = if (mode == TravelMode.BIKE) BIKE_TOWN_SHARE else TOWN_SHARE
+
+    /** The kind [mode] fixes by itself; null on foot and (T278) on a bike, where the route decides. */
     fun byMode(mode: TravelMode): TripKind? = when (mode) {
-        TravelMode.HIKE -> null
+        TravelMode.HIKE, TravelMode.BIKE -> null
         TravelMode.DRIVE -> TripKind.EVERYDAY
-        TravelMode.BIKE, TravelMode.CROW -> TripKind.BACKCOUNTRY
+        TravelMode.CROW -> TripKind.BACKCOUNTRY
     }
+
+    /**
+     * T278: the kind of a kept trip in [mode] (its stored `path.mode`, null when this build does not know it) with the kind
+     * [stored] with it: the stored kind, else as by the mode before T278 (a Drive everyday; on foot, on a bike, a Line or a
+     * mode this build does not know, backcountry), so every trip kept before T278 reads as it did.
+     */
+    fun kept(mode: TravelMode?, stored: TripKind?): TripKind =
+        stored ?: if (mode == TravelMode.DRIVE) TripKind.EVERYDAY else TripKind.BACKCOUNTRY
+
+    /** T278: the chip a kept trip lights ([kept]): Walk or Hike on foot by its kind, else its mode's; null for an unknown mode. */
+    fun chipOf(mode: TravelMode?, stored: TripKind?): RouteChip? = mode?.let { RouteChip.of(it, kept(it, stored)) }
 
     /**
      * The share of the route's metres in town: [metersByClass] in [TOWN_CLASSES] less the graded metres among them
@@ -85,17 +108,20 @@ object TripKinds {
         return town / total
     }
 
-    /** The planner's guess for a route on foot: Walk from [TOWN_SHARE] in town, else Hike; an unknown share is Hike, never Walk. */
-    fun guess(metersByClass: Map<WayClass, Double>, gradedMetersByClass: Map<WayClass, Double> = emptyMap()): KindChoice {
+    /**
+     * The planner's guess for a route on foot: Walk from [TOWN_SHARE] in town, else Hike; an unknown share is Hike, never
+     * Walk. T278: on a bike ([mode]) everyday from [BIKE_TOWN_SHARE]; an unknown share is backcountry.
+     */
+    fun guess(metersByClass: Map<WayClass, Double>, gradedMetersByClass: Map<WayClass, Double> = emptyMap(), mode: TravelMode = TravelMode.HIKE): KindChoice {
         val share = townShare(metersByClass, gradedMetersByClass) ?: return KindChoice(TripKind.BACKCOUNTRY, KindReason.UNKNOWN)
-        return KindChoice(if (share >= TOWN_SHARE) TripKind.EVERYDAY else TripKind.BACKCOUNTRY, KindReason.SHARE, share)
+        return KindChoice(if (share >= threshold(mode)) TripKind.EVERYDAY else TripKind.BACKCOUNTRY, KindReason.SHARE, share)
     }
 
     /** The kind of a route in [mode]: the mode's own, else a [tapped] chip's, else [guess]. */
     fun choose(mode: TravelMode, metersByClass: Map<WayClass, Double>, gradedMetersByClass: Map<WayClass, Double> = emptyMap(), tapped: TripKind? = null): KindChoice {
         byMode(mode)?.let { return KindChoice(it, KindReason.MODE) }
         if (tapped != null) return KindChoice(tapped, KindReason.TAP, townShare(metersByClass, gradedMetersByClass))
-        return guess(metersByClass, gradedMetersByClass)
+        return guess(metersByClass, gradedMetersByClass, mode)
     }
 
     /** [choose] for a planned route. */

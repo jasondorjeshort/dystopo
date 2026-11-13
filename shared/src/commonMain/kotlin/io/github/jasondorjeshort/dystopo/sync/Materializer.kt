@@ -135,13 +135,13 @@ object Materializer {
     fun route(id: String, ops: Collection<Op>): Route? = routePlan(id, ops)?.toRoute()
 
     /**
-     * The fields a route put writes (T60): its GPX fields, and `path`, `waypoints` and (T108) `directions` reset to
-     * null (a put replaces every field; the put's own points stand for the path until a `path` write follows).
+     * The fields a route put writes (T60): its GPX fields, and `path`, `waypoints`, (T108) `directions` and (T278) `tripKind`
+     * reset to null (a put replaces every field; the put's own points stand for the path until a `path` write follows).
      */
     fun routePutFields(put: PutRoute): Map<String, String?> = put.route.let {
         mapOf(
             "name" to it.name, "description" to it.description, "comment" to it.comment, "type" to it.type, "extensions" to it.extensions,
-            "path" to null, "waypoints" to null, "directions" to null,
+            "path" to null, "waypoints" to null, "directions" to null, "tripKind" to null,
         )
     }
 
@@ -152,7 +152,7 @@ object Materializer {
      * leg ([RoutePath.fixed]); a value that does not decode (a newer format) counts as absent, the same
      * way on every replica. T108: `directions` last writer wins too, taken only when they were made for that path
      * ([RouteDirections.forPath]); otherwise (none written, a newer format, or written for a path since replaced) the
-     * plan has none, on every replica alike.
+     * plan has none, on every replica alike. T278: `tripKind` last writer wins; a value this build does not read is absent.
      */
     fun routePlan(id: String, ops: Collection<Op>): RoutePlan? {
         val live = live(ops)
@@ -162,7 +162,8 @@ object Materializer {
         // T65: the `waypoints` list plus the per-waypoint `wpt:` writes, in HLC order (RouteOps).
         val waypoints = RouteOps.waypoints(live)
         val directions = f["directions"]?.let { RouteDirections.forPath(it, path) } // T108
-        return RoutePlan(id, f["name"] ?: "", path, waypoints, f["description"], f["comment"], f["type"], f["extensions"], directions)
+        val tripKind = io.github.jasondorjeshort.dystopo.routing.TripKind.of(f["tripKind"]) // T278
+        return RoutePlan(id, f["name"] ?: "", path, waypoints, f["description"], f["comment"], f["type"], f["extensions"], directions, tripKind)
     }
 
     private fun modeOf(type: String?): String = if (type?.lowercase() == "bike") "bike" else "hike"
