@@ -78,6 +78,8 @@ empty report or an error outside the parts no longer keeps the summary and the s
 
 T273: a reboot's line in `device\emu-reboots.log` ends with `android-emu.ps1`'s wait for the guest's storage (the package manager and a writable `/sdcard`, so the next part's install finds it ready); the sweep reboots rather than loading a snapshot (a load leaves the emulator 0.3 to 0.8 GB over a reboot's level and undoes the guest's disk; finding `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`).
 
+T270: `a11y` (debug build, after `startup`) runs `tools/android-a11y.py` at font scales 1.0 and 2.0 over about 21 screens (the map with each card up, the pickers, the recording panel, Tracks and routes, Offline maps, Settings and its pages, share, the first-run card) and lists each screen's clickable nodes under 48 dp of touch area (Compose's own, from `GET /semantics`), unlabelled, duplicate or overlapping, text outside its bounds, contrast under 4.5:1 and the map's controls left under a screen; red only on a finding `tools/a11y-baseline.json` does not list (`parts.a11y.new`); view `a11y/a11y-sheet.png` (on the sheet too). A fix strikes its baseline line; a new line needs its reason in the log. <!-- end T270 -->
+
 From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) need the key: copy
 `tools\release.keystore` and `tools\release.properties` from the main checkout into the worktree's
 `tools\` (gitignored; confirm with `git status --ignored`) and never commit them (`release-realism.md`).

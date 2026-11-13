@@ -19,6 +19,10 @@
 #                GET /debug/launch, the first frame's and the map drawn's against tools/launch-budget.json: red on a median
 #                over its ceiling or a StrictMode kind a stage's declared work does not allow. Report startup.json; the
 #                table in summary.json. Runs after the reboot check every device part gets (-EmuRebootGB), and seeds after it.
+#   a11y         (T270, debug build, after startup) tools/android-a11y.py at font scales 1.0 and 2.0: every screen's clickable
+#                nodes under 48 dp of touch area, unlabelled, duplicate or overlapping, text outside its bounds, low contrast,
+#                the map's controls left under a screen, from GET /semantics, uiautomator dump and a screencap; red only on a
+#                finding tools/a11y-baseline.json does not list. Report a11y.json, the outlined frames and a11y/a11y-sheet.png.
 #   bothunits    (T139, T129's follow-up; T147: in every device sweep, -NoBothUnits leaves it out) android-ui.py bothunits: the scale bar's Both units choice set on
 #                the sweep's emulator (debug build) reaches a second one through a sync peer and back. The second emulator
 #                is booted on the matrix pattern (AVD <Avd>-b, console -MatrixEmuPort, default -EmuPort+2, debug forward
@@ -198,6 +202,9 @@ $MatrixDevices = @($MatrixDevices | ForEach-Object { $_ -split ',' } | Where-Obj
 # T268: the launch budget's part, a debug-build device part
 $allParts += 'startup'; $deviceParts += 'startup'
 # end T268
+# T270: the accessibility part, a debug-build device part
+$allParts += 'a11y'; $deviceParts += 'a11y'
+# end T270
 foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allParts -notcontains $p) { throw "unknown part '$p' (parts: $($allParts -join ', '))" } }
 
 # T191: the per-part ceilings, from the parts' timings in the sweeps of waves 20 to 23 (steps.tsv of out\sweep-w20,
@@ -214,6 +221,10 @@ foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allP
 if ($PartTimeout -lt 1) { throw '-PartTimeout must be a number of seconds' }
 $ceilings = @{ 'device-tour' = 1200 * [math]::Max(1, $DeviceTourRuns); 'update' = 1500; 'check' = 2400; 'matrix' = 2400; 'device-boot' = 1500 }
 $releaseBuildS = 1800
+# T270: two font scales of 21 screens took 311 to 372 s in six -Only a11y sweeps (each screen 5 to 10 s, the first-run
+# card's two restarts about 25 s); 1200 s leaves room for a loaded emulator and the routing graph's first build (about 125 s).
+$ceilings['a11y'] = 1200
+# end T270
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
         throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
@@ -851,6 +862,7 @@ try {
 
     $debugDeviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits')
     $debugDeviceParts += 'startup' # T268 (end T268)
+    $debugDeviceParts += 'a11y' # T270 (end T270)
     $needDevtool = @('tour', 'demo-serve', 'live', 'sync-sim') + $(if ($DeviceServer -eq 'live' -and -not $NoDevice) { $debugDeviceParts } else { @() }) |
         Where-Object { Want $_ }
     if ($needDevtool) {
@@ -1029,6 +1041,14 @@ try {
                 '--dem', $dem, '--osm', $osm, '--quiet', '240', '--budget', 'tools/launch-budget.json') (Join-Path $Out 'startup.json') (Join-Path $Out 'startup.err.log')
         }
         # end T268
+        # T270: the accessibility part, on the debug build after the reboot check like any part: the packs are copied when the
+        # phone's differ and the one synthetic track it needs is imported by the script, so it leans on no earlier part. It
+        # puts the font scale back and the packs it moves aside for the first-run card.
+        $null = Part 'a11y' {
+            Run $py @('-I', 'tools/android-a11y.py', '--serial', $serial, '--port', "$Port", '--font-scales', '1.0,2.0',
+                '--baseline', 'tools/a11y-baseline.json', '--dem', $dem, '--osm', $osm, '--out', (Join-Path $Out 'a11y')) (Join-Path $Out 'a11y.json') (Join-Path $Out 'a11y.err.log')
+        }
+        # end T270
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
         $script:emuPhase = 'release' # T233: a reboot from here boots only; every release part installs its own APK
         $null = Part 'release' {

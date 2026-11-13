@@ -1,5 +1,5 @@
 """T147: sweep-summary.py offline: load_last_json with log text around a report, and the both-units part's four
-screenshots (both phones after each carry); T154: the diagnostics part; T268: the startup part.
+screenshots (both phones after each carry); T154: the diagnostics part; T268: the startup part; T270: the a11y part.
 
     python -I tools/test_sweep_summary.py
 """
@@ -104,6 +104,24 @@ try:
     del rep["budget"]
     write("startup.json", json.dumps(rep))
     assert summary.PARTS["startup"](d, "startup")["error"] == "no budget in the report"
+
+    # T270: the a11y part (android-a11y.py --baseline): counts per screen, a skipped screen's reason, the new findings, the sheet.
+    assert summary.PARTS["a11y"](d, "a11y") == {}, "no report, no entry"
+    new = {"screen": "route:2.0", "kind": "under48", "label": "Fit", "boundsDp": [100, 100, 130, 120]}
+    rep = {"part": "a11y", "ok": False, "fontScales": [1.0, 2.0], "screensChecked": 1, "seconds": 260.4,
+           "totals": {"under48": 1, "contrast": 2},
+           "screens": [{"screen": "route:2.0", "counts": {"under48": 1, "contrast": 2}, "findings": [{}]},
+                       {"screen": "share:2.0", "skipped": "RuntimeError: POST /share/start: 500"}],
+           "skipped": ["share:2.0"], "baseline": {"file": "tools/a11y-baseline.json", "entries": 40, "matched": 2, "new": [new], "gone": []}}
+    write("a11y.json", "[a11y] map:1.0: ...\n" + json.dumps(rep))
+    got = summary.PARTS["a11y"](d, "a11y")
+    assert got["screens"]["route:2.0"] == {"under48": 1, "contrast": 2} and got["screens"]["share:2.0"] == {"skipped": "RuntimeError: POST /share/start: 500"}, got
+    assert got["baseline"] == {"entries": 40, "matched": 2, "new": 1, "gone": 0} and got["new"] == [new] and got["skipped"] == ["share:2.0"], got
+    write("a11y.json", json.dumps({"part": "a11y", "ok": False, "error": "RuntimeError: no debug server"}))
+    assert summary.PARTS["a11y"](d, "a11y") == {"error": "RuntimeError: no debug server"}
+    os.makedirs(os.path.join(d, "a11y"))
+    open(os.path.join(d, "a11y", "a11y-sheet.png"), "wb").close()
+    assert ("Accessibility, offending nodes outlined", "a11y sheet", os.path.join("a11y", "a11y-sheet.png")) in summary.sheet_images(d)
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
