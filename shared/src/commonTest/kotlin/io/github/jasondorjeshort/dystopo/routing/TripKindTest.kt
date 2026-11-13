@@ -115,6 +115,13 @@ class TripKindTest {
         assertEquals(TripKinds.TOWN_SHARE, TripKinds.threshold(TravelMode.HIKE))
         assertEquals(TripKind.EVERYDAY, TripKinds.guess(mapOf(WayClass.MINOR to t * 1000, WayClass.TRACK to (1 - t) * 1000), mode = TravelMode.BIKE).kind)
         assertEquals(TripKind.BACKCOUNTRY, TripKinds.guess(mapOf(WayClass.MINOR to t * 1000 - 1, WayClass.TRACK to (1 - t) * 1000 + 1), mode = TravelMode.BIKE).kind)
+        // Trip details: on every backcountry card, and on an everyday Bike card as its override; not on a Walk or a Drive.
+        assertTrue(TripKinds.hasDetails(TravelMode.HIKE, TripKind.BACKCOUNTRY))
+        assertTrue(TripKinds.hasDetails(TravelMode.BIKE, TripKind.EVERYDAY))
+        assertTrue(TripKinds.hasDetails(TravelMode.BIKE, TripKind.BACKCOUNTRY))
+        assertTrue(TripKinds.hasDetails(TravelMode.CROW, TripKind.BACKCOUNTRY))
+        assertTrue(!TripKinds.hasDetails(TravelMode.HIKE, TripKind.EVERYDAY))
+        assertTrue(!TripKinds.hasDetails(TravelMode.DRIVE, TripKind.EVERYDAY))
         // The Bike chip is lit whatever the kind (no chip overrides a bike's kind).
         assertEquals(RouteChip.BIKE, RouteChip.of(TravelMode.BIKE, TripKind.EVERYDAY))
         assertEquals(RouteChip.BIKE, RouteChip.of(TravelMode.BIKE, null))

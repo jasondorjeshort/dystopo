@@ -94,6 +94,13 @@ object TripKinds {
     fun kept(mode: TravelMode?, stored: TripKind?): TripKind =
         stored ?: if (mode == TravelMode.DRIVE) TripKind.EVERYDAY else TripKind.BACKCOUNTRY
 
+    /**
+     * T278: whether a card offers a route's water, terrain, best-start and past-effort lines: a backcountry route (folded
+     * under the planner's Trip details row; the trip card's water line), and an everyday Bike route as its override (a bike's
+     * kind has no chip to change it; the survey's override row). On foot the Walk and Hike chips override; a Drive has none.
+     */
+    fun hasDetails(mode: TravelMode?, kind: TripKind?): Boolean = kind != TripKind.EVERYDAY || mode == TravelMode.BIKE
+
     /** T278: the chip a kept trip lights ([kept]): Walk or Hike on foot by its kind, else its mode's; null for an unknown mode. */
     fun chipOf(mode: TravelMode?, stored: TripKind?): RouteChip? = mode?.let { RouteChip.of(it, kept(it, stored)) }
 

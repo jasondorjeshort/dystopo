@@ -1286,6 +1286,18 @@ def route_to_here(dev, a=PARADISE, b=PANORAMA, z=13):
 ROUTE_ROW = r"^[A-Z][\w ()]* route · [^·]+ · (?=[\d.,]+ (mi|km|ft|m) · )"
 
 
+# T278: a route row's first word is the trip's kind as its chip names it ("Walk route", "Hike route"); the Trip details row's
+# title on the route card. The kinds a kept trip's row can name.
+ROUTE_ROW_WORD = r"^(Walk|Hike|Bike|Drive|Line) route · "
+TRIP_DETAILS = r"^[▸▾] Trip details$"
+
+
+def route_row_words(texts):
+    """T278: the word each route row of the Tracks and routes screen starts with ("Walk", "Hike", ...), in order."""
+    return [m.group(1) for m in (re.match(ROUTE_ROW_WORD, t) for t in texts) if m]
+# end T278
+
+
 def route_rows(texts):
     """The Routes list's rows among [texts]: (their numbers lines, the name above each). T262: a row of the Tracks and
     routes screen gives its numbers after the mode and date."""

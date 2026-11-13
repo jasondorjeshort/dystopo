@@ -477,3 +477,9 @@ assert ui.notification_actions("nothing posted") is None
 assert ui.notification_actions(DUMP.split("  NotificationRecord(0x058d")[0]) is None  # another app's id 31 is not ours
 
 print("test_android_ui: ok")
+
+# T278: a kept Walk's row says "Walk route"; a trip kept before T278 still "Hike route"; the Trip details row's title.
+assert ui.route_row_words(["Chamonix streets", "Walk route · Nov 13 · 2.3 km · 0:33", "Hike route · Nov 9 · 1.8 mi · up 1318 ft · 1:15", "Walk"]) == ["Walk", "Hike"]
+assert ui.route_rows(["Chamonix streets", "Walk route · Nov 13 · 2.3 km · 0:33"]) == (["2.3 km · 0:33"], ["Chamonix streets"])
+assert re.match(ui.TRIP_DETAILS, "▸ Trip details") and re.match(ui.TRIP_DETAILS, "▾ Trip details") and not re.match(ui.TRIP_DETAILS, "Trip details")
+# end T278

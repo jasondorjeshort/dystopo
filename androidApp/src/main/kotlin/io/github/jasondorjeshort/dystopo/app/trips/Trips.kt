@@ -207,12 +207,13 @@ object Trips {
      * Keeps the T45 planned route as a trip: its start and end become via points, its line one trail leg (T108: crow,
      * one straight leg). T108: with the plan's own directions (local, or the server's for a route it planned). T219: with
      * no [givenName] and no name of its own, called after its ends ([nameFor], [from] and [to] being the card's). Reads the packs.
+     * T278: with [kind], the card's kind (a Walk or a Hike on the same path; the `tripKind` field, synced).
      */
-    fun keep(p: PlannedRoute, givenName: String? = null, from: RouteOrigin.End? = null, to: RouteOrigin.End? = null): RoutePlan {
+    fun keep(p: PlannedRoute, givenName: String? = null, from: RouteOrigin.End? = null, to: RouteOrigin.End? = null, kind: io.github.jasondorjeshort.dystopo.routing.TripKind? = null): RoutePlan {
         val name = givenName ?: nameFor(p, from, to)
         val path = RoutePath.planned(p.route.points, p.mode.label, p.timeS) // T89: a drive keeps the router's time
         val directions = p.instructions.takeIf { it.isNotEmpty() }?.let { SavedDirections.of(it, path) }
-        val plan = RoutePlan(p.route.id, name, path, type = p.mode.label, description = p.route.description, directions = directions)
+        val plan = RoutePlan(p.route.id, name, path, type = p.mode.label, description = p.route.description, directions = directions, tripKind = kind)
         store { it.putRoutePlan(plan, System.currentTimeMillis()) }
         return opened(plan.id)
     }
@@ -254,6 +255,21 @@ object Trips {
     fun removeVia(id: String, index: Int) = edit(id, "remove $index") { ed, p -> ed.removeVia(p, index) }
     fun setMode(id: String, mode: String) = edit(id, "mode $mode") { ed, p -> ed.setMode(p, mode) }
     fun reroute(id: String) = edit(id, "reroute") { ed, p -> ed.reroute(p) }
+
+    /**
+     * T278: a tap on the trip card's chip [c]. A chip in another mode re-plans the trip in it ([setMode]); Walk and Hike set
+     * the kept kind (the `tripKind` field, synced; the same path), and any other chip clears it, so the trip reads as by its
+     * mode ([io.github.jasondorjeshort.dystopo.routing.TripKinds.kept]). The lit chip again changes nothing.
+     */
+    fun tapChip(id: String, c: io.github.jasondorjeshort.dystopo.routing.RouteChip): RoutePlan {
+        val before = plan(id) ?: throw NoSuchElementException("no route $id")
+        val mode = io.github.jasondorjeshort.dystopo.routing.TravelMode.of(before.path.mode)
+        if (io.github.jasondorjeshort.dystopo.routing.TripKinds.chipOf(mode, before.tripKind) == c) return opened(id)
+        if (mode != c.mode) setMode(id, c.mode.label)
+        val kind = if (c.mode == io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE) c.kind else null
+        if (plan(id)?.tripKind != kind) check(store { it.setField(EntityKind.ROUTE, id, "tripKind", kind?.key, System.currentTimeMillis()) }) { "route $id is gone" }
+        return opened(id)
+    }
 
     /**
      * T106 (a T89 follow-up): Re-plan on a drive planned before T89 ([untimedDriveLegs]): its trail and straight legs

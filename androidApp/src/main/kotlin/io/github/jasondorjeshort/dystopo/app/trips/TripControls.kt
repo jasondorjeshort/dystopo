@@ -51,7 +51,10 @@ import io.github.jasondorjeshort.dystopo.gpx.ProfileSample
 import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.model.WaypointAt
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
+import io.github.jasondorjeshort.dystopo.routing.RouteChip
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.routing.TripKind
+import io.github.jasondorjeshort.dystopo.routing.TripKinds
 import io.github.jasondorjeshort.dystopo.sync.RouteListItem
 
 private val Ink = Color(0xFF2B2420)
@@ -130,7 +133,8 @@ private fun TripCard(modifier: Modifier) {
         }
         BasicText(
             // T219: the figures of the route card and the list (T217's formatter); T108: an unknown mode by its own name.
-            io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.figures(s.distanceM, s.ascentM, s.descentM, s.timeS, TravelMode.of(s.mode)) + " " + TravelMode.labelOf(s.mode),
+            // T278: a kept Walk reads "walk" (the chip's word for the kept kind).
+            io.github.jasondorjeshort.dystopo.app.routing.PaceSettings.figures(s.distanceM, s.ascentM, s.descentM, s.timeS, TravelMode.of(s.mode)) + " " + tripModeWord(s.mode, p.tripKind).lowercase(),
             style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold),
         )
         val known = TravelMode.known(s.mode)
@@ -157,8 +161,12 @@ private fun TripCard(modifier: Modifier) {
         }
         TripDirections(p)
         // T187: the water along the trip, in order with the distance along it and the gap to the next (a list under the line).
-        io.github.jasondorjeshort.dystopo.app.routing.WaterAlongLine(p.path.points, io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen) {
-            io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen = !io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen
+        // T278: by the kept kind: none on a kept Walk or Drive; a Bike keeps it whatever its kind (its override).
+        val mode = TravelMode.of(s.mode)
+        if (TripKinds.hasDetails(mode, TripKinds.kept(mode, p.tripKind))) {
+            io.github.jasondorjeshort.dystopo.app.routing.WaterAlongLine(p.path.points, io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen) {
+                io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen = !io.github.jasondorjeshort.dystopo.app.routing.WaterUi.tripOpen
+            }
         }
         TripCorridorLine(p) // T130: the corridor kept offline around the trip
         Trips.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
@@ -175,7 +183,9 @@ private fun TripCard(modifier: Modifier) {
             for ((t, label) in listOf("none" to "Drag", "via" to "+Via", "waypoint" to "+Waypoint")) {
                 if (known || t != "via") Toggle(label, Trips.tool == t) { Trips.tool = t } // T108: no via edits in an unknown mode
             }
-            for (m in TravelMode.entries.map { it.label }) Toggle(TravelMode.of(m)!!.display, s.mode == m) { if (s.mode != m) Trips.background { Trips.setMode(p.id, m) } } // T108: crow too
+            // T108: crow too. T278: the route card's five chips; Walk and Hike set the kept kind on the same path ([Trips.tapChip]).
+            val lit = TripKinds.chipOf(TravelMode.of(s.mode), p.tripKind)
+            for (c in RouteChip.entries) Toggle(c.label, lit == c) { if (lit != c) Trips.background { Trips.tapChip(p.id, c) } }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (p.path.via.size > 2) {
@@ -189,6 +199,13 @@ private fun TripCard(modifier: Modifier) {
         }
     }
 }
+
+/**
+ * T278: a kept trip's mode as its chip names it ("Walk", "Hike", "Bike", "Drive", "Line"; the kept kind on foot, a trip
+ * without one as by its mode); a mode this build does not know by its own name. Pure, tested.
+ */
+internal fun tripModeWord(mode: String?, kind: TripKind?): String =
+    TripKinds.chipOf(TravelMode.of(mode), kind)?.label ?: TravelMode.labelOf(mode).replaceFirstChar { it.uppercase() }
 
 /** T219: the Routes list with nothing in it (no HTTP route; the card's verb is T217's "Save"). */
 internal const val ROUTES_EMPTY = "No saved routes yet. Long-press the map to set a start and an end, then tap Save."

@@ -95,11 +95,11 @@ object PaceSettings {
     fun noun(mode: TravelMode, n: Int): String = RouteFigures.noun(mode, n)
 
     /** The route card's line under the time: what the estimate rests on, in the mode's words ([RouteFigures.basis]). */
-    fun cardLine(mode: TravelMode): String =
-        PaceFits.active[mode]?.let { basedOn(it) }
-            ?: RouteFigures.basis(mode, fitTracks = null, bySetting = AppSettings.paceStandard && stored().fit(mode)?.ready == true)
+    fun cardLine(mode: TravelMode, walk: Boolean = false): String =
+        PaceFits.active[mode]?.let { basedOn(it, walk) }
+            ?: RouteFigures.basis(mode, fitTracks = null, bySetting = AppSettings.paceStandard && stored().fit(mode)?.ready == true, walk = walk)
 
-    fun basedOn(f: PaceFit): String = RouteFigures.basis(f.mode, fitTracks = f.tracks)
+    fun basedOn(f: PaceFit, walk: Boolean = false): String = RouteFigures.basis(f.mode, fitTracks = f.tracks, walk = walk)
 
     /** The Settings row's text under its heading. */
     fun rowText(units: ContourUnits = AppSettings.units): String {
@@ -252,8 +252,10 @@ object PaceSettings {
     fun secondLine(plan: PlannedRoute): String? {
         val e = estimate(plan)?.takeIf { rangeForm() }
         val fit = PaceFits.active[plan.mode]
-        if (e != null && e.isRange && fit != null) return "${e.rangeText}, ${basedOn(fit).replaceFirstChar { it.lowercase() }}"
-        return cardLine(plan.mode)
+        // T278 (T276's follow-up): a Walk's line says walking, not hiking.
+        val walk = plan.mode == TravelMode.HIKE && RouteSession.tripKind == io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY
+        if (e != null && e.isRange && fit != null) return "${e.rangeText}, ${basedOn(fit, walk).replaceFirstChar { it.lowercase() }}"
+        return cardLine(plan.mode, walk)
     }
 
     /** `range` in `GET /route` and `POST /route`: the setting, the card's two lines and the estimate behind them. */
@@ -420,10 +422,11 @@ object RouteFigures {
      * time is the hike model's over the straight line ([io.github.jasondorjeshort.dystopo.routing.Crow]); a drive's comes
      * from the roads' speeds.
      */
-    fun basis(mode: TravelMode, fitTracks: Int? = null, bySetting: Boolean = false): String {
-        if (fitTracks != null) return "Based on your last $fitTracks ${noun(mode, fitTracks)}"
+    fun basis(mode: TravelMode, fitTracks: Int? = null, bySetting: Boolean = false, walk: Boolean = false): String {
+        // T278: a Walk (on foot, everyday) says walking: its fit's tracks are the ones on foot.
+        if (fitTracks != null) return if (walk && mode == TravelMode.HIKE) "Based on your last $fitTracks ${if (fitTracks == 1) "track" else "tracks"} on foot" else "Based on your last $fitTracks ${noun(mode, fitTracks)}"
         val words = when (mode) {
-            TravelMode.HIKE -> "Based on a typical hiking pace"
+            TravelMode.HIKE -> if (walk) "Based on a typical walking pace" else "Based on a typical hiking pace"
             TravelMode.BIKE -> "Based on a typical cycling pace"
             TravelMode.DRIVE -> "Based on typical driving speeds"
             TravelMode.CROW -> "Based on a typical hiking pace along the straight line"
