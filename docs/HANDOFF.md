@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-13 13:50 UTC, at commit b118cab9, by main session (T278 merged; T263 and T273 with implementers)
+Updated: 2026-11-13 14:55 UTC, at commit 227239d1, by main session (T263 with its verifier; T273 with its implementer)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
 "Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
 
@@ -10,8 +10,9 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 - **v0.1.28-alpha is published** (2026-11-13 11:26 UTC, tag on 2a84ae01): the early release, T276 and T277. The
   sweep before it was green without a rerun (`out/sweep-20261113-0446`, the next release's `-Prev`).
 - **T267 and T278 are merged** (ae4da781, b118cab9), after the release: both ship in the closing alpha. **T263**
-  (lane A, `task/T263`, console 5570 / host 8694) and **T273** (lane B, `task/T273`, console 5574 / host 8698) are
-  with implementers. Three tasks wait behind them. The 7-day meter read 6 at 13:36 UTC (reset 2026-11-20 04:00 UTC).
+  (lane A, `task/T263` at 85bdac24, console 5570 / host 8694) is with its verifier, its report in the scratchpad's
+  `T263-verify/report.txt`; **T273** (lane B, `task/T273`, console 5574 / host 8698) is with its implementer. Three
+  tasks wait behind them. The 7-day meter read 6 at 14:50 UTC (reset 2026-11-20 04:00 UTC).
 - The live viewer is wanted and runs from the installed distribution (`out/coordinator-pids.txt`).
 - Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with
   `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
