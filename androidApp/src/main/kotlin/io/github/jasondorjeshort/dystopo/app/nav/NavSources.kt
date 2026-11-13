@@ -30,6 +30,10 @@ import java.io.File
  * there, only depart and arrive (and a trip's via points). Tracks have none. T108: a kept trip's saved directions come
  * first (no graph needed: a trip synced from another phone, offline), moved onto the navigation line; only a trip
  * without them is read from the packs as before.
+ *
+ * T276: the route on the map brings its kind ([Resolved.tripKind], the route card's chip): an everyday route is navigated
+ * without the turn-back clock, the next water and the next shade ([NavSession.start]). A kept trip, a saved route, a
+ * track and a GPX file have none (null: navigated as before, everything on).
  */
 object NavSources {
     class Resolved(
@@ -40,6 +44,8 @@ object NavSources {
         val mode: TravelMode? = null,
         /** T102: the turn directions along [path] (every priority; navigation filters by level). */
         val directions: List<Instruction> = emptyList(),
+        /** T276: the route card's kind for the route on the map; null for everything else (navigated as before). */
+        val tripKind: io.github.jasondorjeshort.dystopo.routing.TripKind? = null,
     )
 
     class NotFound(message: String) : Exception(message)
@@ -50,8 +56,12 @@ object NavSources {
         val path = NavPath.of(RouteSession.unifiedRoute(p))
         return Resolved(
             path,
-            linkedMapOf("kind" to "route", "route" to "current", "id" to p.route.id, "name" to p.route.name, "mode" to p.mode.label),
+            linkedMapOf(
+                "kind" to "route", "route" to "current", "id" to p.route.id, "name" to p.route.name, "mode" to p.mode.label,
+                "tripKind" to RouteSession.tripKind?.key, "tripKindReason" to RouteSession.kindReason?.key, // T276
+            ),
             s.timeS, p.mode, onto(path, p.instructions),
+            tripKind = if (RouteSession.everyday) io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY else RouteSession.tripKind,
         )
     }
 

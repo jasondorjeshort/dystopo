@@ -156,6 +156,9 @@ object NavSession {
     @Volatile private var directions: List<Instruction> = emptyList()
     @Volatile private var shownDirections: List<Instruction> = emptyList()
     @Volatile private var travel: TravelMode = TravelMode.HIKE
+    /** T276: the followed route's kind (the route card's); null for a kept trip, a saved route, a track or a file. */
+    @Volatile private var tripKind: io.github.jasondorjeshort.dystopo.routing.TripKind? = null
+    private val everyday: Boolean get() = tripKind == io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY
     /** T163: the turn-around clock along the line, its alerts given in this navigation, its last reading and spoken line. */
     @Volatile private var turn: TurnAround? = null
     private val turnAlerts = TurnAlerts()
@@ -205,6 +208,7 @@ object NavSession {
         zoom: Double? = 15.0,
         planTimeS: Double? = null,
         directions: List<Instruction> = emptyList(),
+        tripKind: io.github.jasondorjeshort.dystopo.routing.TripKind? = null,
     ): Map<String, Any?> {
         stop()
         hookInjected()
@@ -215,7 +219,10 @@ object NavSession {
             this.directions = directions
             shownDirections = Directions.shown(directions)
             travel = options.mode
-            turn = TurnAround(path, TurnPace.of(CostModel(options.mode))) // T163: T164's fitted pace reaches it through CostModel
+            this.tripKind = tripKind
+            // T163: T164's fitted pace reaches it through CostModel. T276: an everyday route has no turn-back clock: no
+            // reading, no alert (tone, buzz, spoken line) and no terrain shade (its timing is the clock's).
+            turn = if (tripKind == io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY) null else TurnAround(path, TurnPace.of(CostModel(options.mode)))
             synchronized(turnAlerts) { turnAlerts.reset(); turnEvents.clear() }
             turnClock = null
             turnSpoken = null
@@ -240,8 +247,8 @@ object NavSession {
         NavSpeech.begin() // T126: a fresh spoken list; the engine is made on the first line
         startWater(path) // T187
         startShade(path) // T194
-        // T193: the end's terrain sunset starts sweeping now, so it is usually back by the first fix.
-        DeadlineSetting.parse(AppSettings.turnDeadline)?.takeIf { it.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TERRAIN }?.let { st ->
+        // T193: the end's terrain sunset starts sweeping now, so it is usually back by the first fix (T276: not without the clock).
+        DeadlineSetting.parse(AppSettings.turnDeadline)?.takeIf { it.kind == io.github.jasondorjeshort.dystopo.nav.DeadlineKind.TERRAIN && turn != null }?.let { st ->
             val now = System.currentTimeMillis()
             runCatching { resolveDeadline(st, path.points.last().lat, path.points.last().lon, now, localMidnight(now)) }
         }
@@ -274,6 +281,7 @@ object NavSession {
         water = null
         synchronized(waterSaid) { waterSaid.clear(); waterEvents.clear() }
         val nav = navigator ?: return
+        if (everyday) return // T276: nothing is computed for an everyday route
         val pts = path.points.map { io.github.jasondorjeshort.dystopo.model.RoutePoint(it.lat, it.lon, it.ele) }
         RouteWater.async(pts) { r ->
             if (navigator !== nav) return@async
@@ -370,7 +378,7 @@ object NavSession {
 
     private fun startFrom(resolve: () -> NavSources.Resolved) {
         runCatching { resolve() }
-            .onSuccess { r -> start(r.path, r.source, NavOptions(mode = r.mode ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE), planTimeS = r.planTimeS, directions = r.directions) }
+            .onSuccess { r -> start(r.path, r.source, NavOptions(mode = r.mode ?: io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE), planTimeS = r.planTimeS, directions = r.directions, tripKind = r.tripKind) }
             .onFailure { Log.w(TAG, "cannot navigate", it) }
     }
 
@@ -760,9 +768,10 @@ object NavSession {
             "ui" to ui?.let { linkedMapOf("next" to it.next, "nextDistance" to it.nextDistance, "endDistance" to it.endDistance, "endTime" to it.endTime, "rejoin" to it.rejoin, "offRoute" to it.offRoute, "heading" to it.heading, "fixAge" to it.fixAge, "snoozed" to it.snoozed, "turn" to it.turn, "turnDistance" to it.turnDistance, "turnSoon" to it.turnSoon, "water" to it.water, "shade" to it.shade) }, // T187: water; T194: shade
             "directions" to linkedMapOf("count" to directions.size, "shown" to shownDirections.size, "level" to Directions.DEFAULT_LEVEL), // T102
             "speech" to NavSpeech.navJson(), // T137: the mute and the no-voice notice
-            "turnAround" to turnJson(), // T163
-            "water" to waterJson(s), // T187
-            "shadeAlong" to shadeJson(), // T194
+            "tripKind" to tripKind?.key, // T276
+            "turnAround" to turnJson(), // T163; null on an everyday route (T276)
+            "water" to if (everyday) null else waterJson(s), // T187; T276: none on an everyday route
+            "shadeAlong" to if (everyday) null else shadeJson(), // T194; T276: none on an everyday route
             "layout" to io.github.jasondorjeshort.dystopo.app.TopChips.json() + mapOf("routeCardHidden" to io.github.jasondorjeshort.dystopo.app.routing.RouteSession.json()["cardHidden"], "tripEditorOpen" to (io.github.jasondorjeshort.dystopo.app.trips.Trips.editingId != null), "navCard" to navCardJson()), // T65; T212: the card's band, font scale and scroll
         )
     }

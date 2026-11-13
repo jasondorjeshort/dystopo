@@ -124,6 +124,7 @@ object RouteBestStart {
     /** The computation for [plan] (started now when new); null for drive or a line of fewer than two points. */
     fun start(plan: PlannedRoute): Future<Result>? {
         if (!applies(plan.mode) || plan.route.points.size < 2) return null
+        if (RouteSession.isEveryday(plan.route.points)) return null // T276: nothing is computed for an everyday route
         val path = pathOf(plan)
         val temp = temperature(path)
         val aim = BestStartAim.of(temp["tempC"] as Double?)
@@ -185,6 +186,7 @@ object RouteBestStart {
     fun json(plan: PlannedRoute?, waitMs: Long = 10_000): Map<String, Any?> {
         if (plan == null || plan.route.points.size < 2) return linkedMapOf("state" to "noRoute")
         if (!applies(plan.mode)) return linkedMapOf("state" to "mode", "mode" to plan.mode.label)
+        if (RouteSession.isEveryday(plan.route.points)) return linkedMapOf("state" to "everyday", "computed" to computed) // T276
         val r = await(plan, waitMs) ?: return linkedMapOf("state" to "computing", "line" to ShadeText.BEST_START_WORKING)
         return linkedMapOf<String, Any?>(
             "state" to r.state, "line" to r.line, "ms" to r.ms, "error" to r.error, "temperature" to r.temperature,

@@ -305,6 +305,11 @@ data class PlannedRoute(
     val instructions: List<Instruction> = emptyList(),
     /** T164: the user's fitted pace [timeS] came from ([CostModel.pace]); null for the standard estimate. */
     val pace: PaceFit? = null,
+    /**
+     * T276: of [metersByClass], the metres on ways that carry an OSM `sac_scale` grade (a hiking trail, whatever its class:
+     * the paved trails at Paradise are footways); read by [TripKinds.guess]. Empty when the router knows no grades.
+     */
+    val gradedMetersByClass: Map<WayClass, Double> = emptyMap(),
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
@@ -313,6 +318,7 @@ data class PlannedRoute(
         "points" to route.points.size, "edges" to edges, "expanded" to expanded, "cost" to r1(cost),
         "start" to snapJson(start), "end" to snapJson(end),
         "metersByClass" to metersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) },
+        "gradedMetersByClass" to gradedMetersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) }, // T276
         "via" to via.map { (n, m) -> linkedMapOf("name" to n, "distanceM" to r1(m)) }, // T49: trail names
         "bearingDeg" to if (mode == TravelMode.CROW && route.points.size >= 2) route.points.let { Crow.bearingDeg(it.first().lat, it.first().lon, it.last().lat, it.last().lon) } else null, // T108
         "memory" to memory.ifEmpty { null }, // T76
@@ -995,6 +1001,7 @@ class TileRouter(
         var ascent = 0.0
         var descent = 0.0
         val byClass = LinkedHashMap<WayClass, Double>()
+        val graded = LinkedHashMap<WayClass, Double>() // T276: metres with a sac_scale grade
         val runs = ArrayList<Pair<String?, Double>>() // T49: consecutive stretches by way name
         val runRoadM = ArrayList<Double>() // T87: metres of each run on roads (service and up)
         var driveS = 0.0 // T73
@@ -1010,6 +1017,7 @@ class TileRouter(
             ascent += (if (fwd) g.edgeAscent[st.e] else g.edgeDescent[st.e]) * part
             descent += (if (fwd) g.edgeDescent[st.e] else g.edgeAscent[st.e]) * part
             byClass[g.wayClass(st.e)] = (byClass[g.wayClass(st.e)] ?: 0.0) + g.edgeLength[st.e] * part
+            if (g.sac(st.e) > 0) graded[g.wayClass(st.e)] = (graded[g.wayClass(st.e)] ?: 0.0) + g.edgeLength[st.e] * part // T276
             for (p in subPoints(g, st.e, st.f0, st.f1)) {
                 val last = pts.lastOrNull()
                 if (last != null && last.lat == p.lat && last.lon == p.lon) continue
@@ -1036,6 +1044,7 @@ class TileRouter(
             TrackStats.profile(track, Router.PROFILE_SAMPLES), cost, steps.size, named(s), named(t), expanded, byClass, via, memory,
             Directions.of(pts, model.mode, this), // T102
             model.pace, // T164
+            graded, // T276
         )
     }
 

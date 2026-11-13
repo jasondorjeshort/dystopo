@@ -22,6 +22,11 @@ import io.github.jasondorjeshort.dystopo.routing.RouteFailure
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.ShadeText
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.routing.KindChoice
+import io.github.jasondorjeshort.dystopo.routing.KindReason
+import io.github.jasondorjeshort.dystopo.routing.RouteChip
+import io.github.jasondorjeshort.dystopo.routing.TripKind
+import io.github.jasondorjeshort.dystopo.routing.TripKinds
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
@@ -45,6 +50,15 @@ import kotlin.math.roundToLong
  * permitted), looking for one every [WAIT_POLL_MS] and planning on the first. The card names both ends ([from], [to]:
  * "From: Your location", "To: 46.80240, -121.72890"), and From offers [fromHere], [chooseOnMap] (`pickStart`: the next
  * long-press is the start) and [swap]. "Route from here" keeps T45's two long-presses (`start`).
+ *
+ * T276: the route's kind ([tripKind], [TripKinds]) is held beside [mode]: Walk and Hike are both [TravelMode.HIKE]. On foot
+ * a new route guesses from where it runs (the share in town); a tapped Walk or Hike chip ([tapChip], `POST /route?kind=`)
+ * holds through every re-plan of that route (a mode change, Swap, a new start on the map, Your location) until Clear or
+ * a new route; no foot chip is lit while a route on foot is planning. An everyday route's water, terrain, best start and
+ * past effort are neither drawn nor computed ([isEveryday], read by [RouteWater], [RouteExposure] and [RouteBestStart]),
+ * and navigation of it starts without the turn-back clock, the next water and the next shade
+ * ([io.github.jasondorjeshort.dystopo.app.nav.NavSources.currentRoute]). The kind and whether a tap chose it outlive the
+ * process with the route ([SessionRoute]).
  */
 object RouteSession {
     val overlay = RouteOverlay().apply { onLongPress = { lat, lon -> longPress(lat, lon) } }
@@ -64,6 +78,42 @@ object RouteSession {
         private set
     var plan by mutableStateOf<PlannedRoute?>(null)
         private set
+
+    /** T276: the route's kind; null on foot while nothing is planned or a route is planning (no foot chip is lit). */
+    var tripKind by mutableStateOf<TripKind?>(null)
+        private set
+
+    /** T276: why the route has [tripKind] (`GET /route` `ui.tripKindReason`). */
+    var kindReason by mutableStateOf<KindReason?>(null)
+        private set
+
+    /** T276: the planned route's share in town on foot ([TripKinds.townShare]); null when not known. */
+    @Volatile var townShare: Double? = null
+        private set
+
+    /** T276: the Walk or Hike chip tapped for this route (held through re-plans until Clear or a new route). */
+    @Volatile private var tappedKind: TripKind? = null
+
+    /** T276: the points of the session's route while it is everyday ([isEveryday]); null otherwise. */
+    @Volatile private var everydayPoints: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>? = null
+
+    /**
+     * T276: whether [points] are the session route's and it is everyday: the gate [RouteWater], [RouteExposure] and
+     * [RouteBestStart] read before they compute anything (any thread).
+     */
+    fun isEveryday(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>?): Boolean = points != null && points === everydayPoints
+
+    /** T276: whether the session's route is everyday (navigation of it starts without the backcountry lines). */
+    val everyday: Boolean get() = plan?.let { isEveryday(it.route.points) } ?: false
+
+    /** T276: the chip lit now ([RouteChip.of]); null on foot while the kind is not known. */
+    val chip: RouteChip? get() = RouteChip.of(mode, tripKind)
+
+    /** T276: makes [c] the session's kind for plan [p]: its share and the gate. Any thread. */
+    private fun kindFor(p: PlannedRoute, c: KindChoice) {
+        townShare = c.townShare
+        everydayPoints = if (c.kind == TripKind.EVERYDAY) p.route.points else null
+    }
 
     /** T102: the route card's list of turn directions is open (the "Directions" action, `POST /nav/directions?open=1`). */
     var directionsOpen by mutableStateOf(false)
@@ -132,22 +182,26 @@ object RouteSession {
             val r = runCatching { if (f.isFile) SessionRoute.decode(f.readText(Charsets.UTF_8)) else null }.getOrNull() ?: return@execute
             if (plan != null || start != null) return@execute
             setEnds(r.from ?: RouteOrigin.End(r.start.first, r.start.second), r.to ?: RouteOrigin.End(r.end.first, r.end.second))
-            restored = linkedMapOf("routeId" to r.plan.route.id, "savedAt" to r.savedAt, "points" to r.plan.route.points.size, "directions" to r.plan.instructions.size)
-            ui { if (plan == null && phase == "idle") { phase = "route"; mode = r.plan.mode; plan = r.plan; message = null } }
+            restored = linkedMapOf("routeId" to r.plan.route.id, "savedAt" to r.savedAt, "points" to r.plan.route.points.size, "directions" to r.plan.instructions.size, "tripKind" to r.kind?.key, "tripKindReason" to r.kindReason?.key)
+            // T276: the kind and whether a tap chose it; a file without them reads by the mode (on foot: Hike, unknown).
+            val c = r.kind?.let { KindChoice(it, r.kindReason ?: KindReason.UNKNOWN) } ?: TripKinds.choose(r.plan.mode, emptyMap())
+            tappedKind = if (c.reason == KindReason.TAP) c.kind else null
+            kindFor(r.plan, c)
+            ui { if (plan == null && phase == "idle") { phase = "route"; mode = r.plan.mode; plan = r.plan; tripKind = c.kind; kindReason = c.reason; message = null } }
             overlay.show(r.plan.route.points, null, null)
             Log.i(RoutePlanner.TAG, "restored the unsaved route ${r.plan.route.id} (${r.plan.route.points.size} points)")
         }
     }
 
     /** T108: writes [p] as the unsaved route ([SessionRoute]); null deletes it. */
-    private fun persist(p: PlannedRoute?) {
+    private fun persist(p: PlannedRoute?, kind: KindChoice? = null) {
         val s = fromEnd
         val e = toEnd
         runCatching {
             val f = sessionFile()
             if (p == null || s == null || e == null) { f.delete(); return@runCatching }
             val tmp = File(f.path + ".tmp")
-            tmp.writeText(SessionRoute.encode(p, s.lat to s.lon, e.lat to e.lon, System.currentTimeMillis(), s, e), Charsets.UTF_8)
+            tmp.writeText(SessionRoute.encode(p, s.lat to s.lon, e.lat to e.lon, System.currentTimeMillis(), s, e, kind?.kind, kind?.reason), Charsets.UTF_8)
             if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
         }.onFailure { Log.w(RoutePlanner.TAG, "could not save the unsaved route", it) }
     }
@@ -183,7 +237,9 @@ object RouteSession {
         waitingFor = -1
         setEnds(RouteOrigin.End(lat, lon), null)
         failure = null
-        ui { phase = "start"; plan = null; message = "Long-press the end point"; fromOpen = false }
+        newRoute(null) // T276: a new route guesses its kind again
+        everydayPoints = null
+        ui { phase = "start"; plan = null; tripKind = TripKinds.byMode(mode); kindReason = tripKind?.let { KindReason.MODE }; message = "Long-press the end point"; fromOpen = false }
         overlay.show(null, start, null)
         RoutePlanner.ensure() // build or load the graph while the user picks the end
     }
@@ -193,7 +249,8 @@ object RouteSession {
      * card's mode. With no fix it waits for the first one (see the class comment). Runs on the planning worker, or with
      * [wait] on the calling thread (the debug route; never the main thread), so the answer already holds the plan.
      */
-    fun routeTo(lat: Double, lon: Double, wait: Boolean = false, travel: TravelMode? = null) {
+    fun routeTo(lat: Double, lon: Double, wait: Boolean = false, travel: TravelMode? = null, newRoute: Boolean = true) {
+        if (newRoute) newRoute(null) // T276: a new route guesses its kind again (Your location re-plans the same one)
         val token = waitToken.incrementAndGet()
         val t = travel ?: mode
         if (travel != null) ui { mode = travel }
@@ -289,7 +346,7 @@ object RouteSession {
             else -> return false
         }
         ui { fromOpen = false }
-        routeTo(dest.lat, dest.lon, wait)
+        routeTo(dest.lat, dest.lon, wait, newRoute = false)
         return true
     }
 
@@ -333,7 +390,10 @@ object RouteSession {
     ): RouteResult {
         waitingFor = -1
         setEnds(fromAs ?: RouteOrigin.End(fromLat, fromLon), toAs ?: RouteOrigin.End(toLat, toLon))
-        ui { phase = "planning"; mode = travel; plan = null; message = "Planning..."; fromOpen = false }
+        everydayPoints = null
+        val byMode = TripKinds.byMode(travel)
+        // T276: no foot chip is lit while a route on foot is planning; the other modes' kind is their own.
+        ui { phase = "planning"; mode = travel; plan = null; tripKind = byMode; kindReason = byMode?.let { KindReason.MODE }; message = "Planning..."; fromOpen = false }
         overlay.show(null, start, end)
         val result = try {
             RoutePlanner.plan(fromLat, fromLon, toLat, toLon, travel, name, waitMs).let { r ->
@@ -366,8 +426,10 @@ object RouteSession {
         when (result) {
             is RouteResult.Found -> {
                 failure = null
-                persist(result.plan) // T108: outlives the process
-                uiq.publish(PUBLISH_MS) { phase = "route"; plan = result.plan; message = null } // T119: before the caller answers
+                val kind = TripKinds.of(result.plan, tappedKind) // T276: the mode's, the tapped chip's, or the guess
+                kindFor(result.plan, kind)
+                persist(result.plan, kind) // T108: outlives the process
+                uiq.publish(PUBLISH_MS) { phase = "route"; plan = result.plan; tripKind = kind.kind; kindReason = kind.reason; message = null } // T119: before the caller answers
                 overlay.show(result.plan.route.points, null, null)
                 // T49: show the whole route. T114: once the finished card has been measured (it grows by the numbers, the
                 // trails and the actions after planning, and the fit used to leave the start, the phone's position, under it).
@@ -386,7 +448,11 @@ object RouteSession {
     private fun failed(result: RouteResult.Failed): RouteResult.Failed {
         failure = result
         persist(null)
-        uiq.publish(PUBLISH_MS) { phase = "failed"; plan = null; message = result.message }
+        // T276: a failed route on foot lights the tapped chip, else Hike (no share to guess from).
+        val c = TripKinds.choose(mode, emptyMap(), tapped = tappedKind)
+        everydayPoints = null
+        townShare = null
+        uiq.publish(PUBLISH_MS) { phase = "failed"; plan = null; tripKind = c.kind; kindReason = c.reason; message = result.message }
         overlay.show(null, start, end)
         return result
     }
@@ -408,6 +474,33 @@ object RouteSession {
      * Plans the current start and end again in [travel] mode: in the background, or with [wait] (T49, the
      * debug route) on the calling thread, so the answer already holds the new route.
      */
+    /**
+     * T276: a tap on a chip. Walk or Hike holds its kind for this route ([tappedKind]) until Clear or a new route; on a
+     * route already planned on foot, Walk and Hike change only the kind (the same routing: nothing is planned again, the
+     * card and the markers follow). Any other chip drops a held foot kind and plans in its mode ([changeMode]).
+     */
+    fun tapChip(c: RouteChip, wait: Boolean = false) {
+        tappedKind = if (c.mode == TravelMode.HIKE) c.kind else null
+        val p = plan
+        if (c.mode == TravelMode.HIKE && mode == TravelMode.HIKE && p != null && phase == "route") {
+            val kind = TripKinds.of(p, c.kind)
+            kindFor(p, kind)
+            persist(p, kind)
+            uiq.publish(PUBLISH_MS) { tripKind = kind.kind; kindReason = kind.reason }
+            overlay.refreshWater()
+            return
+        }
+        if (phase != "route" && phase != "planning") {
+            ui { tripKind = if (c.mode == TravelMode.HIKE) c.kind else TripKinds.byMode(c.mode); kindReason = if (c.mode == TravelMode.HIKE) KindReason.TAP else KindReason.MODE }
+        }
+        changeMode(c.mode, wait)
+    }
+
+    /** T276: a new route (not a re-plan of this one): [kind] is `POST /route`'s `kind=` (a tap), null to guess again. */
+    fun newRoute(kind: TripKind?) {
+        tappedKind = kind
+    }
+
     fun changeMode(travel: TravelMode, wait: Boolean = false) {
         val s = fromEnd
         val e = toEnd
@@ -448,7 +541,10 @@ object RouteSession {
         setEnds(null, null)
         failure = null
         persist(null) // T108: Clear and Keep drop the saved route (a small file delete)
-        ui { phase = "idle"; plan = null; message = null; directionsOpen = false; fromOpen = false; moreOpen = false }
+        tappedKind = null // T276: a tapped chip holds until Clear
+        everydayPoints = null
+        townShare = null
+        ui { phase = "idle"; plan = null; tripKind = null; kindReason = null; message = null; directionsOpen = false; fromOpen = false; moreOpen = false }
         overlay.show(null, null, null)
     }
 
@@ -517,6 +613,13 @@ object RouteSession {
     fun cardJson(): Map<String, Any?> {
         val p = plan
         val units = AppSettings.units
+        // T276: an everyday route has none of the four lines, and nothing is computed for them.
+        if (p != null && isEveryday(p.route.points)) return linkedMapOf(
+            "headline" to PaceSettings.headline(p), "drawnHeadline" to BottomPanels.routeCardHeadline,
+            "basis" to PaceSettings.secondLine(p),
+            "actions" to CardActions.of(phase, canTryCrow()).map { it.json() }, "moreOpen" to moreOpen,
+            "lines" to linkedMapOf("water" to EVERYDAY_JSON, "exposure" to EVERYDAY_JSON, "bestStart" to EVERYDAY_JSON, "pastEffort" to EVERYDAY_JSON),
+        )
         return linkedMapOf(
             "headline" to p?.let { PaceSettings.headline(it) }, "drawnHeadline" to BottomPanels.routeCardHeadline,
             "basis" to p?.let { PaceSettings.secondLine(it) },
@@ -535,6 +638,13 @@ object RouteSession {
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "phase" to phase, "message" to message, "mode" to mode.label,
+        // T276: the kind beside the mode (`everyday`, `backcountry`; null on foot while planning), why (`mode`, `share`,
+        // `tap`, `unknown`), the share in town it was guessed from, the chip lit and the chips drawn, a held tap.
+        "tripKind" to tripKind?.key, "tripKindReason" to kindReason?.key, "townShare" to townShare?.let { Math.round(it * 1000) / 1000.0 },
+        "townShareThreshold" to TripKinds.TOWN_SHARE, "chip" to chip?.key, "chips" to RouteChip.entries.map { it.key },
+        "tapped" to tappedKind?.key,
+        // T276: the computations an everyday route must not start (unchanged while one is shown).
+        "computed" to linkedMapOf("water" to RouteWater.computed, "exposure" to RouteExposure.computed, "bestStart" to RouteBestStart.computed),
         "start" to start?.let { listOf(it.latitude, it.longitude) }, "end" to end?.let { listOf(it.latitude, it.longitude) },
         "longPresses" to longPresses, "overlayFeatures" to overlay.features, "overlayInstalled" to overlay.installedOnStyle,
         "summary" to plan?.let { PaceSettings.headline(it) }, "lastFile" to lastFile?.path,
@@ -566,6 +676,9 @@ object RouteSession {
             if (f != null && (phase == "route" || phase == "failed")) add("swap")
         }
     }
+
+    /** T276: a card line of an everyday route in `GET /route` `card.lines`: not drawn, never computed. */
+    val EVERYDAY_JSON: Map<String, Any?> = linkedMapOf("state" to LineState.NONE, "text" to null, "everyday" to true)
 
     /** How long a long-press waits for the graph to be built on first use. */
     const val WAIT_MS = 120_000L

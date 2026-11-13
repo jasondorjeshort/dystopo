@@ -69,8 +69,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.search.SEARCH_COVERAGE_HELP +
             // end T255
             // T262: the Tracks and routes screen.
-            io.github.jasondorjeshort.dystopo.app.tracks.TRACKS_LIST_HELP
+            io.github.jasondorjeshort.dystopo.app.tracks.TRACKS_LIST_HELP +
             // end T262
+            // T276: the route card's Walk and Hike chips.
+            io.github.jasondorjeshort.dystopo.app.routing.ROUTE_KIND_HELP
+            // end T276
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }
