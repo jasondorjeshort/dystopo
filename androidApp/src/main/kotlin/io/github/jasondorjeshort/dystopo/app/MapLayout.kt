@@ -474,6 +474,17 @@ object MapLayout {
     fun invalidate() = controls.invalidate()
 
     /**
+     * T277: the bottom of the window's top row (Search and the settings row) by the last placement, px from the Compose
+     * root's top; 0 before the first. The track panels' column stops under it (`tracking/TrackControls.kt`), so a profile
+     * taller than the window (landscape at font scale 2.0) keeps its header out from under the top row.
+     */
+    fun topRowBottomPx(): Float {
+        val r = controls.lastRuled ?: return 0f
+        val p = r.placement ?: return 0f
+        return (listOfNotNull(p[OverlayIds.SEARCH]?.rect, p[OverlayIds.SETTINGS_ROW]?.rect).maxOfOrNull { it.bottom } ?: 0f) * r.density
+    }
+
+    /**
      * T239: where the rule puts MapLibre's compass, px from the window's top left, and whether it is drawn: while the map
      * faces north the compass is not up, and this is where it would go, so it fades in there. `MapController.attach` reads
      * it through [compassListener] and sets the compass's margins (it sets no margin anywhere else).
@@ -600,10 +611,7 @@ object MapLayout {
         val core = bar?.corePx ?: 0
         val rowPx = if (barSize != null && core in 1..barSize.height) core else barSize?.height ?: 0
         val search = c.sizeOf(nameOf(OverlayIds.SEARCH))
-        val panels = BottomPanels.trackPanelsTop.value.takeIf { it > BottomPanels.trackPanelsBottom.value }?.let { top ->
-            val h = root[1] / d
-            OverlayRect(EDGE_DP, h - top, root[0] / d - EDGE_DP, h - BottomPanels.trackPanelsBottom.value)
-        }
+        val panels = panelsRect(root[0] / d, root[1] / d, BottomPanels.trackPanelsTop.value, BottomPanels.trackPanelsBottom.value)
         val stripUp = AppSettings.readoutBar && c.slot(nameOf(OverlayIds.STRIP)) != null
         return OverlayInput(
             windowWidth = root[0] / d, windowHeight = root[1] / d,
@@ -795,19 +803,56 @@ object MapLayout {
 
     private fun mapView(): View? = DystopoApp.instance.map.mapView
 
-    /** The window: the map view's root, px. */
-    private fun rootSize(): FloatArray {
+    /** The window: the map view's root, px; T277: the content view, where Compose's root lies ([ruleFrame]). */
+    private fun rootSize(): FloatArray = frameNow().first
+
+    /** The system bars and the display cutout, px: left, top, right, bottom; T277: what of them lies over the content view. */
+    private fun insetsPx(): FloatArray = frameNow().second
+
+    /** T277: [ruleFrame] of the window as it is now. */
+    private fun frameNow(): Pair<FloatArray, FloatArray> {
         val root = mapView()?.rootView
         val m = DystopoApp.instance.resources.displayMetrics
-        return floatArrayOf((root?.width ?: m.widthPixels).toFloat(), (root?.height ?: m.heightPixels).toFloat())
+        val window = floatArrayOf((root?.width ?: m.widthPixels).toFloat(), (root?.height ?: m.heightPixels).toFloat())
+        val content = root?.findViewById<View>(android.R.id.content)?.takeIf { it.width > 0 && it.height > 0 }?.let { c ->
+            val at = IntArray(2).also { c.getLocationInWindow(it) }
+            floatArrayOf(at[0].toFloat(), at[1].toFloat(), (at[0] + c.width).toFloat(), (at[1] + c.height).toFloat())
+        }
+        val v = mapView()
+        val i = v?.let { ViewCompat.getRootWindowInsets(it)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()) }
+        val insets = i?.let { floatArrayOf(it.left.toFloat(), it.top.toFloat(), it.right.toFloat(), it.bottom.toFloat()) } ?: FloatArray(4)
+        return ruleFrame(window, content, insets)
     }
 
-    /** The system bars and the display cutout, px: left, top, right, bottom. */
-    private fun insetsPx(): FloatArray {
-        val v = mapView() ?: return FloatArray(4)
-        val i = ViewCompat.getRootWindowInsets(v)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()) ?: return FloatArray(4)
-        return floatArrayOf(i.left.toFloat(), i.top.toFloat(), i.right.toFloat(), i.bottom.toFloat())
+    /**
+     * T277 (pure, `MapLayoutTest`): the window the rule lays out in, px, and its insets (left, top, right, bottom), from the
+     * window's size, the content view's rectangle in it (left, top, right, bottom; null when not laid out) and the system
+     * bars' insets. The content view, since Compose's root fills it and every rectangle the rule reads or places (the
+     * nodes', the cards', the track panels' column) is in that root's coordinates; the insets are what of the bars lies
+     * over it. Edge to edge (Android 15 and later) the two are the same; on a window that is not (Android 14 and earlier,
+     * the owner's phone) the root lies between the status bar and the navigation bar, and before T277 the rule took the
+     * whole window: the panels' rectangle and the lower columns came out the two bars' height down, the strip over the
+     * profile's header and the scale bar on its statistics line.
+     */
+    fun ruleFrame(windowPx: FloatArray, contentPx: FloatArray?, insetsPx: FloatArray): Pair<FloatArray, FloatArray> {
+        val c = contentPx ?: return windowPx to insetsPx
+        val w = c[2] - c[0]
+        val h = c[3] - c[1]
+        if (w <= 0f || h <= 0f) return windowPx to insetsPx
+        val over = floatArrayOf(
+            maxOf(0f, insetsPx[0] - c[0]), maxOf(0f, insetsPx[1] - c[1]),
+            maxOf(0f, insetsPx[2] - (windowPx[0] - c[2])), maxOf(0f, insetsPx[3] - (windowPx[1] - c[3])),
+        )
+        return floatArrayOf(w, h) to over
     }
+
+    /**
+     * T277 (pure, `MapLayoutTest`): the track panels' rectangle in the rule's window ([widthDp] by [heightDp]), from their
+     * column's top and bottom as distances from the bottom of the Compose root ([BottomPanels.trackPanelsTop] and
+     * [BottomPanels.trackPanelsBottom]); null while the column is empty.
+     */
+    fun panelsRect(widthDp: Float, heightDp: Float, topDp: Float, bottomDp: Float): OverlayRect? =
+        if (topDp > bottomDp) OverlayRect(EDGE_DP, heightDp - topDp, widthDp - EDGE_DP, heightDp - bottomDp) else null
 
     private fun rectJson(r: FloatArray?) = r?.map { Math.round(it) }
 
@@ -851,6 +896,11 @@ object MapLayout {
                     "sideColumn" to p.sideColumn, "cardColumns" to p.cardColumns, "buttonsDrawn" to p.buttonsDrawn, "entriesDrawn" to p.entriesDrawn,
                     "latch" to p.latch?.let { l -> linkedMapOf("widthDp" to l.windowWidth, "heightDp" to l.windowHeight, "fontScale" to l.fontScale, "cards" to l.cards.sorted()) },
                     "trackRoomDp" to p.trackRoom, "stripRoomDp" to p.stripRoom,
+                    // T277: the track panels' rectangle the rule stood the lower columns on, and the drawn elements over it.
+                    "panelsPx" to i?.panels?.let { r -> listOf(Math.round(r.left * d), Math.round(r.top * d), Math.round(r.right * d), Math.round(r.bottom * d)) },
+                    "overPanels" to i?.panels?.let { r ->
+                        seen.filter { s -> s.rectPx?.let { it[2] > r.left * d && it[0] < r.right * d && it[3] > r.top * d + 0.5f && it[1] < r.bottom * d - 0.5f } == true }.map { nameOf(it.id) }
+                    },
                     "elements" to p.elements.map { e ->
                         linkedMapOf(
                             "id" to e.id, "name" to OverlayIds.NAMES[e.id],

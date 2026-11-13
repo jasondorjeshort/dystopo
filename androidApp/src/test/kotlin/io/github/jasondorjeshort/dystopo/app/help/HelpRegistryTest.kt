@@ -163,6 +163,9 @@ class HelpRegistryTest {
             // T262: the Tracks and routes screen.
             "tracks.list",
             // end T262
+            // T277: the track profile panel.
+            "tracks.profile",
+            // end T277
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,8 +25,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -180,6 +183,12 @@ private fun BoxScope.Controls() {
             // T49: above the route card too; T106: and above the update offer, which covered the long-press card.
             val b = maxOf(io.github.jasondorjeshort.dystopo.app.routing.BottomPanels.trackPanelsFloor, io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop)
             if (b > 0.dp) m.padding(start = 8.dp, end = 8.dp, bottom = b + 6.dp) else m.navigationBarsPadding().padding(start = 8.dp, end = 8.dp, bottom = 28.dp)
+        }.layout { measurable, c ->
+            // T277: never up under the top row (Search and the settings row): a profile taller than the room (landscape at
+            // font scale 2.0) gives up its chart's height first, so its header (name, Fit, Close) stays in view.
+            val room = c.maxHeight - io.github.jasondorjeshort.dystopo.app.MapLayout.topRowBottomPx().toInt() - 6.dp.roundToPx()
+            val p = measurable.measure(if (c.hasBoundedHeight && room in c.minHeight until c.maxHeight) c.copy(maxHeight = room) else c)
+            layout(p.width, p.height) { p.place(0, 0) }
         }.let { m -> // T49: report where the panels are (GET /route layout)
             val density = androidx.compose.ui.platform.LocalDensity.current
             m.onGloballyPositioned { c ->
@@ -262,13 +271,20 @@ private fun HideChip(onClick: () -> Unit) {
 }
 
 /** T253: a vertical swipe of a thumb's length on the panel hides the bar, as Hide and Back do. */
-private fun Modifier.hideOnSwipe(): Modifier = pointerInput(Unit) {
+private fun Modifier.hideOnSwipe(downOnly: Boolean = false, hide: () -> Unit = { TrackBar.hide() }): Modifier = pointerInput(downOnly) {
     var dragged = 0f
     detectVerticalDragGestures(
         onDragStart = { dragged = 0f },
-        onDragEnd = { if (kotlin.math.abs(dragged) >= 48.dp.toPx()) TrackBar.hide() },
+        onDragEnd = { if (swipeHides(dragged, 48.dp.toPx(), downOnly)) hide() },
     ) { change, dy -> change.consume(); dragged += dy }
 }
+
+/**
+ * T277 (pure, tested): whether a vertical drag of [draggedPx] (down positive) hides a panel: at least [thresholdPx] either
+ * way, or with [downOnly] (the profile panel, which sits at the bottom: a swipe down puts it away) only down.
+ */
+internal fun swipeHides(draggedPx: Float, thresholdPx: Float, downOnly: Boolean): Boolean =
+    if (downOnly) draggedPx >= thresholdPx else kotlin.math.abs(draggedPx) >= thresholdPx
 
 /**
  * T253: Discard on the paused panel, in red and apart from the chips; a tap asks first ([DISCARD_QUESTION], Discard or
@@ -534,13 +550,37 @@ private fun WaypointSheet(w: io.github.jasondorjeshort.dystopo.store.StoredWaypo
     }
 }
 
+/** T277: an action of the profile's header as a 48 dp target, so its touch area does not reach over its neighbour's. */
+@Composable
+private fun HeaderAction(text: String, label: String? = null, onClick: () -> Unit) {
+    Box(
+        Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).clickable(onClickLabel = label, onClick = onClick).padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(text, style = TextStyle(color = Link, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+    }
+}
+
+/** T277: the profile panel's Close: only the profile goes; the track stays on the map. */
+private fun closeProfile() { Thread { tracker().showProfile(null) }.start() }
+
 @Composable
 private fun ProfilePanel(p: Tracking.ProfileView) {
-    Panel(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BasicText(p.name, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold), modifier = Modifier.widthIn(max = 220.dp))
-            Action("Fit") { tracker().overlay.fit(p.trackId) } // T265: the whole track in view, the short way round
-            Action("Close") { Thread { tracker().showProfile(null) }.start() }
+    // T277: Back closes the profile first: composed after the track bar's handler (above), so it comes before it; the
+    // screens over the map (Tracks and routes, Settings) are composed after TrackControls, so their own Back comes first.
+    androidx.activity.compose.BackHandler { closeProfile() }
+    // T277: a swipe down on the panel closes it, as Close does (down only: the panel sits at the bottom).
+    Panel(Modifier.fillMaxWidth().hideOnSwipe(downOnly = true) { closeProfile() }) {
+        // T277: the header fills the width: the name takes what is left (one line, cut with an ellipsis), Fit next, Close
+        // at the right edge as a 48 dp target, so it stays whole at a narrow width and a large font scale.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BasicText(
+                p.name, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                modifier = Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.profile")
+            HeaderAction("Fit") { tracker().overlay.fit(p.trackId) } // T265: the whole track in view, the short way round
+            HeaderAction(PROFILE_CLOSE, PROFILE_CLOSE_ACTION) { closeProfile() }
         }
         val s = p.stats
         GapStatsLine(
@@ -559,7 +599,8 @@ private fun ProfilePanel(p: Tracking.ProfileView) {
         val lo = eles.min()
         val hi = eles.max()
         val total = p.samples.last().distanceM.takeIf { it > 0 } ?: 1.0
-        Canvas(Modifier.fillMaxWidth().height(110.dp)) {
+        // T277: 110 dp tall, less where the column has less room (its cap above), the axis line kept under it.
+        Canvas(Modifier.weight(1f, fill = false).fillMaxWidth().heightIn(max = 110.dp).fillMaxHeight()) {
             val span = (hi - lo).takeIf { it > 1.0 } ?: 1.0
             fun x(d: Double) = (d / total * size.width).toFloat()
             fun y(e: Double) = (size.height - (e - lo) / span * (size.height * 0.9) - size.height * 0.05).toFloat()
@@ -585,9 +626,10 @@ private fun ProfilePanel(p: Tracking.ProfileView) {
             drawPath(line, Magenta, style = Stroke(width = 2.5.dp.toPx()))
             drawLine(Ink.copy(alpha = 0.3f), Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            BasicText("0  |  " + UnitFormat.elevation(lo.toDouble(), AppSettings.units) + " low", style = TextStyle(color = Ink, fontSize = 10.sp))
-            BasicText(UnitFormat.elevation(hi.toDouble(), AppSettings.units) + " high  |  " + UnitFormat.distance(total.toDouble(), AppSettings.units), style = TextStyle(color = Ink, fontSize = 10.sp))
+        // T277: each half takes half the width, so at a large font scale they wrap apart instead of running together.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BasicText("0  |  " + UnitFormat.elevation(lo.toDouble(), AppSettings.units) + " low", Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 10.sp))
+            BasicText(UnitFormat.elevation(hi.toDouble(), AppSettings.units) + " high  |  " + UnitFormat.distance(total.toDouble(), AppSettings.units), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 10.sp, textAlign = androidx.compose.ui.text.style.TextAlign.End))
         }
     }
 }
@@ -607,6 +649,18 @@ private fun GapStatsLine(stats: String, gapText: String?, size: Int) {
         io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.gaps")
     }
 }
+
+/** T277: the profile panel's Close (the word the other cards use) and its spoken action. */
+internal const val PROFILE_CLOSE = "Close"
+internal const val PROFILE_CLOSE_ACTION = "Close the profile; the track stays on the map"
+
+/** T277: the profile panel's help: Fit, Close, the swipe and Back (ADR 0031: the owner's to adjust). */
+internal val TRACK_PROFILE_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.profile", "A track's profile", "The map, bottom: a track's profile", needs = "a track's profile open") {
+        "The track's climb along its length. Fit shows the whole track on the map. Close at the right, a swipe down on " +
+            "the panel or Back puts the profile away; the track stays on the map until you hide it in Tracks and routes."
+    },
+)
 
 /** T260: what the dashed line means (ADR 0031: the owner's to adjust). */
 internal val TRACK_GAPS_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
@@ -675,7 +729,7 @@ private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+private fun Panel(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) { // T277: ColumnScope, for the chart's weight
     Column(modifier.background(Paper, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         content()
     }
