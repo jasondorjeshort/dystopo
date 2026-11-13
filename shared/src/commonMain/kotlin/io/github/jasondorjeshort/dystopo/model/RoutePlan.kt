@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.model
 
 import io.github.jasondorjeshort.dystopo.routing.Instruction
 import io.github.jasondorjeshort.dystopo.routing.Maneuver
+import io.github.jasondorjeshort.dystopo.routing.TripKind
 import io.github.jasondorjeshort.dystopo.routing.WayClass
 import io.github.jasondorjeshort.dystopo.sync.ByteReader
 import io.github.jasondorjeshort.dystopo.sync.ByteWriter
@@ -17,7 +18,9 @@ import kotlin.math.roundToLong
  * (`SetField`, last writer wins): `path` ([RoutePath.encode]: mode, via points and every leg's
  * geometry in one value, so a reroute can never pair one device's via points with another's legs) and
  * `waypoints` ([RouteWaypoints.encode]). Older builds ignore fields they do not know. T108 (ADR 0033): a third,
- * `directions` ([RouteDirections]), keeps the turn directions with the trip, tied to the path they were made for.
+ * `directions` ([RouteDirections]), keeps the turn directions with the trip, tied to the path they were made for. T278
+ * (ADR 0033): `tripKind` ([TripKind.key]), the kind the trip was kept as (a Walk or a Hike on the same path); absent reads
+ * as by the mode ([io.github.jasondorjeshort.dystopo.routing.TripKinds.kept]), so every trip stored before reads as it did.
  *
  * Coordinates in a path are quantised to 1e-7 degrees (about 1 cm) and elevations to centimetres
  * ([RoutePath.quantized]), so a path decodes to exactly what was encoded and a GPX written from it is
@@ -254,7 +257,8 @@ object RouteWaypoints {
  * A planned route as the app shows it (T60): the GPX fields of [Route], the [path] it was drawn with
  * and its [waypoints]. [toRoute] is the GPX `rte` (the path's points as `rtept`s). T108: [directions], the turn
  * directions saved with it; a plan read from a store has them only when they were made for its [path] (else null:
- * not saved, or saved for a path an edit has since replaced), and [savedDirections] checks that for any plan.
+ * not saved, or saved for a path an edit has since replaced), and [savedDirections] checks that for any plan. T278:
+ * [tripKind], the kind it was kept as (null: none written, or a value this build does not read; read as by the mode).
  */
 data class RoutePlan(
     val id: String,
@@ -266,6 +270,7 @@ data class RoutePlan(
     val type: String? = null,
     val extensions: String? = null,
     val directions: SavedDirections? = null,
+    val tripKind: TripKind? = null,
 ) {
     fun toRoute(): Route = Route(id, name, path.points, description, comment, type, extensions)
 

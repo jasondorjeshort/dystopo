@@ -128,8 +128,16 @@ object AppSettings {
 
     // ---- T172: the recording activity remembered for the next Record, and one profile value per activity (tracking/ActivityPicker); synced ----
 
-    /** The activity the picker marks and a recording with none given starts with (T161's readout reads it too). */
+    /**
+     * The activity the picker marks and a recording with none given starts with (T161's readout reads it too). T263: the
+     * app's current activity, its mode: the map's activity chip shows and changes it, and a new route's travel mode
+     * follows it ([io.github.jasondorjeshort.dystopo.app.activity.ActivityMode]).
+     */
     val trackActivity: Activity get() = TRACK_ACTIVITY.value
+
+    /** T263: Record asks which activity (the picker), else starts with [trackActivity] at once. */
+    const val KEY_RECORD_ASK_ACTIVITY = "recordAskActivity"
+    val recordAskActivity: Boolean get() = RECORD_ASK_ACTIVITY.value
 
     /** The stored choices per activity ([RecordingProfiles.encode]'s form); an activity missing has its defaults. */
     @Volatile var trackProfiles: Map<Activity, String> = emptyMap()
@@ -592,6 +600,13 @@ object AppSettings {
         { io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(it.toString()) }, { "$KEY_SHADE_SPOKEN must be off, hot or always (got $it)" }))
     val ESTIMATE_POSITION = flag(KEY_ESTIMATE_POSITION, true, synced = true) // T203
     val SHOW_DIVERGENCE = flag(KEY_SHOW_DIVERGENCE, true, synced = true) // T213
+    // T278: the route card's Trip details row open or folded (routing/RouteControls.kt, TripDetails); per device, no row.
+    val TRIP_DETAILS_OPEN = flag("tripDetailsOpen", false)
+    // end T278
+    // T263: "Ask which activity when a recording starts": Record opens the picker (on, the owner's choice of 2026-11-11), or
+    // starts with the current activity at once (off; tracking/ActivityPicker.kt). Synced.
+    val RECORD_ASK_ACTIVITY = flag(KEY_RECORD_ASK_ACTIVITY, true, synced = true)
+    // end T263
 }
 
 /**

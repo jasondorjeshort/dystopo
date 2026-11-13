@@ -199,7 +199,8 @@ internal fun listRows(
     }
     if (filter != TracksUi.Filter.TRACKS) for (r in routes) {
         out += ListRow(
-            "route", r.id, r.name.ifBlank { Trips.UNNAMED }, routeLine(TravelMode.labelOf(r.mode).replaceFirstChar { it.uppercase() }, date(r.createdAt), routeFigures(r)),
+            // T278: the kept kind's word ("Walk route"), as the trip card's chip names it.
+            "route", r.id, r.name.ifBlank { Trips.UNNAMED }, routeLine(io.github.jasondorjeshort.dystopo.app.trips.tripModeWord(r.mode, io.github.jasondorjeshort.dystopo.routing.TripKind.of(r.tripKind)), date(r.createdAt), routeFigures(r)),
             null, r.id !in hiddenRoutes, false, r.createdAt,
             io.github.jasondorjeshort.dystopo.app.trips.routeRowCounts(r.viaPoints, r.waypoints, if (r.straightM > 0) UnitFormat.distance(r.straightM, units) else null),
             lengthM = r.distanceM,
@@ -244,7 +245,7 @@ internal fun sortLabel(s: TracksUi.Sort): String = s.label
 internal fun trackLine(activity: String?, date: String, distance: String?, recording: Boolean): String =
     listOfNotNull(activity ?: TRACK_WORD, date, distance, RECORDING_WORD.takeIf { recording }).joinToString(" · ")
 
-/** T262: a route row's second line: its mode as a route ("Hike route"), date, then the card's figures. Pure, tested. */
+/** T262: a route row's second line: its mode as a route ("Hike route"; T278: "Walk route"), date, then the card's figures. Pure, tested. */
 internal fun routeLine(mode: String, date: String, figures: String): String = "$mode route · $date · $figures"
 
 /** T262: the word beside the eye. Pure, tested. */

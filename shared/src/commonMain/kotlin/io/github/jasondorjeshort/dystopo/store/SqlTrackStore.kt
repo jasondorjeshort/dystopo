@@ -104,7 +104,7 @@ class SqlTrackStore(
 
     /**
      * T60: routes written to the route table from the log on this open (after the schema-4 migration; T108: after the
-     * schema-5 one, for the directions column); 0 otherwise. Declared before `init`, which sets it.
+     * schema-5 one, for the directions column; T278: after the schema-8 one, for the trip_kind column); 0 otherwise. Declared before `init`, which sets it.
      */
     var routesMaterialized = 0
         private set
@@ -134,6 +134,7 @@ class SqlTrackStore(
             }
             // T60 (schema 4): the route table is filled from the log once, after the migration created it.
             // T108 (schema 5): again once, for the directions column (a log synced from a newer peer may hold them).
+            // T278 (schema 8): again once, for the trip_kind column (a newer peer's `tripKind` writes the log kept).
             if (q.getMeta("routes").executeAsOneOrNull() != ROUTES_TABLE) {
                 var n = 0
                 for (id in q.routeIdsInLog().executeAsList()) { rebuildRoute(id); n++ }
@@ -546,6 +547,7 @@ class SqlTrackStore(
             emit(SetField(EntityKind.ROUTE, plan.id, "path", plan.path.quantized().encode()), now)
             emit(SetField(EntityKind.ROUTE, plan.id, "waypoints", RouteWaypoints.encode(plan.waypoints)), now)
             plan.directions?.let(io.github.jasondorjeshort.dystopo.model.RouteDirections::encode)?.let { emit(SetField(EntityKind.ROUTE, plan.id, "directions", it), now) } // T108
+            plan.tripKind?.let { emit(SetField(EntityKind.ROUTE, plan.id, "tripKind", it.key), now) } // T278
             rebuildRoute(plan.id)
             check(q.selectRoute(plan.id).executeAsOneOrNull() != null) { "route ${plan.id} stays hidden by a delete stamped more than 30 days ahead of this device's clock" }
         }
@@ -566,12 +568,14 @@ class SqlTrackStore(
             live.first { it.body is PutRoute }.hlc.text, s.updatedAt, s.distanceM, s.ascentM, s.descentM, s.timeS,
             s.viaPoints.toLong(), s.waypoints.toLong(), s.straightM, s.mode,
             plan.directions?.let(io.github.jasondorjeshort.dystopo.model.RouteDirections::encode), // T108: only directions made for this path
+            plan.tripKind?.key, // T278
         )
     }
 
     private fun planOf(r: io.github.jasondorjeshort.dystopo.store.db.Route): RoutePlan = RoutePlan(
         r.id, r.name, RoutePath.decode(r.path), RouteWaypoints.decode(r.waypoints), r.description, r.comment, r.type, r.extensions,
         io.github.jasondorjeshort.dystopo.model.RouteDirections.decodeOrNull(r.directions), // T108
+        io.github.jasondorjeshort.dystopo.routing.TripKind.of(r.trip_kind), // T278
     )
 
     override fun routePlan(id: String): RoutePlan? = q.selectRoute(id).executeAsOneOrNull()?.let(::planOf)
@@ -582,6 +586,7 @@ class SqlTrackStore(
         RouteListItem(
             r.id, r.name, r.mode, r.distance_m, r.ascent_m, r.descent_m, r.time_s, r.via_count.toInt(), r.waypoint_count.toInt(), r.straight_m, r.updated_at,
             runCatching { Hlc.parse(r.created_hlc).wall }.getOrDefault(0L), // T262: the list's date and order
+            io.github.jasondorjeshort.dystopo.routing.TripKind.of(r.trip_kind)?.key, // T278
         )
     }
 
@@ -729,8 +734,11 @@ class SqlTrackStore(
     }
 
     private companion object {
-        /** T108: sync_meta `routes` once the route table holds every route with its directions (schema 5); "1" was T60's. */
-        const val ROUTES_TABLE = "2"
+        /**
+         * T108: sync_meta `routes` once the route table holds every route with its directions (schema 5); "1" was T60's.
+         * T278: "3" once it holds every route's kind too (schema 8).
+         */
+        const val ROUTES_TABLE = "3"
 
         /** T158: sync_meta `tracks` once every track row's fields were rewritten from the log (schema 6). */
         const val TRACKS_TABLE = "6"

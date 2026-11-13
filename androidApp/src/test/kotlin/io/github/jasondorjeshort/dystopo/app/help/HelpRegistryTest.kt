@@ -166,6 +166,12 @@ class HelpRegistryTest {
             // T277: the track profile panel.
             "tracks.profile",
             // end T277
+            // T278: the route card's Trip details row.
+            "route.tripDetails",
+            // end T278
+            // T263: the activity chip's picker and the ask setting.
+            "activity.chip", "settings.recordAskActivity",
+            // end T263
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

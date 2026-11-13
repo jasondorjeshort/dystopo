@@ -566,13 +566,10 @@ fun RouteControls() {
                         )
                     }
                     Directions(plan)
-                    // T276: an everyday route (Walk, Drive) has none of the four lines below; a backcountry one keeps them.
-                    if (RouteSession.tripKind != io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY) {
-                        WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
-                        ExposureLine(plan.route.points, plan.mode) // T195
-                        BestStartLine(plan) // T209: the start time with the most terrain shade on a hot day, else sun (RouteBestStart.kt)
-                        PastEffortLine(plan) // T184
-                    }
+                    // T276: an everyday route (Walk, Drive) has none of the four lines below. T278: a backcountry route folds them
+                    // into one Trip details row (a one-line summary, opening to them); an everyday Bike keeps the row as its
+                    // override, with nothing computed until it is opened ([TripKinds.hasDetails], [TripDetails]).
+                    if (io.github.jasondorjeshort.dystopo.routing.TripKinds.hasDetails(plan.mode, RouteSession.tripKind)) TripDetailsRow(plan)
                 }
                 if (phase == "planning") BuildProgress()
                 RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
@@ -619,7 +616,7 @@ fun RouteControls() {
                     for (a in actions) when (a.id) {
                         CardActions.GO.id -> CardAction(a, row) { Thread { io.github.jasondorjeshort.dystopo.app.nav.NavSession.startRoute() }.start() } // T61: navigate
                         // T60's Keep: stored as a trip (synced, its corridor offline), clearing the plan.
-                        CardActions.SAVE.id -> CardAction(a, row) { plan?.let { p -> val f = RouteSession.from; val t = RouteSession.to; RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p, from = f, to = t) } } } // T219: the ends name it
+                        CardActions.SAVE.id -> CardAction(a, row) { plan?.let { p -> val f = RouteSession.from; val t = RouteSession.to; val k = RouteSession.tripKind; RouteSession.clear(); io.github.jasondorjeshort.dystopo.app.trips.Trips.background { io.github.jasondorjeshort.dystopo.app.trips.Trips.keep(p, from = f, to = t, kind = k) } } } // T219: the ends name it; T278: the card's kind
                         CardActions.TURN_ON.id -> CardAction(a, row) {
                             when (RouteSession.locationState()) {
                                 "noPermission" -> askLocation.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
@@ -641,14 +638,167 @@ fun RouteControls() {
     }
 }
 
-/** T276: the help text of the route card's Walk and Hike chips (`HelpRegistry`), beside the chips. */
+/**
+ * T276: the help text of the route card's Walk and Hike chips (`HelpRegistry`), beside the chips. T278: Hike keeps the lines
+ * under Trip details; a ride is picked the same way.
+ */
 internal val ROUTE_KIND_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
     io.github.jasondorjeshort.dystopo.app.help.HelpText("route.kind", "Walk or Hike", "The map: route card", needs = "a route being planned") {
-        "Walk and Hike follow the same paths. Walk is for town: no water, terrain or start time lines, and no turn-back " +
-            "time when you navigate. Hike shows them all. The planner picks one from how much of the route runs on roads " +
-            "and streets; tap the other to change it. Drive is like Walk; Bike and Line are like Hike."
+        "Walk and Hike follow the same paths. Walk is for town: no water, terrain or start time lines, no turn-back time " +
+            "when you navigate. Hike keeps them under Trip details. The planner picks one by how much of the route runs on " +
+            "roads and streets; tap the other to change it. Drive is like Walk, Line like Hike; a ride is judged alike."
     },
 )
+
+/** T278: the help text of the route card's Trip details row (`HelpRegistry`), at the row's end. */
+internal val TRIP_DETAILS_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("route.tripDetails", TripDetailsText.TITLE, "The map: route card", needs = "a hike, a line or a ride being planned") {
+        "Trip details holds the water along the route, its steep ground, the best start time and your past times on it, " +
+            "with the water count and steepest slope on the row. Tap it to open or close it; it stays as you left it. A ride " +
+            "mostly on roads and streets keeps it closed, and works nothing out until you open it."
+    },
+)
+
+/**
+ * T278: the route card's Trip details row: open or folded is a per-device key ([AppSettings.TRIP_DETAILS_OPEN], through the
+ * settings registry; not synced, no settings row). [overrides] lifts the everyday gate ([RouteSession.isEveryday]) for an
+ * everyday Bike while the row is open, so its lines are computed then and only then. [json] is `GET /route` `tripDetails`.
+ */
+internal object TripDetails {
+    /** Open or folded (a Compose read: the card follows a change made here). */
+    val open: Boolean
+        get() {
+            TripDetailsUiState.rev // read, so the card recomposes on [setOpen]
+            return io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_DETAILS_OPEN.value
+        }
+
+    /** Opens or folds the row and stores it (main thread). */
+    fun setOpen(v: Boolean) {
+        io.github.jasondorjeshort.dystopo.app.AppSettings.set(io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_DETAILS_OPEN, v)
+        TripDetailsUiState.rev++
+    }
+
+    /** Whether an open row lifts the everyday gate in [mode] (a Bike only; any thread). */
+    fun overrides(mode: TravelMode): Boolean = mode == TravelMode.BIKE && io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_DETAILS_OPEN.value
+
+    /** The row's summary as last drawn (null while open or not drawn). */
+    @Volatile var drawnSummary: String? = null
+
+    /** Whether [plan]'s water and terrain have both answered (or will not be worked out). */
+    fun settled(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute): Boolean {
+        val points = plan.route.points
+        if (RouteSession.isEveryday(points)) return true
+        val waterDone = !io.github.jasondorjeshort.dystopo.app.AppSettings.waterAlongRoute || RouteWater.start(points)?.isDone != false
+        val terrainDone = !RouteExposure.applies(plan.mode) || RouteExposure.start(points, plan.mode)?.isDone != false
+        return waterDone && terrainDone
+    }
+
+    /** The summary of [plan]'s lines from what has answered now (starts nothing an everyday route must not start). */
+    fun summaryNow(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute): String {
+        val points = plan.route.points
+        if (RouteSession.isEveryday(points)) return TripDetailsText.PLAIN
+        val w = if (io.github.jasondorjeshort.dystopo.app.AppSettings.waterAlongRoute) RouteWater.cached(points) else null
+        val e = if (RouteExposure.applies(plan.mode)) RouteExposure.cached(points, plan.mode) else null
+        return TripDetailsText.summary(w?.takeIf { it.error == null }?.items, e?.exposure?.let { TripDetailsText.steepestDeg(it) }, !settled(plan))
+    }
+
+    /** `GET /route` `tripDetails`: whether the row is drawn, open, the summary now and as drawn, and whether it overrides. */
+    fun json(): Map<String, Any?> {
+        val p = RouteSession.plan?.takeIf { RouteSession.phase == "route" }
+        val shown = p != null && io.github.jasondorjeshort.dystopo.routing.TripKinds.hasDetails(p.mode, RouteSession.tripKind)
+        return linkedMapOf(
+            "shown" to shown, "open" to io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_DETAILS_OPEN.value,
+            "key" to io.github.jasondorjeshort.dystopo.app.AppSettings.TRIP_DETAILS_OPEN.key,
+            "override" to (shown && RouteSession.tripKind == io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY),
+            "summary" to if (shown) summaryNow(p!!) else null, "drawnSummary" to if (shown) drawnSummary else null,
+            "title" to TripDetailsText.TITLE,
+        )
+    }
+}
+
+/** T278: [TripDetails]' Compose state (made on first use, on the main thread: the card reads it first). */
+internal object TripDetailsUiState {
+    var rev by androidx.compose.runtime.mutableIntStateOf(0)
+}
+
+/** T278: the Trip details row's words (pure, `TripDetailsTextTest`; ADR 0031, the owner adjusts them). */
+internal object TripDetailsText {
+    const val TITLE = "Trip details"
+
+    /** The summary of a row whose lines are not worked out (an everyday Bike's, until opened; no answer at all). */
+    const val PLAIN = "Water, terrain and start time"
+
+    /** The summary while neither the water nor the terrain has answered. */
+    const val WORKING = "Working out water and terrain"
+
+    /** "No water found", "1 water crossing", "3 water crossings", "2 water places" (a spring, tap or lake among them). */
+    fun water(items: List<io.github.jasondorjeshort.dystopo.routing.WaterItem>): String {
+        val n = items.size
+        if (n == 0) return "No water found"
+        val streams = items.all { it.kind == io.github.jasondorjeshort.dystopo.routing.WaterKind.STREAM }
+        return "$n water " + if (streams) (if (n == 1) "crossing" else "crossings") else (if (n == 1) "place" else "places")
+    }
+
+    /** The steepest ground beside the route, whole degrees (null without elevation data). */
+    fun steepestDeg(e: io.github.jasondorjeshort.dystopo.routing.ExposureResult): Int? {
+        if (!e.hasData) return null
+        return e.samples.mapNotNull { s -> s.slopeDeg.takeUnless { it.isNaN() } }.maxOrNull()?.let { kotlin.math.round(it).toInt() }
+    }
+
+    /**
+     * The row's one line, from what has answered: "3 water crossings · steepest slope 38 degrees", one of the two alone,
+     * [WORKING] while nothing has answered and something works, else [PLAIN].
+     */
+    fun summary(water: List<io.github.jasondorjeshort.dystopo.routing.WaterItem>?, steepestDeg: Int?, working: Boolean): String {
+        val parts = listOfNotNull(water?.let(::water), steepestDeg?.let { "steepest slope $it degrees" })
+        if (parts.isNotEmpty()) return parts.joinToString(" · ")
+        return if (working) WORKING else PLAIN
+    }
+}
+
+/**
+ * T278: one row, "Trip details" with its summary, folding the water, terrain, best-start and past-effort lines (their own
+ * disclosures unchanged). Tapping it opens or folds it ([TripDetails.setOpen]); the summary follows the answers.
+ */
+@Composable
+private fun TripDetailsRow(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute) {
+    val open = TripDetails.open
+    val points = plan.route.points
+    var summary by remember(points, plan.mode) { mutableStateOf(TripDetails.summaryNow(plan)) }
+    LaunchedEffect(points, plan.mode, open) {
+        if (open) return@LaunchedEffect
+        while (true) {
+            val done = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { TripDetails.settled(plan) }
+            summary = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { TripDetails.summaryNow(plan) }
+            if (done) break
+            kotlinx.coroutines.delay(400)
+        }
+    }
+    SideEffect { TripDetails.drawnSummary = if (open) null else summary }
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().clickable { TripDetails.setOpen(!open) }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // T278: one paragraph, the title bold and the summary after it, wrapping under the title at large font scales (a
+        // summary squeezed beside the title was cut to "2 water place..." at 2.0).
+        val text = androidx.compose.ui.text.buildAnnotatedString {
+            pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold, fontSize = 13.sp))
+            append((if (open) "▾ " else "▸ ") + TripDetailsText.TITLE)
+            pop()
+            if (!open) append("  $summary")
+        }
+        BasicText(text, style = TextStyle(color = Ink, fontSize = 12.sp), modifier = Modifier.weight(1f))
+        io.github.jasondorjeshort.dystopo.app.help.HelpIcon("route.tripDetails")
+    }
+    if (open) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
+            ExposureLine(plan.route.points, plan.mode) // T195
+            BestStartLine(plan) // T209: the start time with the most terrain shade on a hot day, else sun (RouteBestStart.kt)
+            PastEffortLine(plan) // T184
+        }
+    }
+}
 
 /** T212: how often the card compares the settings with the ones it drew (`POST /settings` reaches it within this). */
 private const val SETTINGS_TICK_MS = 500L

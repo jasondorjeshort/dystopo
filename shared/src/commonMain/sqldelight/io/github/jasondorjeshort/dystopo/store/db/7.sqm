@@ -1,0 +1,6 @@
+-- Version 7 -> 8 (T278): the route table keeps each kept trip's kind (the synced `tripKind` field, TripKind's key:
+-- everyday or backcountry), NULL when none was written. A NULL kind reads as by the trip's mode (on foot, a Hike; a bike,
+-- backcountry), so every trip stored before this migration behaves as it did. SqlTrackStore rebuilds every route row from
+-- the log on the first open after it (sync_meta `routes`), so a kind a newer peer synced into the log is not lost.
+
+ALTER TABLE route ADD COLUMN trip_kind TEXT;

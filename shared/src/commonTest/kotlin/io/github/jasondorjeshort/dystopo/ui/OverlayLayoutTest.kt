@@ -37,6 +37,7 @@ class OverlayLayoutTest {
             online = if (online) OverlaySize(140f * chip, 66f * chip) else null,
             trackBar = OverlaySize(170f * chip, 36f * chip),
             routes = OverlaySize(70f * chip, 36f * chip),
+            activity = OverlaySize(78f * chip, 36f * chip), // T263
             scaleBar = OverlaySize(112f, 36f * k),
             strip = listOf(OverlaySize(84f * k, 40f * k), OverlaySize(70f * k, 40f * k), OverlaySize(70f * k, 40f * k), OverlaySize(60f * k, 40f * k)),
             buttons = buttons, offCentre = offCentre,
@@ -70,6 +71,52 @@ class OverlayLayoutTest {
         if (o.isShown(OverlayIds.SCALE_BAR)) assertTrue(e.isShown(OverlayIds.SCALE_BAR), "the extra entries cost the scale bar at $at")
         if (!e.isShown(OverlayIds.SCALE_BAR)) assertTrue(e.entriesDrawn <= i.strip.size, "extra entries kept with the scale bar gone at $at")
         if (e.isShown(OverlayIds.SCALE_BAR) && o.isShown(OverlayIds.STRIP)) assertTrue(e.entriesDrawn >= o.entriesDrawn, "the core entries kept at $at")
+    }
+
+    /** T263: the activity chip in [o]: under the settings row and the Routes chip, at the chips' right edge; it goes first. */
+    private fun activityChipHolds(i: OverlayInput, o: OverlayPlacement, at: String) {
+        val a = assertNotNull(o[OverlayIds.ACTIVITY], "the activity chip is placed or hidden at $at")
+        val r = a.rect
+        if (r == null) {
+            assertEquals(OverlayLayout.REASON_NO_ROOM, a.reason, at)
+            return
+        }
+        val row = assertNotNull(o[OverlayIds.SETTINGS_ROW]?.rect, at)
+        assertTrue(r.top >= row.bottom, "the activity chip $r under the settings row $row at $at")
+        val right = i.windowWidth - i.insetRight - 8f
+        assertTrue(kotlin.math.abs(r.right - right) < 0.01f, "the activity chip $r at the chips' right edge $right at $at")
+        o[OverlayIds.ROUTES]?.rect?.let { routes -> assertTrue(r.top >= routes.bottom, "the activity chip $r under the Routes chip $routes at $at") }
+        o[OverlayIds.TRACK_BAR]?.rect?.let { bar -> assertTrue(r.top >= bar.bottom, "the activity chip $r under the track bar $bar at $at") }
+        // It yields before the Routes chip: shown with the bar and Routes up, Routes is shown too.
+        if (i.routes != null && o.isShown(OverlayIds.TRACK_BAR)) assertTrue(o.isShown(OverlayIds.ROUTES), "the Routes chip hid before the activity chip at $at")
+    }
+
+    @Test
+    fun theActivityChipSitsUnderTheRoutesChipAndGoesFirst() = grid { i, o, at -> // T263
+        activityChipHolds(i, o, at)
+        val j = drawnFrom(i)
+        activityChipHolds(j, OverlayLayout.place(j), "drawn: $at")
+    }
+
+    @Test
+    fun theActivityChipIsShownOnACommonPhone() { // T263: upright and on its side, at 1.0 and 2.0, no card
+        for (landscape in listOf(false, true)) for (scale in listOf(1f, 2f)) {
+            val i = input(if (landscape) 915f else 412f, if (landscape) 412f else 915f, landscape, scale, 0, 1, false, true)
+            assertTrue(OverlayLayout.place(i).isShown(OverlayIds.ACTIVITY), "landscape $landscape scale $scale")
+            assertTrue(OverlayLayout.place(drawnFrom(i)).isShown(OverlayIds.ACTIVITY), "drawn: landscape $landscape scale $scale")
+        }
+    }
+
+    @Test
+    fun theActivityChipYieldsToAnOpenTrackPanelItLeavesShort() { // T263: landscape at 2.0, the picker open under the bar
+        val i = drawnFrom(input(915f, 412f, true, 2f, 0, 1, false, true)).copy(trackPanel = 300f)
+        val o = OverlayLayout.place(i)
+        assertEquals(OverlayLayout.REASON_NO_ROOM, o[OverlayIds.ACTIVITY]?.reason)
+        val without = OverlayLayout.place(i.copy(activity = null))
+        assertEquals(without.trackRoom, o.trackRoom, "the panel gets the room it had before the chip")
+        assertEquals(emptyList(), o.overlaps())
+        // A short panel leaves the chip in place.
+        assertTrue(OverlayLayout.place(i.copy(trackPanel = 10f)).isShown(OverlayIds.ACTIVITY))
     }
 
     @Test
@@ -147,7 +194,8 @@ class OverlayLayoutTest {
     @Test
     fun cardsYieldBeforeAnythingIsHidden() {
         // A warning that would take the whole band scrolls, and the buttons and the scale bar stay.
-        val i = input(393f, 851f, false, 2f, 2, 3, false, true).let { it.copy(warning = it.warning!!.copy(natural = 2000f)) }
+        // T263: without the activity chip, which as a chip keeps its room before the ladder walks (here it costs the lock).
+        val i = input(393f, 851f, false, 2f, 2, 3, false, true).let { it.copy(warning = it.warning!!.copy(natural = 2000f), activity = null) }
         val o = OverlayLayout.place(i)
         assertEquals(OverlayState.COMPACT, o[OverlayIds.WARNING_CARD]?.state)
         assertEquals(OverlayLayout.REASON_SCROLLS, o[OverlayIds.WARNING_CARD]?.reason)

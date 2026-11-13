@@ -424,6 +424,7 @@ object MapLayout {
     val RULED: Set<String> = setOf(
         OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.LOCK,
         OverlayIds.SCALE_BAR, OverlayIds.STRIP,
+        OverlayIds.ACTIVITY, // T263: the activity chip, under the Routes chip
     ).mapTo(LinkedHashSet()) { OverlayIds.NAMES.getValue(it) }
 
     /** T241: the [control] nodes' sizes and rectangles; T239: and the rule's placement of them. Main thread. */
@@ -624,6 +625,7 @@ object MapLayout {
             trackBar = barSize?.let { OverlaySize(it.width / d, rowPx / d) },
             trackPanel = barSize?.let { (it.height - rowPx).coerceAtLeast(0) / d } ?: 0f,
             routes = dp(c.sizeOf(nameOf(OverlayIds.ROUTES))),
+            activity = dp(c.sizeOf(nameOf(OverlayIds.ACTIVITY))), // T263
             compass = if (turned) CompassView.sizePx()?.let { OverlaySize(it[0] / d, it[1] / d) } else null,
             scaleBar = dp(c.sizeOf(nameOf(OverlayIds.SCALE_BAR))),
             strip = if (stripUp) StripLayout.entrySizesPx.map { OverlaySize(it[0] / d, it[1] / d) } else emptyList(),
@@ -738,6 +740,7 @@ object MapLayout {
         out += seen(OverlayIds.ONLINE, null)
         out += seen(OverlayIds.TRACK_BAR, null)
         out += seen(OverlayIds.ROUTES, null)
+        out += seen(OverlayIds.ACTIVITY, null) // T263
         val compass = compassTarget
         out += CompassView.boundsPx()?.let { Seen(OverlayIds.COMPASS, it, SHOWN, null) }
             ?: gone(OverlayIds.COMPASS, if (turned && compass?.hidden == true) compass.reason ?: OverlayLayout.REASON_NO_ROOM else "mapFacingNorth")
@@ -787,7 +790,7 @@ object MapLayout {
     fun topChromeDp(density: Float): List<List<Float>>? {
         val search = controls.lastRectOf(nameOf(OverlayIds.SEARCH)) ?: return null
         val bands = listOfNotNull(search, controls.lastRectOf(nameOf(OverlayIds.SETTINGS_ROW)))
-        val rects = listOf(OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.NAV_CARD).mapNotNull { controls.lastRectOf(nameOf(it)) }
+        val rects = listOf(OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY, OverlayIds.NAV_CARD).mapNotNull { controls.lastRectOf(nameOf(it)) }
         return topChrome(bands, rects, rootSize()[0], insetsPx()[1], density)
     }
 

@@ -220,10 +220,18 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         // T172: recording per activity; the four choice rows edit the remembered activity's profile.
         SettingsRow.TRACK_ACTIVITY -> {
             val a = AppSettings.trackActivity
-            Setting(row.label, "what Record starts with, and the activity the rows below set", help = "settings.trackActivity") {
+            Setting(row.label, TRACK_ACTIVITY_LINE, help = "settings.trackActivity") { // T263: the app's current activity
                 for (x in Activity.entries) Option(RecordingProfiles.label(x), a == x) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.TRACK_ACTIVITY, x)) }
             }
         }
+        // T263: Record asks which activity, or starts with the current one.
+        SettingsRow.RECORD_ASK_ACTIVITY -> {
+            val on = AppSettings.recordAskActivity
+            Setting(row.label, RECORD_ASK_ACTIVITY_LINE, help = "settings.recordAskActivity") {
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.RECORD_ASK_ACTIVITY, it)) }
+            }
+        }
+        // end T263
         SettingsRow.TRACK_ACCURACY -> {
             val p = AppSettings.trackProfile()
             Setting(row.label, "${RecordingProfiles.label(p.activity)}: fixes less accurate than this are kept but marked, and left out of the distance", help = "settings.trackAccuracy") {
@@ -430,6 +438,10 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
 }
 
 /** T213: the Show trail disagreements row's line under its title (ADR 0031 string). */
+// T263: the activity rows' lines (ADR 0031: the owner's to adjust).
+internal const val TRACK_ACTIVITY_LINE = "what you are doing now, shown on the map's activity chip: Record and new routes start from it, and the rows below set its recording"
+internal const val RECORD_ASK_ACTIVITY_LINE = "Record shows the activities first; off, it starts at once with the current activity"
+// end T263
 internal const val SHOW_DIVERGENCE_LINE = "where your recorded tracks keep leaving the mapped trail, worked out on this phone"
 
 /** T203: the Estimate position row's line under its title (ADR 0031 string). */
@@ -673,9 +685,18 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         },
         // T172: the recording rows
         HelpText("settings.trackActivity", "Activity", at(SettingsGroup.NAVIGATION, "Recording: Activity"), show = page(SettingsGroup.NAVIGATION)) {
-            "Record asks how you travel and remembers the answer for next time. Each activity keeps its own accuracy limit, " +
-                "auto-pause, network location and interval: the rows below change the settings of the activity chosen here."
+            // T263: the app's current activity (the map's chip), not only the recording's.
+            "What you are doing now, also on the map's activity chip: the readout, the turn-back time and a new route's " +
+                "mode follow it, and Record starts with it. Each activity keeps its own accuracy limit, auto-pause, network " +
+                "location and interval: the rows below change those of the activity chosen here."
         },
+        // T263
+        HelpText("settings.recordAskActivity", "Ask which activity", at(SettingsGroup.NAVIGATION, "Ask which activity when a recording starts"), show = page(SettingsGroup.NAVIGATION)) {
+            "On, Record first shows the activities, with the current one marked, and a tap starts the recording. Off, " +
+                "Record starts at once with the current activity, the one the map's activity chip shows; change it there " +
+                "or on the recording panel."
+        },
+        // end T263
         HelpText("settings.trackAccuracy", "Accuracy limit", at(SettingsGroup.NAVIGATION, "Recording: Accuracy limit"), show = page(SettingsGroup.NAVIGATION)) {
             "Every position is kept with its accuracy. Those less accurate than the limit are marked: they still show where " +
                 "you were, but they do not add to the distance or the climb. Off counts every position, which suits flying."

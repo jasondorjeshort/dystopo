@@ -7,14 +7,19 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -170,10 +175,18 @@ object RecordingProfiles {
  * that activity's profile and becomes the remembered one (synced, `app.trackActivity`; T161's readout reads it). The same
  * panel changes a track's activity afterwards: the recording one's (which then records with that activity's profile and
  * remembers it) from the recording panel, any other's from the Tracks list (the profile it was recorded with is kept).
+ *
+ * T263: the remembered activity is the app's current activity, its mode. The map's activity chip
+ * ([io.github.jasondorjeshort.dystopo.app.activity.ActivityChip]) opens the panel for [MODE] (a choice changes the current
+ * activity and starts nothing), or while recording for the recording (as its activity line does). With "Ask which
+ * activity when a recording starts" off ([AppSettings.recordAskActivity]) Record starts at once with the current activity
+ * ([openForRecord]). The panel scrolls within the room the layout rule leaves the track bar, so in landscape at font scale
+ * 2.0 every choice and Cancel can be reached by a tap (T253's finding).
  */
 object ActivityPicker {
-    /** What the picker opens for: [NEW] (Record was tapped), or a track's id. */
+    /** What the picker opens for: [NEW] (Record was tapped), [MODE] (T263: the activity chip), or a track's id. */
     const val NEW = "new"
+    const val MODE = "mode"
 
     /** Null: closed. Compose state, main thread. */
     var target by mutableStateOf<String?>(null)
@@ -188,11 +201,55 @@ object ActivityPicker {
     @Volatile var lastChoice: Map<String, Any?>? = null
         private set
 
-    /** Opens the picker for a new recording, the remembered activity marked (main thread). */
+    /** T263: the activity chip opened the panel, unfolding the track bar if [unfolded]; [close] folds it again. */
+    var openedByChip by mutableStateOf(false)
+        private set
+    private var unfolded = false
+
+    /**
+     * T263: a recording started by Record without the picker, for the panel to ask what a new recording asks once (the
+     * notification permission, the battery exemption); the panel takes it ([ActivityPickerPanel]).
+     */
+    var startedUnasked by mutableStateOf(false)
+        internal set
+
+    /**
+     * Opens the picker for a new recording, the remembered activity marked (main thread). T263: with the ask setting off,
+     * starts the recording at once with the current activity instead.
+     */
     fun openForRecord() {
+        if (!AppSettings.recordAskActivity) {
+            close()
+            val app = DystopoApp.instance
+            val a = AppSettings.trackActivity
+            startedUnasked = true
+            Thread { choose(app, NEW, a) }.start()
+            return
+        }
         target = NEW
         targetName = null
         marked = AppSettings.trackActivity
+    }
+
+    /**
+     * T263: the activity chip's tap (main thread): the picker for the current activity, or while recording for the
+     * recording's, under the track bar, which unfolds for it and folds again when the panel closes.
+     */
+    fun openForMode() {
+        val ui = TrackingUiState.ui
+        val id = ui.activeId
+        if (ui.recording && id != null) openForTrack(id, ui.activeName ?: "", ui.activeActivity)
+        else {
+            target = MODE
+            targetName = null
+            marked = AppSettings.trackActivity
+        }
+        TrackBar.listOpen = false
+        if (!TrackBar.open) {
+            TrackBar.open = true
+            unfolded = true
+        }
+        openedByChip = true
     }
 
     /** Opens the picker for a stored track (main thread). */
@@ -206,11 +263,15 @@ object ActivityPicker {
         target = null
         targetName = null
         marked = null
+        if (openedByChip && unfolded && TrackBar.open) TrackBar.open = false // T263: the bar folds back as it was
+        openedByChip = false
+        unfolded = false
     }
 
     /** The remembered activity becomes [a] (through the settings, so it syncs). Off the main thread. */
     fun remember(app: DystopoApp, a: Activity) {
         if (AppSettings.trackActivity != a) SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok.of(AppSettings.TRACK_ACTIVITY, a))
+        android.os.Handler(android.os.Looper.getMainLooper()).post { io.github.jasondorjeshort.dystopo.app.activity.ActivityChipUiState.current = a } // T263: the chip at once
     }
 
     /**
@@ -218,7 +279,11 @@ object ActivityPicker {
      * Returns what happened, for the route.
      */
     fun choose(app: DystopoApp, target: String, a: Activity): Map<String, Any?> {
-        val result: Map<String, Any?> = if (target == NEW) {
+        val result: Map<String, Any?> = if (target == MODE) {
+            // T263: the chip's choice: the current activity changes; nothing starts.
+            remember(app, a)
+            linkedMapOf("mode" to true, "activity" to a.code, "routeMode" to io.github.jasondorjeshort.dystopo.app.activity.ActivityMode.routeMode(a).label)
+        } else if (target == NEW) {
             // T229: before the tracker is ready the Record chip says "Starting", this waits, then starts once (Tracking.once).
             val s = Tracking.once(app) { t -> remember(app, a); t.start(null, Tracking.Mode.ALL, a) }
                 ?: return linkedMapOf("started" to null, "refused" to "a recording is already starting")
@@ -239,9 +304,15 @@ object ActivityPicker {
         "marked" to marked?.code, "remembered" to AppSettings.trackActivity.code,
         "choices" to Activity.entries.map { linkedMapOf("activity" to it.code, "label" to RecordingProfiles.label(it)) },
         "lastChoice" to lastChoice,
+        "openedByChip" to openedByChip, // T263
+        "chip" to io.github.jasondorjeshort.dystopo.app.activity.ActivityChip.json(), // T263
     )
 
-    private fun title(): String = if (target == NEW) "Record as" else "Activity of ${targetName ?: "this track"}"
+    internal fun title(): String = when (target) {
+        NEW -> "Record as"
+        MODE -> "Activity" // T263
+        else -> "Activity of ${targetName ?: "this track"}"
+    }
 
     private val trackActivityPath = Regex("^/tracks/([0-9a-fA-F-]{36})/activity$")
 
@@ -249,8 +320,12 @@ object ActivityPicker {
      * T172 debug routes, consulted by [io.github.jasondorjeshort.dystopo.app.TrackRoutes] first:
      * - `GET /tracks/picker`: the panel (`open`, `target`: `new` or a track id, `title`, `marked`, `remembered`, `choices`
      *   with their labels, `lastChoice`).
-     * - `POST /tracks/picker?open=new|<track id>|close`: opens it as the Record chip does (`new`) or as a track's activity
-     *   line does, or closes it; `POST /tracks/picker/choose?activity=foot|bike|road|rail|boat|air` taps a choice.
+     * - `POST /tracks/picker?open=new|mode|<track id>|close`: opens it as the Record chip does (`new`; T263: with the ask
+     *   setting off that starts the recording at once, as Record does), as the activity chip does (`mode`, T263: the
+     *   current activity, or while recording the recording's), or as a track's activity line does, or closes it;
+     *   `POST /tracks/picker/choose?activity=foot|bike|road|rail|boat|air` taps a choice.
+     * - T263: `GET /tracks/picker` also reports `openedByChip` and `chip` (the chip's `activity`, `label`, `description`,
+     *   `recording`, `current`, the new route's `routeMode` and `askOnRecord`).
      * - `POST /tracks/{id}/activity?activity=`: changes a track's activity (the recording one also takes that activity's
      *   profile and makes it the remembered one).
      */
@@ -260,6 +335,7 @@ object ActivityPicker {
             val open = r.query["open"]?.trim().orEmpty()
             when (open) {
                 "", NEW -> app.map.onMain { TrackBar.open = true; openForRecord() }
+                MODE -> app.map.onMain { openForMode() } // T263: as the activity chip's tap
                 "close" -> app.map.onMain { close() }
                 else -> {
                     val t = Tracking.of(app) // T229: only for a track's activity; opening it to record needs no tracker
@@ -291,25 +367,39 @@ object ActivityPicker {
 
 /**
  * T172: the picker's panel under the track chips, while [ActivityPicker.target] is set: a title ("Record as", or "Activity
- * of <track>"), the six activities with the marked one filled, and Cancel. [onRecordStarted]: what a new recording asks
- * once (the notification permission, the battery exemption), from [TrackControls], which holds the permission's launcher.
+ * of <track>"; T263: "Activity" from the activity chip, with its help), the six activities with the marked one filled, and
+ * Cancel. [onRecordStarted]: what a new recording asks once (the notification permission, the battery exemption), from
+ * [TrackControls], which holds the permission's launcher; T263: also for a recording Record started without the picker.
+ *
+ * T263 (T253's finding): the panel scrolls within the height the layout rule leaves the track bar's column, so in
+ * landscape at font scale 2.0, where that room is less than the panel, every choice and Cancel are reached by a scroll and
+ * a tap; it is no taller than its content otherwise.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ActivityPickerPanel(onRecordStarted: () -> Unit) {
+    if (ActivityPicker.startedUnasked) {
+        LaunchedEffect(Unit) {
+            ActivityPicker.startedUnasked = false
+            onRecordStarted()
+        }
+    }
     val target = ActivityPicker.target ?: return
     val app = DystopoApp.instance
+    val scroll = rememberScrollState()
     Column(
-        Modifier.widthIn(max = 300.dp).background(PickerPaper, RoundedCornerShape(8.dp)).padding(10.dp),
+        Modifier.widthIn(max = 300.dp).background(PickerPaper, RoundedCornerShape(8.dp))
+            .verticalScroll(scroll, enabled = scroll.maxValue > 0).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        BasicText(
-            if (target == ActivityPicker.NEW) "Record as" else "Activity of ${ActivityPicker.targetName ?: "this track"}",
-            style = TextStyle(color = PickerInk, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(ActivityPicker.title(), style = TextStyle(color = PickerInk, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+            if (target == ActivityPicker.MODE) io.github.jasondorjeshort.dystopo.app.help.HelpIcon("activity.chip") // T263
+        }
         if (target == ActivityPicker.NEW) {
             BasicText("Sets the recording's accuracy limit, auto-pause and interval; change them in Settings.", style = TextStyle(color = PickerMuted, fontSize = 11.sp))
         }
+        if (target == ActivityPicker.MODE) BasicText(MODE_LINE, style = TextStyle(color = PickerMuted, fontSize = 11.sp)) // T263
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (a in Activity.entries) {
                 val on = a == ActivityPicker.marked
@@ -333,9 +423,20 @@ internal fun ActivityPickerPanel(onRecordStarted: () -> Unit) {
     }
 }
 
+/** T263: under "Activity" when the chip opened the panel (ADR 0031: the owner's to adjust). */
+internal const val MODE_LINE = "What you are doing now: the readout, the turn-back time and new routes follow it."
+
 private val PickerInk = Color(0xFF2B2420)
 private val PickerMuted = Color(0xFF6B5A4A)
 private val PickerPaper = Color(0xEEFFFCF5)
 private val PickerAccent = Color(0xFF7A4E2D)
 private val PickerLine = Color(0xFFE2D8C6)
 private val PickerLink = Color(0xFF2C7BB6)
+
+/** T263: the chip's help, beside the picker's title when the chip opened it. */
+internal val ACTIVITY_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("activity.chip", "Activity", "The map, the activity chip", needs = "the activity chip's picker open", show = { ActivityPicker.openForMode() }) {
+        "The chip under Routes shows what you are doing now. The readout, the turn-back time and a new route's mode follow " +
+            "it, and Record starts with it. Tap the chip to change it; while recording it changes the recording's activity."
+    },
+)

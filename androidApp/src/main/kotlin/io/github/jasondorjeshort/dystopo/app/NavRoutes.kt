@@ -79,7 +79,8 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `flips`), the clock, the card's `ui`, `shownOnCard`, `layout.cardPx`, and the `alerts` and `spoken` line of this
  *   recording (`POST /tracks/wayback` moves the anchor; `TrackRoutes.kt`).
  * - T276: `route=current` brings the route card's kind (`source.tripKind`, `source.tripKindReason`); `GET /nav` has
- *   `tripKind` (`everyday`, `backcountry`, or null for a kept trip, a saved route, a track or a file). An everyday route
+ *   `tripKind` (`everyday`, `backcountry`, or null for a saved route, a track or a file; T278: a kept trip's stored kind,
+ *   absent read as by its mode and a ride as backcountry, so a kept Walk or Drive is everyday). An everyday route
  *   is navigated without the turn-back clock (`turnAround` null, no tone, buzz or spoken line), the next water (`water`
  *   null, no markers) and the next terrain shade (`shadeAlong` null); the card shows none of them.
  *   T193, `turnDeadline=terrain`: the clock counts to the sun behind the terrain at the line's end (in free tracking at

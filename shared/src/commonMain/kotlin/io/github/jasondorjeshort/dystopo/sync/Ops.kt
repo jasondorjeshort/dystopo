@@ -31,7 +31,8 @@ enum class EntityKind(val code: Int) {
         // T60: `path` (RoutePath.encode) and `waypoints` (RouteWaypoints.encode) are the route's shape and waypoints;
         // T65: `wpt:<id>` is one waypoint (RouteOps.encodeWaypoint; null = removed), so concurrent waypoint edits merge;
         // T108: `directions` (RouteDirections.encode) are the turn directions for one path value (builds before T108 ignore it).
-        private val ROUTE_FIELDS = FieldSet(setOf("name", "description", "comment", "type", "extensions", "path", "waypoints", "directions"), RouteOps.WAYPOINT_FIELD_PREFIX)
+        // T278: `tripKind` (TripKind.key) is the kind the trip was kept as; builds before T278 keep it in the log and ignore it.
+        private val ROUTE_FIELDS = FieldSet(setOf("name", "description", "comment", "type", "extensions", "path", "waypoints", "directions", "tripKind"), RouteOps.WAYPOINT_FIELD_PREFIX)
         private val SETTING_FIELDS = FieldSet(setOf("value"))
     }
 }

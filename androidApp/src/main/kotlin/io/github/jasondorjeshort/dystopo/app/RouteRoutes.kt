@@ -11,7 +11,8 @@ import io.github.jasondorjeshort.dystopo.routing.TripKind
 /**
  * Debug routes for offline route planning (T45; registered with one line in [Routes]):
  * - `POST /route?from=lat,lon&to=lat,lon[&mode=hike|bike|drive|crow][&name=][&wait=ms][&profile=1]`: plans on the
- *   active pack's trail graph (building it on first use; waits up to `wait`, default 120000 ms) and
+ *   active pack's trail graph (building it on first use; waits up to `wait`, default 120000 ms; T263: without `mode=`, the
+ *   current activity's, as a new route on the map) and
  *   shows it on the map like a long-press pair would. 200 with the route, 422 with `error` and
  *   `message` when there is none (off the network, not connected), 503 while the graph is not ready. T255: a failure's
  *   `reason` is the ends' coverage (`vector`, `tiles-only`, `no-map`); at an end no vector archive covers, the card's
@@ -65,6 +66,14 @@ import io.github.jasondorjeshort.dystopo.routing.TripKind
  * not move). An everyday route's `card.lines` are all `none` with `everyday` true, and `water`, `exposure`, `bestStart`
  * and `pastEffort` answer `state` `everyday`. `POST /route/mode?chip=walk|hike|bike|drive|line[&wait=1]` taps a chip as
  * the card does: Walk and Hike on a route on foot change only its kind (nothing is planned again).
+ * T278, Trip details: `GET /route` has `tripDetails`: `shown` (the row is drawn: a backcountry route, or an everyday Bike as
+ * its override), `open` (the per-device key `tripDetailsOpen`, through the settings registry, not synced), `override`
+ * (the row on an everyday Bike, whose lines are computed only while it is open), `summary` (the row's line from what has
+ * answered now: "3 water crossings · steepest slope 38 degrees", "Working out water and terrain", or "Water, terrain and
+ * start time" for lines not worked out), `drawnSummary` (as the row last drew it; null while open), `title`. While the row
+ * is folded `water`, `exposure`, `bestStart` and `pastEffort` answer as before T278 (the water list's own disclosure,
+ * `POST /route/water?open=`, unchanged). `POST /route/details?open=1|0` opens or folds the row as a tap does and stores it;
+ * answers `tripDetails`.
  * - `POST /route/more?open=1|0`: opens or closes the card's three-dot overflow (a tap on it); answers `card`.
  * - `POST /route/lines?holdMs=<n>`: the next water and terrain computations wait `n` ms first (0 clears), so the working
  *   state can be read and viewed; answers `holdMs`. An answer already computed for the same points still shows at once.
@@ -129,7 +138,7 @@ object RouteRoutes {
             "POST" to "/route" -> {
                 val (fromLat, fromLon) = latLon(r.query["from"]) ?: return bad("from=lat,lon required")
                 val (toLat, toLon) = latLon(r.query["to"]) ?: return bad("to=lat,lon required")
-                val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be ${TravelMode.labels}") } ?: TravelMode.HIKE
+                val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be ${TravelMode.labels}") } ?: RouteSession.newRouteMode() // T263: the activity's
                 // T276: the kind a tap on Walk or Hike would hold; without it the planner guesses (on foot).
                 val kind = r.query["kind"]?.let { TripKind.of(it) ?: return bad("kind must be everyday or backcountry") }
                 if (kind != null && mode != TravelMode.HIKE) return bad("kind= is for mode=hike (Walk or Hike); the other modes have their own kind")
@@ -154,6 +163,11 @@ object RouteRoutes {
                 }
             }
             "GET" to "/route" -> Response.json(current(app, r.query["profile"] == "1", r.query["wait"]?.toLongOrNull()?.coerceIn(0, 60_000) ?: 10_000))
+            "POST" to "/route/details" -> { // T278: the Trip details row, as a tap on it
+                val open = when (r.query["open"]) { "1", "true" -> true; "0", "false" -> false; else -> return bad("open=1|0 required") }
+                app.map.onMain { io.github.jasondorjeshort.dystopo.app.routing.TripDetails.setOpen(open) }
+                Response.json(io.github.jasondorjeshort.dystopo.app.routing.TripDetails.json())
+            }
             "POST" to "/route/more" -> { // T217: the card's three-dot overflow
                 val open = when (r.query["open"]) { "1", "true" -> true; "0", "false" -> false; else -> return bad("open=1|0 required") }
                 app.map.onMain { RouteSession.moreOpen = open }
@@ -262,6 +276,7 @@ object RouteRoutes {
         "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to pastEffort(RouteSession.plan, waitMs), // T184; T276
         "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(RouteSession.plan?.route?.points, RouteSession.plan?.mode, exposureOpen(app), waitMs), // T195
         "bestStart" to io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart.json(RouteSession.plan, waitMs), // T209
+        "tripDetails" to io.github.jasondorjeshort.dystopo.app.routing.TripDetails.json(), // T278: after the waits above, so its summary has their answers
     )
 
     /** T276: `pastEffort`, not computed for the session's everyday route (`state` `everyday`). */
