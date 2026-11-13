@@ -142,6 +142,9 @@ class HelpRegistryTest {
             // T209: the route card's start-time line.
             "route.bestStart",
             // end T209
+            // T276: the route card's Walk and Hike chips.
+            "route.kind",
+            // end T276
             // T213: the trail disagreements' switch and the long-press card's lines.
             "settings.showDivergence", "longPress.divergence",
             // end T213
