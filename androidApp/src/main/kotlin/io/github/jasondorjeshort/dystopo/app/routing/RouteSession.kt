@@ -642,7 +642,7 @@ object RouteSession {
         // T276: the kind beside the mode (`everyday`, `backcountry`; null on foot while planning), why (`mode`, `share`,
         // `tap`, `unknown`), the share in town it was guessed from, the chip lit and the chips drawn, a held tap.
         "tripKind" to tripKind?.key, "tripKindReason" to kindReason?.key, "townShare" to townShare?.let { Math.round(it * 1000) / 1000.0 },
-        "townShareThreshold" to TripKinds.threshold(mode), // T278: a bike's own "chip" to chip?.key, "chips" to RouteChip.entries.map { it.key },
+        "townShareThreshold" to TripKinds.threshold(mode), "chip" to chip?.key, "chips" to RouteChip.entries.map { it.key }, // T278: the mode's threshold
         "tapped" to tappedKind?.key,
         // T276: the computations an everyday route must not start (unchanged while one is shown).
         "computed" to linkedMapOf("water" to RouteWater.computed, "exposure" to RouteExposure.computed, "bestStart" to RouteBestStart.computed),
