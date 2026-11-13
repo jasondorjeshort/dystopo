@@ -1,37 +1,36 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-11 17:00 UTC, by main session (v0.1.27-alpha published; the second half waits for the reset)
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32, `out/wave32-research/` [no-check: gitignored].
+Updated: 2026-11-13 05:45 UTC, at commit 252bde0d, by main session (wave 32's second half launched)
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
+"Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
 
 ## Now
 
-- **v0.1.27-alpha published** 2026-11-11 (tag on 5d7b641d, versionCode 1501): wave 32's first half; sweep
-  `out/sweep-20261111-1012` [no-check: gitignored] green.
-- **Wave 32 first half** (launched 2026-11-10 17:40 UTC on the owner's go; plan 298987de, fixes 93636d62; research
-  and the critic's report in `out/wave32-research/` [no-check: gitignored]): **T271, T262, T264, T269, T272, T265,
-  T274 and T275 merged** (log entries of 2026-11-10 and -11). Nothing runs. Per-agent costs: the cost finding's wave 32 line.
+- **Wave 32's second half runs** (the owner's go, 2026-11-13; re-planned after a second critic, 252bde0d): nine tasks
+  in two lanes. **T276** (lane A) and **T267** (lane B) are with their implementers on `task/T276` and `task/T267`; no
+  report yet. The 7-day meter read 1 at the launch (reset 2026-11-13; the next is 2026-11-20 04:00 UTC).
+- The live viewer is wanted and runs from the installed distribution (`out/coordinator-pids.txt`).
 - Rules: no force push (merge `main` in); a push on its own line; an LZW error in a cached DEM cell is a stale range
-  cache (T269); a sweep part can lose its emulator after a guard reboot (one rerun; T273).
+  cache (T269); the tour's offline step flaked for T262 and T264 (one rerun before a FIX).
 
 ## Next
 
-1. Finish T275's cleanup: `dystopo-wt/T275` is held open by a process (find it by PID, not by name), then
-   `worktree prune`, `branch -d task/T275`, AVD `dystopo35-T275`.
-2. Wave 32's second half after the 7-day reset (read it fresh; 2026-11-14 03:00 UTC on this account, 75 at 13:35 UTC
-   on 11-11, 80 on 11-12): **T276 first** (the owner's priority for the next release, 2026-11-12: an everyday route
-   hides the backcountry lines), then **T277** (the profile's Close hidden on the owner's phone; the owner wants it in the next release too), T263, T266, T268, T267, T270, T273, then a sweep and a release.
-3. The owner removes the empty `C:\c` folder T264's first tilebuild run left (the safety check refused the agent).
+1. Each implementer's report gets a Sonnet verifier (`brief` skill, `verifier.md`), then the merge sequence.
+2. Lane A after T276: **T277**, then the **early release**: once T276 and T277 have merged and lane B's running task
+   has merged, launch nothing, run the sweep, publish the alpha (the owner's two priority fixes).
+3. Then lane A: T278, T263, T266, T268. Lane B after T267: T273, then T270 only after T263 has merged.
+4. The closing sweep and alpha, the wave's close (the allowance sentence's reading, the record chore).
 
 ## Waiting on user
 
+- The owner closes whatever window sits in the empty folder `dystopo-wt/T275` (its branch and AVD are gone), then
+  removes the folder; and removes the empty `C:\c` folder T264's first tilebuild run left.
 - Answered 2026-11-11 (`docs/TASKS.md` › Owner actions pending, "Answered 2026-11-11", and Later's first entry).
 - The owner's-eye items of wave 31's merges (ADR 0031, the record's Status lines) and the real-phone checks of
-  v0.1.26-alpha: the owner reads them "soon enough".
-- The daily-limit research is in (`out/wave32-research/daily-limit-and-openfreemap.md` [no-check: gitignored]):
-  OpenFreeMap's terms cap each download at 3,000 tiles or 50 MB, which a split would evade; asked the owner to
-  chose both (cap direct mode now: Later's first entry; the owner emails them); the daily limit is 1 GB. The 0054 glacier detail (permanent snow without a
-  mapped glacier) when its ADR is written.
+  v0.1.26-alpha and v0.1.27-alpha: the owner reads them "soon enough".
+- OpenFreeMap's terms cap each download at 3,000 tiles or 50 MB (Later's first entry; the owner emails them); the
+  0054 glacier detail (permanent snow without a mapped glacier) when its ADR is written.
 
 ## Open findings
 
