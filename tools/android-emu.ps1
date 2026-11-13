@@ -50,6 +50,21 @@
 # -Accel off still tries, for experiments. -Gpu picks the emulator GPU at boot (default: host when there is a
 # hardware GPU; swiftshader draws no MapLibre text or dashes). To change it, -Stop the AVD and boot again;
 # the app is reinstalled and the packs re-pushed on every run (a GPU mode change can wipe the app).
+#
+# T273, snapshots (docs/reference/android-emulator.md, Snapshots): every boot is a cold boot (-no-snapshot-load
+# -no-snapshot-save: no Quick Boot load at the start, no save at the exit; a console save still works). -SnapshotSave
+# <name> saves the emulator as <name> at the end of the run (after the install and the push, or after the boot with
+# -BootOnly, so -BootOnly -SnapshotSave on a running emulator saves without installing anything), the app stopped first
+# so no process with a stale token or debug port is restored. -SnapshotLoad <name> loads it into the running emulator
+# instead of booting, reads the console's OK or KO, reconnects adb when it stays offline, and skips the install and the
+# push: the guest's disk is the snapshot's, so whatever was installed, imported or downloaded after the save is gone,
+# and a caller that needs more installs and seeds it after the load. A KO exits 3: the snapshot is missing or no longer
+# matches the emulator, the image or the AVD; save it again. An app that does not start within 120 s after the load
+# exits 4 (a stuck guest was saved: reboot, save again on a quiet guest, a few minutes after the boot). After a boot and after a load the script waits for the
+# guest's storage (the package manager and a writable /sdcard) before it installs anything or exits.
+#
+#   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo35-T273 -EmuPort 5574 -Port 8698 -BootOnly -SnapshotSave clean
+#   powershell -ExecutionPolicy Bypass -File tools\android-emu.ps1 -Avd dystopo35-T273 -EmuPort 5574 -Port 8698 -SnapshotLoad clean
 param(
     [string]$Avd = 'dystopo35',
     [string]$SystemImage = 'system-images;android-35;google_apis;x86_64',
@@ -116,7 +131,13 @@ param(
     [double]$PrivateLimitGB = 0,
     [double]$FreeFloorGB = 0,
     [double]$BootCostGB = 0,
-    [int]$RamWaitMinutes = 5
+    [int]$RamWaitMinutes = 5,
+    # T273: save the emulator as this snapshot at the end of the run (the app stopped first).
+    [string]$SnapshotSave = '',
+    # T273: load this snapshot into the running emulator instead of booting it, then launch the app (no install, no push).
+    [string]$SnapshotLoad = '',
+    # T273: the longest wait for the guest's storage after a boot or a load.
+    [int]$StorageWaitSeconds = 180
 )
 $ErrorActionPreference = 'Stop'
 # T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
@@ -130,6 +151,8 @@ $env:ANDROID_SDK_ROOT = $sdk
 if ($AvdHome) { $env:ANDROID_AVD_HOME = [IO.Path]::GetFullPath($AvdHome) }
 elseif (-not $env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME = Join-Path $sdk 'avd' }
 if ($Delete -and -not $Stop) { throw '-Delete goes with -Stop' }
+foreach ($n in @($SnapshotSave, $SnapshotLoad | Where-Object { $_ })) { if ($n -notmatch '^[\w.-]+$') { throw "a snapshot name is letters, digits, '.', '_' or '-' (got '$n')" } }
+if (($SnapshotSave -or $SnapshotLoad) -and ($NoEmulator -or $Stop -or $Forward)) { throw '-SnapshotSave and -SnapshotLoad go with an emulator, not with -NoEmulator, -Stop or -Forward' }
 if ($Api -gt 0) { $SystemImage = "system-images;android-$Api;google_apis;x86_64" }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
 $emulator = Join-Path $sdk 'emulator\emulator.exe'
@@ -450,6 +473,52 @@ function Stop-EmulatorGuard($id) {
     else { Write-Warning "guard pid $id now runs something else; left alone" }
 }
 
+# T273: the guest's storage after a boot or a load. sys.boot_completed can come before the package manager answers and
+# before /sdcard (FUSE) takes writes: wave 32's features part failed once at install-map on "Permission denied" right
+# after a reboot. Polls both every second, up to -StorageWaitSeconds. Returns nothing (progress is output, T65).
+function Wait-GuestStorage {
+    $t = Get-Date
+    $probe = '/sdcard/Android/data/.dystopo-storage-probe'
+    $tries = 0
+    while ($true) {
+        $tries++
+        $pm = (Adb shell pm path android) -join ' '
+        $w = (Adb shell "touch $probe && rm $probe && echo writable") -join ' '
+        if ($pm -match 'package:' -and $w -match 'writable') { break }
+        if (((Get-Date) - $t).TotalSeconds -gt $StorageWaitSeconds) {
+            throw "the guest's storage was not ready $StorageWaitSeconds s after sys.boot_completed (pm path android: '$($pm.Trim())'; a write to /sdcard/Android/data: '$($w.Trim())')"
+        }
+        Start-Sleep -Seconds 1
+    }
+    Write-Host ("guest storage ready {0:n1} s after sys.boot_completed ({1} poll(s): the package manager and a writable /sdcard)" -f ((Get-Date) - $t).TotalSeconds, $tries)
+}
+# T273: a console snapshot command and its reply; returns @{ Ok; Reply; Seconds }, Ok only on an OK without a KO line.
+function Invoke-EmuSnapshot([string]$verb, [string]$name) {
+    $t = Get-Date
+    $reply = @(Adb emu avd snapshot $verb $name | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $ko = @($reply | Where-Object { $_ -match '^KO' })
+    @{ Ok = (-not $ko.Count -and ($reply -contains 'OK')); Reply = ($reply -join ' | '); Seconds = ((Get-Date) - $t).TotalSeconds }
+}
+# T273: an adb call with a deadline (a job; $null when it did not end in time). After a load the guest answered adb and
+# sys.boot_completed but then did not start the app for 2 to 6 minutes in 2 of 22 loads measured (snapshots saved on a
+# busy or a stuck guest), so the first app start after a load is bounded.
+function Invoke-AdbWithin([int]$seconds, [string[]]$argv) {
+    $j = Start-Job -ScriptBlock { param($adb, $s, $a) & $adb -s $s @a 2>&1 | ForEach-Object { "$_" } } -ArgumentList $adb, $script:serial, $argv
+    $done = Wait-Job $j -Timeout $seconds
+    $out = if ($done) { @(Receive-Job $j -ErrorAction SilentlyContinue) } else { $null }
+    if (-not $done) { Stop-Job $j }
+    Remove-Job $j -Force
+    $out
+}
+# T273: saves the emulator as $SnapshotSave with the app stopped (its token and debug port would belong to the restored
+# process). A KO throws.
+function Save-EmuSnapshot {
+    Adb shell am force-stop $package | Out-Null
+    $r = Invoke-EmuSnapshot 'save' $SnapshotSave
+    if (-not $r.Ok) { throw "snapshot save '$SnapshotSave' failed: $($r.Reply)" }
+    Write-Host ("snapshot '$SnapshotSave' saved in {0:n1} s (the app stopped; -SnapshotLoad $SnapshotSave relaunches it)" -f $r.Seconds)
+}
+
 # 0. -Stop: kill this AVD's emulator and drop its forward.
 if ($Stop) {
     if ($NoEmulator) { throw '-Stop applies to emulators only' }
@@ -644,7 +713,9 @@ if ($NoEmulator) {
             $Gpu = if ($hw) { 'host' } else { 'swiftshader_indirect' }
             Write-Host ("gpu: $Gpu" + $(if ($hw) { " ($($hw[0].Name))" } else { ' (no hardware GPU found; MapLibre text and dashes will not draw)' }))
         }
-        $emuArgs = @('-avd', $Avd, '-port', $consolePort, '-no-window', '-gpu', $Gpu, '-no-audio', '-no-boot-anim', '-no-snapshot-save',
+        if ($SnapshotLoad) { throw "-SnapshotLoad $SnapshotLoad loads into a running emulator; $Avd does not run (boot it first)" }
+        # T273: -no-snapshot-load: a cold boot, never a Quick Boot from an earlier exit; a console save still works.
+        $emuArgs = @('-avd', $Avd, '-port', $consolePort, '-no-window', '-gpu', $Gpu, '-no-audio', '-no-boot-anim', '-no-snapshot-load', '-no-snapshot-save',
             '-memory', "$Memory", '-cores', "$Cores") + $accelArgs
         if ($Locale) { $emuArgs += @('-change-locale', $Locale) }
         if ($NetSpeed) { $emuArgs += @('-netspeed', $NetSpeed) }
@@ -671,10 +742,40 @@ Write-Host "device: $script:serial"
 
 $deadline = (Get-Date).AddMinutes($BootTimeoutMinutes)
 $started = Get-Date
+$script:loaded = $false
+if ($SnapshotLoad) {
+    # T273: the load. The qemu process stays (its lock and its guard keep watching it); adb can go offline for a moment.
+    $r = Invoke-EmuSnapshot 'load' $SnapshotLoad
+    if (-not $r.Ok) {
+        Write-Host "snapshot load KO: '$SnapshotLoad' on $script:serial ($($r.Reply)): it is missing or no longer matches the emulator, the image or the AVD; save it again (-SnapshotSave $SnapshotLoad)"
+        exit 3
+    }
+    Write-Host ("snapshot '$SnapshotLoad' loaded in {0:n1} s" -f $r.Seconds)
+    $script:loaded = $true
+    $deadline = (Get-Date).AddMinutes(5)
+}
+$reloads = 0
+$lastLoad = Get-Date
 Write-Host 'waiting for sys.boot_completed'
 while ($true) {
     $booted = (Adb shell getprop sys.boot_completed) -join ''
     if ($booted.Trim() -eq '1') { break }
+    if ($script:loaded -and ((Get-Date) - $lastLoad).TotalSeconds -gt 15) {
+        # T273: adb offline after a load (a pitfall the research names). Measured here: offline for minutes, and an
+        # adb reconnect did not bring it back; the same load again did, within 2 s. So the load again, twice at most,
+        # then one adb reconnect.
+        if ($reloads -lt 2) {
+            $reloads++
+            Write-Host "adb: $script:serial not back 15 s after the load ($(((Get-AdbDevices)[$script:serial]))); loading '$SnapshotLoad' again ($reloads of 2)"
+            $r = Invoke-EmuSnapshot 'load' $SnapshotLoad
+            if (-not $r.Ok) { Write-Host "snapshot load KO on the retry: $($r.Reply)"; exit 3 }
+        } elseif ($reloads -eq 2) {
+            $reloads++
+            Write-Host "adb: $script:serial not back after two loads; adb reconnect"
+            Native $adb -s $script:serial reconnect | Out-Null
+        }
+        $lastLoad = Get-Date
+    }
     if ($proc -and -not $script:emuLockPid) { Update-EmulatorLockPid $script:emuLock ([int]($script:serial -replace 'emulator-', '')) }
     if ($proc -and $proc.HasExited) {
         $tail = if (Test-Path $log) { (Get-Content $log -Tail 10) -join "`n" } else { '' }
@@ -689,7 +790,28 @@ if (-not $NoEmulator) {
     $name = Get-EmuAvdName $script:serial
     if ($name -ne $Avd) { throw "$script:serial runs AVD '$name', not '$Avd'" }
 }
-Write-Host ("booted after {0:n0} s" -f ((Get-Date) - $started).TotalSeconds)
+if ($script:loaded) {
+    # T273: a VM the load left paused is resumed. The guest clock: without -no-snapshot-update-time the emulator corrects
+    # it after a load, but not always at once (measured: 0 to 1 s off at sys.boot_completed in most loads, once the
+    # snapshot's age, 47 min, behind), so it is polled until within 5 s of the host's, up to 60 s.
+    $status = (Adb emu avd status | Select-Object -First 1) -join ''
+    if ($status -notmatch 'running') { Write-Host "after the load: '$($status.Trim())'; avd start"; Adb emu avd start | Out-Null }
+    $bootS = ((Get-Date) - $started).TotalSeconds
+    $tc = Get-Date
+    $skew0 = $null
+    while ($true) {
+        $g = ((Adb shell date +%s) -join '').Trim()
+        $skew = if ($g -match '^\d+$') { [double]$g - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } else { [double]::NaN }
+        if ($null -eq $skew0) { $skew0 = $skew }
+        if ([math]::Abs($skew) -le 5) { break }
+        if (((Get-Date) - $tc).TotalSeconds -gt 60) { Write-Warning ("the guest clock is still {0:n0} s off the host's 60 s after the load" -f $skew); break }
+        Start-Sleep -Seconds 1
+    }
+    Write-Host ("sys.boot_completed {0:n1} s after the load ({1} repeat load(s)); guest clock {2:n0} s off the host's at first, {3:n0} s after {4:n0} s" -f $bootS, [math]::Min($reloads, 2), $skew0, $skew, ((Get-Date) - $tc).TotalSeconds)
+} else {
+    Write-Host ("booted after {0:n0} s" -f ((Get-Date) - $started).TotalSeconds)
+}
+Wait-GuestStorage # T273
 # Animations off: faster, and screenshots never catch a transition.
 foreach ($k in 'window_animation_scale', 'transition_animation_scale', 'animator_duration_scale') { Adb shell settings put global $k 0 | Out-Null }
 Adb shell svc power stayon true | Out-Null
@@ -704,17 +826,22 @@ if (-not $NoEmulator) {
 }
 if ($Locale) { Write-Host ("locale: " + ((Adb shell getprop persist.sys.locale) -join '').Trim()) }
 if ($BootOnly) {
+    if ($SnapshotSave) { Save-EmuSnapshot } # T273
     Write-Host "ANDROID_SERIAL=$script:serial (boot only: nothing installed)"
     exit 0
 }
 
 # 3. Install (-g grants the location permission, so the app shows no dialog), push the pack, launch.
-Write-Host "installing $Apk"
-$install = Adb install -r -g $apkPath
-if (($install -join ' ') -notmatch 'Success') { throw "install failed: $install" }
+# T273: after a load the app, its preferences and the packs are the snapshot's: nothing is installed or pushed.
+if ($script:loaded) { Write-Host "after the load: no install, no push (the guest's disk is snapshot '$SnapshotLoad')" }
+else {
+    Write-Host "installing $Apk"
+    $install = Adb install -r -g $apkPath
+    if (($install -join ' ') -notmatch 'Success') { throw "install failed: $install" }
+}
 Adb shell am force-stop $package | Out-Null
 $serverValue = if ($Server -eq 'none') { '' } else { $Server }
-if ($Server) {
+if ($Server -and -not $script:loaded) {
     # T105: a fresh install has no preferences yet; write the server into them before the first start, so the app never
     # asks the default server for anything. An install that has them gets the setting through the debug route below.
     $prefs = (Adb shell "run-as $package ls shared_prefs/dystopo-settings.xml") -join ' '
@@ -729,7 +856,7 @@ if ($Server) {
         Write-Host "server before the first start: $(if ($serverValue) { $serverValue } else { 'none' })"
     }
 }
-if (-not $NoPush) {
+if (-not $NoPush -and -not $script:loaded) {
     & (Join-Path $PSScriptRoot 'android-push-pack.ps1') -Dem $Dem -Osm $Osm -Package $package -Serial $script:serial -Name $PackName
 }
 
@@ -737,7 +864,13 @@ if (-not $NoPush) {
 $taken = @(Get-Forwards | Where-Object { $_.Port -eq $Port -and $_.Serial -ne $script:serial })
 if ($taken) { throw "host port $Port is already forwarded to $($taken[0].Serial); pick another -Port" }
 Adb logcat -c | Out-Null
-Adb shell am start -W -n $activity | Out-Null
+if ($script:loaded) {
+    # T273: bounded after a load; a guest that does not start the app is not used.
+    if ($null -eq (Invoke-AdbWithin 120 @('shell', 'am', 'start', '-W', '-n', $activity))) {
+        Write-Host "the app did not start within 120 s after the load of '$SnapshotLoad': the snapshot's guest is stuck; stop the emulator and boot it again, then save the snapshot again on a quiet guest"
+        exit 4
+    }
+} else { Adb shell am start -W -n $activity | Out-Null }
 $token = Connect-DebugServer # T57: random debug port and token from logcat
 
 $url = "http://localhost:$Port"
@@ -758,6 +891,7 @@ if ($Server -and $token) {
     $set = Invoke-RestMethod -Method Post -TimeoutSec 30 -Headers @{ 'X-Dystopo-Token' = $token } "$url/settings?server=$([uri]::EscapeDataString($serverValue))"
     Write-Host "server: $(if ($set.server) { $set.server } else { 'none' })"
 }
+if ($SnapshotSave) { Save-EmuSnapshot; Write-Host "the app is stopped for the snapshot: the token below is gone (-Forward after the next launch)" } # T273
 $stopArgs = if ($NoEmulator) { '' } else { "-Avd $Avd -EmuPort $($script:serial -replace 'emulator-', '') -Port $Port" + $(if ($AvdHome) { " -AvdHome $env:ANDROID_AVD_HOME" } else { '' }) + " -Stop [-Delete]" }
 Write-Host ''
 Write-Host "ANDROID_SERIAL=$script:serial"

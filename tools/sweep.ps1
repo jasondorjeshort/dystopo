@@ -572,6 +572,14 @@ function Ensure-Emulator([string]$before) {
         return @{ Ok = $false; Note = $script:emuBroken }
     }
     $line = "rebooted $serial before ${before}: $why; stopped and booted again in $([math]::Round($sw.Elapsed.TotalSeconds)) s with the 60 s wait$(if ($fails.Count) { " (after $($fails -join '; '))" }), private $(Format-Gb $after)"
+    # T273: android-emu.ps1 waits for the guest's storage (the package manager and a writable /sdcard) before it returns,
+    # so the next part's install and push find it ready (features failed once at install-map on "Permission denied"
+    # right after a reboot); its line goes on the reboot's. A snapshot load is not the sweep's path: measured in T273, a
+    # load leaves the emulator 0.3 to 0.8 GB over a reboot's level and undoes the guest's disk (finding
+    # docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md), so the reboot stays.
+    $storage = @(Get-Content "$log.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match '^guest storage ready' }) | Select-Object -Last 1
+    if ($storage) { $line += "; $($storage.Trim())" }
+    # end T273
     Add-Content -Encoding ascii (Join-Path $dev 'emu-reboots.log') "$(Get-Date -Format s) $line"
     Write-Host "[sweep] $line"
     @{ Ok = $true; Note = $line }
