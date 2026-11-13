@@ -34,7 +34,7 @@ none) through `POST /tracks/import`, and `--dem`/`--osm` copy the packs to `file
 the phone's copy differs in size; then the device's load is waited out (`android_debug.wait_quiet`). `--budget` compares
 the medians with the file's ceilings (`budget`: one row per stage and frame, `red` and its `reasons`) and exits 1 when a
 median is over its ceiling or a stage shows an undeclared StrictMode kind; a stage missing from the run or from the file
-is listed, not red. `--set-budget` writes the file from one or two reports (`make_budget`, `ceiling`: the larger median
+is listed, not red. `--set-budget` writes the file from the reports of several sweeps (`make_budget`, `ceiling`: the largest median
 times 1.25, and never under it plus 16 ms, `FLOOR_MS`); lower a ceiling by
 hand in the commit that lands an improvement, never raise one without a line in the dated log.
 """
@@ -231,7 +231,7 @@ def make_budget(reports, sources, date, factor=FACTOR, old=None):
                  "first frame and the map drawn, against the medians of tools/android-startup.py --launches 5 (cold, a seeded "
                  "store) in the sweep's startup part; a median over its ceiling, or a StrictMode kind a stage's declared work "
                  "does not allow, turns the part red.",
-        "rule": "Set by android-startup.py --set-budget from the medians of two sweeps: the larger times the factor, rounded "
+        "rule": "Set by android-startup.py --set-budget from the medians of sweeps (the first ceilings: three sweeps of 2026-11-13): the largest times the factor, rounded "
                 "up to whole ms, and never under that median plus floorMs (one frame at 60 Hz; a stage of a few ms swings by "
                 "more than a quarter of itself). Lower a ceiling by hand in the commit that lands an improvement; never raise "
                 "one without a line in the dated log. A renamed stage keeps its ceiling through aliases, {old name: new name}.",
