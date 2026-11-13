@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-13 21:45 UTC, at commit bb4ff4a8, by main session (T279 merged; T270 with its verifier)
+Updated: 2026-11-13 23:20 UTC, at commit e0a74fc1, by main session (all ten tasks merged; the closing sweep launching)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
 "Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
 
@@ -9,21 +9,21 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 - **v0.1.28-alpha is published** (2026-11-13 11:26 UTC, tag on 2a84ae01): the early release, T276 and T277. The
   sweep before it was green without a rerun (`out/sweep-20261113-0446`, the next release's `-Prev`).
-- **T267, T278, T263, T266, T268, T273 and T279 are merged** after the release (their Status lines); all ship in
-  the closing alpha. T279 (added from T273's verifier) fixed empty tile files served as hits; the sweep tour after a
-  forced reboot is green again. **T270** (lane B, 5574 / 8698, `task/T270` at 149f2270) is with its verifier, which
-  runs `a11y` after the parts before it (the baseline was taken alone). Scratchpad: `briefs/`, `Tnn-verify/`.
-  Meter 13 at 20:31 UTC. A red `startup` or `a11y` part is read before any rerun; the sweep keeps `-EmuRebootGB 6`.
+- **Every task of the wave is merged**: T267, T278, T263, T266, T268, T273, T279 and T270 after the release (their
+  Status lines), all shipping in the closing alpha, v0.1.29-alpha. **The closing sweep** runs through a Sonnet agent
+  (`-Prev out\sweep-20261113-0446`, default ports): no commit to `main` while it runs (the version code is the
+  commit count). New parts since the last green sweep: `startup` (T268) and `a11y` (T270); a red one is read before
+  any rerun. The tour's offline step was red once at two verifiers on the world view at z5 (green on retry).
 - The live viewer is wanted (`out/coordinator-pids.txt`). Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with
   `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
 
 ## Next
 
-1. Each implementer's report gets a Sonnet verifier (`brief` skill, `verifier.md`), then the merge sequence.
-2. T270 is the last task (it may need `main` merged in: T279 added a line to `android-debug-routes.md`). The key is refused
-   to task agents: no brief asks for `android-ui.py upgrade`; the closing sweep runs it (T278's kept trips ride on it).
-3. The closing sweep (`-Prev out\sweep-20261113-0446`) and alpha, the wave's close (the allowance sentence's reading,
-   the record chore).
+1. The sweep's summary and sheets read; green: the `release` skill (cut the changelog, tag v0.1.29-alpha, the
+   draft checked by a Sonnet agent, notes after `scratchpad/release/notes.md`, publish, `gh release view`).
+2. The release key is refused to task agents; the sweep and the draft check run their scripts in the main checkout.
+3. The wave's close: README status, the allowance sentence's reading (meter 13 at 20:31 UTC; 1 at planning), the
+   Later lines from the Status lines, the record chore (`docs/tasks/wave-32.md`).
 
 ## Waiting on user
 
