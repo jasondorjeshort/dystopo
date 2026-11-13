@@ -11,7 +11,8 @@ import io.github.jasondorjeshort.dystopo.routing.TripKind
 /**
  * Debug routes for offline route planning (T45; registered with one line in [Routes]):
  * - `POST /route?from=lat,lon&to=lat,lon[&mode=hike|bike|drive|crow][&name=][&wait=ms][&profile=1]`: plans on the
- *   active pack's trail graph (building it on first use; waits up to `wait`, default 120000 ms) and
+ *   active pack's trail graph (building it on first use; waits up to `wait`, default 120000 ms; T263: without `mode=`, the
+ *   current activity's, as a new route on the map) and
  *   shows it on the map like a long-press pair would. 200 with the route, 422 with `error` and
  *   `message` when there is none (off the network, not connected), 503 while the graph is not ready. T255: a failure's
  *   `reason` is the ends' coverage (`vector`, `tiles-only`, `no-map`); at an end no vector archive covers, the card's
@@ -137,7 +138,7 @@ object RouteRoutes {
             "POST" to "/route" -> {
                 val (fromLat, fromLon) = latLon(r.query["from"]) ?: return bad("from=lat,lon required")
                 val (toLat, toLon) = latLon(r.query["to"]) ?: return bad("to=lat,lon required")
-                val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be ${TravelMode.labels}") } ?: TravelMode.HIKE
+                val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be ${TravelMode.labels}") } ?: RouteSession.newRouteMode() // T263: the activity's
                 // T276: the kind a tap on Walk or Hike would hold; without it the planner guesses (on foot).
                 val kind = r.query["kind"]?.let { TripKind.of(it) ?: return bad("kind must be everyday or backcountry") }
                 if (kind != null && mode != TravelMode.HIKE) return bad("kind= is for mode=hike (Walk or Hike); the other modes have their own kind")

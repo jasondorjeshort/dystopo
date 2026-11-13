@@ -251,9 +251,9 @@ object RouteSession {
      * [wait] on the calling thread (the debug route; never the main thread), so the answer already holds the plan.
      */
     fun routeTo(lat: Double, lon: Double, wait: Boolean = false, travel: TravelMode? = null, newRoute: Boolean = true) {
-        if (newRoute) newRoute(null) // T276: a new route guesses its kind again (Your location re-plans the same one)
+        val fresh = if (newRoute) newRoute(null) else null // T276: a new route guesses its kind again (Your location re-plans the same one)
         val token = waitToken.incrementAndGet()
-        val t = travel ?: mode
+        val t = travel ?: fresh ?: mode // T263: a new route in the activity's mode
         if (travel != null) ui { mode = travel }
         val job = { routeToNow(token, RouteOrigin.End(lat, lon), t) }
         if (wait) job() else worker.execute(job)
@@ -497,10 +497,17 @@ object RouteSession {
         changeMode(c.mode, wait)
     }
 
-    /** T276: a new route (not a re-plan of this one): [kind] is `POST /route`'s `kind=` (a tap), null to guess again. */
-    fun newRoute(kind: TripKind?) {
+    /**
+     * T276: a new route (not a re-plan of this one): [kind] is `POST /route`'s `kind=` (a tap), null to guess again. T263:
+     * it opens in the current activity's mode ([newRouteMode]); a mode chosen on the card holds for this route's re-plans.
+     */
+    fun newRoute(kind: TripKind?): TravelMode {
         tappedKind = kind
+        return newRouteMode().also { m -> ui { mode = m } }
     }
+
+    /** T263: the mode a new route opens in, from the app's current activity (on foot Hike, read as Walk or Hike by the guess). */
+    fun newRouteMode(): TravelMode = io.github.jasondorjeshort.dystopo.app.activity.ActivityMode.routeMode(AppSettings.trackActivity)
 
     fun changeMode(travel: TravelMode, wait: Boolean = false) {
         val s = fromEnd

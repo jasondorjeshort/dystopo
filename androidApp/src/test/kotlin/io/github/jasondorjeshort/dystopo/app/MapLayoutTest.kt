@@ -456,4 +456,50 @@ class MapLayoutTest {
             assertTrue(placed[OverlayIds.STRIP]?.rect != null, "edgeToEdge=$edgeToEdge: the strip has room above the panels")
         }
     }
+
+    /**
+     * T263: the activity chip on both window kinds (T277's recipe: the rule works in the Compose root's coordinates), upright
+     * and on its side at font scales 1.0 and 2.0: under the settings row, the track bar and the Routes chip, at the chips'
+     * right edge, inside the root and clear of the track panels drawn at the bottom.
+     */
+    @Test
+    fun theActivityChipSitsUnderTheRoutesChipOnBothWindowKinds() {
+        for (edgeToEdge in listOf(false, true)) for (landscape in listOf(false, true)) for (scale in listOf(1f, 2f)) {
+            val w = if (landscape) 914f else 411f
+            val h = if (landscape) 411f else 914f
+            val window = floatArrayOf(w, h)
+            val bars = if (landscape) floatArrayOf(0f, 24f, 48f, 0f) else floatArrayOf(0f, 49f, 0f, 24f)
+            val content = if (edgeToEdge) floatArrayOf(0f, 0f, w, h) else floatArrayOf(0f, bars[1], w - bars[2], h - bars[3])
+            val (root, ins) = MapLayout.ruleFrame(window, content, bars)
+            val k = if (scale > 1f) 1.3f else 1f // the chips' capped font scale (MapChrome)
+            val panels = MapLayout.panelsRect(root[0], root[1], 100f, 40f)
+            val input = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
+                windowWidth = root[0], windowHeight = root[1],
+                insetLeft = ins[0], insetTop = ins[1], insetRight = ins[2], insetBottom = ins[3],
+                fontScale = scale,
+                search = io.github.jasondorjeshort.dystopo.ui.OverlaySize(io.github.jasondorjeshort.dystopo.ui.OverlayLayout.SEARCH_WIDTH, 48f * k),
+                topRow = io.github.jasondorjeshort.dystopo.ui.OverlaySize(190f * k, 40f * k),
+                credit = io.github.jasondorjeshort.dystopo.ui.OverlaySize(380f, 30f * k),
+                trackBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(160f * k, 40f * k),
+                routes = io.github.jasondorjeshort.dystopo.ui.OverlaySize(70f * k, 36f * k),
+                activity = io.github.jasondorjeshort.dystopo.ui.OverlaySize(78f * k, 36f * k),
+                scaleBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(80f, 28f),
+                strip = List(2) { io.github.jasondorjeshort.dystopo.ui.OverlaySize(72f, 40f) },
+                buttons = 1,
+                panels = panels,
+                cardsDrawn = true,
+            )
+            val at = "edgeToEdge=$edgeToEdge landscape=$landscape scale=$scale"
+            val placed = io.github.jasondorjeshort.dystopo.ui.OverlayLayout.place(input)
+            assertTrue(placed.overlaps().isEmpty(), "$at: ${placed.overlaps()}")
+            val chip = placed[OverlayIds.ACTIVITY]?.rect
+            assertTrue(chip != null, "$at: the activity chip is shown")
+            val routes = placed[OverlayIds.ROUTES]!!.rect!!
+            val row = placed[OverlayIds.SETTINGS_ROW]!!.rect!!
+            assertTrue(chip.top >= routes.bottom && chip.top >= row.bottom, "$at: $chip under Routes $routes and the settings row $row")
+            assertTrue(kotlin.math.abs(chip.right - routes.right) < 0.01f, "$at: $chip at the chips' edge with Routes $routes")
+            assertTrue(chip.top >= ins[1] && chip.bottom <= root[1] - ins[3] && chip.right <= root[0] - ins[2], "$at: $chip inside the root $root less its insets")
+            assertTrue(chip.bottom <= panels!!.top, "$at: $chip clear of the track panels $panels")
+        }
+    }
 }

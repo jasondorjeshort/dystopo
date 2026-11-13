@@ -61,6 +61,8 @@ data class OverlayInput(
     val online: OverlaySize? = null,
     val trackBar: OverlaySize? = null,
     val routes: OverlaySize? = null,
+    /** T263: the activity chip, under the Routes chip in the chips' column (the app's current activity; a tap opens the picker). */
+    val activity: OverlaySize? = null,
     val compass: OverlaySize? = null,
     val scaleBar: OverlaySize? = null,
     val strip: List<OverlaySize> = emptyList(),
@@ -143,6 +145,9 @@ object OverlayIds {
     const val SCALE_BAR = "scaleBar"
     const val COMPASS = "compass"
 
+    /** T263: the activity chip; added after the inventory was drawn up, so it has no M-number and keeps a name of its own. */
+    const val ACTIVITY = "activityChip"
+
     /** The inventory's rows each element holds, and the name `GET /layout` prints beside the id. */
     val CONTROLS: Map<String, List<String>> = mapOf(
         SETTINGS_ROW to listOf("M1", "M2"), SEARCH to (3..7).map { "M$it" }, ONLINE to (8..10).map { "M$it" },
@@ -156,6 +161,7 @@ object OverlayIds {
         ROUTES to "routesChip", TRIP_CARD to "tripCard", PLANNING_CARD to "planningCard", NAV_CARD to "navigationCard",
         WARNING_CARD to "warningCard", LOCK to "lockButton", ORIENTATION to "orientationButton", POSITION to "positionButton",
         STRIP to "readoutStrip", CREDIT to "creditLine", UPDATE_CARD to "updateCard", SCALE_BAR to "scaleBar", COMPASS to "compass",
+        ACTIVITY to "activityChip", // T263
     )
 }
 
@@ -174,7 +180,7 @@ object OverlayIds {
  *   the pressure), the scale bar, the readout's entries from the end of their drawn order with the elevation last, and
  *   (centred only) the position button.
  *   The ladder is global: a rung is taken for the whole screen, so the order holds where the two sides are short apart too.
- * - The Waypoint and Tracks bar, the Routes chip, the compass and the online indicator keep their size while they fit
+ * - The Waypoint and Tracks bar, the Routes chip, (T263) the activity chip, the compass and the online indicator keep their size while they fit
  *   and hide rather than sit under a card or the credit line; they do not wait for the ladder.
  * - A window under [COMPACT_HEIGHT] dp tall (a phone on its side, Material's compact height) keeps the chips and the
  *   buttons in a column of their own at the right and the cards in the rest, side by side when one stack does not hold
@@ -373,7 +379,7 @@ object OverlayLayout {
         if (i.navigation != null && i.planning != null) hidden(OverlayIds.PLANNING_CARD, REASON_NAVIGATING)
         // A window on its side: a column of its own at the right for the chips and the buttons, and the cards in the rest,
         // side by side when one stack does not hold their least. Headlines that still do not fit take the chips' width too.
-        val chipsW = max(max(i.trackBar?.width ?: 0f, i.routes?.width ?: 0f), max(i.compass?.width ?: 0f, COLUMN - EDGE)) + EDGE
+        val chipsW = max(max(i.trackBar?.width ?: 0f, max(i.routes?.width ?: 0f, i.activity?.width ?: 0f)), max(i.compass?.width ?: 0f, COLUMN - EDGE)) + EDGE
         val side = held?.sideColumn ?: (i.windowHeight < COMPACT_HEIGHT && safeR - safeL - chipsW >= MIN_MAIN)
         val heldTwo = held?.let { it.cardColumns == 2 } // T239: the latch
         fun twoColumns(all: List<CardIn>, roomW: Float) = side && all.size >= 2 && stack(all) { it.card.least } > bodyH && roomW >= MIN_CARD_COLUMN * 2 + GAP
@@ -421,6 +427,7 @@ object OverlayLayout {
         // The Routes chip sits under the bar, in the app's own clamp too: without the bar it hides with it.
         if (i.trackBar == null || chips.isNotEmpty()) tryChip(OverlayIds.ROUTES, i.routes)
         else if (i.routes != null) hidden(OverlayIds.ROUTES, REASON_NO_ROOM) // also with the chips' width gone
+        tryChip(OverlayIds.ACTIVITY, i.activity) // T263: under the Routes chip, before the compass
         tryChip(OverlayIds.COMPASS, i.compass)
         val online = i.online?.takeIf { o -> o.width <= columnW && band(o) + GAP + (if (side) 0f else reserve) <= free }
         if (i.online != null && online == null) hidden(OverlayIds.ONLINE, REASON_NO_ROOM)
@@ -557,7 +564,7 @@ object OverlayLayout {
         val warning = cards.firstOrNull { it.first == OverlayIds.WARNING_CARD }?.second?.drawn
         val below = cards.filter { it.first != OverlayIds.NAV_CARD && it.first != OverlayIds.WARNING_CARD }.map { it.second.drawn!! } + listOfNotNull(i.panels)
 
-        val chipsW = max(max(i.trackBar?.width ?: 0f, i.routes?.width ?: 0f), max(i.compass?.width ?: 0f, COLUMN - EDGE)) + EDGE
+        val chipsW = max(max(i.trackBar?.width ?: 0f, max(i.routes?.width ?: 0f, i.activity?.width ?: 0f)), max(i.compass?.width ?: 0f, COLUMN - EDGE)) + EDGE
         val side = held?.sideColumn ?: (i.windowHeight < COMPACT_HEIGHT && safeR - safeL - chipsW >= MIN_MAIN)
         val columnLeft = safeR - chipsW
         fun crossesRight(r: OverlayRect) = r.right > columnLeft && r.left < safeR
@@ -588,6 +595,7 @@ object OverlayLayout {
         val barShown = tryChip(OverlayIds.TRACK_BAR, row)
         // The Routes chip sits under the bar: without the bar it hides with it.
         if (row == null || barShown) tryChip(OverlayIds.ROUTES, i.routes) else if (i.routes != null) hidden(OverlayIds.ROUTES, REASON_NO_ROOM)
+        tryChip(OverlayIds.ACTIVITY, i.activity) // T263: under the Routes chip, before the compass
         tryChip(OverlayIds.COMPASS, i.compass)
 
         // The online column at the main column's top; where it reaches the chips (upright, narrow), they go under it.
