@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-13 15:10 UTC, at commit 01f65a1a, by main session (T263 merged; T266 and T273 with implementers)
+Updated: 2026-11-13 15:10 UTC, at commit 01f65a1a, by main session (T263 merged; T266 with its implementer, T273 with its verifier)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
 "Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
 
@@ -10,11 +10,11 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 - **v0.1.28-alpha is published** (2026-11-13 11:26 UTC, tag on 2a84ae01): the early release, T276 and T277. The
   sweep before it was green without a rerun (`out/sweep-20261113-0446`, the next release's `-Prev`).
 - **T267, T278 and T263 are merged** (ae4da781, b118cab9, 01f65a1a), after the release: all ship in the closing
-  alpha. **T266** (lane A, `task/T266`, console 5570 / host 8694) and **T273** (lane B, `task/T273`, console 5574 /
-  host 8698) are with implementers. T268 and T270 wait. The 7-day meter read 7 at 15:02 UTC (reset 2026-11-20
-  04:00 UTC).
-- The live viewer is wanted and runs from the installed distribution (`out/coordinator-pids.txt`).
-- Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with
+  alpha. **T266** (lane A, `task/T266`, console 5570 / host 8694) is with its implementer. **T273** (lane B,
+  `task/T273` at 5f195e83, console 5574 / host 8698) is with its verifier: the sweep keeps rebooting, and its two
+  sweep-tour runs were red (0-byte elevation tiles under the sweep's server; the offline step under direct sources),
+  so the verifier takes a `main` baseline. T268 and T270 wait. The meter read 7 at 15:02 UTC (reset 2026-11-20).
+- The live viewer is wanted (`out/coordinator-pids.txt`). Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with
   `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
 
 ## Next
