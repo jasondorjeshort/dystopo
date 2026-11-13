@@ -614,7 +614,14 @@ object OverlayLayout {
         var trackRoom = 0f
         if (barShown && row != null) {
             val keep = max(if (i.buttons >= 1) BUTTON + GAP else 0f, reserve)
-            val left = (by - (chipTop + chipsH() + keep)).coerceAtLeast(0f)
+            var left = (by - (chipTop + chipsH() + keep)).coerceAtLeast(0f)
+            // T263: the activity chip yields to an open panel it would leave short (the picker it opens hangs there).
+            val activity = chips.indexOfFirst { it.first == OverlayIds.ACTIVITY }
+            if (activity >= 0 && i.trackPanel > left) {
+                chips.removeAt(activity)
+                hidden(OverlayIds.ACTIVITY, REASON_NO_ROOM)
+                left = (by - (chipTop + chipsH() + keep)).coerceAtLeast(0f)
+            }
             chips[0] = OverlayIds.TRACK_BAR to OverlaySize(row.width, row.height + min(i.trackPanel, left))
             trackRoom = row.height + left
         }

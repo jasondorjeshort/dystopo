@@ -108,6 +108,18 @@ class OverlayLayoutTest {
     }
 
     @Test
+    fun theActivityChipYieldsToAnOpenTrackPanelItLeavesShort() { // T263: landscape at 2.0, the picker open under the bar
+        val i = drawnFrom(input(915f, 412f, true, 2f, 0, 1, false, true)).copy(trackPanel = 300f)
+        val o = OverlayLayout.place(i)
+        assertEquals(OverlayLayout.REASON_NO_ROOM, o[OverlayIds.ACTIVITY]?.reason)
+        val without = OverlayLayout.place(i.copy(activity = null))
+        assertEquals(without.trackRoom, o.trackRoom, "the panel gets the room it had before the chip")
+        assertEquals(emptyList(), o.overlaps())
+        // A short panel leaves the chip in place.
+        assertTrue(OverlayLayout.place(i.copy(trackPanel = 10f)).isShown(OverlayIds.ACTIVITY))
+    }
+
+    @Test
     fun theRectanglesNeverIntersect() = grid { _, o, at ->
         assertEquals(emptyList(), o.overlaps(), at)
     }
