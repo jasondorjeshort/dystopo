@@ -482,7 +482,7 @@ class TileCache(
     val emptyDropped = AtomicLong()
     val emptyDroppedKept = AtomicLong()
 
-    /** T279: [put] syncs the temporary file before renaming it (false only to measure the cost, `POST /debug/cache/puts`). */
+    /** T279: [put] syncs the temporary file before renaming it (false only while `POST /debug/cache/fill?sync=0` times its cost). */
     @Volatile var syncWrites: Boolean = true
 
     init {
