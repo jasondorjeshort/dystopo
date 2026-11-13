@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-13 12:50 UTC, at commit ae4da781, by main session (T267 merged; T278 and T273 with implementers)
+Updated: 2026-11-13 13:50 UTC, at commit b118cab9, by main session (T278 merged; T263 and T273 with implementers)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
 "Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
 
@@ -9,9 +9,9 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 
 - **v0.1.28-alpha is published** (2026-11-13 11:26 UTC, tag on 2a84ae01): the early release, T276 and T277. The
   sweep before it was green without a rerun (`out/sweep-20261113-0446`, the next release's `-Prev`).
-- **T267 is merged** (ae4da781), after the release: it ships in the closing alpha. **T278** (lane A, `task/T278`,
-  console 5570 / host 8694) and **T273** (lane B, `task/T273`, console 5574 / host 8698) are with implementers.
-- Five tasks wait behind them. The 7-day meter read 4 at 11:00 UTC (reset 2026-11-20 04:00 UTC).
+- **T267 and T278 are merged** (ae4da781, b118cab9), after the release: both ship in the closing alpha. **T263**
+  (lane A, `task/T263`, console 5570 / host 8694) and **T273** (lane B, `task/T273`, console 5574 / host 8698) are
+  with implementers. Three tasks wait behind them. The 7-day meter read 6 at 13:36 UTC (reset 2026-11-20 04:00 UTC).
 - The live viewer is wanted and runs from the installed distribution (`out/coordinator-pids.txt`).
 - Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with
   `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
@@ -19,7 +19,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
 ## Next
 
 1. Each implementer's report gets a Sonnet verifier (`brief` skill, `verifier.md`), then the merge sequence.
-2. Lane A after T278: T263, T266, T268. Lane B after T273: T270, only after T263 has merged.
+2. Lane A after T263: T266, T268. Lane B after T273: T270, only after T263 has merged. The release key is refused
+   to task agents: no brief asks for `android-ui.py upgrade`; the closing sweep runs it (T278's kept trips ride on it).
 3. The closing sweep (`-Prev out\sweep-20261113-0446`) and alpha, the wave's close (the allowance sentence's reading,
    the record chore).
 

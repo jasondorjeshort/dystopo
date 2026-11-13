@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-13
 
+- T278: Trip details folded into one row on a backcountry route card; Walk or Hike kept with a saved trip and honoured when it is navigated; a bike route mostly on streets reads as everyday
 - T267: The online tile store leaves the cache directory, so Android's Clear cache and a low-storage trim no longer take kept maps; kept tiles can no longer be evicted before the kept areas have loaded
 
 ## v0.1.28-alpha (2026-11-13)
