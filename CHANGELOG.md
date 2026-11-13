@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.28-alpha (2026-11-13)
+
 ### 2026-11-13
 
 - T277: The track profile's Close is no longer covered on a phone whose window is not edge to edge; Close sits at the header's right edge, and a swipe down or Back closes the profile
