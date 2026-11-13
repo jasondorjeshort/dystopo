@@ -49,6 +49,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         walkHook = if (io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG_ENDPOINTS) indexHold(app) else null, // T242: POST /debug/cache/hold
         snapshot = true, // T249: tiles.index beside the tiles
         move = storeMove(app), // T267
+        pinsPending = true, // T267: Areas.attach brings the pins; nothing is evicted before
     )
     init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: after TileCache") } // T228
 

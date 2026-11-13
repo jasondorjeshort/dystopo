@@ -84,6 +84,8 @@ class TileCache(
     private val walker: TileWalker = TileWalker.forPlatform(),
     /** T267: where the store was before; moved into [dir] by the index's thread before the walk (the online cache's). */
     val move: TileStoreMove? = null,
+    /** T267: nothing is evicted until [attachPins] (the online cache's: the offline areas' pins come from `Areas.attach`). */
+    pinsPending: Boolean = false,
     /** Last, so the callers' trailing lambda is the clock (as before T242). */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -93,6 +95,33 @@ class TileCache(
 
     /** T75 hook: entries it says to keep (tiles of pinned areas of interest, `areas/Areas.kt`) are skipped by eviction. */
     @Volatile var keep: (String) -> Boolean = { io.github.jasondorjeshort.dystopo.app.areas.Areas.isPinned(it) }
+
+    /**
+     * T267: whether the pins are known ([attachPins]; true from the start without `pinsPending`). Until then nothing is
+     * evicted: [trim] does not run, [evictOldest] frees nothing, [oldestTouch] names nothing, and [clearWhere] waits for
+     * them (a kept tile read as unpinned in the first launch after the store's move, see [attachPins]). `GET /debug/cache`'s
+     * `pinsAttached` tells "pins not yet attached" from "nothing kept".
+     */
+    @Volatile var pinsAttached: Boolean = !pinsPending
+        private set
+    private val pinsLatch = CountDownLatch(if (pinsPending) 1 else 0)
+
+    /**
+     * T267: the pins arrive ([keep] set) and eviction may run; once the index is whole the pinned flags and counts are asked
+     * again ([recountPinned], on the index's thread or one of its own), not at the next launch, and the budget is told.
+     */
+    fun attachPins(keep: (String) -> Boolean) {
+        this.keep = keep
+        pinsAttached = true
+        pinsLatch.countDown()
+        whenReady("pins-recount") {
+            runCatching { recountPinned() }
+            onWrite?.invoke()
+        }
+    }
+
+    /** T267: waits (off the main thread, at most [WAIT_STALL_MS]) for [attachPins]; false when they did not come. */
+    private fun awaitPins(): Boolean = pinsAttached || (!onMain() && pinsLatch.await(WAIT_STALL_MS, TimeUnit.MILLISECONDS))
 
     /** T242: where the index is: being built from the directory, or whole. */
     enum class State { INDEXING, READY }
@@ -1075,7 +1104,7 @@ class TileCache(
      * returns the bytes freed (less when nothing else may go). The cache budget's eviction; [maxBytes] is untouched.
      */
     fun evictOldest(bytes: Long, eligible: (String) -> Boolean = { true }, spare: (String) -> Boolean = { false }, notAfter: Long = Long.MAX_VALUE): Long {
-        if (bytes <= 0) return 0
+        if (bytes <= 0 || !pinsAttached) return 0 // T267: nothing goes before the pins are known
         awaitReady("evictOldest")
         val victims = ArrayList<String>()
         var freed = 0L
@@ -1107,6 +1136,7 @@ class TileCache(
      * compares two caches with it to evict oldest-used first across both.
      */
     fun oldestTouch(eligible: (String) -> Boolean = { true }, spare: (String) -> Boolean = { false }): Long? {
+        if (!pinsAttached) return null // T267
         awaitReady("oldestTouch")
         var found: Long? = null
         synchronized(lock) {
@@ -1195,6 +1225,7 @@ class TileCache(
     fun clearWhere(chunk: Int = CLEAR_CHUNK, onChunk: ((deleted: Int, total: Int) -> Unit)? = null, matches: (String) -> Boolean): Int {
         require(chunk > 0) { "chunk $chunk" }
         awaitReady("clearWhere")
+        check(awaitPins()) { "TileCache.clearWhere before the pins were attached (${callerOf()})" } // T267: [matches] may ask [keep]
         val keys = ArrayList<String>()
         var from = 0
         while (true) {
@@ -1229,7 +1260,7 @@ class TileCache(
     }
 
     private fun trimIfOver() {
-        if (ready && total - pinnedTotal > maxBytes) trim()
+        if (ready && pinsAttached && total - pinnedTotal > maxBytes) trim() // T267: not before the pins are known
     }
 
     /**
@@ -1276,6 +1307,7 @@ class TileCache(
         "entries" to size, "bytes" to bytes, "maxBytes" to maxBytes, "pinnedBytes" to pinnedBytes, "pinnedEntries" to pinnedSize,
         "hits" to hits.get(), "misses" to misses.get(), "writes" to writes.get(), "evictions" to evictions.get(),
         "budgetEvictions" to budgetEvictions.get(), // T112
+        "pinsAttached" to pinsAttached, // T267: false: the pinned figures are not the offline areas' yet
         "index" to indexJson(), // T242
         "fromSnapshot" to fromSnapshot, "snapshot" to snapshotJson(), // T249
     ) + (moveJson() ?: emptyMap()) // T267: location, moveState, groupFixed, move

@@ -174,6 +174,24 @@ object Areas : VersionPins {
     private val unreadable = ArrayList<Map<String, Any?>>()
     private val coverMemo = HashMap<String, Map<Int, TileSet>>()
     private var loaded = false
+    /**
+     * T267: [load] has finished ([current] holds the records' pins). [loaded] is set at its start, so a lookup on another
+     * thread that read only [loaded] got [AreaPins.NONE] while the main thread was still reading the records: every kept
+     * tile asked then read as unpinned (the tile cache's first recount after its snapshot). The lookups below test this
+     * flag and otherwise wait for [load] to end ([awaitLoaded]; a latch, not [load]'s lock, which a lookup under the tile
+     * cache's lock must not wait on).
+     */
+    @Volatile private var ready = false
+    private val readyLatch = java.util.concurrent.CountDownLatch(1)
+    @Volatile private var loader: Thread? = null
+
+    /** T267: [load] run or waited for (at most 10 s; not on the thread inside it), so [current] holds the records' pins. */
+    private fun awaitLoaded() {
+        if (ready) return
+        if (!loaded) runCatching { load() }
+        if (!loaded || ready || loader === Thread.currentThread()) return // no app yet (unit tests), or the loader itself
+        runCatching { readyLatch.await(10, java.util.concurrent.TimeUnit.SECONDS) }
+    }
 
     /**
      * T87: loads this object, and so creates its Compose state ([list], [screenOpen]), on the main thread from
@@ -221,7 +239,7 @@ object Areas : VersionPins {
      * true for tiles of a pinned area (and of the segments ahead while navigating).
      */
     fun isPinned(key: String): Boolean {
-        if (!loaded) runCatching { load() } // before the app is up (unit tests) nothing is pinned
+        awaitLoaded() // before the app is up (unit tests) nothing is pinned; T267: the records read, not only begun
         return current.isPinned(key)
     }
 
@@ -234,7 +252,7 @@ object Areas : VersionPins {
      * navigation's transient pins, which have no row to link to. Takes no lock; any thread (the chip asks from a worker).
      */
     fun isRecorded(key: String): Boolean {
-        if (!loaded) runCatching { load() }
+        awaitLoaded()
         val all = list
         val memo = recordedPins
         val pins = if (memo != null && memo.first === all) memo.second else {
@@ -249,7 +267,7 @@ object Areas : VersionPins {
 
     /** T95 ([VersionPins]): the pins with their versions, for the fetcher's lookups and version changes. */
     override fun pins(): AreaPins {
-        if (!loaded) runCatching { load() }
+        awaitLoaded()
         return current
     }
 
@@ -300,6 +318,17 @@ object Areas : VersionPins {
         if (loaded) return
         dir // the app's files dir; throws before the app exists, leaving [loaded] false
         loaded = true
+        loader = Thread.currentThread()
+        try {
+            loadRecords()
+        } finally { // T267: the lookups waiting in awaitLoaded go on (with what was read, as before when it failed)
+            ready = true
+            loader = null
+            readyLatch.countDown()
+        }
+    }
+
+    private fun loadRecords() {
         // T140: both files (the sibling holds what a version-1 reader cannot parse), each record by version, kind, fields.
         fun text(f: File) = runCatching { f.takeIf { it.isFile }?.readText() }.onFailure { Log.w(TAG, "${f.name} unreadable", it) }.getOrNull()
         val files = AreaFiles.decode(text(file), text(sibling)) { what, e -> Log.w(TAG, what, e) }
@@ -320,8 +349,8 @@ object Areas : VersionPins {
     /** Installs the cache hook (called when the online service starts) and reads the records. */
     fun attach(service: OnlineService) {
         load()
-        service.cache.keep = ::isPinned
-        onPinsChanged = { service.cache.recountPinned() } // T91: pinned bytes have their own budget; T242: on its thread, once the index is whole
+        onPinsChanged = { service.cache.recountPinned() }
+        service.cache.attachPins(::isPinned) // T267: eviction waits for this; the pinned counts are taken again once the index is whole // T91: pinned bytes have their own budget; T242: on its thread, once the index is whole
         // T151: the cache's keys as rows, for coverage; T242: once the index is whole, on its thread (it walked the keys here on the main thread)
         service.cache.whenReady("areas-rows") { rowsOf(service.cache) }
         AheadPrefetch.start()

@@ -249,6 +249,34 @@ class TileStoreMoveTest {
         assertFalse(old.exists())
     }
 
+    /**
+     * The fix round's order: the move launch reads the snapshot and recounts the pins while the offline areas are still being
+     * read (keep answers false for every tile), and the pins arrive after. On e747c2ec the cache took `keep = ...` without a
+     * recount, so every kept tile read as unpinned until the next launch, and a cap under the kept bytes trimmed them. Now
+     * nothing is evicted before [TileCache.attachPins], which recounts once the index is whole.
+     */
+    @Test
+    fun keptTilesSurviveWhenThePinsArriveAfterTheSnapshot() {
+        val want = oldStore(120)
+        val kept = { k: String -> k.contains("/dem@v1/") }
+        val keptCount = want.keys.count(kept)
+        val c = TileCache(newDir, 1, snapshot = true, move = TileStoreMove(oldDir), pinsPending = true, clock = { now }).also { it.keep = { false }; it.awaitReady() }
+        waitFor { c.move!!.settled }
+        assertTrue(c.fromSnapshot)
+        assertFalse(c.pinsAttached)
+        assertEquals(false, c.json()["pinsAttached"], "GET /debug/cache tells pins not yet attached from nothing kept")
+        assertEquals(0, c.pinnedSize, "the areas not read yet: nothing reads as kept")
+        c.put("s_1/osm@o1/13/1300/2800.pbf", ByteArray(50)) // a write over a cap of one byte: no trim before the pins
+        assertEquals(0L, c.evictOldest(Long.MAX_VALUE), "the budget frees nothing before the pins")
+        assertNull(c.oldestTouch())
+        assertEquals(want.size + 1, c.size, "nothing evicted before the pins are known")
+        c.attachPins(kept)
+        waitFor { c.pinnedSize == keptCount }
+        assertEquals(want.filterKeys(kept).values.sumOf { it.size }.toLong(), c.pinnedBytes, "recounted at once, not at the next launch")
+        waitFor { c.size == keptCount } // the cap applies to the rest once the pins are known
+        for (k in want.keys.filter(kept)) assertTrue(File(newDir, k).isFile, "$k kept")
+    }
+
     private fun waitFor(what: () -> Boolean) {
         val until = System.currentTimeMillis() + 30_000
         while (!what()) {
