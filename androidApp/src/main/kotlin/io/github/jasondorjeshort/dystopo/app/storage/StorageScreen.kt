@@ -410,7 +410,7 @@ internal val STORAGE_HELP: List<HelpText> = run {
  * T267 (ADR 0060 W2): under the Online tiles row while the store is still in the cache (T249's sentence became this
  * state's): before the move has run, while a copy runs, and when it failed.
  */
-internal const val CLEAR_CACHE_LINE = "Kept maps are in the cache on this phone; Android's Clear cache would remove them"
+internal const val CLEAR_CACHE_LINE = "Kept maps are in the cache on this phone; Android's Clear cache would remove them."
 
 /** T267: the Online tiles row's line on Android's Clear cache: until the move is done (`moveState`), none after. */
 internal fun clearCacheLine(key: String, s: Map<String, Any?>): String? =

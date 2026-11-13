@@ -84,6 +84,6 @@ class StorageRowsTest {
         }
         assertNull(clearCacheLine(Storage.ONLINE, mapOf("moveState" to "done")))
         assertNull(clearCacheLine(Storage.PINNED, mapOf("moveState" to "copying")), "the Online tiles row only")
-        assertEquals("Kept maps are in the cache on this phone; Android's Clear cache would remove them", CLEAR_CACHE_LINE)
+        assertEquals("Kept maps are in the cache on this phone; Android's Clear cache would remove them.", CLEAR_CACHE_LINE)
     }
 }

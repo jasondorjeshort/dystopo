@@ -1641,11 +1641,13 @@ def store_listing(dev, root):
 
 
 def plant_tiles(dev, n=200):
-    """[n] synthetic tiles in the old store, under a server key no source uses, owned as the cache directory is."""
+    """[n] synthetic tiles in the old store, under a server key no source uses, owned as the cache directory is (and with
+    the app's modes: setgid directories, files its own)."""
     base = f"{STORE_OLD}/{PLANT_SERVER}/dem@u1/12"
     cache = f"/data/data/{PACKAGE}/cache"
     script = (f"mkdir -p {base} && i=0; while [ $i -lt {n} ]; do x=$((650 + i / 20)); y=$((1400 + i % 20)); mkdir -p {base}/$x; "
               f"head -c $((100 + i)) /dev/zero > {base}/$x/$y.png; i=$((i + 1)); done; "
+              f"find {STORE_OLD}/{PLANT_SERVER} -type d -exec chmod 2700 {{}} + && find {STORE_OLD}/{PLANT_SERVER} -type f -exec chmod 600 {{}} + && "
               f"chown -R $(stat -c %u:%g {cache}) {cache}/online && chcon -R $(stat -c %C {cache}) {cache}/online && echo planted")
     return "planted" in su(dev, script, timeout=300)
 
