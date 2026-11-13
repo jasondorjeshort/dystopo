@@ -101,10 +101,11 @@ object RouteSession {
      * T276: whether [points] are the session route's and it is everyday: the gate [RouteWater], [RouteExposure] and
      * [RouteBestStart] read before they compute anything (any thread).
      */
-    fun isEveryday(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>?): Boolean = points != null && points === everydayPoints
+    fun isEveryday(points: List<io.github.jasondorjeshort.dystopo.model.RoutePoint>?): Boolean =
+        points != null && points === everydayPoints && !TripDetails.overrides(mode) // T278: an open Trip details row on an everyday Bike computes them
 
     /** T276: whether the session's route is everyday (navigation of it starts without the backcountry lines). */
-    val everyday: Boolean get() = plan?.let { isEveryday(it.route.points) } ?: false
+    val everyday: Boolean get() = plan?.let { it.route.points === everydayPoints } ?: false
 
     /** T276: the chip lit now ([RouteChip.of]); null on foot while the kind is not known. */
     val chip: RouteChip? get() = RouteChip.of(mode, tripKind)
@@ -641,7 +642,7 @@ object RouteSession {
         // T276: the kind beside the mode (`everyday`, `backcountry`; null on foot while planning), why (`mode`, `share`,
         // `tap`, `unknown`), the share in town it was guessed from, the chip lit and the chips drawn, a held tap.
         "tripKind" to tripKind?.key, "tripKindReason" to kindReason?.key, "townShare" to townShare?.let { Math.round(it * 1000) / 1000.0 },
-        "townShareThreshold" to TripKinds.TOWN_SHARE, "chip" to chip?.key, "chips" to RouteChip.entries.map { it.key },
+        "townShareThreshold" to TripKinds.threshold(mode), "chip" to chip?.key, "chips" to RouteChip.entries.map { it.key }, // T278: the mode's threshold
         "tapped" to tappedKind?.key,
         // T276: the computations an everyday route must not start (unchanged while one is shown).
         "computed" to linkedMapOf("water" to RouteWater.computed, "exposure" to RouteExposure.computed, "bestStart" to RouteBestStart.computed),

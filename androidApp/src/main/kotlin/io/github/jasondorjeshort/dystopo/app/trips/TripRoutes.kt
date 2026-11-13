@@ -31,6 +31,12 @@ import java.security.MessageDigest
  *   sent to the map view (the finger path: the route must be open and the point on screen).
  * - `POST /routes/{id}/waypoint?lat=&lon=&name=[&sym=]`, `DELETE /routes/{id}/waypoint/{wid}`.
  * - `POST /routes/{id}/mode?mode=`, `/rename?name=`, `/reroute`, `/open`, `/export`; `DELETE /routes/{id}`.
+ * - T278: the kind a trip was kept as (the synced `tripKind` field): each row of `GET /routes` `routes` has `tripKind`
+ *   (`everyday`, `backcountry`, null when none was kept: it reads as by the mode); `GET /routes/{id}` has `tripKind` (the
+ *   stored value), `kind` (as the card reads it, [io.github.jasondorjeshort.dystopo.routing.TripKinds.kept]), `chip` (the
+ *   chip lit: `walk`, `hike`, `bike`, `drive`, `line`), `chipLabel` and `water` (whether the card shows its water line:
+ *   [io.github.jasondorjeshort.dystopo.routing.TripKinds.hasDetails]). `POST /routes/keep` keeps the card's kind.
+ *   `POST /routes/{id}/chip?chip=walk|hike|bike|drive|line` taps the trip card's chip ([Trips.tapChip]).
  * - T106: `GET /routes/{id}` has each leg's `timeS` and `untimedDriveLegs` (a drive planned before T89: routed legs
  *   with no router time, so the flat 45 km/h estimate; the trip card says so with Re-plan); `POST /routes/{id}/replan`
  *   is that Re-plan (trail and straight legs routed again in the same mode, fixed legs kept).
@@ -104,7 +110,7 @@ object TripRoutes {
             }
             "POST" to "/routes/keep" -> {
                 val planned = RouteSession.plan ?: return Response.json(mapOf("error" to "no planned route"), 404)
-                return Response.json(planJson(Trips.keep(planned, q["name"], io.github.jasondorjeshort.dystopo.app.routing.RouteSession.from, io.github.jasondorjeshort.dystopo.app.routing.RouteSession.to), false))
+                return Response.json(planJson(Trips.keep(planned, q["name"], io.github.jasondorjeshort.dystopo.app.routing.RouteSession.from, io.github.jasondorjeshort.dystopo.app.routing.RouteSession.to, RouteSession.tripKind), false)) // T278: the card's kind
             }
             "POST" to "/routes/import" -> {
                 require(r.body.isNotEmpty()) { "POST a GPX file as the body" }
@@ -186,6 +192,11 @@ object TripRoutes {
                 require(io.github.jasondorjeshort.dystopo.routing.TravelMode.known(mode)) { "mode must be ${io.github.jasondorjeshort.dystopo.routing.TravelMode.labels}" }
                 return Response.json(planJson(Trips.setMode(id, mode!!), false))
             }
+            r.method == "POST" && suffix == "/chip" -> { // T278: the trip card's chip
+                val chip = io.github.jasondorjeshort.dystopo.routing.RouteChip.entries.firstOrNull { it.key == q["chip"] }
+                    ?: throw IllegalArgumentException("chip must be ${io.github.jasondorjeshort.dystopo.routing.RouteChip.entries.joinToString("|") { it.key }}")
+                return Response.json(planJson(Trips.tapChip(id, chip), false))
+            }
             r.method == "POST" && suffix == "/directions" -> { // T108
                 val p = Trips.plan(id) ?: throw NoSuchElementException("no route $id")
                 if (q["save"] == "1") Trips.migrateDirections(p, q["wait"]?.toLongOrNull()?.coerceIn(0, 120_000) ?: 30_000)
@@ -259,6 +270,11 @@ object TripRoutes {
             "waypoints" to p.waypoints.map { linkedMapOf("id" to it.id, "name" to it.name, "lat" to it.lat, "lon" to it.lon, "ele" to it.ele, "sym" to it.symbol) },
             "summary" to RouteSummary.of(p).json(profile),
             "modeLabel" to io.github.jasondorjeshort.dystopo.routing.TravelMode.labelOf(p.path.mode), // T108
+            "tripKind" to p.tripKind?.key, // T278: as stored (null: none kept)
+            "kind" to io.github.jasondorjeshort.dystopo.routing.TripKinds.kept(io.github.jasondorjeshort.dystopo.routing.TravelMode.of(p.path.mode), p.tripKind).key,
+            "chip" to io.github.jasondorjeshort.dystopo.routing.TripKinds.chipOf(io.github.jasondorjeshort.dystopo.routing.TravelMode.of(p.path.mode), p.tripKind)?.key,
+            "chipLabel" to tripModeWord(p.path.mode, p.tripKind),
+            "water" to io.github.jasondorjeshort.dystopo.routing.TripKinds.hasDetails(io.github.jasondorjeshort.dystopo.routing.TravelMode.of(p.path.mode), io.github.jasondorjeshort.dystopo.routing.TripKinds.kept(io.github.jasondorjeshort.dystopo.routing.TravelMode.of(p.path.mode), p.tripKind)),
             "directions" to directionsJson(p), // T108
             "corridor" to corridorJson(p), // T130
             "gpxBytes" to gpx.size, "gpxSha256" to MessageDigest.getInstance("SHA-256").digest(gpx).joinToString("") { "%02x".format(it) },

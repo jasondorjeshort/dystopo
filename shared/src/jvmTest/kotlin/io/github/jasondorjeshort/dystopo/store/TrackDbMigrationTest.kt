@@ -70,6 +70,31 @@ class TrackDbMigrationTest {
         return f
     }
 
+    /**
+     * T278: a file of the frozen schema [version] holding what [write] stores: written by this build's store into a fresh
+     * file, then every table's rows copied into the frozen one by the columns that version has (a newer column is left
+     * behind, as an older build never wrote it), with sync_meta `routes` as a build of that version left it ([routesMeta]).
+     */
+    private fun olderFile(version: Long, dir: File, routesMeta: String, write: (SqlTrackStore) -> Unit): File {
+        val written = File(dir, "written-v$version.db")
+        JdbcSqliteDriver(url(written), Properties(), TrackDb.Schema).use { d -> write(SqlTrackStore(d, wallClock = { 1_000L })) }
+        val f = frozen(version, dir)
+        DriverManager.getConnection(url(f)).use { c ->
+            val tables = c.createStatement().executeQuery("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+                .use { rs -> generateSequence { if (rs.next()) rs.getString(1) else null }.toList() }
+            c.createStatement().use { st ->
+                st.executeUpdate("ATTACH DATABASE '${written.invariantSeparatorsPath}' AS w")
+                for (t in tables) {
+                    val cols = st.executeQuery("PRAGMA main.table_info('$t')").use { rs -> generateSequence { if (rs.next()) rs.getString("name") else null }.toList() }
+                    st.executeUpdate("INSERT OR REPLACE INTO main.$t(${cols.joinToString()}) SELECT ${cols.joinToString()} FROM w.$t")
+                }
+                st.executeUpdate("UPDATE main.sync_meta SET value = '$routesMeta' WHERE key = 'routes'")
+                st.executeUpdate("PRAGMA user_version = $version")
+            }
+        }
+        return f
+    }
+
     /** The current schema as SQL text (what a new frozen `<n>.sql` holds), read back from a fresh database. */
     private fun schemaSql(f: File): String = DriverManager.getConnection(url(f)).use { c ->
         c.createStatement().executeQuery("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid").use { rs ->
@@ -288,11 +313,9 @@ class TrackDbMigrationTest {
         val t1 = "00000000-0000-4000-8000-000000000061"
         val r1 = "00000000-0000-4000-8000-000000000062"
         try {
-            val f = frozen(6, dir)
-            DriverManager.getConnection(url(f)).use { c -> c.createStatement().use { st -> st.executeUpdate("PRAGMA user_version = 6") } }
-            // The store of a version-6 build: no migration, and no call that reads the new table.
-            JdbcSqliteDriver(url(f), Properties()).use { d ->
-                val store = SqlTrackStore(d, wallClock = { 1_000L })
+            // What a version-6 build stored (T278: written by this build and copied into the frozen schema, since this
+            // build's store writes the route table's version-8 column).
+            val f = olderFile(6, dir, "2") { store ->
                 store.create(t1, "Paradise loop", 1_000L)
                 store.append(t1, io.github.jasondorjeshort.dystopo.model.TrackPoint(46.785, -121.735, 1650.0, 1_000L), newSegment = true, now = 1_000L)
                 store.append(t1, io.github.jasondorjeshort.dystopo.model.TrackPoint(46.786, -121.734, 1660.0, 61_000L), now = 61_000L)
@@ -319,6 +342,57 @@ class TrackDbMigrationTest {
                 assertEquals(emptySet(), store.hidden(ShownKind.TRACK))
                 store.deleteRoute(r1, 6_000L)
                 assertEquals(emptySet(), store.hidden(ShownKind.ROUTE))
+            }
+            assertEquals(schemaOf(fresh(dir)), schemaOf(f))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /**
+     * T278: a version-7 file (v0.1.28-alpha's schema) holding two trips upgrades with every trip as it was: one kept before
+     * T278 (no kind: it reads as by its mode, a Hike) and one whose log holds a `tripKind` write a newer phone synced in
+     * (a version-7 build keeps it in the log without a column for it), which the route table's rebuild after the migration
+     * brings into the new column. The kind then travels in a sync bundle into a second store.
+     */
+    @Test
+    fun versionSevenTripsKeepTheirKindAfterTheUpgrade() {
+        val dir = Files.createTempDirectory("dystopo-upgrade7").toFile()
+        val before = "00000000-0000-4000-8000-000000000071"
+        val walk = "00000000-0000-4000-8000-000000000072"
+        fun plan(id: String, name: String, kind: io.github.jasondorjeshort.dystopo.routing.TripKind?) = io.github.jasondorjeshort.dystopo.model.RoutePlan(
+            id, name, io.github.jasondorjeshort.dystopo.model.RoutePath(
+                "hike", listOf(io.github.jasondorjeshort.dystopo.model.ViaPoint(45.9172, 6.8668), io.github.jasondorjeshort.dystopo.model.ViaPoint(45.9080, 6.8530)),
+                listOf(io.github.jasondorjeshort.dystopo.model.RouteLeg(io.github.jasondorjeshort.dystopo.model.LegKind.TRAIL, List(4) { io.github.jasondorjeshort.dystopo.model.RoutePoint(45.9172 - 0.003 * it, 6.8668 - 0.0046 * it, 1040.0) })),
+            ).quantized(), type = "hike", tripKind = kind,
+        )
+        try {
+            // What a version-7 phone holds: the log with both writes (a version-7 build keeps a field it does not know in the
+            // log) and the route rows without the new column.
+            val f = olderFile(7, dir, "2") { store ->
+                store.putRoutePlan(plan(before, "Kept before T278", null), 1_000L)
+                store.putRoutePlan(plan(walk, "Walk from a newer phone", io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY), 2_000L)
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d, wallClock = { 3_000L })
+                assertEquals(2, store.routesMaterialized, "every route row rebuilt from the log once")
+                assertEquals(listOf(before, walk), store.routeList().map { it.id })
+                assertEquals(null, store.routePlan(before)!!.tripKind)
+                assertEquals(io.github.jasondorjeshort.dystopo.routing.TripKind.BACKCOUNTRY, io.github.jasondorjeshort.dystopo.routing.TripKinds.kept(io.github.jasondorjeshort.dystopo.routing.TravelMode.HIKE, store.routePlan(before)!!.tripKind), "a Hike, as before")
+                assertEquals(io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY, store.routePlan(walk)!!.tripKind)
+                assertEquals(listOf(null, "everyday"), store.routeList().map { it.tripKind })
+                assertEquals(store.snapshotFromLog(), store.snapshot())
+                // Into a second store through a sync bundle.
+                val other = SqlTrackStore(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY, Properties()).also { TrackDb.Schema.create(it) }, wallClock = { 4_000L })
+                io.github.jasondorjeshort.dystopo.sync.syncPair(store, other, 4_000L)
+                assertEquals(io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY, other.routePlan(walk)!!.tripKind)
+                assertEquals(null, other.routePlan(before)!!.tripKind)
+                assertEquals(store.snapshot(), other.snapshot())
+            }
+            JdbcSqliteDriver(url(f), Properties(), TrackDb.Schema).use { d ->
+                val store = SqlTrackStore(d, wallClock = { 5_000L })
+                assertEquals(0, store.routesMaterialized, "once only")
+                assertEquals(io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY, store.routePlan(walk)!!.tripKind)
             }
             assertEquals(schemaOf(fresh(dir)), schemaOf(f))
         } finally {

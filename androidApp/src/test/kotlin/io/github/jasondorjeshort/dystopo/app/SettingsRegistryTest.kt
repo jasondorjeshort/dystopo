@@ -59,6 +59,7 @@ class SettingsRegistryTest {
         "readoutBar" to false, "climbWindow" to 300, "pressureFallWarning" to "fewer",
         "waterAlongRoute" to false, "waterSpoken" to true, "viewRange" to 100, "timeEstimateForm" to "one",
         "shadeSpoken" to "always", "estimatePosition" to false, "showDivergence" to false,
+        "tripDetailsOpen" to true, // T278
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -86,8 +87,9 @@ class SettingsRegistryTest {
      */
     private val t257Entries = listOf("pressure", "accuracy", "fixAge")
 
+    // T278 (ADR 0033: one key added, per device): `tripDetailsOpen` in `GET /settings` is taken out too, checked on its own.
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
-        m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) }
+        m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k != "tripDetailsOpen" }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
 
     private fun t257Synced(): Map<String, Any?> = SettingsSync.current().filterKeys { it !in beforeT257(SettingsSync.current()) }
@@ -112,6 +114,17 @@ class SettingsRegistryTest {
         assertEquals("shown=1;pace=0;damping=medium;pm=0;knots=0", readout["pressure"], "T257: the pressure on by default")
         assertEquals("shown=0;pace=0;damping=medium;pm=0;knots=0", readout["accuracy"])
         assertEquals(listOf<Pair<String, Any?>>("cacheBudgetMb" to 1024L), empty.writes, "loading writes only the budget's migration")
+    }
+
+    /** T278: Trip details' open state is a plain per-device key: folded by default, stored, never synced. */
+    @Test
+    fun tripDetailsOpenIsPerDevice() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(false, AppSettings.json()["tripDetailsOpen"])
+        assertTrue(SettingsSync.current().keys.none { "tripDetails" in it }, "not synced")
+        AppSettings.load(FakePrefs(seed))
+        assertEquals(true, AppSettings.json()["tripDetailsOpen"])
+        assertTrue(!AppSettings.TRIP_DETAILS_OPEN.synced)
     }
 
     @Test

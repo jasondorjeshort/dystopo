@@ -140,7 +140,9 @@ CREATE TABLE route (
     straight_m REAL NOT NULL,
     mode TEXT NOT NULL,
     -- Version 5 (T108): the saved turn directions (RouteDirections) when made for this row's path, else NULL.
-    directions TEXT
+    directions TEXT,
+    -- Version 8 (T278): the kept trip's kind (TripKind's key), NULL when none was written (read as by the mode).
+    trip_kind TEXT
 );
 
 CREATE INDEX route_order ON route(created_hlc, id);
@@ -364,8 +366,8 @@ INSERT OR REPLACE INTO sync_meta(key, value) VALUES (?, ?);
 
 upsertRoute:
 INSERT OR REPLACE INTO route(id, name, description, comment, type, extensions, path, waypoints, created_hlc, updated_at,
-    distance_m, ascent_m, descent_m, time_s, via_count, waypoint_count, straight_m, mode, directions)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    distance_m, ascent_m, descent_m, time_s, via_count, waypoint_count, straight_m, mode, directions, trip_kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 deleteRouteRow:
 DELETE FROM route WHERE id = ?;

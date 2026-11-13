@@ -75,8 +75,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.routing.ROUTE_KIND_HELP +
             // end T276
             // T277: the track profile's Close, swipe and Back.
-            io.github.jasondorjeshort.dystopo.app.tracking.TRACK_PROFILE_HELP
+            io.github.jasondorjeshort.dystopo.app.tracking.TRACK_PROFILE_HELP +
             // end T277
+            // T278: the route card's Trip details row.
+            io.github.jasondorjeshort.dystopo.app.routing.TRIP_DETAILS_HELP
+            // end T278
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

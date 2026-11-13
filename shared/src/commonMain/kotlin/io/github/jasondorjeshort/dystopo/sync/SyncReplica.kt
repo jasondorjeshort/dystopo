@@ -350,17 +350,20 @@ data class RouteListItem(
     val updatedAt: Long,
     /** T262: epoch ms of the route's first put (its HLC's wall time; 0 when unknown): the Tracks and routes list's date. */
     val createdAt: Long = 0L,
+    /** T278: the kind the trip was kept as ([io.github.jasondorjeshort.dystopo.routing.TripKind.key]); null for none (read as by the mode). */
+    val tripKind: String? = null,
 ) {
     fun json(): Map<String, Any?> = linkedMapOf(
         "id" to id, "name" to name, "mode" to mode, "distanceM" to RouteSummary.r1(distanceM), "ascentM" to ascentM?.let(RouteSummary::r1),
         "descentM" to descentM?.let(RouteSummary::r1), "timeS" to kotlin.math.round(timeS).toLong(), "time" to RouteSummary.hm(timeS),
         "viaPoints" to viaPoints, "waypoints" to waypoints, "straightM" to RouteSummary.r1(straightM), "updatedAt" to updatedAt,
+        "tripKind" to tripKind, // T278
     )
 
     companion object {
         fun of(plan: RoutePlan, updatedAt: Long): RouteListItem {
             val s = RouteSummary.of(plan, samples = 0)
-            return RouteListItem(plan.id, plan.name, s.mode, s.distanceM, s.ascentM, s.descentM, s.timeS, s.viaPoints, plan.waypoints.size, s.straightM, updatedAt)
+            return RouteListItem(plan.id, plan.name, s.mode, s.distanceM, s.ascentM, s.descentM, s.timeS, s.viaPoints, plan.waypoints.size, s.straightM, updatedAt, tripKind = plan.tripKind?.key)
         }
     }
 }

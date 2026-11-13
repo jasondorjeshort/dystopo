@@ -592,6 +592,9 @@ object AppSettings {
         { io.github.jasondorjeshort.dystopo.routing.ShadeSpoken.parse(it.toString()) }, { "$KEY_SHADE_SPOKEN must be off, hot or always (got $it)" }))
     val ESTIMATE_POSITION = flag(KEY_ESTIMATE_POSITION, true, synced = true) // T203
     val SHOW_DIVERGENCE = flag(KEY_SHOW_DIVERGENCE, true, synced = true) // T213
+    // T278: the route card's Trip details row open or folded (routing/RouteControls.kt, TripDetails); per device, no row.
+    val TRIP_DETAILS_OPEN = flag("tripDetailsOpen", false)
+    // end T278
 }
 
 /**
