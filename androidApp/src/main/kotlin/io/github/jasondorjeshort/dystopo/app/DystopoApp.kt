@@ -42,6 +42,7 @@ class DystopoApp : Application() {
         // T266: the launch's list and runner are made on a thread of their own while the system installs the content providers,
         // so onCreate finds them made (their classes' loading cost the main thread about 12 ms on the emulator).
         Thread({ AppLaunch.runner }, "launch-make").apply { isDaemon = true }.start()
+        growFdTable() // T280
     }
 
     // T228: StartupTrace.mark names each step of the launch; a step lasts until the next mark (marks only, nothing moved).
@@ -247,6 +248,34 @@ class DystopoApp : Application() {
     companion object {
         /** T57: logcat tag of the `debug server on port N token T` line the tools read. */
         const val DEBUG_TAG = "Dystopo"
+
+        /**
+         * T280: the slots the process's table of open files gets at once ([growFdTable]). The kernel starts a process with
+         * 64 and doubles the table each time a file is opened past its size (the app holds about 210 after a launch on the
+         * emulator, so 128, then 256); each growth waits for an RCU grace period (`synchronize_rcu` in `expand_fdtable`), and
+         * every thread that opens a file meanwhile waits with it. At launch the growth past 64 fell inside the `world` and
+         * `assets` stages: their marker reads blocked in `open()` (`expand_files`) for 30 to 60 ms on the sweep's emulator,
+         * where a grace period took 62 ms, while the start trace's sampler waited out the growth.
+         */
+        const val FD_TABLE_SLOTS = 512
+
+        /** T280: the growth's time in ms (null until it ends, -1 when it failed), for the start trace's header. */
+        @Volatile var fdTableMs: Double? = null
+            private set
+
+        /**
+         * T280: grows the table of open files to [FD_TABLE_SLOTS] once, on a thread of its own at the start of the process
+         * (a duplicate of fd 0 at slot [FD_TABLE_SLOTS] - 1, closed at once; the table never shrinks), so the launch pays one
+         * grace period here, before `onCreate`, instead of two inside its stages.
+         */
+        private fun growFdTable() = Thread({
+            val t0 = System.nanoTime()
+            fdTableMs = runCatching {
+                val fd = android.system.Os.fcntlInt(java.io.FileDescriptor.`in`, android.system.OsConstants.F_DUPFD, FD_TABLE_SLOTS - 1)
+                android.os.ParcelFileDescriptor.adoptFd(fd).close()
+                Math.round((System.nanoTime() - t0) / 1e5) / 10.0
+            }.onFailure { Log.w(DEBUG_TAG, "the table of open files not grown", it) }.getOrDefault(-1.0)
+        }, "fd-table").apply { isDaemon = true }.start()
 
         lateinit var instance: DystopoApp
             private set

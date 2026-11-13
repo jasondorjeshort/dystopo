@@ -109,8 +109,9 @@ def parse_launch(j):
 
 def parse_package_reads(trace, firstrun):
     """T280: the APK's update time as each launch read it: `assets` (main thread) and `world` (its worker) from `GET /firstrun`
-    `assets` (`versionMs`, the `getPackageInfo` call; `checkMs`, the marker and folders after it; `versionShared`, the read
-    the stage found made), and the trace's own read (`GET /debug/startup` `head.packageInfoMs`, on its I/O thread)."""
+    `assets` (`versionMs`, the `getPackageInfo` call; `checkMs`, the marker and folders after it), the trace's own read
+    (`GET /debug/startup` `head.packageInfoMs`, on its I/O thread) and the growth of the table of open files at the start of
+    the process (`head.fdTableMs`, `DystopoApp.growFdTable`)."""
     a = (firstrun or {}).get("assets") or {}
     w = a.get("world") or {}
     head = ((trace or {}).get("head")) or {}
@@ -120,9 +121,9 @@ def parse_package_reads(trace, firstrun):
             return float(v)
         except (TypeError, ValueError):
             return None
-    keys = ("versionMs", "checkMs", "versionShared")
+    keys = ("versionMs", "checkMs")
     return {"assets": {k: a.get(k) for k in keys if k in a}, "world": {k: w.get(k) for k in keys if k in w},
-            "trace": {"packageInfoMs": num(head.get("packageInfoMs")), "packageInfoEndMs": num(head.get("packageInfoEndMs"))}}
+            "trace": {"packageInfoMs": num(head.get("packageInfoMs")), "fdTableMs": num(head.get("fdTableMs"))}}
 
 
 def stage_medians(launches):
