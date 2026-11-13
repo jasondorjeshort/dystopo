@@ -600,10 +600,7 @@ object MapLayout {
         val core = bar?.corePx ?: 0
         val rowPx = if (barSize != null && core in 1..barSize.height) core else barSize?.height ?: 0
         val search = c.sizeOf(nameOf(OverlayIds.SEARCH))
-        val panels = BottomPanels.trackPanelsTop.value.takeIf { it > BottomPanels.trackPanelsBottom.value }?.let { top ->
-            val h = root[1] / d
-            OverlayRect(EDGE_DP, h - top, root[0] / d - EDGE_DP, h - BottomPanels.trackPanelsBottom.value)
-        }
+        val panels = panelsRect(root[0] / d, root[1] / d, BottomPanels.trackPanelsTop.value, BottomPanels.trackPanelsBottom.value)
         val stripUp = AppSettings.readoutBar && c.slot(nameOf(OverlayIds.STRIP)) != null
         return OverlayInput(
             windowWidth = root[0] / d, windowHeight = root[1] / d,
@@ -796,18 +793,41 @@ object MapLayout {
     private fun mapView(): View? = DystopoApp.instance.map.mapView
 
     /** The window: the map view's root, px. */
-    private fun rootSize(): FloatArray {
-        val root = mapView()?.rootView
-        val m = DystopoApp.instance.resources.displayMetrics
-        return floatArrayOf((root?.width ?: m.widthPixels).toFloat(), (root?.height ?: m.heightPixels).toFloat())
-    }
+    private fun rootSize(): FloatArray = frameNow().first
 
     /** The system bars and the display cutout, px: left, top, right, bottom. */
-    private fun insetsPx(): FloatArray {
-        val v = mapView() ?: return FloatArray(4)
-        val i = ViewCompat.getRootWindowInsets(v)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()) ?: return FloatArray(4)
-        return floatArrayOf(i.left.toFloat(), i.top.toFloat(), i.right.toFloat(), i.bottom.toFloat())
+    private fun insetsPx(): FloatArray = frameNow().second
+
+    /** T277: [ruleFrame] of the window as it is now. */
+    private fun frameNow(): Pair<FloatArray, FloatArray> {
+        val root = mapView()?.rootView
+        val m = DystopoApp.instance.resources.displayMetrics
+        val window = floatArrayOf((root?.width ?: m.widthPixels).toFloat(), (root?.height ?: m.heightPixels).toFloat())
+        val content = root?.findViewById<View>(android.R.id.content)?.takeIf { it.width > 0 && it.height > 0 }?.let { c ->
+            val at = IntArray(2).also { c.getLocationInWindow(it) }
+            floatArrayOf(at[0].toFloat(), at[1].toFloat(), (at[0] + c.width).toFloat(), (at[1] + c.height).toFloat())
+        }
+        val v = mapView()
+        val i = v?.let { ViewCompat.getRootWindowInsets(it)?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()) }
+        val insets = i?.let { floatArrayOf(it.left.toFloat(), it.top.toFloat(), it.right.toFloat(), it.bottom.toFloat()) } ?: FloatArray(4)
+        return ruleFrame(window, content, insets)
     }
+
+    /**
+     * T277 (pure, `MapLayoutTest`): the window the rule lays out in, px, and its insets (left, top, right, bottom), from the
+     * window's size, the content view's rectangle in it (left, top, right, bottom; null when not laid out) and the system
+     * bars' insets.
+     */
+    fun ruleFrame(windowPx: FloatArray, contentPx: FloatArray?, insetsPx: FloatArray): Pair<FloatArray, FloatArray> =
+        windowPx to insetsPx
+
+    /**
+     * T277 (pure, `MapLayoutTest`): the track panels' rectangle in the rule's window ([widthDp] by [heightDp]), from their
+     * column's top and bottom as distances from the bottom of the Compose root ([BottomPanels.trackPanelsTop] and
+     * [BottomPanels.trackPanelsBottom]); null while the column is empty.
+     */
+    fun panelsRect(widthDp: Float, heightDp: Float, topDp: Float, bottomDp: Float): OverlayRect? =
+        if (topDp > bottomDp) OverlayRect(EDGE_DP, heightDp - topDp, widthDp - EDGE_DP, heightDp - bottomDp) else null
 
     private fun rectJson(r: FloatArray?) = r?.map { Math.round(it) }
 

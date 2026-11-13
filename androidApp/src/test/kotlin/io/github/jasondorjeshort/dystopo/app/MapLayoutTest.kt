@@ -414,4 +414,46 @@ class MapLayoutTest {
         )
         assertEquals(520f / d + 8f, io.github.jasondorjeshort.dystopo.app.routing.CardBands.warningTop(520f / d + 8f, null, 12f, 399f, 700f, over = upright), 0.01f)
     }
+
+    /**
+     * T277: on a window that is not edge to edge (Android 14 and earlier, the owner's phone: Compose's root lies between
+     * the status bar and the navigation bar), the strip, the scale bar and the position column stand above the track
+     * panels as Compose draws them. Before T277 the rule laid out in the whole window while the panels' column and every
+     * placed element are in the Compose root's coordinates, so they sat the two bars' height down, over the panel's header
+     * and statistics line.
+     */
+    @Test
+    fun theLowerColumnsClearTheTrackPanelsOnAWindowThatIsNotEdgeToEdge() {
+        for (edgeToEdge in listOf(false, true)) {
+            val window = floatArrayOf(411f, 914f)
+            val bars = floatArrayOf(0f, 49f, 0f, 24f)
+            val content = if (edgeToEdge) floatArrayOf(0f, 0f, 411f, 914f) else floatArrayOf(0f, 49f, 411f, 890f)
+            val composeH = content[3] - content[1]
+            val (root, ins) = MapLayout.ruleFrame(window, content, bars)
+            // The column as fromWindowBottom reports it: 300 dp up to 40 dp up from the Compose root's bottom.
+            val panels = MapLayout.panelsRect(root[0], root[1], 300f, 40f)
+            val drawn = io.github.jasondorjeshort.dystopo.ui.OverlayRect(8f, composeH - 300f, 403f, composeH - 40f)
+            val input = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
+                windowWidth = root[0], windowHeight = root[1],
+                insetLeft = ins[0], insetTop = ins[1], insetRight = ins[2], insetBottom = ins[3],
+                fontScale = 1f,
+                search = io.github.jasondorjeshort.dystopo.ui.OverlaySize(io.github.jasondorjeshort.dystopo.ui.OverlayLayout.SEARCH_WIDTH, 48f),
+                topRow = io.github.jasondorjeshort.dystopo.ui.OverlaySize(190f, 40f),
+                credit = io.github.jasondorjeshort.dystopo.ui.OverlaySize(380f, 30f),
+                trackBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(160f, 40f),
+                scaleBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(80f, 28f),
+                strip = List(3) { io.github.jasondorjeshort.dystopo.ui.OverlaySize(72f, 40f) },
+                buttons = 3,
+                panels = panels,
+                cardsDrawn = true,
+            )
+            val placed = io.github.jasondorjeshort.dystopo.ui.OverlayLayout.place(input)
+            for (id in listOf(OverlayIds.STRIP, OverlayIds.SCALE_BAR, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.LOCK)) {
+                val r = placed[id]?.rect ?: continue
+                assertTrue(r.bottom <= drawn.top || r.top >= drawn.bottom || r.right <= drawn.left || r.left >= drawn.right,
+                    "edgeToEdge=$edgeToEdge: $id at $r covers the track panels drawn at $drawn")
+            }
+            assertTrue(placed[OverlayIds.STRIP]?.rect != null, "edgeToEdge=$edgeToEdge: the strip has room above the panels")
+        }
+    }
 }
