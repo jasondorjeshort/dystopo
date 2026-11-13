@@ -60,6 +60,7 @@ class SettingsRegistryTest {
         "waterAlongRoute" to false, "waterSpoken" to true, "viewRange" to 100, "timeEstimateForm" to "one",
         "shadeSpoken" to "always", "estimatePosition" to false, "showDivergence" to false,
         "tripDetailsOpen" to true, // T278
+        "recordAskActivity" to false, // T263
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -88,8 +89,9 @@ class SettingsRegistryTest {
     private val t257Entries = listOf("pressure", "accuracy", "fixAge")
 
     // T278 (ADR 0033: one key added, per device): `tripDetailsOpen` in `GET /settings` is taken out too, checked on its own.
+    // T263 (ADR 0033: one key added, synced): `recordAskActivity` and `app.recordAskActivity` too.
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
-        m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k != "tripDetailsOpen" }
+        m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k != "tripDetailsOpen" && k != "recordAskActivity" && k != "app.recordAskActivity" }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
 
     private fun t257Synced(): Map<String, Any?> = SettingsSync.current().filterKeys { it !in beforeT257(SettingsSync.current()) }
@@ -98,9 +100,10 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18, SettingsSync.current().size, "every synced key, none lost; T257 added 18")
-        assertEquals(18, t257Synced().size)
-        assertTrue(t257Synced().values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one")
+        assertEquals(18 + 1, t257Synced().size)
+        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals("off", SettingsSync.current()["app.recordAskActivity"], "T263: the seeded off syncs as off")
         assertEquals(SEEDED_JSON, canon(beforeT257(AppSettings.json())))
     }
 
@@ -125,6 +128,21 @@ class SettingsRegistryTest {
         AppSettings.load(FakePrefs(seed))
         assertEquals(true, AppSettings.json()["tripDetailsOpen"])
         assertTrue(!AppSettings.TRIP_DETAILS_OPEN.synced)
+    }
+
+    /** T263: "Ask which activity when a recording starts": on by default (the owner, 2026-11-11), synced, a row under the activity. */
+    @Test
+    fun recordAskActivityIsSyncedAndOnByDefault() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(true, AppSettings.recordAskActivity)
+        assertEquals(true, AppSettings.json()["recordAskActivity"])
+        assertEquals("on", SettingsSync.current()["app.recordAskActivity"])
+        assertTrue(AppSettings.RECORD_ASK_ACTIVITY.synced)
+        val plan = SettingsSync.plan(mapOf("app.recordAskActivity" to "off"), emptyMap(), SettingsRoutes.KEYS)
+        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[AppSettings.RECORD_ASK_ACTIVITY])
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
+        assertEquals(rows.indexOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.TRACK_ACTIVITY) + 1, rows.indexOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.RECORD_ASK_ACTIVITY))
+        assertEquals("Ask which activity when a recording starts", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.RECORD_ASK_ACTIVITY.label)
     }
 
     @Test

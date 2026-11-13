@@ -734,13 +734,26 @@
       }
     },
     {
-      "id": "trackAccuracy",
+      "id": "recordAskActivity",
       "kind": "setting",
       "platforms": ["android"],
       "placement": {
         "android": {
           "category": "navigation",
           "order": 9,
+          "zone": "settings",
+          "row": "recordAskActivity"
+        }
+      }
+    },
+    {
+      "id": "trackAccuracy",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 10,
           "zone": "settings",
           "row": "trackAccuracy"
         }
@@ -753,7 +766,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 10,
+          "order": 11,
           "zone": "settings",
           "row": "trackAutoPause"
         }
@@ -766,7 +779,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 11,
+          "order": 12,
           "zone": "settings",
           "row": "trackFallback"
         }
@@ -779,7 +792,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 12,
+          "order": 13,
           "zone": "settings",
           "row": "trackInterval"
         }
@@ -792,7 +805,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 13,
+          "order": 14,
           "zone": "settings",
           "row": "trackBattery"
         }
@@ -805,7 +818,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 14,
+          "order": 15,
           "zone": "settings",
           "row": "readoutSpeed"
         }
@@ -818,7 +831,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 15,
+          "order": 16,
           "zone": "settings",
           "row": "readoutClimb"
         }
@@ -831,7 +844,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 16,
+          "order": 17,
           "zone": "settings",
           "row": "readoutCourse"
         }
@@ -844,7 +857,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 17,
+          "order": 18,
           "zone": "settings",
           "row": "readoutElevation"
         }
@@ -857,7 +870,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 18,
+          "order": 19,
           "zone": "settings",
           "row": "readoutBarometer"
         }
@@ -870,7 +883,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 19,
+          "order": 20,
           "zone": "settings",
           "row": "readoutBar"
         }
@@ -883,7 +896,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 20,
+          "order": 21,
           "zone": "settings",
           "row": "climbWindow"
         }
@@ -896,7 +909,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 21,
+          "order": 22,
           "zone": "settings",
           "row": "pressureFallWarning"
         }
@@ -909,7 +922,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 22,
+          "order": 23,
           "zone": "settings",
           "row": "waterAlongRoute"
         }
@@ -922,7 +935,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 23,
+          "order": 24,
           "zone": "settings",
           "row": "waterSpoken"
         }
@@ -935,7 +948,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 24,
+          "order": 25,
           "zone": "settings",
           "row": "timeEstimateForm"
         }
@@ -948,7 +961,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 25,
+          "order": 26,
           "zone": "settings",
           "row": "shadeSpoken"
         }
@@ -961,7 +974,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 26,
+          "order": 27,
           "zone": "settings",
           "row": "setHeight"
         }
@@ -974,7 +987,7 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 27,
+          "order": 28,
           "zone": "settings",
           "row": "estimatePosition"
         }
@@ -1180,9 +1193,21 @@
       "placement": {
         "android": {
           "category": "navigation",
-          "order": 28,
+          "order": 36,
           "zone": "map-right",
           "inventory": ["M11", "M12", "M13", "M14", "M15", "M16"]
+        }
+      }
+    },
+    {
+      "id": "activityChip",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 37,
+          "zone": "map-right"
         }
       }
     },

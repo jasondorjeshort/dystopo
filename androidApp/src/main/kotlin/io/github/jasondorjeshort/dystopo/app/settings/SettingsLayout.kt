@@ -54,6 +54,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     CREDITS("credits", SettingsGroup.ABOUT, "Credits", "SettingsPages", "T103"),
     // T172: recording per activity (the remembered one's profile) and the battery exemption
     TRACK_ACTIVITY("trackActivity", SettingsGroup.NAVIGATION, "Recording: Activity", "SettingsPages", "T172"),
+    // T263: whether Record asks (the activity picker) or starts with the current activity
+    RECORD_ASK_ACTIVITY(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_RECORD_ASK_ACTIVITY, SettingsGroup.NAVIGATION, "Ask which activity when a recording starts", "SettingsPages", "T263"),
+    // end T263
     TRACK_ACCURACY("trackAccuracy", SettingsGroup.NAVIGATION, "Recording: Accuracy limit", "SettingsPages", "T172"),
     TRACK_AUTO_PAUSE("trackAutoPause", SettingsGroup.NAVIGATION, "Recording: Auto-pause", "SettingsPages", "T172"),
     TRACK_FALLBACK("trackFallback", SettingsGroup.NAVIGATION, "Recording: Network location", "SettingsPages", "T172"),
