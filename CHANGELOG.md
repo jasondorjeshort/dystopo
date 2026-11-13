@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-13
 
+- T279: A map tile left empty by a sudden power loss is no longer shown as a blank patch for ever: it is dropped and fetched again, and tiles are now written safely to storage before they count as saved
 - T273: Developer tooling: the emulator script can save and load snapshots, and every boot waits for the guest's storage; the sweep keeps rebooting between parts (a load does not give all the memory back); nothing a user sees changes
 - T268: The sweep times the app's launch stage by stage over a seeded store and fails when one runs over its ceiling
 - T266: The app's launch is a declared list of stages, checked by a test and timed stage by stage (debug builds report it); nothing a user sees changes

@@ -70,6 +70,14 @@ import java.util.concurrent.atomic.AtomicLong
  * clears the directories' setgid bit ([GroupFixer]; Android gives `cache` the cache GID and setgid, so a renamed tree
  * would go on counting as cache). [whenReady]'s contract is unchanged: the actions run once the index is whole, after the
  * move has put the tree in place (the copy itself goes on after that, under the index).
+ *
+ * T279: **an empty file is never served.** A stop of the device that writes nothing out (an emulator killed with `adb emu
+ * kill`, a phone whose battery dies) can leave a tile's file at its name with no bytes: the rename reached the disk, the
+ * data did not. [get] reads such a file as a miss, deletes it with its index entry and counts it ([emptyDropped], of them
+ * kept [emptyDroppedKept]), so the tile is fetched again (a kept tile too; offline it reads as missing, not as a broken
+ * image); the walk drops one it meets the same way. A value that is empty on purpose (an open-ocean vector tile, the
+ * cliff cache's "unchanged") is written as the one byte [EMPTY_MARK] and read back empty. [put] syncs the temporary file
+ * before its rename ([syncWrites]), so a stop after the rename leaves the whole tile or none.
  */
 class TileCache(
     val dir: File,
@@ -470,6 +478,13 @@ class TileCache(
     val writes = AtomicLong()
     val evictions = AtomicLong()
 
+    /** T279: zero-length files dropped (by [get] or the walk), and of them those [keep] held. */
+    val emptyDropped = AtomicLong()
+    val emptyDroppedKept = AtomicLong()
+
+    /** T279: [put] syncs the temporary file before renaming it (false only while `POST /debug/cache/fill?sync=0` times its cost). */
+    @Volatile var syncWrites: Boolean = true
+
     init {
         if (moving && move!!.from.exists()) moveRoot = move.from
         if (!moving) dir.mkdirs() // T267: a pending move renames the old tree into place, so nothing is made there first
@@ -589,6 +604,12 @@ class TileCache(
                 if (key.endsWith(".tmp")) {
                     // A write interrupted by a kill; one under way now (a put while indexing) is younger.
                     if (mtime < startedAt - STALE_TMP_MS) runCatching { File(path).delete() }
+                } else if (bytes == 0L) {
+                    // T279: a write a hard stop left empty (a value empty on purpose is EMPTY_MARK; a put renames a whole file).
+                    if (runCatching { File(path).delete() }.getOrDefault(false)) {
+                        emptyDropped.incrementAndGet()
+                        if (runCatching { keep(key) }.getOrDefault(false)) emptyDroppedKept.incrementAndGet()
+                    }
                 } else {
                     batch += Walked(key, bytes, mtime)
                     walked++
@@ -910,6 +931,11 @@ class TileCache(
             misses.incrementAndGet()
             return null
         }
+        if (data.isEmpty()) { // T279: a write a hard stop left empty: a miss, so the tile is fetched again
+            dropEmpty(key, file)
+            misses.incrementAndGet()
+            return null
+        }
         hits.incrementAndGet()
         val now = clock()
         val minute = minuteOf(now)
@@ -929,7 +955,21 @@ class TileCache(
             }
         }
         if (touchFile) file.setLastModified(now)
-        return data
+        return if (data.size == 1 && data[0] == EMPTY_MARK[0]) ByteArray(0) else data
+    }
+
+    /** T279: deletes [key]'s zero-length [file] (still empty: a put may have just replaced it) and its entry, and counts it. */
+    private fun dropEmpty(key: String, file: File) {
+        val kept = runCatching { keep(key) }.getOrDefault(false)
+        synchronized(lock) {
+            if (file.length() != 0L) return
+            removed?.add(key)
+            val s = index.find(key)
+            if (s != TileIndex.NONE) removeEntry(key, s)
+        }
+        if (file.length() == 0L) file.delete()
+        emptyDropped.incrementAndGet()
+        if (kept) emptyDroppedKept.incrementAndGet()
     }
 
     /**
@@ -968,7 +1008,11 @@ class TileCache(
         val file = File(dir, key)
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, "${file.name}.${Thread.currentThread().id}.tmp")
-        tmp.writeBytes(bytes)
+        val stored = if (bytes.isEmpty()) EMPTY_MARK else bytes // T279: an empty file on disk is a torn write
+        FileOutputStream(tmp).use { out ->
+            out.write(stored)
+            if (syncWrites) out.fd.sync() // T279: the bytes reach the disk before the name does
+        }
         if (!placeWrite(key, tmp, file)) return
         val now = clock()
         file.setLastModified(now)
@@ -979,15 +1023,15 @@ class TileCache(
             val s = index.find(key)
             if (s != TileIndex.NONE) {
                 val old = index.size(s)
-                total += bytes.size - old
-                if (index.isPinned(s)) pinnedTotal += bytes.size - old
-                index.setSize(s, bytes.size)
-                if (old != bytes.size) changed()
+                total += stored.size - old
+                if (index.isPinned(s)) pinnedTotal += stored.size - old
+                index.setSize(s, stored.size)
+                if (old != stored.size) changed()
                 setPinned(s, pinned)
                 index.touch(s, minute)
                 touched = true
             } else {
-                addEntry(key, bytes.size, minute, pinned)
+                addEntry(key, stored.size, minute, pinned)
             }
         }
         writes.incrementAndGet()
@@ -1307,6 +1351,7 @@ class TileCache(
         "entries" to size, "bytes" to bytes, "maxBytes" to maxBytes, "pinnedBytes" to pinnedBytes, "pinnedEntries" to pinnedSize,
         "hits" to hits.get(), "misses" to misses.get(), "writes" to writes.get(), "evictions" to evictions.get(),
         "budgetEvictions" to budgetEvictions.get(), // T112
+        "emptyDropped" to emptyDropped.get(), "emptyDroppedKept" to emptyDroppedKept.get(), "syncWrites" to syncWrites, // T279
         "pinsAttached" to pinsAttached, // T267: false: the pinned figures are not the offline areas' yet
         "index" to indexJson(), // T242
         "fromSnapshot" to fromSnapshot, "snapshot" to snapshotJson(), // T249
@@ -1329,6 +1374,9 @@ class TileCache(
 
         /** T242: files the walk files at a time under the lock. */
         const val WALK_BATCH = 1024
+
+        /** T279: what an empty value is written as (a file with no bytes is a write a hard stop cut short); read back empty. */
+        val EMPTY_MARK = byteArrayOf(0)
 
         /** T242: entries a pass over the whole index visits per hold of the lock. */
         const val SCAN_CHUNK = 4096

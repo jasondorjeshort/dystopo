@@ -33,11 +33,14 @@ import java.io.File
  * - T242 `GET /debug/cache[?gc=1]`: the two tile caches' indexes ([io.github.jasondorjeshort.dystopo.app.online.TileCache.json]
  *   and its `index`: `state` indexing or ready, `partial`, `entries`, `bytes`, `walked`, `walkMs`, `heapBytes` (the index's
  *   heap, estimated from its arrays) and `heapBytesPerEntry`), the Java heap in use (`gc=1` collects first), and the last
- *   fill. `POST /debug/cache/fill?files=1..400000&bytes=16..65536[&clear=1]` writes that many synthetic tiles straight
+ *   fill. `POST /debug/cache/fill?files=1..400000&bytes=16..65536[&clear=1][&sync=0|1]` writes that many synthetic tiles straight
  *   into the online cache's directory, in the real key shape (`fill.example_8770/dem@f1/<z>/<x>/<y>.png` and a fifth as
  *   `osm@f1/.../<y>.pbf`, columns of 256 around Rainier, file times spread over the last 1000 minutes), on a thread of its
  *   own; the running index does not count them, the next launch's walk does (that is what it is for). `clear=1` deletes
  *   them instead (through the cache, once its index is whole). Answers at once; `GET /debug/cache`'s `fill` follows it.
+ *   T279: `sync=1` or `sync=0` writes them through `TileCache.put` instead (indexed at once), with or without the sync
+ *   before each rename, so its cost can be timed (`fill.ms`); `sync` is on again afterwards. `GET /debug/cache`'s `online`
+ *   has `emptyDropped` and `emptyDroppedKept` (zero-length files a hard stop left, dropped as misses) and `syncWrites`.
  *   `POST /debug/cache/hold?ms=0..120000` holds the next launch's walk of the online cache that long at its first file, once
  *   (a file, as the tracking delay), so the `indexing` window can be seen: the one list and the Storage screen saying so,
  *   a kill mid-index. Answers `pendingHoldMs`.
@@ -86,8 +89,9 @@ object DebugRoutes {
                 val files = r.query["files"]?.toIntOrNull()?.takeIf { it in 1..400_000 } ?: if (clear) 0 else return Response.json(mapOf("error" to "files must be 1..400000"), 400)
                 val bytes = r.query["bytes"]?.toIntOrNull()?.takeIf { it in 16..65_536 } ?: if (clear) 0 else return Response.json(mapOf("error" to "bytes must be 16..65536"), 400)
                 if (fill?.get("running") == true) return Response.json(mapOf("error" to "a fill is running", "fill" to fill), 409)
-                startFill(app, files, bytes, clear)
-                Response.json(mapOf("started" to true, "files" to files, "bytes" to bytes, "clear" to clear))
+                val sync = r.query["sync"]?.let { it == "1" } // T279: through TileCache.put, synced before the rename or not
+                startFill(app, files, bytes, clear, sync)
+                Response.json(mapOf("started" to true, "files" to files, "bytes" to bytes, "clear" to clear, "sync" to sync))
             }
             "POST" to "/debug/cache/hold" -> { // T242, as T229's tracking delay
                 val ms = r.query["ms"]?.toLongOrNull()?.takeIf { it in 0..120_000 } ?: return Response.json(mapOf("error" to "ms must be 0..120000"), 400)
@@ -206,7 +210,7 @@ object DebugRoutes {
      * columns of 256 (one leaf directory each) at zooms 16 down to 9 around Rainier, four in five DEM tiles and one in five
      * vector tiles, file times spread over the last 1000 minutes; or, [clear], those tiles deleted through the cache.
      */
-    private fun startFill(app: DystopoApp, files: Int, bytes: Int, clear: Boolean) {
+    private fun startFill(app: DystopoApp, files: Int, bytes: Int, clear: Boolean, sync: Boolean? = null) {
         val cache = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache
         val t0 = SystemClock.elapsedRealtime()
         fill = linkedMapOf("running" to true, "files" to files, "bytes" to bytes, "clear" to clear, "done" to 0)
@@ -236,8 +240,8 @@ object DebugRoutes {
                                 if (done >= files) break
                                 val y = (cy - side / 2 + row).coerceIn(0, n - 1)
                                 val f = File(dir, "$y.${if (osm) "pbf" else "png"}")
-                                f.writeBytes(body)
-                                f.setLastModified(now - (done % 1000) * 60_000L)
+                                if (sync != null) { cache.syncWrites = sync; cache.put(f.relativeTo(cache.dir).invariantSeparatorsPath, body) } // T279
+                                else { f.writeBytes(body); f.setLastModified(now - (done % 1000) * 60_000L) }
                                 done++
                                 if (done % 1000 == 0) fill = fill.orEmpty() + mapOf("done" to done, "ms" to SystemClock.elapsedRealtime() - t0)
                             }
@@ -249,7 +253,8 @@ object DebugRoutes {
             } catch (e: Throwable) {
                 error = "${e.javaClass.simpleName}: ${e.message}"
             }
-            fill = linkedMapOf("running" to false, "files" to files, "bytes" to bytes, "clear" to clear, "done" to done, "ms" to SystemClock.elapsedRealtime() - t0, "error" to error)
+            cache.syncWrites = true // T279: the default again
+            fill = linkedMapOf("running" to false, "files" to files, "bytes" to bytes, "clear" to clear, "sync" to sync, "done" to done, "ms" to SystemClock.elapsedRealtime() - t0, "error" to error)
         }, "debug-cache-fill").apply { isDaemon = true }.start()
     }
 
