@@ -6,7 +6,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-13
 
-- T276: An everyday route hides the backcountry lines (lane A, first; the owner's priority for the next release)
+- T277: The track profile's Close is no longer covered on a phone whose window is not edge to edge; Close sits at the header's right edge, and a swipe down or Back closes the profile
+- T276: An everyday route hides the backcountry lines: Walk beside Hike in the planner, chosen by how much of the route runs on streets
 
 ## v0.1.27-alpha (2026-11-11)
 
