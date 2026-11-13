@@ -779,15 +779,15 @@ private fun TripDetailsRow(plan: io.github.jasondorjeshort.dystopo.routing.Plann
         Modifier.fillMaxWidth().clickable { TripDetails.setOpen(!open) }.padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BasicText((if (open) "▾ " else "▸ ") + TripDetailsText.TITLE, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
-        if (!open) {
-            BasicText(
-                "  $summary", style = TextStyle(color = Ink, fontSize = 12.sp), maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-            )
-        } else {
-            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+        // T278: one paragraph, the title bold and the summary after it, wrapping under the title at large font scales (a
+        // summary squeezed beside the title was cut to "2 water place..." at 2.0).
+        val text = androidx.compose.ui.text.buildAnnotatedString {
+            pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold, fontSize = 13.sp))
+            append((if (open) "▾ " else "▸ ") + TripDetailsText.TITLE)
+            pop()
+            if (!open) append("  $summary")
         }
+        BasicText(text, style = TextStyle(color = Ink, fontSize = 12.sp), modifier = Modifier.weight(1f))
         io.github.jasondorjeshort.dystopo.app.help.HelpIcon("route.tripDetails")
     }
     if (open) {

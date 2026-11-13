@@ -32,8 +32,9 @@ import java.io.File
  * without them is read from the packs as before.
  *
  * T276: the route on the map brings its kind ([Resolved.tripKind], the route card's chip): an everyday route is navigated
- * without the turn-back clock, the next water and the next shade ([NavSession.start]). A kept trip, a saved route, a
- * track and a GPX file have none (null: navigated as before, everything on).
+ * without the turn-back clock, the next water and the next shade ([NavSession.start]). T278: a kept trip brings its stored
+ * kind ([io.github.jasondorjeshort.dystopo.routing.TripKinds.navKind]: absent reads as by the mode, a ride as before), so a
+ * kept Walk or Drive is navigated as everyday. A saved route, a track and a GPX file have none (null: as before).
  */
 object NavSources {
     class Resolved(
@@ -44,7 +45,7 @@ object NavSources {
         val mode: TravelMode? = null,
         /** T102: the turn directions along [path] (every priority; navigation filters by level). */
         val directions: List<Instruction> = emptyList(),
-        /** T276: the route card's kind for the route on the map; null for everything else (navigated as before). */
+        /** T276: the route card's kind for the route on the map; T278: a kept trip's; null for everything else (as before). */
         val tripKind: io.github.jasondorjeshort.dystopo.routing.TripKind? = null,
     )
 
@@ -77,8 +78,9 @@ object NavSources {
         val directions = if (saved != null) onto(path, saved) else Directions.ofPath(p.path, RoutePlanner.localJunctions(p.path.points.map { it.lat to it.lon }))
         return Resolved(
             path,
-            linkedMapOf("kind" to "trip", "route" to key, "id" to p.id, "name" to p.name, "mode" to p.path.mode, "directions" to if (saved != null) "saved" else "packs"),
+            linkedMapOf("kind" to "trip", "route" to key, "id" to p.id, "name" to p.name, "mode" to p.path.mode, "directions" to if (saved != null) "saved" else "packs", "tripKind" to p.tripKind?.key),
             s.timeS, TravelMode.of(p.path.mode), directions,
+            tripKind = io.github.jasondorjeshort.dystopo.routing.TripKinds.navKind(TravelMode.of(p.path.mode), p.tripKind), // T278
         )
     }
 

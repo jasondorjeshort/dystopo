@@ -95,6 +95,14 @@ object TripKinds {
         stored ?: if (mode == TravelMode.DRIVE) TripKind.EVERYDAY else TripKind.BACKCOUNTRY
 
     /**
+     * T278: the kind a kept trip is navigated with: [kept], except that a Bike is navigated as backcountry whatever its
+     * kind (the planner navigates the route on the map by its own gate; a kept ride keeps the clock, as before T278). An
+     * everyday trip (a kept Walk, a Drive) starts with no turn-back clock, no next water and no next shade.
+     */
+    fun navKind(mode: TravelMode?, stored: TripKind?): TripKind =
+        if (mode == TravelMode.BIKE) TripKind.BACKCOUNTRY else kept(mode, stored)
+
+    /**
      * T278: whether a card offers a route's water, terrain, best-start and past-effort lines: a backcountry route (folded
      * under the planner's Trip details row; the trip card's water line), and an everyday Bike route as its override (a bike's
      * kind has no chip to change it; the survey's override row). On foot the Walk and Hike chips override; a Drive has none.

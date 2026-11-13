@@ -127,6 +127,18 @@ class TripKindTest {
         assertEquals(RouteChip.BIKE, RouteChip.of(TravelMode.BIKE, null))
     }
 
+    /** T278: the kind a kept trip is navigated with (absent reads as by the mode, as the trip card does). */
+    @Test
+    fun aKeptTripIsNavigatedByItsKind() {
+        assertEquals(TripKind.EVERYDAY, TripKinds.navKind(TravelMode.HIKE, TripKind.EVERYDAY), "a kept Walk")
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.navKind(TravelMode.HIKE, TripKind.BACKCOUNTRY), "a kept Hike")
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.navKind(TravelMode.HIKE, null), "a hike kept before T278")
+        assertEquals(TripKind.EVERYDAY, TripKinds.navKind(TravelMode.DRIVE, null), "a drive kept before T278")
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.navKind(TravelMode.CROW, null))
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.navKind(TravelMode.BIKE, TripKind.EVERYDAY), "a kept ride as before")
+        assertEquals(TripKind.BACKCOUNTRY, TripKinds.navKind(null, null), "a mode this build does not know")
+    }
+
     @Test
     fun theRouterCountsTheGradedMetres() {
         // A footway with a hiking grade and a plain one, end to end: the router's metres by class and the graded ones.

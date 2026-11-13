@@ -1291,7 +1291,7 @@ ROUTE_ROW = r"^[A-Z][\w ()]* route · [^·]+ · (?=[\d.,]+ (mi|km|ft|m) · )"
 # T278: a route row's first word is the trip's kind as its chip names it ("Walk route", "Hike route"); the Trip details row's
 # title on the route card. The kinds a kept trip's row can name.
 ROUTE_ROW_WORD = r"^(Walk|Hike|Bike|Drive|Line) route · "
-TRIP_DETAILS = r"^[▸▾] Trip details$"
+TRIP_DETAILS = r"^[▸▾] Trip details(  |$)"  # the summary follows the title in one text when folded
 
 
 def route_row_words(texts):
