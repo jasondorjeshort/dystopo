@@ -316,7 +316,7 @@ class TileService(
 
     /** T38: tiles no pack covers come from the configured server ([OnlineTiles]); null when none is set. */
     val online: OnlineTiles? = run {
-        StartupTrace.mark("OnlineService.get") // T228, a mark of its own: it runs on the main thread at launch
+        // T266: the "OnlineService.get" mark is the online stage's now (DystopoApp.onCreate builds the service before this); here it is a slot read
         val service = OnlineService.get()
         StartupTrace.mark("OnlineService.tilesFor")
         service.tilesFor(packs, "${ContourCache.VERSION}-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag").also { StartupTrace.mark("TileService's rest") }

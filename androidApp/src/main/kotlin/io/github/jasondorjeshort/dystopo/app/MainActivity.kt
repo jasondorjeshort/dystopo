@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.github.jasondorjeshort.dystopo.app.about.AttributionLine
+import io.github.jasondorjeshort.dystopo.app.launch.AppLaunch
+import io.github.jasondorjeshort.dystopo.launch.Gate
+import io.github.jasondorjeshort.dystopo.launch.Launch
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMapOptions
@@ -51,22 +54,37 @@ class MainActivity : ComponentActivity() {
     val saveFile = registerForActivityResult(SaveFile.contract()) { SaveFile.finished(it) }
 
     // T228: StartupTrace.mark names each step of the launch; a step lasts until the next mark (marks only, nothing moved).
+    // T266 (ADR 0061 step 1): the steps are the bodies of the activity's declared stages, run by AppLaunch.runner here, in the
+    // same order (a later activity of the same process runs them straight).
     override fun onCreate(savedInstanceState: Bundle?) {
         StartupTrace.activityCreated()
         super.onCreate(savedInstanceState)
         StartupRoutes.stallPoint("activityOnCreate")
-        StartupTrace.mark("MapViewport.prepare")
-        MapViewport.prepare() // T162: its Compose state, on the main thread before the first composition
-        StartupTrace.mark("startCamera")
-        val start = startCamera(savedInstanceState)
-        StartupTrace.mark("MapView")
-        mapView = MapView(this, MapLibreMapOptions.createFromAttributes(this).camera(start).textureMode(false))
-        StartupTrace.mark("mapView.onCreate")
-        mapView.onCreate(savedInstanceState)
-        StartupTrace.mark("map.attach")
-        app.map.activity = this
-        io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
-        app.map.attach(mapView, styleJson = { app.tiles.style() })
+        val launch = AppLaunch.runner
+        launch.run(Launch.VIEWPORT) {
+            StartupTrace.mark("MapViewport.prepare")
+            MapViewport.prepare() // T162: its Compose state, on the main thread before the first composition
+        }
+        launch.awaitGate(Gate.BEFORE_ACTIVITY) // ADR 0061: the main thread's one wait, bounded and traced (nothing to wait for while those stages run on it)
+        val start = launch.run(Launch.CAMERA) {
+            StartupTrace.mark("startCamera")
+            startCamera(savedInstanceState)
+        }
+        launch.run(Launch.MAPVIEW) {
+            StartupTrace.mark("MapView")
+            mapView = MapView(this, MapLibreMapOptions.createFromAttributes(this).camera(start).textureMode(false))
+            StartupTrace.mark("mapView.onCreate")
+            mapView.onCreate(savedInstanceState)
+            StartupTrace.mark("map.attach")
+            app.map.activity = this
+            io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
+            app.map.attach(mapView, styleJson = { app.tiles.style() })
+        }
+        launch.run(Launch.ACTIVITY) { links() }
+    }
+
+    /** The `activity` stage's body (T266): links and intents, the content, the permission request. */
+    private fun links() {
         StartupTrace.mark("links and intents")
         DeepLink.install(this, mapView) // T55: links that arrive while the map is open move the camera
         io.github.jasondorjeshort.dystopo.app.share.ShareLink.handle(intent) // T57: dystopo://share links
@@ -151,19 +169,23 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         StartupTrace.started()
         super.onStart()
-        StartupTrace.mark("mapView.onStart")
-        mapView.onStart()
-        StartupTrace.mark("MapOrientation.setForeground")
-        io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(true) // T100: facing's compass and turns
-        StartupTrace.mark("startDeviceLocation")
-        if (Foreground.activityStarted()) app.map.setForeground(true) // T150: the polling loops resume; device fixes again
+        AppLaunch.runner.run(Launch.START) {
+            StartupTrace.mark("mapView.onStart")
+            mapView.onStart()
+            StartupTrace.mark("MapOrientation.setForeground")
+            io.github.jasondorjeshort.dystopo.app.controls.MapOrientation.setForeground(true) // T100: facing's compass and turns
+            StartupTrace.mark("startDeviceLocation")
+            if (Foreground.activityStarted()) app.map.setForeground(true) // T150: the polling loops resume; device fixes again
+        }
     }
 
     override fun onResume() {
         StartupTrace.resumed()
         super.onResume()
-        StartupTrace.mark("mapView.onResume")
-        mapView.onResume()
+        AppLaunch.runner.run(Launch.RESUME) {
+            StartupTrace.mark("mapView.onResume")
+            mapView.onResume()
+        }
         MainWatchdog.resumed() // T144: the UI-thread watchdog ticks while the activity is in the foreground
     }
 

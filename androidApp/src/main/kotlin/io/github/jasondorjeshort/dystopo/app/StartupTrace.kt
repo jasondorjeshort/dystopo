@@ -56,7 +56,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - `.startup-history`: one line a start, the newest [StartupText.HISTORY_KEEP]; the last section of each report.
  *
  * Header keys beyond the common ones: `startId`, `pid`, `startKind`, `kindSource`, `outcome` (`finished`, `running`,
- * `ended`, `noFirstFrame`, `left`), `reasons` (comma-separated `stall`, `mapNotDrawn`, `firstFrame`, `notFinished`, or `-`),
+ * `ended`, `noFirstFrame`, `left`), `reasons` (comma-separated `stall`, `mapNotDrawn`, `firstFrame`, `notFinished`, `mainThreadRead` (T266), or `-`),
  * `thresholdMs`, `firstFrameMs`, `longestStallMs`, `topFreezeMs` (the title's figure), `topFreezeMark` and `topFreezeMarkMs` (the step
  * or stall it names), `topFreezeShare`, `blockingFrame`, `mapMs`, `activity`,
  * `processStartToAttachMs` (loading and field initialisers, not sampled), `importance`, `firstStart`, `sinceBootS`,
@@ -133,6 +133,54 @@ object StartupTrace {
     fun composing(name: String) {
         val w = current?.window ?: return
         if (!w.firstFrameSeen) mark(name)
+    }
+
+    /** T266: the name of the mark in force on the open window, else null (StrictMode's stage, [io.github.jasondorjeshort.dystopo.app.launch.AppLaunch]). */
+    fun markInForceName(): String? = current?.window?.takeIf { !it.closed }?.markInForceName()
+
+    /** T266: every mark of the window open now, else the last closed one: name and elapsed-realtime ms (the launch's observed stages). */
+    fun markTimes(): List<Pair<String, Long>> = (current ?: lastClosed)?.window?.markTimes().orEmpty()
+
+    /** T266: the window's own process start, elapsed-realtime ms (null without a window). */
+    fun openAt(): Long? = (current ?: lastClosed)?.window?.openAt
+
+    /** T266: when the first frame was drawn, elapsed-realtime ms, else null. */
+    fun firstFrameAt(): Long? = (current ?: lastClosed)?.window?.firstFrameAtOrNull()
+
+    @Volatile private var waitingFrom: String? = null
+
+    /**
+     * T266 (ADR 0061): the main thread starts ([begins]) or ends a wait on the launch stage [stage]: a mark `waiting for <stage>`
+     * while it lasts (the samples then dump the awaited stage's thread, [awaitedThread]), and the mark that was in force again after it.
+     */
+    fun waitingFor(stage: String?, begins: Boolean) {
+        if (Thread.currentThread() !== mainThread) return
+        if (begins) {
+            waitingFrom = markInForceName()
+            awaitedStage = stage
+            mark("$WAITING_FOR$stage")
+        } else {
+            awaitedStage = null
+            waitingFrom?.let { mark(it) }
+            waitingFrom = null
+        }
+    }
+
+    /** T266: the stage the main thread waits on now (its thread is dumped with the samples), else null. */
+    @Volatile var awaitedStage: String? = null
+        private set
+
+    /** T266: how the trace finds the awaited stage's thread ([io.github.jasondorjeshort.dystopo.app.launch.AppLaunch] sets it). */
+    @Volatile var awaitedThread: (String) -> Thread? = { null }
+
+    /**
+     * T266 (ADR 0061, release builds): a value read on the main thread before it was ready, by [caller]: the window's reason
+     * `mainThreadRead` and the caller in the header, so the next report names the site. Debug builds fail a check instead.
+     */
+    fun mainThreadRead(value: String, caller: String) {
+        val a = current ?: return
+        a.window.mainThreadRead("$value from $caller")
+        a.head["mainThreadRead"] = "$value from $caller"
     }
 
     /** The top of `MainActivity.onCreate`. */
@@ -249,6 +297,10 @@ object StartupTrace {
                 w.addSample(state, delta, stack, inForce)
                 // The lock's holder is named by its stack now, while it holds it: the report's own stacks are main's.
                 if (state == StartupWindow.LOCK && w.wantsLockDump(inForce)) runCatching { w.addLockDump(inForce, stack, otherThreads()) }.onFailure { Log.w(TAG, "lock dump failed", it) }
+                // T266: a wait on a launch stage dumps the awaited stage's thread, not the latch.
+                awaitedStage?.let { awaitedThread(it) }?.takeIf { w.wantsLockDump(inForce) }?.let { t ->
+                    runCatching { w.addLockDump(inForce, stack, listOf("thread ${t.name} (${t.state})" to t.stackTrace.map(StackTraceElement::toString).take(StartupText.MAX_FRAMES))) }
+                }
             }
             if (!frameHandled && w.firstFrameSeen) {
                 frameHandled = true
@@ -492,6 +544,7 @@ object StartupTrace {
             "thresholds" to thresholds.json(),
             "tuning" to StartupWindow.tuningJson(),
             "pendingStall" to StartupRoutes.pendingJson(),
+            "launch" to io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.summary(), // T266: the runner's overhead (ADR 0061)
             "history" to dir?.let(::readHistory),
             "traces" to dir?.let { traces(it).map(File::getName) },
             "progress" to dir?.listFiles { f -> f.name.startsWith(PROGRESS_PREFIX) }?.map(File::getName),
@@ -500,6 +553,9 @@ object StartupTrace {
 
     private const val MB = 1024L * 1024L
     private const val START_INFO_AFTER_MS = 1_000L
+
+    /** T266: the mark of a main-thread wait on a launch stage. */
+    const val WAITING_FOR = "waiting for "
 }
 
 /** What counts as slow: Android vitals' excessive start times (ADR 0044: one practice, no setting), and this wave's stall and map figures. */
@@ -633,6 +689,24 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
     fun mark(name: String, at: Long) {
         if (closed || marks.size >= MAX_MARKS) return
         marks += Mark(name, at)
+    }
+
+    /** T266: the name of the mark in force, else null. */
+    @Synchronized
+    fun markInForceName(): String? = marks.lastOrNull()?.name
+
+    /** T266: every mark's name and time (elapsed-realtime ms). */
+    @Synchronized
+    fun markTimes(): List<Pair<String, Long>> = marks.map { it.name to it.at }
+
+    fun firstFrameAtOrNull(): Long? = firstFrameAt.takeIf { it >= 0 }
+
+    private val mainThreadReads = ArrayList<String>()
+
+    /** T266: a value read on the main thread before it was ready (release builds): the reason `mainThreadRead`. */
+    @Synchronized
+    fun mainThreadRead(what: String) {
+        if (!closed && mainThreadReads.size < 8) mainThreadReads += what
     }
 
     @Synchronized
@@ -861,6 +935,7 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
         val longest = maxOf(stalls.maxOfOrNull { it.ms } ?: 0L, if (outstanding >= 0) now - sentAt else 0L)
         if (longest >= t.stallMs) out += REASON_STALL
         if (mapNotDrawn) out += REASON_MAP
+        if (mainThreadReads.isNotEmpty()) out += REASON_MAIN_READ // T266
         val threshold = t.of(kind)
         if (firstFrameAt >= 0) {
             if (firstFrameAt - openAt > threshold) out += REASON_FIRST_FRAME
@@ -927,6 +1002,8 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
         const val REASON_MAP = "mapNotDrawn"
         const val REASON_FIRST_FRAME = "firstFrame"
         const val REASON_NOT_FINISHED = "notFinished"
+        /** T266 (ADR 0061): a launch value read on the main thread before it was ready, in a release build. */
+        const val REASON_MAIN_READ = "mainThreadRead"
 
         const val SAMPLE_EVERY_MS = 100L
         const val BEAT_EVERY_MS = 100L
