@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-13
+
+- T276: An everyday route hides the backcountry lines (lane A, first; the owner's priority for the next release)
+
 ## v0.1.27-alpha (2026-11-11)
 
 ### 2026-11-11
