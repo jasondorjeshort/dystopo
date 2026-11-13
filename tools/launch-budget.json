@@ -1,0 +1,36 @@
+{
+ "about": "T268: the launch budget. Ceilings in ms per stage of GET /debug/launch (shared launch/Launch.kt) and for the first frame and the map drawn, against the medians of tools/android-startup.py --launches 5 (cold, a seeded store) in the sweep's startup part; a median over its ceiling, or a StrictMode kind a stage's declared work does not allow, turns the part red.",
+ "rule": "Set by android-startup.py --set-budget from the medians of sweeps (the first ceilings: three sweeps of 2026-11-13): the largest times the factor, rounded up to whole ms, and never under that median plus floorMs (one frame at 60 Hz; a stage of a few ms swings by more than a quarter of itself). Lower a ceiling by hand in the commit that lands an improvement; never raise one without a line in the dated log. A renamed stage keeps its ceiling through aliases, {old name: new name}.",
+ "factor": 1.25,
+ "floorMs": 16,
+ "set": {"date": "2026-11-13", "from": ["out/sweep-T268-a/startup.json", "out/sweep-T268-b/startup.json", "the verifier's sweep of task/T268 (its summary.json parts.startup.table)"]},
+ "frames": {
+  "firstFrameMs": {"ceilingMs": 4909, "medianMs": [3651, 3621, 3927]},
+  "fullyLoadedMs": {"ceilingMs": 6680, "medianMs": [4876, 4965, 5344]}
+ },
+ "stages": {
+  "prepare": {"ceilingMs": 300, "medianMs": [196, 210, 240]},
+  "maplibre": {"ceilingMs": 302, "medianMs": [203, 230, 241]},
+  "settings": {"ceilingMs": 103, "medianMs": [82, 75, 70]},
+  "tracking": {"ceilingMs": 174, "medianMs": [131, 139, 139]},
+  "world": {"ceilingMs": 22, "medianMs": [6, 5, 6]},
+  "assets": {"ceilingMs": 21, "medianMs": [5, 3, 5]},
+  "packs": {"ceilingMs": 87, "medianMs": [69, 68, 66]},
+  "online": {"ceilingMs": 114, "medianMs": [91, 84, 82]},
+  "cacheIndex": {"ceilingMs": 18, "medianMs": [1, 2, 2]},
+  "tiles": {"ceilingMs": 72, "medianMs": [51, 56, 52]},
+  "watchers": {"ceilingMs": 43, "medianMs": [24, 24, 27]},
+  "downloads": {"ceilingMs": 28, "medianMs": [11, 12, 12]},
+  "server": {"ceilingMs": 40, "medianMs": [19, 24, 24]},
+  "updater": {"ceilingMs": 31, "medianMs": [12, 12, 15]},
+  "viewport": {"ceilingMs": 17, "medianMs": [1, 1, 1]},
+  "camera": {"ceilingMs": 32, "medianMs": [13, 16, 15]},
+  "mapview": {"ceilingMs": 87, "medianMs": [60, 62, 69]},
+  "activity": {"ceilingMs": 64, "medianMs": [45, 34, 48]},
+  "start": {"ceilingMs": 43, "medianMs": [22, 24, 27]},
+  "resume": {"ceilingMs": 16, "medianMs": [0, 0, 0]},
+  "composition": {"ceilingMs": 1458, "medianMs": [1116, 1153, 1166]},
+  "style": {"ceilingMs": 112, "medianMs": [89, 84, 88]}
+ },
+ "aliases": {}
+}

@@ -14,6 +14,11 @@
 #   device-tour  android-check.py --views-file tools/android-tour.txt --server <the same> (twice by default; token from
 #                logcat; T105: the first view waits until the device's load besides the app has settled)
 #   probe        android-probe.py
+#   startup      (T268, debug build, after bothunits) the launch budget: tools/android-startup.py --launches 5 (cold) over a
+#                seeded store (52 synthetic tracks through POST /tracks/import, the Rainier packs), each stage's median of
+#                GET /debug/launch, the first frame's and the map drawn's against tools/launch-budget.json: red on a median
+#                over its ceiling or a StrictMode kind a stage's declared work does not allow. Report startup.json; the
+#                table in summary.json. Runs after the reboot check every device part gets (-EmuRebootGB), and seeds after it.
 #   bothunits    (T139, T129's follow-up; T147: in every device sweep, -NoBothUnits leaves it out) android-ui.py bothunits: the scale bar's Both units choice set on
 #                the sweep's emulator (debug build) reaches a second one through a sync peer and back. The second emulator
 #                is booted on the matrix pattern (AVD <Avd>-b, console -MatrixEmuPort, default -EmuPort+2, debug forward
@@ -190,6 +195,9 @@ $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $LiveViews = @($LiveViews | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $MatrixDevices = @($MatrixDevices | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+# T268: the launch budget's part, a debug-build device part
+$allParts += 'startup'; $deviceParts += 'startup'
+# end T268
 foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allParts -notcontains $p) { throw "unknown part '$p' (parts: $($allParts -join ', '))" } }
 
 # T191: the per-part ceilings, from the parts' timings in the sweeps of waves 20 to 23 (steps.tsv of out\sweep-w20,
@@ -834,6 +842,7 @@ try {
     $null = Part 'notices' { Run $py @('-I', 'tools/notices.py', '--check') (Join-Path $Out 'notices.log') (Join-Path $Out 'notices.err.log') }
 
     $debugDeviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits')
+    $debugDeviceParts += 'startup' # T268 (end T268)
     $needDevtool = @('tour', 'demo-serve', 'live', 'sync-sim') + $(if ($DeviceServer -eq 'live' -and -not $NoDevice) { $debugDeviceParts } else { @() }) |
         Where-Object { Want $_ }
     if ($needDevtool) {
@@ -1003,6 +1012,15 @@ try {
                 $null = Run 'powershell.exe' ($bArgs + @('-Stop', '-Delete')) (Join-Path $bdir 'emu-b-stop.log') (Join-Path $bdir 'emu-b-stop.err.log') -Cleanup -TimeoutS 300
             }
         }
+        # T268: the launch budget, on the debug build before the release phase. Part's reboot check (Ensure-Emulator, at
+        # -EmuRebootGB) runs before the body, so the store is seeded and the packs copied after it: the part never leans on
+        # what an earlier part left. Five cold launches add about 2.5 GB to the emulator's private bytes (finding of
+        # 2026-11-05), inside the guard's -EmuLimitGB from any level under -EmuRebootGB.
+        $null = Part 'startup' {
+            Run $py @('-I', 'tools/android-startup.py', '--serial', $serial, '--port', "$Port", '--launches', '5', '--seed-tracks', '52',
+                '--dem', $dem, '--osm', $osm, '--quiet', '240', '--budget', 'tools/launch-budget.json') (Join-Path $Out 'startup.json') (Join-Path $Out 'startup.err.log')
+        }
+        # end T268
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
         $script:emuPhase = 'release' # T233: a reboot from here boots only; every release part installs its own APK
         $null = Part 'release' {
