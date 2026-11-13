@@ -191,7 +191,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
         val f = File(app.noBackupFilesDir, STORE_VERSIONS_FILE)
         val old = File(app.cacheDir, VERSIONS_FILE)
         if (old.exists()) runCatching {
-            (cache.move ?: TileStoreMove(oldStoreDir(app))).carry(old, f)
+            val m = cache.move ?: TileStoreMove(oldStoreDir(app))
+            m.carry(old, f)
+            m.fixGroupOf(listOf(f)) // a rename keeps the cache GID
             old.parentFile?.delete()
         }
         return f

@@ -215,6 +215,8 @@ class TileStoreMoveTest {
         assertEquals(g["dirs"], g["setgidCleared"])
         assertEquals(20_123, g["otherGidSeen"])
         assertTrue(fake.gid.values.all { it == 10_123 })
+        assertEquals(10_123, fake.gid[File(root, "no_backup/tiles.index").path], "the snapshot carried beside the tree too")
+        assertEquals(1L, g["besideFixed"])
         assertTrue(fake.setgid.isEmpty())
         assertEquals("done", m.readMarker(newDir)["group"])
 

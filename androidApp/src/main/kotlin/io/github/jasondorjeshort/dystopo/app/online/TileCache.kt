@@ -404,8 +404,13 @@ class TileCache(
         m.movedFiles = entries.toLong()
         m.movedBytes = total
         val marker = m.readMarker(dir)
-        if (marker["group"] == "pending") m.fixGroups(dir)
-        else m.groupFromMarker(marker)
+        if (marker["group"] == "pending") {
+            m.fixGroups(dir)
+            // The files carried beside the tree (the snapshot, its marker) kept the cache GID too.
+            m.fixGroupOf(TileStoreMove.SNAPSHOT_SUFFIXES.map { File(dir.absoluteFile.parentFile, dir.name + it) })
+        } else {
+            m.groupFromMarker(marker)
+        }
         runCatching {
             m.writeMarker(dir, marker + mapOf(
                 "state" to STATE_DONE, "group" to STATE_DONE, "groupFixed" to m.groupFixed?.toString(),
@@ -1500,6 +1505,28 @@ class TileStoreMove(
             "ownGid" to own, "otherGidSeen" to otherGid, "dirs" to dirs, "files" to files, "dirsFixed" to dirsFixed,
             "filesFixed" to filesFixed, "setgidCleared" to setgidCleared, "failed" to failed, "firstError" to firstError, "ms" to groupMs,
         )
+    }
+
+    /**
+     * The ownership fix for single files carried beside the tree ([carry]: the snapshot, the versions file): the app's own
+     * group when it has another; counted into [group] (`besideFixed`, `besideFailed`).
+     */
+    fun fixGroupOf(files: List<File>) {
+        val g = groups ?: return
+        var fixed = 0L
+        var failed = 0L
+        for (f in files) {
+            val st = g.stat(f.path) ?: continue
+            if (st[0] == g.ownGid) continue
+            try {
+                g.chown(f.path, g.ownGid)
+                fixed++
+            } catch (_: Throwable) {
+                failed++
+            }
+        }
+        group = group.orEmpty() + mapOf("besideFixed" to ((group?.get("besideFixed") as? Long ?: 0L) + fixed), "besideFailed" to ((group?.get("besideFailed") as? Long ?: 0L) + failed))
+        if (failed > 0) groupFixed = false
     }
 
     fun stateName(): String = when (state) {
