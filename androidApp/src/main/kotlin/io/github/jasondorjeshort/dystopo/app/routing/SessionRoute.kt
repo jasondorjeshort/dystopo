@@ -11,6 +11,8 @@ import io.github.jasondorjeshort.dystopo.routing.Instruction
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.routing.KindReason
+import io.github.jasondorjeshort.dystopo.routing.TripKind
 
 /**
  * T108 (a T102 follow-up): the route on the route card that has not been kept, as a small file
@@ -28,6 +30,10 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * T114: an end that was the phone's fix also keeps that fix (`startFix`, `endFix`: its time, source and age when planned),
  * so the card still says "From: Your location" after a restart. Optional keys in version 1: a file without them reads as
  * two placed points, and a build before T114 ignores them.
+ *
+ * T276: two more optional keys, `tripKind` (`everyday`, `backcountry`) and `tripKindReason` (`mode`, `share`, `tap`,
+ * `unknown`; `tap` when a tapped Walk or Hike chose it), so a relaunch restores the kind and a held tap. A restored plan
+ * has no share in town to guess from again; a file without the keys reads by the mode (on foot: Hike, `unknown`).
  */
 object SessionRoute {
     const val VERSION = 1
@@ -40,11 +46,14 @@ object SessionRoute {
     class Restored(
         val plan: PlannedRoute, val start: Pair<Double, Double>, val end: Pair<Double, Double>, val savedAt: Long,
         val from: RouteOrigin.End? = null, val to: RouteOrigin.End? = null,
+        /** T276: the kind and its reason, when the file has them. */
+        val kind: TripKind? = null, val kindReason: KindReason? = null,
     )
 
     fun encode(
         p: PlannedRoute, start: Pair<Double, Double>, end: Pair<Double, Double>, now: Long,
         from: RouteOrigin.End? = null, to: RouteOrigin.End? = null,
+        kind: TripKind? = null, kindReason: KindReason? = null,
     ): String = JsonWriter.write(
         linkedMapOf(
             "version" to VERSION, "savedAt" to now, "id" to p.route.id, "name" to p.route.name, "description" to p.route.description,
@@ -54,7 +63,7 @@ object SessionRoute {
             "via" to p.via.map { listOf(it.first, it.second) },
             "instructions" to p.instructions.map { it.json(p.mode) },
             "start" to listOf(start.first, start.second), "end" to listOf(end.first, end.second),
-        ) + listOfNotNull(fixJson("startFix", from), fixJson("endFix", to)),
+        ) + listOfNotNull(fixJson("startFix", from), fixJson("endFix", to), kind?.let { "tripKind" to it.key }, kindReason?.let { "tripKindReason" to it.key }),
     )
 
     private fun fixJson(key: String, e: RouteOrigin.End?): Pair<String, Any?>? {
@@ -91,6 +100,9 @@ object SessionRoute {
         )
         val start = pair("start")
         val end = pair("end")
-        Restored(plan, start, end, (num("savedAt") ?: 0.0).toLong(), fixEnd(m["startFix"] as? Map<*, *>, start), fixEnd(m["endFix"] as? Map<*, *>, end))
+        Restored(
+            plan, start, end, (num("savedAt") ?: 0.0).toLong(), fixEnd(m["startFix"] as? Map<*, *>, start), fixEnd(m["endFix"] as? Map<*, *>, end),
+            TripKind.of(m["tripKind"] as? String), KindReason.of(m["tripKindReason"] as? String),
+        )
     }.getOrNull()
 }

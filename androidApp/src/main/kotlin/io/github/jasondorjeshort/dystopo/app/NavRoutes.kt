@@ -78,6 +78,10 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  *   `WayBackClock`'s: the way back's `anchor` (`source` `start`, `walk` or `here`), `retrace` (`returning`, `headingBack`,
  *   `flips`), the clock, the card's `ui`, `shownOnCard`, `layout.cardPx`, and the `alerts` and `spoken` line of this
  *   recording (`POST /tracks/wayback` moves the anchor; `TrackRoutes.kt`).
+ * - T276: `route=current` brings the route card's kind (`source.tripKind`, `source.tripKindReason`); `GET /nav` has
+ *   `tripKind` (`everyday`, `backcountry`, or null for a kept trip, a saved route, a track or a file). An everyday route
+ *   is navigated without the turn-back clock (`turnAround` null, no tone, buzz or spoken line), the next water (`water`
+ *   null, no markers) and the next terrain shade (`shadeAlong` null); the card shows none of them.
  *   T193, `turnDeadline=terrain`: the clock counts to the sun behind the terrain at the line's end (in free tracking at
  *   the way-back anchor) when that is earlier than the flat sunset. `GET /nav/turnaround` while navigating adds
  *   `flatSunsetMs` and `terrainSunsetMs` (with `flatSunset` and `terrainSunset` as clock strings), `terrain` (`behind`:
@@ -119,6 +123,7 @@ object NavRoutes {
             "GET" to "/nav/status" -> Response.json(NavSession.status())
             "GET" to "/nav/turnaround" -> Response.json( // T163
                 NavSession.turnJson()?.let { mapOf("active" to true) + it }
+                    ?: (if (NavSession.active) mapOf("active" to false, "reason" to "everyday route: no turn-back clock") else null) // T276
                     ?: NavSession.freeTrackingTurnJson()?.let { mapOf("active" to true) + it + mapOf("layout" to mapOf("cardPx" to io.github.jasondorjeshort.dystopo.app.nav.WayBackLayout.boundsPx?.toList())) }
                     ?: mapOf("active" to false, "reason" to "not navigating and not recording"),
             )
@@ -183,7 +188,7 @@ object NavRoutes {
             )
             val cam = camera(q["camera"] ?: "follow") ?: return bad("camera must be follow, heading or free")
             val zoom = if (q["zoom"] == "keep") null else d("zoom") ?: 15.0
-            Response.json(NavSession.start(res.path, res.source, opts, cam, q["sound"] != "0", q["vibrate"] != "0", zoom, res.planTimeS, res.directions))
+            Response.json(NavSession.start(res.path, res.source, opts, cam, q["sound"] != "0", q["vibrate"] != "0", zoom, res.planTimeS, res.directions, res.tripKind))
         } catch (e: NavSources.NotFound) {
             Response.json(mapOf("error" to e.message), 404)
         } catch (e: IllegalArgumentException) {

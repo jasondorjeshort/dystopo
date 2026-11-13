@@ -49,6 +49,7 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.about.AttributionInsets
 import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.routing.PlaceName
+import io.github.jasondorjeshort.dystopo.routing.RouteChip
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 
 private val Ink = Color(0xFF2B2420)
@@ -565,24 +566,30 @@ fun RouteControls() {
                         )
                     }
                     Directions(plan)
-                    WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
-                    ExposureLine(plan.route.points, plan.mode) // T195
-                    BestStartLine(plan) // T209: the start time with the most terrain shade on a hot day, else sun (RouteBestStart.kt)
-                    PastEffortLine(plan) // T184
+                    // T276: an everyday route (Walk, Drive) has none of the four lines below; a backcountry one keeps them.
+                    if (RouteSession.tripKind != io.github.jasondorjeshort.dystopo.routing.TripKind.EVERYDAY) {
+                        WaterAlongLine(plan.route.points, WaterUi.routeOpen) { WaterUi.routeOpen = !WaterUi.routeOpen } // T187
+                        ExposureLine(plan.route.points, plan.mode) // T195
+                        BestStartLine(plan) // T209: the start time with the most terrain shade on a hot day, else sun (RouteBestStart.kt)
+                        PastEffortLine(plan) // T184
+                    }
                 }
                 if (phase == "planning") BuildProgress()
                 RouteSession.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) }
                 if (RouteSession.needsOfflineMap) io.github.jasondorjeshort.dystopo.app.search.OfflineMapsLink() // T255: an end with map tiles only
                 // T73: the mode chips (hike, bike, drive; T108: crow) on a row of their own; T108: they wrap rather than
                 // squeeze at large font scales. T212: in the scrolling part, under the lines, so the actions keep their room.
+                // T276: five chips, Walk (everyday) and Hike (backcountry) on the same routing ([RouteChip]); on foot the
+                // planner's guess is lit and one tap overrides it; no foot chip is lit while a route on foot is planning.
                 ModeChips {
-                    for (m in TravelMode.entries) {
-                        val on = RouteSession.mode == m
+                    val lit = if (phase == "planning") RouteChip.of(RouteSession.mode, null) else RouteSession.chip
+                    for (c in RouteChip.entries) {
+                        val on = c == lit
                         BasicText(
-                            m.display, // T256: "Line" for crow (the stored value stays crow)
+                            c.label, // T256: "Line" for crow (the stored value stays crow)
                             style = TextStyle(color = if (on) Color.White else Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold),
                             modifier = Modifier.background(if (on) Ink else Color.Transparent, RoundedCornerShape(12.dp))
-                                .clickable { RouteSession.changeMode(m) }.padding(horizontal = 10.dp, vertical = 4.dp),
+                                .clickable { RouteSession.tapChip(c) }.padding(horizontal = 10.dp, vertical = 4.dp),
                         )
                     }
                 }

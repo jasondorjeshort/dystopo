@@ -136,6 +136,8 @@ class RouteCommand : CliktCommand(name = "route") {
             is RouteResult.Found -> {
                 val plan = result.plan
                 report["route"] = plan.json()
+                // T276: the phone's guess of the route's kind (TripKinds), with the town share it rests on.
+                report["tripKind"] = io.github.jasondorjeshort.dystopo.routing.TripKinds.of(plan).let { linkedMapOf("value" to it.kind.key, "reason" to it.reason.key, "townShare" to it.townShare?.let { s -> Math.round(s * 1000) / 1000.0 }, "threshold" to io.github.jasondorjeshort.dystopo.routing.TripKinds.TOWN_SHARE) }
                 // T102: the directions as text, each with the stretch it starts (P1 major, P2 normal, P3 minor).
                 // T116: with the default level's "then" cues, as the phone's lists say them (Directions.cued).
                 val u = if (style.units == "ft") ContourUnits.FEET else ContourUnits.METERS // the render's --units

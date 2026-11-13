@@ -5,6 +5,8 @@ import io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.routing.RouteChip
+import io.github.jasondorjeshort.dystopo.routing.TripKind
 
 /**
  * Debug routes for offline route planning (T45; registered with one line in [Routes]):
@@ -54,6 +56,15 @@ import io.github.jasondorjeshort.dystopo.routing.TravelMode
  * `id`, `label`, `primary`, `style` `filled|outlined|text|overflow`; the overflow's `items`), `moreOpen`, and `lines`:
  * `water`, `exposure`, `bestStart`, `pastEffort`, each `state` `working|ready|none` and `text`, the words on the card (null
  * for `pastEffort`, which draws no working line). `ui.summary` is `headline`.
+ * T276, the route's kind ([io.github.jasondorjeshort.dystopo.routing.TripKinds]): `POST /route` takes `kind=everyday|backcountry`
+ * with `mode=hike` (a tapped Walk or Hike: reason `tap`, held through re-plans until Clear or a new route); without it the
+ * route on foot is guessed from its share in town (reason `share`, or `unknown` when the share is not known: Hike). `ui`
+ * has `tripKind` (`everyday`, `backcountry`; null on foot while planning), `tripKindReason` (`mode`, `share`, `tap`,
+ * `unknown`), `townShare` and `townShareThreshold`, `chip` (the chip lit: `walk`, `hike`, `bike`, `drive`, `line`),
+ * `chips`, `tapped` and `computed` (the water, terrain and best-start computations so far, which an everyday route does
+ * not move). An everyday route's `card.lines` are all `none` with `everyday` true, and `water`, `exposure`, `bestStart`
+ * and `pastEffort` answer `state` `everyday`. `POST /route/mode?chip=walk|hike|bike|drive|line[&wait=1]` taps a chip as
+ * the card does: Walk and Hike on a route on foot change only its kind (nothing is planned again).
  * - `POST /route/more?open=1|0`: opens or closes the card's three-dot overflow (a tap on it); answers `card`.
  * - `POST /route/lines?holdMs=<n>`: the next water and terrain computations wait `n` ms first (0 clears), so the working
  *   state can be read and viewed; answers `holdMs`. An answer already computed for the same points still shows at once.
@@ -119,6 +130,10 @@ object RouteRoutes {
                 val (fromLat, fromLon) = latLon(r.query["from"]) ?: return bad("from=lat,lon required")
                 val (toLat, toLon) = latLon(r.query["to"]) ?: return bad("to=lat,lon required")
                 val mode = r.query["mode"]?.let { TravelMode.of(it) ?: return bad("mode must be ${TravelMode.labels}") } ?: TravelMode.HIKE
+                // T276: the kind a tap on Walk or Hike would hold; without it the planner guesses (on foot).
+                val kind = r.query["kind"]?.let { TripKind.of(it) ?: return bad("kind must be everyday or backcountry") }
+                if (kind != null && mode != TravelMode.HIKE) return bad("kind= is for mode=hike (Walk or Hike); the other modes have their own kind")
+                RouteSession.newRoute(kind)
                 val wait = r.query["wait"]?.toLongOrNull()?.coerceIn(0, 300_000) ?: RouteSession.WAIT_MS
                 val t0 = System.nanoTime()
                 val result = try {
@@ -132,7 +147,7 @@ object RouteRoutes {
                 when (result) {
                     is RouteResult.Found -> Response.json(linkedMapOf("planMs" to ms, "card" to RouteSession.cardJson(), "route" to RouteSession.routeJson(result.plan, r.query["profile"] == "1"), "graph" to RoutePlanner.json(app),
                         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(result.plan.route.points, waterOpen(app, false)), // T187
-                        "range" to PaceSettings.rangeJson(result.plan), "pastEffort" to PaceSettings.pastEffortJson(result.plan), // T184
+                        "range" to PaceSettings.rangeJson(result.plan), "pastEffort" to pastEffort(result.plan), // T184; T276
                         "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(result.plan.route.points, result.plan.mode, exposureOpen(app)), // T195
                         "bestStart" to io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart.json(result.plan))) // T209
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
@@ -194,8 +209,10 @@ object RouteRoutes {
                 Response.json(current(app, r.query["profile"] == "1"))
             }
             "POST" to "/route/mode" -> {
-                val mode = TravelMode.of(r.query["mode"]) ?: return bad("mode must be ${TravelMode.labels}")
-                RouteSession.changeMode(mode, wait = true)
+                // T276: `chip=` taps a chip as the card does (Walk and Hike hold their kind); `mode=` changes the mode alone.
+                val chip = r.query["chip"]?.let { c -> RouteChip.entries.firstOrNull { it.key == c } ?: return bad("chip must be ${RouteChip.entries.joinToString("|") { it.key }}") }
+                if (chip != null) RouteSession.tapChip(chip, wait = true)
+                else RouteSession.changeMode(TravelMode.of(r.query["mode"]) ?: return bad("mode must be ${TravelMode.labels}, or chip="), wait = true)
                 app.map.onMain { } // T49: the UI updates posted by the plan have run
                 Response.json(current(app, r.query["profile"] == "1"))
             }
@@ -242,10 +259,14 @@ object RouteRoutes {
         "failure" to RouteSession.failure?.json(),
         "graph" to RoutePlanner.json(app),
         "water" to io.github.jasondorjeshort.dystopo.app.routing.RouteWater.json(RouteSession.plan?.route?.points, waterOpen(app, false), waitMs), // T187
-        "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to PaceSettings.pastEffortJson(RouteSession.plan, waitMs), // T184
+        "range" to PaceSettings.rangeJson(RouteSession.plan), "pastEffort" to pastEffort(RouteSession.plan, waitMs), // T184; T276
         "exposure" to io.github.jasondorjeshort.dystopo.app.routing.RouteExposure.json(RouteSession.plan?.route?.points, RouteSession.plan?.mode, exposureOpen(app), waitMs), // T195
         "bestStart" to io.github.jasondorjeshort.dystopo.app.routing.RouteBestStart.json(RouteSession.plan, waitMs), // T209
     )
+
+    /** T276: `pastEffort`, not computed for the session's everyday route (`state` `everyday`). */
+    private fun pastEffort(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute?, waitMs: Long = 10_000): Map<String, Any?>? =
+        if (plan != null && RouteSession.isEveryday(plan.route.points)) linkedMapOf("state" to "everyday") else PaceSettings.pastEffortJson(plan, waitMs)
 
     /** T195: `GET|POST /route/exposure[?open=1|0]`: the terrain of the route on the map. */
     private fun exposure(app: DystopoApp, r: Request): Response {

@@ -8,6 +8,10 @@ import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.routing.Crow
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
+import io.github.jasondorjeshort.dystopo.routing.KindChoice
+import io.github.jasondorjeshort.dystopo.routing.KindReason
+import io.github.jasondorjeshort.dystopo.routing.TripKind
+import io.github.jasondorjeshort.dystopo.routing.TripKinds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -69,6 +73,28 @@ class SessionRouteTest {
         assertNull(assertNotNull(SessionRoute.decode(text.replace("\"time\":1000000,", ""))).from)
         // A missing source reads as the recorder's.
         assertEquals("recorder", assertNotNull(SessionRoute.decode(text.replace("\"source\":\"device\",", ""))).from!!.fix!!.source)
+    }
+
+    @Test
+    fun theKindAndATapComeBack() {
+        // T276: the kind and whether a tap chose it are two optional keys; a relaunch restores both.
+        val p = Crow.plan(46.7864, -121.7366, 46.8024, -121.7289, slope, "Route")
+        val tapped = SessionRoute.encode(p, 46.7864 to -121.7366, 46.8024 to -121.7289, 1L, kind = TripKind.EVERYDAY, kindReason = KindReason.TAP)
+        assertTrue("\"tripKind\":\"everyday\"" in tapped && "\"tripKindReason\":\"tap\"" in tapped, tapped)
+        val r = assertNotNull(SessionRoute.decode(tapped))
+        assertEquals(TripKind.EVERYDAY, r.kind)
+        assertEquals(KindReason.TAP, r.kindReason)
+        val guessed = assertNotNull(SessionRoute.decode(SessionRoute.encode(p, 0.0 to 0.0, 1.0 to 1.0, 1L, kind = TripKind.BACKCOUNTRY, kindReason = KindReason.SHARE)))
+        assertEquals(TripKind.BACKCOUNTRY, guessed.kind)
+        assertEquals(KindReason.SHARE, guessed.kindReason)
+        // A file without the keys (before T276) or with values this build does not know reads by the mode: null here.
+        val old = SessionRoute.encode(p, 0.0 to 0.0, 1.0 to 1.0, 1L)
+        assertTrue("tripKind" !in old)
+        assertNull(assertNotNull(SessionRoute.decode(old)).kind)
+        assertNull(assertNotNull(SessionRoute.decode(tapped.replace("\"everyday\"", "\"errand\""))).kind)
+        // The restored plan has no share to guess from: on foot it reads Hike for the reason unknown, never Walk.
+        assertTrue(assertNotNull(SessionRoute.decode(old)).plan.metersByClass.isEmpty())
+        assertEquals(KindChoice(TripKind.BACKCOUNTRY, KindReason.UNKNOWN), TripKinds.choose(TravelMode.HIKE, emptyMap()))
     }
 
     @Test

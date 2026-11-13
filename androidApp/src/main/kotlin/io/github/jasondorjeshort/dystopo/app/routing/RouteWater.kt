@@ -63,9 +63,13 @@ object RouteWater {
 
     private fun packs(): PackSet? = runCatching { DystopoApp.instance.tiles.packs }.getOrNull()
 
-    /** The computation for [points] (started now when new); null with the setting off, fewer than two points or no packs. */
+    /**
+     * The computation for [points] (started now when new); null with the setting off, fewer than two points or no packs.
+     * T276: null for the session's everyday route ([RouteSession.isEveryday]): nothing is computed for it.
+     */
     fun start(points: List<RoutePoint>): Future<Result>? {
         if (!AppSettings.waterAlongRoute || points.size < 2) return null
+        if (RouteSession.isEveryday(points)) return null
         val p = packs() ?: return null
         val key = points to System.identityHashCode(p)
         synchronized(cache) {
@@ -129,6 +133,7 @@ object RouteWater {
     fun json(points: List<RoutePoint>?, open: Boolean, waitMs: Long = 10_000): Map<String, Any?> {
         if (!AppSettings.waterAlongRoute) return linkedMapOf("enabled" to false)
         if (points == null || points.size < 2) return linkedMapOf("enabled" to true, "state" to "noRoute")
+        if (RouteSession.isEveryday(points)) return linkedMapOf("enabled" to true, "state" to "everyday", "computed" to computed) // T276
         val r = await(points, waitMs) ?: return linkedMapOf("enabled" to true, "state" to "computing")
         return linkedMapOf("enabled" to true, "state" to if (r.error != null) "error" else "ready") + resultJson(r, AppSettings.units) +
             mapOf("open" to open, "list" to if (open) WaterListLayout.json(points) else null) // T192: the rows as drawn
