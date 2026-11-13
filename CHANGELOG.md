@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-13
 
+- T273: Developer tooling: the emulator script can save and load snapshots, and every boot waits for the guest's storage; the sweep keeps rebooting between parts (a load does not give all the memory back); nothing a user sees changes
 - T268: The sweep times the app's launch stage by stage over a seeded store and fails when one runs over its ceiling
 - T266: The app's launch is a declared list of stages, checked by a test and timed stage by stage (debug builds report it); nothing a user sees changes
 - T263: The current activity is the app's mode: a chip on the map names it and opens the picker, a new route starts in its mode, and a new setting lets Record start at once without asking; the Record-as picker scrolls in landscape at large text
