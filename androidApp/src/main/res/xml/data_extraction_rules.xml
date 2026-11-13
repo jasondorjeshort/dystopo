@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- T267 (ADR 0060 W2): kept maps stay off a migration to a new phone (tens of GB the user did not choose to carry; they
+     download again). The packs in files/packs/ and in the external files dir's packs/ are left out of a device-to-device
+     transfer and of a cloud backup (allowBackup="false" turns that off already). The online tile store is in no_backup/,
+     which neither ever takes; the world overview's file (T264) is left as it was. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="packs/" />
+        <exclude domain="external" path="packs/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="packs/" />
+        <exclude domain="external" path="packs/" />
+    </device-transfer>
+</data-extraction-rules>

@@ -31,6 +31,9 @@ import java.util.concurrent.atomic.AtomicLong
  * until they fit with [BudgetPlan.slackBytes] to spare. A check every [TICK_S] seconds catches what grows without
  * reporting (the source downloads).
  *
+ * T267 (ADR 0060 W2): the online cache's store is `noBackupFilesDir/tiles` once moved (its [TileCacheStore] follows the
+ * cache object, so the budget reads whichever root it serves); the contour cache and the sources stay in `cacheDir`.
+ *
  * T127 (T112's deferred fold-in): the direct sources' own trim of `cache/sources/` takes the total as its ceiling
  * ([DirectSources.budgetTotalBytes]), as the two caps do, instead of a fixed 512 MB that did not grow with the total.
  */
