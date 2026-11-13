@@ -592,6 +592,7 @@ fun RouteControls() {
                                 .clickable { RouteSession.tapChip(c) }.padding(horizontal = 10.dp, vertical = 4.dp),
                         )
                     }
+                    io.github.jasondorjeshort.dystopo.app.help.HelpIcon("route.kind") // T276
                 }
                 if (RouteSession.mode == TravelMode.DRIVE) {
                     BasicText(io.github.jasondorjeshort.dystopo.routing.Router.DRIVE_NOTICE, style = TextStyle(color = Ink, fontSize = 11.sp))
@@ -639,6 +640,15 @@ fun RouteControls() {
         )
     }
 }
+
+/** T276: the help text of the route card's Walk and Hike chips (`HelpRegistry`), beside the chips. */
+internal val ROUTE_KIND_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("route.kind", "Walk or Hike", "The map: route card", needs = "a route being planned") {
+        "Walk and Hike follow the same paths. Walk is for town: no water, terrain or start time lines, and no turn-back " +
+            "time when you navigate. Hike shows them all. The planner picks one from how much of the route runs on roads " +
+            "and streets; tap the other to change it. Drive is like Walk; Bike and Line are like Hike."
+    },
+)
 
 /** T212: how often the card compares the settings with the ones it drew (`POST /settings` reaches it within this). */
 private const val SETTINGS_TICK_MS = 500L
