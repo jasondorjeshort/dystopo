@@ -296,8 +296,9 @@ private fun StoreRow(key: String, s: Map<String, Any?>, choices: List<Long>, tot
             }
         }
         holdsLine(key, s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
-        // T249: Android's own Clear cache (in the app's settings) empties the directory these two rows live in.
-        if (key == Storage.ONLINE) BasicText(CLEAR_CACHE_LINE, style = TextStyle(color = Muted, fontSize = 11.sp))
+        // T249: Android's own Clear cache (in the app's settings) emptied the directory these two rows lived in; T267: said
+        // only until the store has moved out of it (ADR 0060 W2).
+        clearCacheLine(key, s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 11.sp)) }
         olderLine(s)?.let { BasicText(it, style = TextStyle(color = Older, fontSize = 12.sp, fontWeight = FontWeight.Bold)) } // T95
         // T115: the pinned budget now goes up to 1 TB, so say so when it is past what the phone has free, as the cache budget does.
         if (key == Storage.PINNED && budget != null && budget * BudgetPlan.MB > freeBytes + bytes) {
@@ -405,8 +406,15 @@ internal val STORAGE_HELP: List<HelpText> = run {
     )
 }
 
-/** T249: under the Online tiles row (the owner lost kept maps to it on 2026-11-07; where they live is ADR 0060's move). */
-internal const val CLEAR_CACHE_LINE = "Android's Clear cache for this app deletes these tiles and the offline maps in the budget too."
+/**
+ * T267 (ADR 0060 W2): under the Online tiles row while the store is still in the cache (T249's sentence became this
+ * state's): before the move has run, while a copy runs, and when it failed.
+ */
+internal const val CLEAR_CACHE_LINE = "Kept maps are in the cache on this phone; Android's Clear cache would remove them."
+
+/** T267: the Online tiles row's line on Android's Clear cache: until the move is done (`moveState`), none after. */
+internal fun clearCacheLine(key: String, s: Map<String, Any?>): String? =
+    if (key == Storage.ONLINE && s["moveState"] != "done") CLEAR_CACHE_LINE else null
 
 /** T249: the budget legend's word for a kind whose index is being built. */
 internal const val INDEXING_SHORT = "counting"

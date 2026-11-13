@@ -75,4 +75,15 @@ class StorageRowsTest {
         assertEquals(pinnedBefore, cache.pinnedBytes)
         assertEquals(emptyMap(), Storage.onlineBreakdown(cache, pinned = false))
     }
+
+    /** T267 (ADR 0060 W2): the Online tiles row says kept maps are in the cache until the store's move is done, then nothing. */
+    @Test
+    fun theClearCacheLineShowsUntilTheMoveIsDone() {
+        for (state in listOf(null, "pending", "copying", "failed")) {
+            assertEquals(CLEAR_CACHE_LINE, clearCacheLine(Storage.ONLINE, mapOf("moveState" to state)), "moveState $state")
+        }
+        assertNull(clearCacheLine(Storage.ONLINE, mapOf("moveState" to "done")))
+        assertNull(clearCacheLine(Storage.PINNED, mapOf("moveState" to "copying")), "the Online tiles row only")
+        assertEquals("Kept maps are in the cache on this phone; Android's Clear cache would remove them.", CLEAR_CACHE_LINE)
+    }
 }

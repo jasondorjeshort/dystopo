@@ -24,6 +24,8 @@ Parts:
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
                pack (no first-run card, contours drawn) and the setting survived. The new APK must carry a higher
                versionCode: the sweep builds it with -PdystopoVersionCode=<commit count> as release.yml does.
+               T267: tiles planted as root in the old build's cache/online/tiles are all in no_backup/tiles after it,
+               each with its size, and the old tree gone (`tilesMoved`; skipped on an image without su).
   update       (T83) the in-app update by taps: --prev-apk (the published release) with the pack, a track and metric
                units, pointed at a mock releases API from its first start (update-api.txt in the app's external files
                dir; the mock on 127.0.0.1:--mock-port is 10.0.2.2 to the emulator; T99), whose own start-up check
@@ -1609,6 +1611,47 @@ def version_of(dev):
     return (int(vc.group(1)) if vc else None), (vn.group(1) if vn else None)
 
 
+# T267: the online tile store's move (ADR 0060 W2). Tiles in the published build's cache/online/tiles must be in
+# no_backup/tiles after the upgrade, every one with its size, and the old tree gone. A release build has no run-as, so the
+# store is read and the tiles planted as root (`su 0`, which the google_apis images have); the planted files get the
+# cache directory's owner, group and SELinux context, as the app's own would. Without su the check is skipped and says so.
+STORE_OLD = f"/data/data/{PACKAGE}/cache/online/tiles"
+STORE_NEW = f"/data/data/{PACKAGE}/no_backup/tiles"
+PLANT_SERVER = "upgrade.example_1"
+
+
+def su(dev, cmd, timeout=120):
+    """[cmd] as root through the image's su (no single quotes in it)."""
+    return dev.shell(f"su 0 sh -c '{cmd}'", timeout=timeout, check_ok=False)
+
+
+def has_su(dev):
+    return su(dev, "id -u").strip() == "0"
+
+
+def store_listing(dev, root):
+    """{key: bytes} of every file under [root] but an unfinished write (.tmp)."""
+    out = su(dev, f"[ -d {root} ] && find {root} -type f ! -name \"*.tmp\" -exec stat -c %s:%n {{}} +", timeout=300)
+    files = {}
+    for line in out.splitlines():
+        size, _, path = line.strip().partition(":")
+        if size.isdigit() and path.startswith(root + "/"):
+            files[path[len(root) + 1:]] = int(size)
+    return files
+
+
+def plant_tiles(dev, n=200):
+    """[n] synthetic tiles in the old store, under a server key no source uses, owned as the cache directory is (and with
+    the app's modes: setgid directories, files its own)."""
+    base = f"{STORE_OLD}/{PLANT_SERVER}/dem@u1/12"
+    cache = f"/data/data/{PACKAGE}/cache"
+    script = (f"mkdir -p {base} && i=0; while [ $i -lt {n} ]; do x=$((650 + i / 20)); y=$((1400 + i % 20)); mkdir -p {base}/$x; "
+              f"head -c $((100 + i)) /dev/zero > {base}/$x/$y.png; i=$((i + 1)); done; "
+              f"find {STORE_OLD}/{PLANT_SERVER} -type d -exec chmod 2700 {{}} + && find {STORE_OLD}/{PLANT_SERVER} -type f -exec chmod 600 {{}} + && "
+              f"chown -R $(stat -c %u:%g {cache}) {cache}/online && chcon -R $(stat -c %C {cache}) {cache}/online && echo planted")
+    return "planted" in su(dev, script, timeout=300)
+
+
 def part_upgrade(args):
     if not args.prev_apk or not os.path.isfile(args.prev_apk):
         return fail(f"--prev-apk not found: {args.prev_apk!r} (gh release download <previous tag> -p '*x86_64.apk')")
@@ -1624,6 +1667,11 @@ def part_upgrade(args):
         return {"ok": r["ok"], "version": st["old"], "png": r.get("png"), **({"error": r.get("error")} if not r["ok"] else {})}
 
     def data():
+        # T267: tiles in the old store (planted as root), listed with the rest of it before the upgrade.
+        st["su"] = has_su(dev)
+        if st["su"]:
+            st["planted"] = plant_tiles(dev)
+            st["storeBefore"] = store_listing(dev, STORE_OLD)
         set_units(dev, "Metres")
         line, _ = plan_and_keep(dev)
         rows, _ = routes_list(dev)
@@ -1656,7 +1704,22 @@ def part_upgrade(args):
         checks = {"noFirstRunCard": card is None, "contours": r["ok"], "track": same_first_track(st["tracks"], tracks),
                   "trip": len(rows) == len(st["routes"]) and all("km" in x for x in rows), "metric": all("km" in x for x in rows),
                   "tracksShown": bool(states) and all(x == "Shown" for x in states)}  # T262: the migration shows every track
-        return {"ok": all(checks.values()), "checks": checks, "tracks": tracks, "states": states, "routes": rows, "png": r.get("png"),
+        # T267: every tile of the old store is in the new one with its size, and the old tree is gone.
+        store = {"su": st.get("su")}
+        if st.get("su"):
+            before = st.get("storeBefore") or {}
+            deadline = time.time() + 30
+            while su(dev, f"[ -e {STORE_OLD} ] && echo left").strip() == "left" and time.time() < deadline:
+                time.sleep(1)
+            after = store_listing(dev, STORE_NEW)
+            lost = sorted(k for k, b in before.items() if after.get(k) != b)
+            old_left = su(dev, f"[ -e {STORE_OLD} ] && echo left").strip() == "left"
+            store.update(planted=st.get("planted"), before=len(before), beforeBytes=sum(before.values()), after=len(after),
+                         afterBytes=sum(after.values()), lost=len(lost), lostExamples=lost[:5], oldTreeLeft=old_left)
+            checks["tilesMoved"] = bool(st.get("planted")) and bool(before) and not lost and not old_left
+        else:
+            store["skipped"] = "no su on this image: the store cannot be read on a release build"
+        return {"ok": all(checks.values()), "checks": checks, "tracks": tracks, "states": states, "routes": rows, "png": r.get("png"), "store": store,
                 **({} if all(checks.values()) else {"error": "lost in the upgrade: " + ", ".join(k for k, v in checks.items() if not v)})}
 
     for name, fn in (("install-previous", old), ("create-data", data), ("install-new", upgrade), ("survived", survived)):

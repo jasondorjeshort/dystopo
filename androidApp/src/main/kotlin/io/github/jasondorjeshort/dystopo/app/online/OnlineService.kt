@@ -41,11 +41,15 @@ class OnlineService private constructor(private val app: DystopoApp) {
     /**
      * T41: the cap is a setting. T242: the constructor returns at once; the index is built on its own thread ([TileCache.state]),
      * so the launch no longer walks the cache on the main thread (120 s over a cache of tens of GB on a phone).
+     * T267 (ADR 0060 W2): the store lives in `noBackupFilesDir/tiles`, out of Android's Clear cache and the system's
+     * low-storage deletion; an install from before is moved there by the cache's index thread before its index ([TileStoreMove]).
      */
     val cache = TileCache(
-        File(app.cacheDir, "online/tiles"), AppSettings.onlineCacheMb * 1024 * 1024,
+        storeDir(app), AppSettings.onlineCacheMb * 1024 * 1024,
         walkHook = if (io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG_ENDPOINTS) indexHold(app) else null, // T242: POST /debug/cache/hold
-        snapshot = true, // T249: online/tiles.index beside the tiles
+        snapshot = true, // T249: tiles.index beside the tiles
+        move = storeMove(app), // T267
+        pinsPending = true, // T267: Areas.attach brings the pins; nothing is evicted before
     )
     init { io.github.jasondorjeshort.dystopo.app.StartupTrace.mark("OnlineService: after TileCache") } // T228
 
@@ -170,7 +174,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
             want.isEmpty() -> null
             target == DirectSources.SERVER -> OnlineFetcher(want, cache, http = if (peers.isEmpty()) direct else peerGet(direct), maxInFlight = DirectSources.FETCHER_IN_FLIGHT)
             // T74: a list of sources (the server, then T78's peer phones), content versions kept across restarts.
-            target.isNotEmpty() -> OnlineFetcher(want, cache, http = if (peers.isEmpty()) UrlConnectionGet() else peerGet(UrlConnectionGet()), versionFile = File(app.cacheDir, VERSIONS_FILE))
+            target.isNotEmpty() -> OnlineFetcher(want, cache, http = if (peers.isEmpty()) UrlConnectionGet() else peerGet(UrlConnectionGet()), versionFile = versionsFile())
             else -> OnlineFetcher(want, cache, http = peerGet(null)) // T78: no server and no direct reading: the peers alone
         }?.also { f -> f.onVersionChange = { onVersionChange(f, it) } }
         if (fetcher?.server != primary) {
@@ -178,6 +182,22 @@ class OnlineService private constructor(private val app: DystopoApp) {
             assetsVersion = null
         }
         Log.i(TAG, "server: ${target.ifEmpty { "(none)" }}${if (peers.isEmpty()) "" else ", peers: $peers"}")
+    }
+
+    /**
+     * T267: the content versions beside the moved store; the old file ([VERSIONS_FILE]) is carried there first, here
+     * because the fetcher reads it as it is made (one rename beside that read), and `online/` goes once empty.
+     */
+    private fun versionsFile(): File {
+        val f = File(app.noBackupFilesDir, STORE_VERSIONS_FILE)
+        val old = File(app.cacheDir, VERSIONS_FILE)
+        if (old.exists()) runCatching {
+            val m = cache.move ?: TileStoreMove(oldStoreDir(app))
+            m.carry(old, f)
+            m.fixGroupOf(listOf(f)) // a rename keeps the cache GID
+            old.parentFile?.delete()
+        }
+        return f
     }
 
     /** T78: uses [urls] as the peer sources from now on (rebuilds the fetcher, reloads the map when it changed). */
@@ -767,8 +787,47 @@ class OnlineService private constructor(private val app: DystopoApp) {
         /** T155: the gap before the next canary DEM try ([retryStalledDem]): after one that stalled, and the most after quick failures. */
         const val CANARY_MIN_GAP_MS = 2_000L
         const val CANARY_MAX_GAP_MS = 30_000L
-        /** T74: the content versions of every source, kept across restarts (outside the tile cache directory). */
+        /** T74: the content versions of every source, kept across restarts (outside the tile cache directory). T267: before the move. */
         const val VERSIONS_FILE = "online/versions.json"
+
+        /** T267: the store's directory in `noBackupFilesDir` (its snapshot `tiles.index`, marker `tiles.move` and versions beside it). */
+        const val STORE_DIR = "tiles"
+
+        /** T267: the content versions beside the moved store. */
+        const val STORE_VERSIONS_FILE = "versions.json"
+
+        /** T267: where the online tile store lives (ADR 0060 W2). */
+        fun storeDir(app: android.content.Context): File = File(app.noBackupFilesDir, STORE_DIR)
+
+        /** T267: where it lived before (`cacheDir/online/tiles`). */
+        fun oldStoreDir(app: android.content.Context): File = File(app.cacheDir, "online/tiles")
+
+        /**
+         * T267: the move of [oldStoreDir] into [storeDir], with the ownership pass on Android. Debug builds: a pending
+         * `POST /debug/cache/move?copy=1` makes the rename fail as `EXDEV` would, and its `perFileMs` holds the copy after each
+         * file, so the copy and the map drawn meanwhile can be seen (a file in `filesDir`, taken by this launch).
+         */
+        private fun storeMove(app: DystopoApp): TileStoreMove {
+            val forced = if (io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG_ENDPOINTS) takeForcedCopy(app) else null
+            return TileStoreMove(
+                oldStoreDir(app), groups = OsGroupFixer,
+                rename = if (forced != null) { _, _ -> throw java.io.IOException("forced by POST /debug/cache/move (as EXDEV)") } else TileStoreMove::atomicRename,
+                copyHook = forced?.takeIf { it > 0 }?.let { ms -> { _: Long -> Thread.sleep(ms) } },
+            )
+        }
+
+        /** T267, debug builds: the file asking the next launch's move to copy ([forceCopyNextMove]). */
+        private const val FORCE_COPY_FILE = ".tile-move-copy"
+
+        /** T267, debug builds: the next launch's move copies instead of renaming, holding [perFileMs] after each file (once). */
+        fun forceCopyNextMove(app: DystopoApp, on: Boolean, perFileMs: Long) {
+            val f = File(app.filesDir, FORCE_COPY_FILE)
+            if (on) f.writeText(perFileMs.toString()) else f.delete()
+        }
+
+        fun pendingForcedCopy(app: DystopoApp): Long? = File(app.filesDir, FORCE_COPY_FILE).takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull()
+
+        private fun takeForcedCopy(app: DystopoApp): Long? = pendingForcedCopy(app)?.also { File(app.filesDir, FORCE_COPY_FILE).delete() }
 
         fun sha256(bytes: ByteArray): String =
             java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }

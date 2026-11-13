@@ -19,7 +19,8 @@ import java.io.File
  * T74: what the app keeps on disk, per store, with the budgets the user sets (PLANNING › Design goals, principle 3):
  * - `packs`: region packs (`files/packs/` and pushed ones in the external files dir), with their routing graphs and
  *   search indexes; not a cache (a pack is removed in the pack list), so no budget and no clear here.
- * - `online`: tiles fetched from the server (DEM, map, glyphs) (`cache/online/tiles/`, one LRU capped by
+ * - `online`: tiles fetched from the server (DEM, map, glyphs) (T267: `no_backup/tiles/`, `cache/online/tiles/` before the
+ *   move of ADR 0060 W2, both while a copy runs; `location` and `moveState` on the row; one LRU capped by
  *   `onlineCacheMb`); T91: the bytes and the cap count only unpinned tiles. T112: the contour and shade tiles made on
  *   the phone from them sit in the same directory but count with `derived` (bytes, holds, Clear).
  * - `pinned` (T91): the tiles of pinned offline areas in that same directory, with their own budget
@@ -75,7 +76,7 @@ object Storage {
 
     fun dirs(app: DystopoApp): Map<String, List<File>> = linkedMapOf(
         PACKS to packDirs(app),
-        ONLINE to listOf(File(app.cacheDir, "online/tiles")),
+        ONLINE to OnlineService.get(app).cache.let { c -> listOfNotNull(c.dir, c.moveRoot) }, // T267: the store's root (and the old one while it is served)
         DERIVED to listOf(File(app.cacheDir, "contours")),
         SOURCES to listOf(File(app.cacheDir, "sources")),
     )
@@ -195,6 +196,7 @@ object Storage {
                 "budgetEvictions" to online.budgetEvictions.get(), // T112
                 "allBytes" to online.bytes, "dirs" to dirsJson(ONLINE),
                 "indexing" to !onlineReady, // T242
+                "location" to online.moveJson()?.get("location"), "moveState" to online.moveJson()?.get("moveState"), // T267
             ) + budgetFields(CacheKind.ONLINE, onlineFetchedBytes),
             PINNED to linkedMapOf(
                 "label" to STORE_IN_BUDGET, "bytes" to pinned, "entries" to online.pinnedSize, "budgetMb" to AppSettings.pinnedCacheMb,
