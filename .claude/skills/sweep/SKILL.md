@@ -57,6 +57,8 @@ stopped by PID; it refuses 8765, 8686, 8687 and console 5554. The `check` part r
 stale build state of finding `docs/findings/2026-10-14-debug-test-compile-loses-internal-after-cache-hit.md`)
 and says so on its `steps.tsv` line.
 
+T268: `startup` (debug build, after `bothunits`, before the release phase) runs `tools/android-startup.py --launches 5` (cold) over a seeded store (52 synthetic Rainier tracks through `POST /tracks/import` and the Rainier packs, seeded after the part's reboot check) and compares each `GET /debug/launch` stage's median, the first frame's and the map drawn's with `tools/launch-budget.json`: red on a median over its ceiling or a StrictMode kind a stage's declared work does not allow; the table is `summary.json` `parts.startup.table`. `android-startup.py --set-budget <two sweeps' startup.json> --budget tools/launch-budget.json` sets the ceilings; lower one by hand when an improvement lands, never raise one without a line in the log. <!-- end T268 -->
+
 T191 (finding `docs/findings/2026-10-31-sweep-hung-when-the-paging-file-ran-out.md`, a 9.5 h hang): every part
 has a ceiling, 900 s by default (`-PartTimeout`), with `device-tour` 1200 s a run, `device-boot` 1500, `update` 1500,
 `check` 2400 and `matrix` 2400 built in (the release build has 1800 s of its own) and `-PartTimeouts part=seconds`

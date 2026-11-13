@@ -1,5 +1,5 @@
 """T147: sweep-summary.py offline: load_last_json with log text around a report, and the both-units part's four
-screenshots (both phones after each carry); T154: the diagnostics part.
+screenshots (both phones after each carry); T154: the diagnostics part; T268: the startup part.
 
     python -I tools/test_sweep_summary.py
 """
@@ -85,6 +85,25 @@ try:
     write(os.path.join("device", "tour1.json"), json.dumps(tour))
     runs = summary.device_tour(d, "device-tour")["runs"]
     assert runs[0]["servedBeforeBaseline"] == {"region-z8": {"osm": 1}} and "failedViews" not in runs[0], runs
+
+    # T268: the startup part's table (android-startup.py --budget's report), the reasons when red, the seeded store.
+    assert summary.PARTS["startup"](d, "startup") == {}, "no report, no entry"
+    rep = {"mode": "cold", "launches": [{}, {}, {}, {}, {}],
+           "medians": {"amTotalMs": 3505, "firstFrameMs": 3369, "fullyLoadedMs": 4642, "longestStallMs": 0, "launchOverheadMs": 6.7},
+           "seed": {"tracks": 52, "tracksImported": 0, "seedPoints": 26000, "packs": ["dem.pmtiles", "osm.pmtiles"], "seconds": 0.4},
+           "budget": {"set": {"date": "2026-11-13", "from": ["a", "b"]}, "factor": 1.25, "red": True,
+                      "reasons": ["stage composition: median 1049.5 ms over its ceiling of 500 ms"], "undeclared": [],
+                      "rows": [{"name": "firstFrameMs", "kind": "frame", "medianMs": 3369, "ceilingMs": 4212, "status": "ok"},
+                               {"name": "composition", "kind": "stage", "medianMs": 1049.5, "ceilingMs": 500, "status": "over"}]}}
+    write("startup.json", json.dumps(rep, indent=1))
+    got = summary.PARTS["startup"](d, "startup")
+    assert got["table"][1] == {"name": "composition", "kind": "stage", "medianMs": 1049.5, "ceilingMs": 500, "status": "over"}, got
+    assert got["red"] is True and got["reasons"] == rep["budget"]["reasons"] and got["launches"] == 5, got
+    assert got["seed"] == {"tracks": 52, "seedPoints": 26000, "packs": ["dem.pmtiles", "osm.pmtiles"], "seconds": 0.4}, got
+    assert got["medians"]["firstFrameMs"] == 3369 and got["budgetSet"]["date"] == "2026-11-13" and "error" not in got, got
+    del rep["budget"]
+    write("startup.json", json.dumps(rep))
+    assert summary.PARTS["startup"](d, "startup")["error"] == "no budget in the report"
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
