@@ -60,6 +60,16 @@ import java.util.concurrent.atomic.AtomicLong
  * on disk ([get], [contains]), and an entry whose file is gone is dropped on [get]. The pinned flags it kept are asked
  * again once it is read ([recountPinned]: navigation's pins do not outlive the process). The walk itself lists each
  * directory and stats its files ([TileWalker]; on Android `File.list` plus `Os.lstat`).
+ *
+ * T267 (ADR 0060 W2): **the store moved out of the cache.** With [move] set (the online cache's), the index's thread first
+ * moves the old tree ([TileStoreMove.from], `cacheDir/online/tiles`) with its snapshot and marker into [dir]
+ * (`noBackupFilesDir/tiles`): one rename; when that is refused (another file system, a project ID: `EXDEV`), a copy in key
+ * order while both trees are served ([moveRoot]: a read tries [dir] and then the old tree, a write goes to [dir], a delete
+ * goes from both), each file deleted from the old tree once its copy is in place, resumable from the marker
+ * ([TileStoreMove.marker]) after a kill; then an ownership pass sets each directory and file to the app's own group and
+ * clears the directories' setgid bit ([GroupFixer]; Android gives `cache` the cache GID and setgid, so a renamed tree
+ * would go on counting as cache). [whenReady]'s contract is unchanged: the actions run once the index is whole, after the
+ * move has put the tree in place (the copy itself goes on after that, under the index).
  */
 class TileCache(
     val dir: File,
@@ -72,6 +82,8 @@ class TileCache(
     snapshot: Boolean = false,
     /** T249: how the directory is walked when there is no snapshot to read. */
     private val walker: TileWalker = TileWalker.forPlatform(),
+    /** T267: where the store was before; moved into [dir] by the index's thread before the walk (the online cache's). */
+    val move: TileStoreMove? = null,
     /** Last, so the callers' trailing lambda is the clock (as before T242). */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -171,6 +183,251 @@ class TileCache(
 
     private fun fileOf(key: String) = File(dir, key)
 
+    // --- T267: two roots while the store moves ---
+
+    /**
+     * T267: the old tree while it is still served (the move not yet run, or a copy under way or failed); null once the
+     * store is wholly in [dir]. Changed under [moveLock].
+     */
+    @Volatile var moveRoot: File? = null
+        private set
+
+    /** T267: the index's thread has a move (or what is left of one) to do before the index ([TileStoreMove.needed]). */
+    private val moving: Boolean = move?.needed(dir) == true
+
+    /** T267: held around a write's rename into [dir], a delete from both trees and the copy's swap of one file. */
+    private val moveLock = Any()
+
+    /** T267: [key]'s bytes from [dir], else (while the old tree is served) from there; the file read, or null. */
+    private fun readFile(key: String): Pair<ByteArray, File>? {
+        val f = fileOf(key)
+        try {
+            return f.readBytes() to f
+        } catch (_: Exception) {
+        }
+        val old = moveRoot ?: return null
+        val o = File(old, key)
+        try {
+            return o.readBytes() to o
+        } catch (_: Exception) {
+        }
+        // The rename may have run between the two reads.
+        return try { f.readBytes() to f } catch (_: Exception) { null }
+    }
+
+    /** T267: whether [key]'s file is in [dir] or (while it is served) in the old tree. */
+    private fun fileExists(key: String): Boolean = fileOf(key).isFile || moveRoot?.let { File(it, key).isFile } == true
+
+    /** T267: deletes [key]'s file from [dir] and (while it is served) from the old tree; whether one went. */
+    private fun deleteFile(key: String): Boolean {
+        if (moveRoot == null) return fileOf(key).delete()
+        synchronized(moveLock) {
+            val a = fileOf(key).delete()
+            val b = moveRoot?.let { File(it, key).delete() } == true
+            return a || b
+        }
+    }
+
+    /** T267: renames a written [tmp] onto [file] ([key]'s, in [dir]); while the old tree is served, its stale copy of [key] goes. */
+    private fun placeWrite(key: String, tmp: File, file: File): Boolean {
+        fun place(): Boolean {
+            if (tmp.renameTo(file)) return true
+            file.delete()
+            if (tmp.renameTo(file)) return true
+            tmp.delete()
+            return false
+        }
+        if (moveRoot == null) return place()
+        synchronized(moveLock) {
+            val ok = place()
+            if (ok) moveRoot?.let { File(it, key).delete() }
+            return ok
+        }
+    }
+
+    /**
+     * T267: the move's first part, on the index's thread before anything is read: the old tree renamed into [dir] with its
+     * snapshot (then [moveRoot] is null and the index is read or walked as before), or, when the rename is refused or [dir]
+     * already holds tiles, a copy begun ([moveRoot] stays: both trees are served until [copyAfterIndex] ends).
+     */
+    private fun moveFirst() {
+        val m = move!!
+        val t0 = System.nanoTime()
+        val marker = m.readMarker(dir)
+        m.begin(clock(), marker)
+        try {
+            val from = m.from
+            var copy = marker["state"] == STATE_COPYING || marker["state"] == STATE_FAILED
+            if (!copy && from.isDirectory) {
+                if (dir.list().isNullOrEmpty()) {
+                    m.writeMarker(dir, mapOf("state" to "renaming"))
+                    try {
+                        dir.parentFile?.mkdirs()
+                        if (dir.isDirectory) dir.delete() // an empty directory left by an earlier launch
+                        synchronized(moveLock) {
+                            m.rename(from, dir)
+                            moveRoot = null
+                        }
+                        m.method = "rename"
+                    } catch (t: Throwable) {
+                        m.renameError = "${t.javaClass.simpleName}: ${t.message}"
+                        copy = true
+                    }
+                } else {
+                    m.renameError = "the new tree already holds files"
+                    copy = true
+                }
+            }
+            if (copy && from.isDirectory) {
+                dir.mkdirs()
+                m.method = "copy"
+                m.state = TileStoreMove.State.COPYING
+                m.writeMarker(dir, mapOf("state" to STATE_COPYING, "method" to "copy", "renameError" to m.renameError))
+                // The snapshot named the old tree's state; the copy walks both trees instead.
+                for (s in TileStoreMove.SNAPSHOT_SUFFIXES) File(from.parentFile, from.name + s).delete()
+                m.renameMs = (System.nanoTime() - t0) / 1_000_000
+                return
+            }
+            // Renamed, nothing to rename, or a copy whose last file went before its marker was written: the snapshot, its marker and an interrupted write's .tmp follow the tree.
+            for (s in TileStoreMove.SNAPSHOT_SUFFIXES) m.carry(File(from.parentFile, from.name + s), File(dir.parentFile, dir.name + s))
+            synchronized(moveLock) { moveRoot = null }
+            from.parentFile?.delete() // `online/` once empty (the versions file leaves it with OnlineService)
+            dir.mkdirs()
+            if (m.method == null) m.method = marker["method"] ?: "none"
+            m.state = TileStoreMove.State.DONE
+            m.renameMs = (System.nanoTime() - t0) / 1_000_000
+            m.writeMarker(dir, mapOf("state" to STATE_DONE, "method" to m.method, "renameError" to m.renameError, "group" to (marker["group"].takeIf { it == STATE_DONE } ?: "pending")))
+        } catch (t: Throwable) {
+            m.error = "${t.javaClass.simpleName}: ${t.message}"
+            m.state = TileStoreMove.State.FAILED
+            m.renameMs = (System.nanoTime() - t0) / 1_000_000
+            runCatching { m.writeMarker(dir, mapOf("state" to STATE_FAILED, "error" to m.error)) }
+        }
+    }
+
+    /**
+     * T267: the copy, after the index of both trees is whole (on the index's thread): the old tree in key order (a
+     * directory's files, then its subdirectories, by name), each file written beside its place in [dir] with its time and
+     * renamed in under [moveLock] unless [dir] has a newer one, then deleted from the old tree, and the emptied directories
+     * with it; the marker names the last directory done every [COPY_MARK_EVERY]. A failure (no space) leaves both trees
+     * served and the next launch goes on. Then the old tree goes, the snapshot is written, and the ownership pass runs.
+     */
+    private fun copyAfterIndex() {
+        val m = move!!
+        val old = moveRoot ?: return
+        val t0 = System.nanoTime()
+        try {
+            copyDir(m, old, "")
+            synchronized(moveLock) { moveRoot = null }
+            old.deleteRecursively() // what is left: emptied directories, and stale files whose key [dir] holds newer
+            old.parentFile?.delete()
+            m.copyMs = (System.nanoTime() - t0) / 1_000_000
+            m.state = TileStoreMove.State.DONE
+            m.writeMarker(dir, mapOf("state" to STATE_DONE, "method" to "copy", "renameError" to m.renameError, "group" to "pending"))
+            runCatching { saveSnapshot("move", force = true) }
+            afterMove()
+        } catch (t: Throwable) {
+            m.copyMs = (System.nanoTime() - t0) / 1_000_000
+            m.error = "${t.javaClass.simpleName}: ${t.message}"
+            m.state = TileStoreMove.State.FAILED
+            runCatching { m.writeMarker(dir, mapOf("state" to STATE_FAILED, "method" to "copy", "cursor" to m.cursor, "error" to m.error)) }
+            m.settled = true
+        }
+    }
+
+    private var dirsSinceMark = 0
+
+    private fun copyDir(m: TileStoreMove, d: File, prefix: String) {
+        val names = d.list()?.sorted() ?: return
+        val subdirs = ArrayList<String>()
+        for (n in names) {
+            val f = File(d, n)
+            if (f.isDirectory) {
+                subdirs += n
+                continue
+            }
+            if (n.endsWith(".tmp")) { // a write a kill interrupted (writes go to the new tree)
+                f.delete()
+                continue
+            }
+            copyOne(m, prefix + n, f)
+        }
+        m.cursor = prefix.trimEnd('/')
+        if (++dirsSinceMark >= COPY_MARK_EVERY) {
+            dirsSinceMark = 0
+            m.writeMarker(dir, mapOf("state" to STATE_COPYING, "method" to "copy", "renameError" to m.renameError, "cursor" to m.cursor))
+        }
+        for (s in subdirs) copyDir(m, File(d, s), "$prefix$s/")
+        d.delete() // emptied (refused when a write is still in it)
+    }
+
+    private fun copyOne(m: TileStoreMove, key: String, src: File) {
+        val dst = fileOf(key)
+        if (dst.exists()) { // a newer write is in the new tree
+            synchronized(moveLock) { src.delete() }
+            m.skipped++
+            return
+        }
+        val bytes = try { src.readBytes() } catch (_: IOException) { return } // removed meanwhile
+        val mtime = src.lastModified()
+        dst.parentFile?.mkdirs()
+        val tmp = File(dst.parentFile, "${dst.name}.move.tmp")
+        tmp.writeBytes(bytes)
+        if (mtime > 0) tmp.setLastModified(mtime) // the order of eviction survives the copy
+        synchronized(moveLock) {
+            when {
+                !src.exists() || dst.exists() -> { // removed, or written newer, meanwhile
+                    tmp.delete()
+                    src.delete()
+                }
+                !m.place(tmp, dst) -> {
+                    tmp.delete()
+                    throw IOException("could not place $key in the new tree")
+                }
+                else -> {
+                    src.delete()
+                    m.copied++
+                    m.copiedBytes += bytes.size
+                }
+            }
+        }
+        m.copyHook?.invoke(m.copied)
+    }
+
+    /** T267: after the move: the ownership pass once ([TileStoreMove.fixGroups]), and the move's figures kept in its marker. */
+    private fun afterMove() {
+        val m = move!!
+        if (m.state != TileStoreMove.State.DONE) {
+            m.settled = true
+            return
+        }
+        m.movedFiles = entries.toLong()
+        m.movedBytes = total
+        val marker = m.readMarker(dir)
+        if (marker["group"] == "pending") m.fixGroups(dir)
+        else m.groupFromMarker(marker)
+        runCatching {
+            m.writeMarker(dir, marker + mapOf(
+                "state" to STATE_DONE, "group" to STATE_DONE, "groupFixed" to m.groupFixed?.toString(),
+                "files" to (marker["files"] ?: m.movedFiles.toString()), "bytes" to (marker["bytes"] ?: m.movedBytes.toString()),
+                "renameMs" to (marker["renameMs"] ?: m.renameMs?.toString()), "copyMs" to (marker["copyMs"] ?: m.copyMs?.toString()),
+                "groupMs" to (marker["groupMs"] ?: m.groupMs?.toString()), "at" to (marker["at"] ?: m.startedAt?.toString()),
+            ))
+        }
+        m.settled = true
+    }
+
+    /** T267: where the store is and how it got there, for `GET /debug/cache` and the Storage screen; null without [move]. */
+    fun moveJson(): Map<String, Any?>? {
+        val m = move ?: return null
+        val location = when {
+            moveRoot != null && m.state != TileStoreMove.State.PENDING -> "${m.fromName} and ${m.toName}"
+            m.state == TileStoreMove.State.DONE -> m.toName
+            else -> m.fromName
+        }
+        return linkedMapOf("location" to location, "moveState" to m.stateName(), "groupFixed" to m.groupFixed, "move" to m.json(dir))
+    }
+
     /** T151: told under the lock of every key added (true) or removed (false); `areas/Areas.kt` keeps the keys as rows. */
     @Volatile var onIndex: ((String, Boolean) -> Unit)? = null
 
@@ -180,8 +437,9 @@ class TileCache(
     val evictions = AtomicLong()
 
     init {
-        dir.mkdirs()
-        if (dir.list().isNullOrEmpty()) {
+        if (moving && move!!.from.exists()) moveRoot = move.from
+        if (!moving) dir.mkdirs() // T267: a pending move renames the old tree into place, so nothing is made there first
+        if (!moving && dir.list().isNullOrEmpty()) {
             markerChecked = true
             markReady() // nothing to walk (a new install, or after Android's Clear cache); a snapshot left is written over at the first change
         } else {
@@ -251,6 +509,23 @@ class TileCache(
 
     /** T249: the index's thread: the snapshot read when it may be, else the walk (then the snapshot written). */
     private fun index() {
+        if (moving) {
+            moveFirst()
+            if (moveRoot != null) { // T267: a copy: both trees walked (the new first: a key in both is the new one), then copied
+                runCatching { snapshotFile?.delete() }
+                if (snapshotFile != null) snapshotLoad = mapOf("used" to false, "why" to "the store is being copied")
+                synchronized(lock) { markerChecked = true }
+                walk(listOf(dir, moveRoot!!))
+                copyAfterIndex()
+                return
+            }
+        }
+        indexOrRead()
+        if (moving) afterMove()
+    }
+
+    /** T249: the snapshot read when it may be, else the walk (then the snapshot written). */
+    private fun indexOrRead() {
         val reason = if (snapshotFile != null) {
             try {
                 loadSnapshot()
@@ -272,11 +547,11 @@ class TileCache(
         if (snapshotFile != null) runCatching { saveSnapshot("walk") }
     }
 
-    private fun walk() {
+    private fun walk(roots: List<File> = listOf(dir)) {
         val startedAt = System.currentTimeMillis()
         val batch = ArrayList<Walked>(WALK_BATCH)
         try {
-            walker.walk(dir) { key, bytes, mtime, path ->
+            for (root in roots) walker.walk(root) { key, bytes, mtime, path ->
                 if (key.endsWith(".tmp")) {
                     // A write interrupted by a kill; one under way now (a put while indexing) is younger.
                     if (mtime < startedAt - STALE_TMP_MS) runCatching { File(path).delete() }
@@ -592,14 +867,11 @@ class TileCache(
             misses.incrementAndGet()
             return null
         }
-        val file = fileOf(key)
-        val data = try {
-            file.readBytes()
-        } catch (_: Exception) {
+        val (data, file) = readFile(key) ?: run { // T267: from the new tree, else the old one while it is served
             // Deleted behind our back (the system trims app caches under storage pressure).
             if (known) synchronized(lock) {
                 val s = index.find(key)
-                if (s != TileIndex.NONE && !file.exists()) removeEntry(key, s)
+                if (s != TileIndex.NONE && !fileExists(key)) removeEntry(key, s)
             }
             misses.incrementAndGet()
             return null
@@ -636,7 +908,7 @@ class TileCache(
             if (index.find(key) != TileIndex.NONE) return true
             if ((ready && !fromSnapshot) || removed?.contains(key) == true) return false
         }
-        return fileOf(key).isFile
+        return fileExists(key) // T267: either tree while the old one is served
     }
 
     /** T242: deletes the entry [key] (one tile, while indexing too); returns whether there was one. */
@@ -652,7 +924,7 @@ class TileCache(
                 false
             }
         }
-        val deleted = fileOf(key).delete()
+        val deleted = deleteFile(key)
         return held || deleted
     }
 
@@ -663,13 +935,7 @@ class TileCache(
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, "${file.name}.${Thread.currentThread().id}.tmp")
         tmp.writeBytes(bytes)
-        if (!tmp.renameTo(file)) {
-            file.delete()
-            if (!tmp.renameTo(file)) {
-                tmp.delete()
-                return
-            }
-        }
+        if (!placeWrite(key, tmp, file)) return
         val now = clock()
         file.setLastModified(now)
         val pinned = keep(key)
@@ -713,7 +979,8 @@ class TileCache(
         val name = key.substringAfterLast('/')
         val parent = key.substringBeforeLast('/', "")
         val prefix = name.substringBeforeLast('.') + infix
-        val names = File(dir, parent).list()?.filter { it.startsWith(prefix) && !it.endsWith(".tmp") }.orEmpty()
+        val names = (File(dir, parent).list().orEmpty().asList() + moveRoot?.let { File(it, parent).list() }.orEmpty()) // T267: both trees while the old one is served
+            .distinct().filter { it.startsWith(prefix) && !it.endsWith(".tmp") }
         val keys = names.map { if (parent.isEmpty()) it else "$parent/$it" }.filter { it != kept }
         if (keys.isEmpty()) return 0
         val gone = synchronized(lock) {
@@ -726,7 +993,7 @@ class TileCache(
                 }
             }
         }
-        gone.forEach { fileOf(it).delete() }
+        gone.forEach { deleteFile(it) }
         return gone.size
     }
 
@@ -823,7 +1090,7 @@ class TileCache(
                 true
             }
         }
-        victims.forEach { fileOf(it).delete() }
+        victims.forEach { deleteFile(it) }
         evictions.addAndGet(victims.size.toLong())
         budgetEvictions.addAndGet(victims.size.toLong())
         return freed
@@ -899,7 +1166,7 @@ class TileCache(
                 gone += k
             }
         }
-        gone.forEach { fileOf(it).delete() }
+        gone.forEach { deleteFile(it) }
         return gone.size
     }
 
@@ -948,7 +1215,7 @@ class TileCache(
                     s != TileIndex.NONE
                 }
             }
-            gone.forEach { fileOf(it).delete() }
+            gone.forEach { deleteFile(it) }
             deleted += gone.size
             at += part.size
             onChunk?.invoke(deleted, keys.size)
@@ -982,7 +1249,7 @@ class TileCache(
                     true
                 }
             }
-            victims.forEach { fileOf(it).delete() }
+            victims.forEach { deleteFile(it) }
             evictions.addAndGet(victims.size.toLong())
             if (victims.size < CLEAR_CHUNK || total - pinnedTotal <= target) return
         }
@@ -1006,7 +1273,7 @@ class TileCache(
         "budgetEvictions" to budgetEvictions.get(), // T112
         "index" to indexJson(), // T242
         "fromSnapshot" to fromSnapshot, "snapshot" to snapshotJson(), // T249
-    )
+    ) + (moveJson() ?: emptyMap()) // T267: location, moveState, groupFixed, move
 
     /** The first frame outside this class and its index: the caller a failed check names. */
     private fun callerOf(): String = Throwable().stackTrace.firstOrNull { f ->
@@ -1041,6 +1308,14 @@ class TileCache(
          */
         const val INDEXING_LINE = "Counting the map tiles"
 
+        /** T267: the move's marker states ([TileStoreMove.marker]). */
+        const val STATE_COPYING = "copying"
+        const val STATE_FAILED = "failed"
+        const val STATE_DONE = "done"
+
+        /** T267: the copy writes its marker (the last directory done) after this many directories. */
+        const val COPY_MARK_EVERY = 64
+
         /** T242: the trim's hysteresis: past the cap it trims this much below it (2 %). */
         fun slackOf(maxBytes: Long): Long = maxBytes / 50
 
@@ -1048,6 +1323,240 @@ class TileCache(
 
         private fun prefixOf(key: String, depth: Int): String = key.split('/').take(depth).joinToString("/")
     }
+}
+
+/**
+ * T267 (ADR 0060 W2): the online store's move from [from] (`cacheDir/online/tiles`) into a [TileCache]'s directory
+ * (`noBackupFilesDir/tiles`), which the cache's index thread runs ([TileCache.move]); this holds its settings, its state
+ * and its figures. The marker ([marker], `tiles.move` beside the new tree) keeps the state across launches as `key=value`
+ * lines: `state` (`renaming`, `copying`, `failed`, `done`), `method` (`rename`, `copy`, `none`), `group` (`pending`,
+ * `done`), the copy's `cursor` (the last directory done), and the figures once done. [rename] is a seam: a test (or the
+ * debug build's forced copy) makes it throw as `EXDEV` would.
+ */
+class TileStoreMove(
+    val from: File,
+    /** The ownership pass's system calls (null: no pass, as on the JVM). */
+    val groups: GroupFixer? = null,
+    /** Renames a file or directory, throwing when it cannot (Android: `rename(2)`; `EXDEV` across file systems or project IDs). */
+    val rename: (File, File) -> Unit = ::atomicRename,
+    /** What `location` calls the old and the new place. */
+    val fromName: String = "cache",
+    val toName: String = "files",
+    /** Called after each file the copy placed, with the count so far (a test kills or holds the copy with it). */
+    val copyHook: ((Long) -> Unit)? = null,
+) {
+    enum class State { PENDING, COPYING, FAILED, DONE }
+
+    @Volatile var state = State.PENDING
+        internal set
+    @Volatile var method: String? = null
+        internal set
+    @Volatile var renameError: String? = null
+        internal set
+    @Volatile var error: String? = null
+        internal set
+    @Volatile var startedAt: Long? = null
+        private set
+    @Volatile var renameMs: Long? = null
+        internal set
+    @Volatile var copyMs: Long? = null
+        internal set
+    @Volatile var cursor: String? = null
+        internal set
+    @Volatile var copied = 0L
+        internal set
+    @Volatile var copiedBytes = 0L
+        internal set
+    @Volatile var skipped = 0L
+        internal set
+    @Volatile var movedFiles: Long? = null
+        internal set
+    @Volatile var movedBytes: Long? = null
+        internal set
+    /** The ownership pass: null until it ran (or with no [groups]), then whether every entry has the app's group and no directory setgid. */
+    @Volatile var groupFixed: Boolean? = null
+        private set
+    @Volatile var groupMs: Long? = null
+        private set
+    @Volatile var group: Map<String, Any?>? = null
+        private set
+    /** This launch's move has come to rest: done with its ownership pass and figures, or failed (tests wait for it). */
+    @Volatile var settled = false
+        internal set
+
+    /** The marker as the last launch left it (its figures when this one had nothing to do). */
+    @Volatile private var last: Map<String, String> = emptyMap()
+
+    fun marker(to: File) = File(to.absoluteFile.parentFile, "${to.name}.move")
+
+    fun readMarker(to: File): Map<String, String> = runCatching {
+        marker(to).readLines().mapNotNull { l -> l.indexOf('=').takeIf { it > 0 }?.let { l.substring(0, it) to l.substring(it + 1) } }.toMap()
+    }.getOrDefault(emptyMap())
+
+    /** Writes the marker atomically (a `.tmp` renamed over it); null values are left out. */
+    fun writeMarker(to: File, values: Map<String, String?>) {
+        val f = marker(to)
+        f.parentFile?.mkdirs()
+        val tmp = File(f.parentFile, f.name + ".tmp")
+        tmp.writeText(values.filterValues { it != null }.entries.joinToString("") { "${it.key}=${it.value!!.replace('\n', ' ')}\n" })
+        if (!tmp.renameTo(f)) {
+            f.delete()
+            tmp.renameTo(f)
+        }
+    }
+
+    /**
+     * Whether the cache's index thread has anything to do before the index ([TileCache]'s constructor asks; a few stats):
+     * the old tree or its snapshot is still there, a copy or a rename was left unfinished, or the ownership pass has not run.
+     * When not, the state is [State.DONE] with the marker's figures.
+     */
+    fun needed(to: File): Boolean {
+        val m = readMarker(to)
+        val left = from.exists() || SNAPSHOT_SUFFIXES.any { File(from.absoluteFile.parentFile, from.name + it).exists() }
+        val n = left || m["state"].let { it != null && it != TileCache.STATE_DONE } || m["group"] == "pending"
+        if (!n) {
+            last = m
+            state = State.DONE
+            method = m["method"] ?: "none"
+            renameError = m["renameError"]
+            groupFromMarker(m)
+            settled = true
+        }
+        return n
+    }
+
+    internal fun begin(at: Long, marker: Map<String, String>) {
+        startedAt = at
+        last = marker
+        cursor = marker["cursor"]
+        renameError = marker["renameError"]
+        method = marker["method"]
+    }
+
+    internal fun groupFromMarker(m: Map<String, String>) {
+        groupFixed = m["groupFixed"]?.toBooleanStrictOrNull()
+        groupMs = m["groupMs"]?.toLongOrNull()
+    }
+
+    /** Puts [tmp] at [dst] (in the new tree), not over a file there. */
+    internal fun place(tmp: File, dst: File): Boolean = !dst.exists() && tmp.renameTo(dst)
+
+    /** Carries one small file ([old] to [new]): a rename, else a copy; when [new] is there already, [old] is stale and goes. */
+    fun carry(old: File, new: File) {
+        if (!old.exists()) return
+        if (new.exists()) {
+            old.delete()
+            return
+        }
+        new.parentFile?.mkdirs()
+        try {
+            rename(old, new)
+        } catch (_: Throwable) {
+            old.copyTo(new, overwrite = false)
+            new.setLastModified(old.lastModified())
+            old.delete()
+        }
+    }
+
+    /**
+     * The ownership pass over [root]: each directory and file lstat'ed; one whose group is not the app's own is given it,
+     * and a directory's setgid bit is cleared (Android makes `cache` setgid with the cache GID, so a renamed tree and every
+     * file made in it would go on counting as cache). One pass for directories and files: a launch over a snapshot never
+     * stats the files, so "lazily by the walk" would leave most of them. Failures are counted, the first one kept.
+     */
+    fun fixGroups(root: File) {
+        val g = groups ?: return
+        val t0 = System.nanoTime()
+        val own = g.ownGid
+        var dirs = 0L; var files = 0L; var dirsFixed = 0L; var filesFixed = 0L; var setgidCleared = 0L; var failed = 0L
+        var firstError: String? = null
+        var otherGid: Int? = null
+        val stack = ArrayList<String>()
+        stack += root.path
+        while (stack.isNotEmpty()) {
+            val p = stack.removeAt(stack.size - 1)
+            val st = g.stat(p) ?: continue
+            val isDir = st[2] == 1
+            if (isDir) dirs++ else files++
+            try {
+                if (st[0] != own) {
+                    if (otherGid == null) otherGid = st[0]
+                    g.chown(p, own)
+                    if (isDir) dirsFixed++ else filesFixed++
+                }
+                if (isDir && st[1] and S_ISGID != 0) {
+                    g.chmod(p, st[1] and 0xfff and S_ISGID.inv())
+                    setgidCleared++
+                }
+            } catch (t: Throwable) {
+                failed++
+                if (firstError == null) firstError = "$p: ${t.javaClass.simpleName}: ${t.message}"
+            }
+            if (isDir) File(p).list()?.forEach { stack += "$p/$it" }
+        }
+        groupMs = (System.nanoTime() - t0) / 1_000_000
+        groupFixed = failed == 0L
+        group = linkedMapOf(
+            "ownGid" to own, "otherGidSeen" to otherGid, "dirs" to dirs, "files" to files, "dirsFixed" to dirsFixed,
+            "filesFixed" to filesFixed, "setgidCleared" to setgidCleared, "failed" to failed, "firstError" to firstError, "ms" to groupMs,
+        )
+    }
+
+    fun stateName(): String = when (state) {
+        State.PENDING -> "pending"
+        State.COPYING -> TileCache.STATE_COPYING
+        State.FAILED -> TileCache.STATE_FAILED
+        State.DONE -> TileCache.STATE_DONE
+    }
+
+    /** `GET /debug/cache`'s `online.move`: how the store moved (this launch's figures, else the marker's from the launch that moved it). */
+    fun json(to: File): Map<String, Any?> = linkedMapOf(
+        "from" to from.path, "to" to to.path, "method" to method, "renameError" to renameError, "error" to error,
+        "files" to (movedFiles ?: last["files"]?.toLongOrNull()), "bytes" to (movedBytes ?: last["bytes"]?.toLongOrNull()),
+        "renameMs" to (renameMs ?: last["renameMs"]?.toLongOrNull()), "copyMs" to (copyMs ?: last["copyMs"]?.toLongOrNull()),
+        "groupMs" to (groupMs ?: last["groupMs"]?.toLongOrNull()), "at" to (startedAt ?: last["at"]?.toLongOrNull()),
+        "thisLaunch" to (startedAt != null),
+        "copy" to if (method == "copy") linkedMapOf("copied" to copied, "copiedBytes" to copiedBytes, "skippedNewer" to skipped, "cursor" to cursor) else null,
+        "group" to group,
+    )
+
+    companion object {
+        /** The files named after the tree that move with it: T249's snapshot, its marker and an interrupted write of it. */
+        val SNAPSHOT_SUFFIXES = listOf(".index", ".index.dirty", ".index.tmp")
+
+        const val S_ISGID = 0x400 // 02000
+
+        /** `rename(2)` through `Files.move` with ATOMIC_MOVE (an `IOException` names the refusal, `EXDEV` among them). */
+        fun atomicRename(a: File, b: File) {
+            Files.move(a.toPath(), b.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        }
+    }
+}
+
+/** T267: the system calls of the ownership pass ([TileStoreMove.fixGroups]); [OsGroupFixer] on Android, a fake in tests. */
+interface GroupFixer {
+    val ownGid: Int
+
+    /** [path]'s group, mode and 1 for a directory (lstat), or null when it cannot be read. */
+    fun stat(path: String): IntArray?
+    fun chown(path: String, gid: Int)
+    fun chmod(path: String, mode: Int)
+}
+
+/** T267: Android's `Os` (the app's own gid; `lchown` with the owner unchanged; `chmod`). */
+object OsGroupFixer : GroupFixer {
+    override val ownGid: Int get() = android.system.Os.getgid()
+
+    override fun stat(path: String): IntArray? = try {
+        val st = android.system.Os.lstat(path)
+        intArrayOf(st.st_gid, st.st_mode, if (android.system.OsConstants.S_ISDIR(st.st_mode)) 1 else 0)
+    } catch (_: android.system.ErrnoException) {
+        null
+    }
+
+    override fun chown(path: String, gid: Int) = android.system.Os.lchown(path, -1, gid)
+
+    override fun chmod(path: String, mode: Int) = android.system.Os.chmod(path, mode)
 }
 
 /** T242: whether this is the UI thread (false on the JVM, where `android.os.Looper` is a stub). */

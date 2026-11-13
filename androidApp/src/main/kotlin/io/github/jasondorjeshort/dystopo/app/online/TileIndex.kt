@@ -492,7 +492,7 @@ internal class TileIndex {
 }
 
 /**
- * T249: [TileIndex] kept on disk (`online/tiles.index`, beside the tile directory: [TileCache]'s snapshot), so a launch over
+ * T249: [TileIndex] kept on disk (`tiles.index`, beside the tile directory (T267: `no_backup/`): [TileCache]'s snapshot), so a launch over
  * a large cache reads one file instead of walking a million. Versioned and self-describing:
  *
  * - a text header: the line [MAGIC], then `name: value` lines (`format`, `written` in epoch ms, `root` the tile directory's

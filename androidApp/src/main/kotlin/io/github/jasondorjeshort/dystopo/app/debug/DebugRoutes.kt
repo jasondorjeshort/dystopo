@@ -41,7 +41,7 @@ import java.io.File
  *   `POST /debug/cache/hold?ms=0..120000` holds the next launch's walk of the online cache that long at its first file, once
  *   (a file, as the tracking delay), so the `indexing` window can be seen: the one list and the Storage screen saying so,
  *   a kill mid-index. Answers `pendingHoldMs`.
- * - T249: `GET /debug/cache`'s `online` also has `fromSnapshot` (this launch read the index from `online/tiles.index`, no
+ * - T249: `GET /debug/cache`'s `online` also has `fromSnapshot` (this launch read the index from `tiles.index` beside the tiles, no
  *   walk) and `snapshot`: `file`, `present`, `fileBytes`, `entriesInFile`, `ageMs`, `usedThisLaunch`, `load` (`used`, and
  *   `why` not, or `entries`, `fileBytesPerEntry`, `readMs`, `validateMs`, `fileMs`, `pinRecountMs`), `lastSave` (`reason`
  *   walk, interval, stop or debug, `entries`, `fileBytes`, `copyMs`, `writeMs`, or `error`), `saves`, `dirty`, `marker`;
@@ -50,6 +50,15 @@ import java.io.File
  *   unchanged index); `?delete=1` deletes it, so the next launch walks. `POST /debug/cache/walk` times both walkers over
  *   the online cache's directory without filing anything (`list+lstat`, then `walkFileTree`, then each again), on a
  *   thread of its own; `GET /debug/cache`'s `walkers` follows it (files, bytes, ms and µs a file per run).
+ * - T267 (ADR 0060 W2): `GET /debug/cache` has `location` (`files` once the store is in `noBackupFilesDir/tiles`, `cache`
+ *   before the move, `cache and files` while a copy runs), `moveState` (`pending`, `copying`, `failed`, `done`) and
+ *   `groupFixed` (the ownership pass: true when every directory and file has the app's own group and no setgid bit, false
+ *   when a change was refused, null before it ran), at the top and in `online`, whose `move` has the figures (`method`
+ *   rename or copy, `renameError`, `files`, `bytes`, `renameMs`, `copyMs`, `groupMs`, `copy` with `copied`, `copiedBytes`,
+ *   `skippedNewer`, `cursor`, and `group` with the pass's counts and `ownGid`, `otherGidSeen`), this launch's or, kept in the
+ *   marker `no_backup/tiles.move`, the launch's that moved it. `POST /debug/cache/move?copy=1[&perFileMs=0..1000]` makes the
+ *   next launch's move copy instead of renaming (the rename fails as `EXDEV` would), holding `perFileMs` after each file so the
+ *   map can be watched meanwhile; `copy=0` forgets it. Answers `pendingCopyPerFileMs`.
  */
 object DebugRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -98,6 +107,12 @@ object DebugRoutes {
                     }
                     else -> Response.json(mapOf("error" to "save=1 or delete=1"), 400)
                 }
+            }
+            "POST" to "/debug/cache/move" -> { // T267
+                val on = r.query["copy"] == "1"
+                val ms = r.query["perFileMs"]?.let { it.toLongOrNull()?.takeIf { v -> v in 0..1000 } ?: return Response.json(mapOf("error" to "perFileMs must be 0..1000"), 400) } ?: 0L
+                io.github.jasondorjeshort.dystopo.app.online.OnlineService.forceCopyNextMove(app, on, ms)
+                Response.json(mapOf("pendingCopyPerFileMs" to io.github.jasondorjeshort.dystopo.app.online.OnlineService.pendingForcedCopy(app)))
             }
             "POST" to "/debug/cache/walk" -> { // T249
                 if (walkers?.get("running") == true) return Response.json(mapOf("error" to "a walk is running", "walkers" to walkers), 409)
@@ -149,7 +164,7 @@ object DebugRoutes {
         val rt = Runtime.getRuntime()
         if (gc) rt.gc()
         val online = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache
-        return linkedMapOf(
+        return linkedMapOf<String, Any?>() + (online.moveJson()?.filterKeys { it != "move" } ?: emptyMap()) + linkedMapOf( // T267: location, moveState, groupFixed
             "online" to online.json(),
             "contours" to io.github.jasondorjeshort.dystopo.app.ContourCache.get(app).json(),
             "javaHeap" to linkedMapOf("usedBytes" to rt.totalMemory() - rt.freeMemory(), "maxBytes" to rt.maxMemory(), "gc" to gc),
