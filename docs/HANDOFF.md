@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-13 18:55 UTC, at commit 4f9b0c58, by main session (T273 merged; T270 and the added T279 launching)
+Updated: 2026-11-13 20:25 UTC, at commit 19a825e4, by main session (T279 with its verifier; T270 at its implementer)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
 "Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
 
@@ -11,7 +11,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
   sweep before it was green without a rerun (`out/sweep-20261113-0446`, the next release's `-Prev`).
 - **T267, T278, T263, T266, T268 and T273 are merged** after the release (their Status lines): all ship in the
   closing alpha. T273's verifier found the sweep tour red after a forced reboot (`-EmuRebootGB 4.5`) on `main` too:
-  0-byte elevation tiles from the phone's own store. **T279** (added, lane A: console 5570 / host 8694) takes it;
+  0-byte tiles from the phone's own store. **T279** (added, lane A: 5570 / 8694; `task/T279` at 77ec642d) is with its verifier;
   **T270** (lane B: console 5574 / host 8698) is the last planned task. Briefs: scratchpad `briefs/`. Meter 8 at
   18:42 UTC. A red `startup` part (T268) is read before any rerun; the closing sweep keeps `-EmuRebootGB 6`.
 - The live viewer is wanted (`out/coordinator-pids.txt`). Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with
