@@ -22,7 +22,7 @@
 #   a11y         (T270, debug build, after startup) tools/android-a11y.py at font scales 1.0 and 2.0: every screen's clickable
 #                nodes under 48 dp of touch area, unlabelled, duplicate or overlapping, text outside its bounds, low contrast,
 #                the map's controls left under a screen, from GET /semantics, uiautomator dump and a screencap; red only on a
-#                finding tools/a11y-baseline.json does not list. Report a11y.json, the outlined frames and a11y11y-sheet.png.
+#                finding tools/a11y-baseline.json does not list. Report a11y.json, the outlined frames and a11y/a11y-sheet.png.
 #   bothunits    (T139, T129's follow-up; T147: in every device sweep, -NoBothUnits leaves it out) android-ui.py bothunits: the scale bar's Both units choice set on
 #                the sweep's emulator (debug build) reaches a second one through a sync peer and back. The second emulator
 #                is booted on the matrix pattern (AVD <Avd>-b, console -MatrixEmuPort, default -EmuPort+2, debug forward
