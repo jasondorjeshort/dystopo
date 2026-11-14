@@ -15,3 +15,13 @@ A stale recording probably wants a question on the next open (finish it, or keep
 cut-off on the age of the last fix. Reproduce on the emulator with a recording started, the clock moved on by days
 (`adb shell` date or a fake fix stream), then a cold start; the debug routes `GET /tracks` and the way-back state
 report what the card reads.
+
+Plan: one pass, the reproduction first (the board's Later has it for the next wave). On the emulator: start a
+recording, stop the fixes, move the clock on three days, cold start; read `GET /tracks` and the way-back state, and
+name why the recording is still open, which pace and deadline the card used, and why a flying recording had a card
+at all against T252's rule. Then: the way-back clock gives no verdict when the last fix is older than a bound (an
+hour, or the survey's figure), and a recording whose last fix is older than a day is asked about at the next open,
+"Finish it" or "Keep recording", a finish ending it at its last fix; a short survey first (ADR 0039) of what
+recording apps do with a recording left running. Done when: `check` green with tests of the cut-off and of the
+stale rule; the reproduction before and after in screenshots; strings listed (ADR 0031). Out of scope: ending a
+recording with nobody asked.
