@@ -17,7 +17,7 @@
   "assets": {"ceilingMs": 21, "medianMs": [5, 3, 5]},
   "packs": {"ceilingMs": 87, "medianMs": [69, 68, 66]},
   "online": {"ceilingMs": 114, "medianMs": [91, 84, 82]},
-  "cacheIndex": {"ceilingMs": 18, "medianMs": [1, 2, 2]},
+  "cacheIndex": {"ceilingMs": 33, "medianMs": [10, 18, 26], "raised": "T280, 2026-11-13: from 18 (medians 1, 2, 2 on fresh boots, startup alone); the medians of three full-order sweeps over an emptied cache (out/sweep-T280-5, -6, -8), the same walk of 32 to 69 files, the walk thread blocked reading ext4 metadata blocks (__getblk_gfp) in the slow launches"},
   "tiles": {"ceilingMs": 72, "medianMs": [51, 56, 52]},
   "watchers": {"ceilingMs": 43, "medianMs": [24, 24, 27]},
   "downloads": {"ceilingMs": 28, "medianMs": [11, 12, 12]},
