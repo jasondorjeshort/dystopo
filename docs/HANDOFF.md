@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-14 15:35 UTC, at commit babfd360, by main session (the owner's four answers after v0.1.29-alpha recorded; no wave open)
+Updated: 2026-11-14 18:15 UTC, at commit c86815a5, by main session (the ideas triaged and ranked; its commits on `main` are not pushed; no wave open)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (no open wave: Owner actions
 and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
@@ -19,14 +19,18 @@ and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
 ## Next
 
-1. The next wave planned from the board's Later and a triage of `docs/ideas/` (the `wave` skill, Plan and launch).
-2. First in it: the ADR that amends 0033 on the owner's word below and what it drops (Later's line); then the key line.
+1. Push the triage (`push-verified.sh`), then plan the next wave (the `wave` skill) from the board's Later and the
+   ideas' Plans, in this order: the sweep-order rule for a new part, the days-old recording, the backup proposal,
+   the signing step (in place of Later's key line), Report recent stats, the power-cut part, search outside a pack.
+   The two ADR 0012 hits (0061, 0053; an idea each) are the coordinator's own, minutes each.
+2. With it: the ADR that amends 0033 on the owner's word below and what it drops (Later's line), after the proposal.
 
 ## Waiting on user
 
 - **Answered 2026-11-14** (the words are on the board's Owner actions): the sheets published with v0.1.27-alpha and
   v0.1.28-alpha stay; alpha upgrades need not be backward compatible (0033 stands until its amending ADR); the
   release key is used, never read (Later's line: Gradle finds it from a worktree, the deny rule stays).
+- Six idea Questions with a blank Answer (`node .claude/hooks/queue-list.js ideas`), and a word on the freeze idea.
 - On the phone, v0.1.29-alpha: the activity chip, Trip details. The strings of T263 and T278 to read (ADR 0031)
   are in their merge bodies. OpenFreeMap's terms (Later's first entry; the owner emails them).
 - Two empty folders are left for the owner: `dystopo-wt/T275` (an `rmdir` reads busy: some window sits in it) and
