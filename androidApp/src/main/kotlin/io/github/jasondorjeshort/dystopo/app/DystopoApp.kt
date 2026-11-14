@@ -266,9 +266,15 @@ class DystopoApp : Application() {
         /**
          * T280: grows the table of open files to [FD_TABLE_SLOTS] once, on a thread of its own at the start of the process
          * (a duplicate of fd 0 at slot [FD_TABLE_SLOTS] - 1, closed at once; the table never shrinks), so the launch pays one
-         * grace period here, before `onCreate`, instead of two inside its stages.
+         * grace period here, before `onCreate`, instead of two inside its stages. Android 11 and later (`Os.fcntlInt` is
+         * public from API 30); older phones grow the table as before.
          */
-        private fun growFdTable() = Thread({
+        private fun growFdTable() {
+            if (android.os.Build.VERSION.SDK_INT >= 30) growFdTable30()
+        }
+
+        @androidx.annotation.RequiresApi(30)
+        private fun growFdTable30() = Thread({
             val t0 = System.nanoTime()
             fdTableMs = runCatching {
                 val fd = android.system.Os.fcntlInt(java.io.FileDescriptor.`in`, android.system.OsConstants.F_DUPFD, FD_TABLE_SLOTS - 1)

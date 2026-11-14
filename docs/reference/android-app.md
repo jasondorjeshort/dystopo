@@ -219,7 +219,8 @@ stage's. Step 1 moves nothing: every stage runs where and in the order it ran be
   `expand_fdtable`) and every thread that opens a file meanwhile waits with it. The app holds about 210 files after a
   launch, so the growths past 64 and 128 fell inside the launch: on the closing sweep of wave 32 the `world` and `assets`
   stages' marker reads both blocked in `open()` (`expand_files`, a kernel trace) for 30 to 84 ms while the start trace's
-  sampler waited out a 62 ms grace period. `attachBaseContext` now grows the table to `FD_TABLE_SLOTS` (512) at once on a
+  sampler waited out a 62 ms grace period. `attachBaseContext` now grows the table to `FD_TABLE_SLOTS` (512) at once (Android
+  11 and later, `Os.fcntlInt`) on a
   thread of its own (`fd-table`; 42 to 59 ms on the sweep's emulator, `GET /debug/startup` `head.fdTableMs`), and no
   launch thread waits in `expand_files` since. The APK's update time (`getPackageInfo`, read by both stages and the
   trace's header) takes 0.1 to 2 ms: the system caches it per process. <!-- end T280 -->
