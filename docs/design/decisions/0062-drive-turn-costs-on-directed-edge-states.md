@@ -59,8 +59,10 @@ time, the overlay part of a query nearly unchanged.
 8. **The driving side** is a parameter of the turn function: a hand-written table of coarse boxes for the
    territories that keep left (`routing/DrivingSide.kt`), looked up once per search at the start point; unknown
    reads right-hand.
-9. **One behaviour, not a setting** (ADR 0044): the surveyed routers do not split, and the numbers are not a user's
-   choice.
+9. **The fast search stays an option** (the owner, 2026-11-14: "the fastest search should remain an option",
+   overruling the surveys' one behaviour): the node search without turn costs can still plan a drive, by a
+   `driveTurns` parameter of the router, a devtool switch and a request parameter, and by a user setting (default:
+   turns counted). The numbers of the table are not a user's choice.
 
 Out of scope, each with what revives it: turn restrictions (the profile keeping restriction relations: an infinite
 turn from a per-piece table fits this state); stop signs and signals (their idea: a node flag read by the turn
@@ -74,7 +76,7 @@ Rejected: node labels with per-junction entry tables (CRP's compact form: less m
 pay for; revisit with the stalling item). No turns in the overlay (prices cells below the detail tiles, breaks the
 same-route property). A precomputed turn table per junction (needed by contraction, not by this search). Three flat
 values (a gentle bend would cost a T-junction). A charge for joining a higher class (no survey supports it; every
-side-street exit would pay). A user setting.
+side-street exit would pay).
 
 ## Consequences
 
