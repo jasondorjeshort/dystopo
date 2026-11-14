@@ -1,7 +1,6 @@
 ---
 date: 2026-11-07
 kind: feature
-related: [2026-11-07-offline-zoom-keeps-what-wider-zooms-showed.md]
 ---
 
 # Rendered map pieces cached on disk, invalidated by a settings change, cleared lazily as storage fills
