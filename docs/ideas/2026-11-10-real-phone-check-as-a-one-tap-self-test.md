@@ -24,3 +24,14 @@ it. A self-test beside it turns the real-phone check into one tap on the phone a
 ## Open
 
 - What the check cannot see: the install dialog, Play Protect, the first-run card; those stay the owner's eyes.
+
+Plan: one pass in `androidApp/.../app/reports/`, after the "Report recent stats" pass (the related idea; both
+change `ReportRow.kt`, so the two never run at once). "Run the release check" under Report a problem builds the
+JSON the body lists (the build, the sensors, a 60 s sample of fixes with each fix's age, accuracy and speed and the
+position rounded to the degree, the offline maps and the world overview, the tile store's place and its
+`moveState`, the last update check, free storage, the readout's entries, the font scale and the screen's size),
+through `DiagnosticDump`'s scrubber, and hands it to the share sheet as Send diagnostics does;
+`GET /reports/selftest` returns the same JSON on a debug build; `devtool dump-scan` reads it and prints the checks
+that passed; the `release` skill's phone step gains "or a self-test received, with its date". Done when: `check`
+green with a test of the JSON's rounding; a tour step runs it on the emulator; the scan clean on its output;
+strings listed (ADR 0031). Out of scope: the install dialog, Play Protect and the first-run card.
