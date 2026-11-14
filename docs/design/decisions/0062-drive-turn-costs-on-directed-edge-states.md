@@ -62,7 +62,11 @@ time, the overlay part of a query nearly unchanged.
 9. **The fast search stays an option** (the owner, 2026-11-14: "the fastest search should remain an option",
    overruling the surveys' one behaviour): the node search without turn costs can still plan a drive, by a
    `driveTurns` parameter of the router, a devtool switch and a request parameter, and by a user setting (default:
-   turns counted). The numbers of the table are not a user's choice.
+   turns counted). The owner the same day: "we should have 'most efficient algorithm', 'least gas' and 'least
+   time' as my starting points for selection", so the setting is one choice of how a drive is planned: least time
+   (this ADR's search, the default) and the quick search are built with the table; least fuel is a later task's,
+   from its own survey, and gets its own record if its model or its overlay cost is a decision. The numbers of the
+   table are not a user's choice.
 
 Out of scope, each with what revives it: turn restrictions (the profile keeping restriction relations: an infinite
 turn from a per-piece table fits this state); stop signs and signals (their idea: a node flag read by the turn

@@ -20,3 +20,6 @@ a synthetic graph. Built after the turn cost, which changes what "fastest" means
 ## Open
 
 - Avoid-unpaved, avoid-tolls and avoid-motorway as separate toggles beside it: not this idea.
+- The owner, 2026-11-14, at wave 33's launch: the drive choice starts as "most efficient algorithm", "least gas" and
+  "least time". Wave 33 builds the choice (T282: least time and the quick search; T284: least fuel, from a survey
+  that also answers whether shortest joins). This idea is deleted on T284's branch if the survey settles it.
