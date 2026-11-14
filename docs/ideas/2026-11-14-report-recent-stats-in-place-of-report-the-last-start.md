@@ -28,3 +28,14 @@ on a tap; this one reports what the phone has already measured. The scrubber and
 - The row's words (ADR 0031): "Report recent stats" is the owner's; the kind label and the notice follow it.
 - Whether a start over the thresholds still files itself as "Startup freeze" (recommended: yes, unchanged).
 - A reader on the sweep's side that puts such a report beside the emulator's medians.
+
+Plan: one pass in `androidApp/.../app/reports/` (`ReportRow.kt`, `Report.kt`) and `StartupTrace.kt`. The row
+"Report the last start" becomes "Report recent stats": the recent starts' stage values from `.startup-history` with
+their medians beside the ceilings of `tools/launch-budget.json` (bundled at build time as a small asset) and the
+header's `fdTableMs` and `packageInfoMs`; then what only a real phone can say, each where the report lacks it: the
+tile store's size and file count, the tiles dropped as empty since the install, the move's `moveState`, its way
+(rename or copy) and its time (ADR 0060's first prediction is answered from this), the kept areas' count and
+state, the dump's heap figures. The scrubber and the 4,000-character body rule stay; a start over the thresholds
+still files itself as "Startup freeze". An option of `devtool dump-scan` prints such a report beside the
+emulator's medians. Done when: `check` green with a test of the body's length and scrubbing on a full history; the
+row and the report's text in screenshots; strings listed (ADR 0031). Out of scope: the self-test (related idea).
