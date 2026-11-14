@@ -17,3 +17,8 @@ Recommendation (the coordinator): not now. T280 changed the app, so nearly every
 and little would have been carried over that day; the saving is real only when a fix touches a script or one
 part's data. The cheaper answer to the same loss is the related idea of this date (a new part proves itself before
 its merge). Worth building if a closing sweep is run again twice in one wave for a part's own script.
+
+Question: leave this until a closing sweep has been run again twice in one wave for a part's own script
+(recommended: you called it not essential, and on the day it would have helped, nearly every part's input had
+changed), or build it now?
+Answer:
