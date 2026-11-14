@@ -1,17 +1,17 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-14 07:40 UTC, at commit 6eeb5358, by main session (v0.1.29-alpha published; the wave's record chore next)
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (wave 32 until its record is
-moved to `docs/tasks/`, then the board's Later).
+Updated: 2026-11-14 08:00 UTC, at commit 4fb6575b, by main session (v0.1.29-alpha published; wave 32 closed and moved to its record)
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (no open wave: Owner actions
+and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
 ## Now
 
 - **v0.1.29-alpha is published** (2026-11-14 07:10 UTC, tag on 6eeb5358, versionCode 1593): the closing release of
   wave 32, nine tasks over v0.1.28-alpha (T267, T278, T263, T266, T268, T273, T279, T270, T280). Its sweep is
   `out/sweep-20261114-0027` (green, no rerun; the next release's `-Prev`). The log has the entries.
-- **Wave 32 is closed but for its record**: a Haiku chore moves it to `docs/tasks/` by that folder's recipe and
-  lifts the Status lines' follow-ups into Later; the coordinator reads the list, commits and pushes.
+- **Wave 32 is closed**: its record is `docs/tasks/wave-32.md`, its follow-ups are in the board's Later (one line a
+  task, the done ones struck), and no agent, emulator or task branch is left.
 - **The sheet attached to the release was rebuilt** without four frames that show a map outside `areas.json` (the
   a11y part's first-run screens and `bothunits`' second phone); the cause is unknown (the log's publish entry).
 - The wave skill's cost figure is 1.0 a task from this close (16 points for eleven tasks; the meter read 17).
@@ -19,9 +19,8 @@ moved to `docs/tasks/`, then the board's Later).
 
 ## Next
 
-1. The record chore's list read, the board, the record and the index committed together and pushed.
-2. The next wave planned from the board's Later and a triage of `docs/ideas/` (the `wave` skill, Plan and launch).
-3. First in it: what opens a fix-less emulator's map outside the public areas, and a check in `sweep-diff.py`.
+1. The next wave planned from the board's Later and a triage of `docs/ideas/` (the `wave` skill, Plan and launch).
+2. First in it: what opens a fix-less emulator's map outside the public areas, and a check in `sweep-diff.py`.
 
 ## Waiting on user
 
