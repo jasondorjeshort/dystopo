@@ -1,7 +1,6 @@
 ---
 date: 2026-11-08
 kind: chore
-related: [2026-11-07-a-launch-budget-per-mark-enforced-by-the-sweep.md]
 ---
 
 # The owner's phone on USB runs the sweep's device parts beside the emulator
