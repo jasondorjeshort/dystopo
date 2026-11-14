@@ -50,12 +50,10 @@ cached) and the tour's offline step, and found the disappearing view came from t
 tiles dropped; T255 put "from a wider zoom" on the chip. Left: the world basemap, the lowest zoom on the area's row,
 and the discard balance (ADR 0060's store and its eviction, not this file).
 
-Plan: one pass, the bundled world basemap (cut from T254 by the wave 31 critic). First step measures: a tilebuild
-recipe for a z0 to z5 vector world (`tilebuild/`, a layer subset in `tilebuild/PROFILE.md`; the extract sizes and a
-Natural Earth build compared, as `out/wave31-research/offline-fallback.md` [no-check: gitignored] part 4 lists)
-and a coarse DEM, their sizes reported; build only near that survey's target (under 10 MB for the vector set),
-else the report proposes the zoom cap. Then a `sources.json` entry, the files added by `bundleMapAssets` in
-`androidApp/build.gradle.kts`, the loopback server answering any tile at those zooms from the bundle when the cache
-and packs lack it (`app/TileService.kt`), and the downloaded area's lowest zoom shown on its row in Offline maps.
-Done when: `check` green with the licence check, the APK's size growth stated, the tour's offline step zoomed out
-to z2 over Rainier with land drawn (screenshot). Out of scope: the minimum zoom under 3 (the whole-world idea).
+2026-11-14 (triage): T264 bundled the world overview (z0 to z5, about 1.75 MB), so a wide view is no longer bare
+over a downloaded area or anywhere else, and T265 lowered the minimum zoom to 1. Left of this file: the downloaded
+area's lowest zoom on its row.
+
+Question: with the overview under every view, is the lowest zoom on an area's row still wanted? Recommended: no
+(the row would explain a blank that no longer appears); your no deletes this file.
+Answer:
