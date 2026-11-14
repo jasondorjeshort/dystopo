@@ -1035,10 +1035,11 @@ try {
         # T268: the launch budget, on the debug build before the release phase. Part's reboot check (Ensure-Emulator, at
         # -EmuRebootGB) runs before the body, so the store is seeded and the packs copied after it: the part never leans on
         # what an earlier part left. Five cold launches add about 2.5 GB to the emulator's private bytes (finding of
-        # 2026-11-05), inside the guard's -EmuLimitGB from any level under -EmuRebootGB.
+        # 2026-11-05), inside the guard's -EmuLimitGB from any level under -EmuRebootGB. T280: the seed also empties the online
+        # tile cache (pinned tiles stay): the cacheIndex stage walks every cached file, and the device tour leaves about 270.
         $null = Part 'startup' {
             Run $py @('-I', 'tools/android-startup.py', '--serial', $serial, '--port', "$Port", '--launches', '5', '--seed-tracks', '52',
-                '--dem', $dem, '--osm', $osm, '--quiet', '240', '--budget', 'tools/launch-budget.json') (Join-Path $Out 'startup.json') (Join-Path $Out 'startup.err.log')
+                '--dem', $dem, '--osm', $osm, '--clear-online-cache', '--quiet', '240', '--budget', 'tools/launch-budget.json') (Join-Path $Out 'startup.json') (Join-Path $Out 'startup.err.log')
         }
         # end T268
         # T270: the accessibility part, on the debug build after the reboot check like any part: the packs are copied when the
