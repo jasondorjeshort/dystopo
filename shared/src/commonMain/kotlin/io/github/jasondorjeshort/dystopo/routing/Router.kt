@@ -439,6 +439,9 @@ fun Router(graph: RoutingGraph): Router = TileRouter(WholeGraph(graph))
  * (T89: [RoutingGraph.footComponent]; conclusive within one graph file, and across files when either
  * end's part of the network stays inside its pack); otherwise when either search runs out of nodes,
  * which takes as long as the smaller of the two networks.
+ *
+ * T281 (ADR 0062): a drive runs on [DriveSearch] instead, the same scheme over directed-edge states so it can price its
+ * turns ([turns]); [driveTurns] off keeps a drive on this node search.
  */
 class TileRouter(
     val tiles: GraphPieces,
