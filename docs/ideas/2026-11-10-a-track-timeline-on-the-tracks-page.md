@@ -20,3 +20,12 @@ screen (new `tracks/TracksScreen.kt` [no-check: new file]) and then adds a view 
 ## Open
 
 - After T262 has merged; its screen's filter chips are where this goes.
+
+Plan: one pass on T262's screen, merged since (`androidApp/.../app/tracks/TracksScreen.kt`). A "Timeline" chip
+beside Tracks, Routes and All: months as grids, newest first, a recorded day marked with its activity's glyph and
+the day's total length, a tap filtering the list to that day and a second tap clearing it; the grouping by local
+day a pure function in `shared` with a test (a recording across midnight counts on the day it started; an empty
+month is drawn only between two months that have recordings). The screen's debug route reports the months and the
+marked days under `filter=timeline`; a tour step screenshots it at font scales 1.0 and 2.0. Done when: `check`
+green with the grouping test; the screenshots viewed; strings listed (ADR 0031). Out of scope: figures per month,
+routes on the grid.
