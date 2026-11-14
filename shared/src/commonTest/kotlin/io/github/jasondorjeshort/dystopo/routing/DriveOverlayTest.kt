@@ -114,11 +114,17 @@ class DriveOverlayTest {
         val g = grid(minorOnlyAcross = true)
         val tg = TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(g))))
         val full = found(TileRouter(tg, DriveOverlay()).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE))
-        val capped = TileRouter(tg, DriveOverlay(), maxSettled = full.expanded / 2).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE)
+        // T281: a drive search settles edge states, up to maxSettled * DRIVE_STATES_PER_JUNCTION of them.
+        val capped = TileRouter(tg, DriveOverlay(), maxSettled = (full.expanded / 2 / Router.DRIVE_STATES_PER_JUNCTION).toInt()).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE)
         assertIs<RouteResult.Failed>(capped)
         assertEquals(RouteFailure.SEARCH_LIMIT, capped.reason, capped.message)
         assertTrue(capped.details["expanded"] as Int <= full.expanded / 2 + 1, "${capped.details}")
         assertTrue(capped.message.contains("search limit"), capped.message)
+        // The fast node search (driveTurns off) keeps its limit in junctions.
+        val nodeFull = found(TileRouter(tg, DriveOverlay(), driveTurns = false).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE))
+        val nodeCapped = TileRouter(tg, DriveOverlay(), maxSettled = nodeFull.expanded / 2, driveTurns = false).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE)
+        assertEquals(RouteFailure.SEARCH_LIMIT, (nodeCapped as RouteResult.Failed).reason)
+        assertEquals(nodeFull.cost, full.cost, full.cost * 1e-9, "the two searches agree at zero turn cost")
     }
 
     @Test

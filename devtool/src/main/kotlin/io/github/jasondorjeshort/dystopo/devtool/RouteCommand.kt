@@ -253,7 +253,7 @@ class RouteBuildCommand : CliktCommand(name = "build") {
 
     override fun run() {
         val (graph, info) = RouteGraphs.build(pack, dem ?: RouteGraphs.defaultDem(pack), out ?: RouteGraphs.defaultFile(pack))
-        echo(pretty(info + ("summary" to graph.json()) + ("networks" to RouteGraphs.networks(graph, 6))))
+        echo(pretty(info + ("summary" to graph.json()) + ("networks" to RouteGraphs.networks(graph, 6)) + ("driveStates" to RouteGraphs.driveStates(graph))))
     }
 }
 
@@ -273,6 +273,29 @@ internal object RouteGraphs {
             val v = sample.getValue(c)
             linkedMapOf("network" to c, "km" to Router.km(m), "node" to listOf(g.nodeLat[v] / 1e6, g.nodeLon[v] / 1e6))
         }
+    }
+
+    /**
+     * T281 (ADR 0062 Decision 6): the drive search's states per junction on this graph: the directed edges a car may
+     * travel (a two-way road counts twice, a one-way once) over the nodes a car may reach (any drivable edge at them).
+     * [Router.DRIVE_STATES_PER_JUNCTION] is this factor on the public packs, rounded up.
+     */
+    fun driveStates(g: RoutingGraph): Map<String, Any?> {
+        val model = io.github.jasondorjeshort.dystopo.routing.CostModel(TravelMode.DRIVE)
+        val driveNode = BooleanArray(g.nodeCount)
+        var directed = 0L
+        for (e in 0 until g.edgeCount) {
+            if (!model.usable(g, e)) continue
+            driveNode[g.edgeFrom[e]] = true; driveNode[g.edgeTo[e]] = true
+            if (model.allows(g, e, true)) directed++
+            if (model.allows(g, e, false)) directed++
+        }
+        val nodes = driveNode.count { it }
+        return linkedMapOf(
+            "driveNodes" to nodes, "directedDriveEdges" to directed,
+            "statesPerJunction" to if (nodes == 0) null else Math.round(directed * 1000.0 / nodes) / 1000.0,
+            "factorUsed" to Router.DRIVE_STATES_PER_JUNCTION,
+        )
     }
 
     fun reader(file: File): PmtilesReader = PmtilesReader.open(FileRangeSource(file), Gzip.decompressors)

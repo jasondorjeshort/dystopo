@@ -235,6 +235,40 @@ class RoutingGraph(
         out
     }
 
+    /**
+     * T281: the bearing (degrees from north, clockwise) at which each edge leaves each of its ends, taken over the first
+     * [Directions.BEARING_M] of its line (or the whole line when shorter), as the turn directions read a way's bearing:
+     * `[2e]` leaving its from node along it, `[2e + 1]` leaving its to node back along it. Built on the first use (the
+     * drive search's turn function, [TurnCost]; a search with an all-zero table never asks), 4 bytes per edge end,
+     * counted in [approxBytes] once built. Not part of the graph file.
+     */
+    val endBearing: FloatArray by lazy {
+        FloatArray(2 * edgeCount) { i -> bearingFrom(i shr 1, i and 1 == 0).toFloat() }.also { bearingDerived = true }
+    }
+    private var bearingDerived = false
+
+    /** Edge [e]'s bearing leaving its from node ([atFrom]) or its to node, over [Directions.BEARING_M] of its line. */
+    private fun bearingFrom(e: Int, atFrom: Boolean): Double {
+        val last = pointCount(e) - 1
+        val step = if (atFrom) 1 else -1
+        var k = if (atFrom) 1 else last - 1
+        val k0 = if (atFrom) 0 else last
+        val lat0 = pointLatE6(e, k0) / E6
+        val lon0 = pointLonE6(e, k0) / E6
+        var plat = lat0
+        var plon = lon0
+        var d = 0.0
+        while (true) {
+            val lat = pointLatE6(e, k) / E6
+            val lon = pointLonE6(e, k) / E6
+            d += TrackStats.distanceM(plat, plon, lat, lon)
+            plat = lat; plon = lon
+            if (d >= Directions.BEARING_M || k == (if (atFrom) last else 0)) break
+            k += step
+        }
+        return TrackStats.bearingDeg(lat0, lon0, plat, plon)
+    }
+
     private val grid: SegmentGrid by lazy { SegmentGrid(this).also { gridDerived = true } }
 
     /** The nearest point on any edge within [maxDistanceM] of ([lat], [lon]), or null. */
@@ -292,6 +326,7 @@ class RoutingGraph(
             nodeCount + 4L * ((footComponent?.size ?: 0) + (driveComponent?.size ?: 0))
         if (adjacencyDerived) b += 4L * (nodeCount + 1 + 2 * edgeCount)
         if (gridDerived) b += grid.approxBytes()
+        if (bearingDerived) b += 4L * 2 * edgeCount // T281: the turn function's bearings
         return b
     }
 
