@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.29-alpha (2026-11-14)
+
 ### 2026-11-14
 
 - T280: The app no longer stalls for a few hundredths of a second early in its launch (it reserves room for its open files once, at the start); developer tooling: the sweep's launch and accessibility checks no longer depend on the time of day or on what an earlier part left behind
