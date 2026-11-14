@@ -13,7 +13,7 @@ refused the file), so in wave 32 `upgrade` ran only from the main checkout, in t
 a copy step, where it works, leaves copies of the key in worktree folders. The owner, 2026-11-14: "Well we aren't
 READING it, right?", and on this idea: "Yes that would be smart".
 
-One script in the main checkout (`tools/sign-release.ps1`, say) takes an APK's path and signs it with the SDK's
+One script in the main checkout (`tools/sign-release.ps1`, say) [no-check: proposed] takes an APK's path and signs it with the SDK's
 `apksigner`, reading the key where it lives; `tools/android-ui.py` already calls `apksigner` for a re-signed
 install. A worktree builds its release APK without the key (signed with the debug key, as the build does today
 when the file is absent), hands the path to the script and installs the result. No agent opens, copies or prints
@@ -29,3 +29,13 @@ main checkout's file by itself), which would sign every worktree's release build
 - A re-signed APK against one Gradle signed: the same certificate, so it installs over a published build; confirm
   that `upgrade` and `update` pass with it.
 - Copies of the key left in worktree folders by earlier waves, if any: the owner's to look for and remove.
+
+Plan: one pass, in place of the board's Later line of 2026-11-14 (the build finding the main checkout's file).
+First, in isolation: an agent in a worktree runs a script of the main checkout that reads the key's file; if the
+permission rule refuses that too, the report stops there with what was refused. Then `tools/sign-release.ps1`
+[no-check: new file]: an APK's path in, the SDK's `apksigner` run with the key where it lives, the signed APK's
+path and its certificate's SHA-256 out, nothing of the key printed. The `upgrade` and `update` parts of
+`tools/sweep.ps1` and of the draft check sign through it when run from a worktree; the `sweep` skill and
+`docs/reference/release-realism.md` lose the copy step. Done when: an APK built in a worktree without the key and
+signed by the script installs over the published v0.1.29-alpha on the emulator (`upgrade` green); no file under
+the worktree holds the key (a listing in the report). The deny rule stays.
