@@ -18,7 +18,7 @@ and little would have been carried over that day; the saving is real only when a
 part's data. The cheaper answer to the same loss is the related idea of this date (a new part proves itself before
 its merge). Worth building if a closing sweep is run again twice in one wave for a part's own script.
 
-Question: leave this until a closing sweep has been run again twice in one wave for a part's own script
-(recommended: you called it not essential, and on the day it would have helped, nearly every part's input had
-changed), or build it now?
-Answer:
+Waits: the coordinator, 2026-11-14, by the owner's leave ("The other decisions I leave to you, or get an
+independent review to confirm"; a critic confirmed). Trigger: a closing sweep run again twice in one wave for a
+part's own script. On the day (T280) the APK had changed, so only the parts that use no device (the tests, the
+live server, the sync simulator) could have been carried over.
