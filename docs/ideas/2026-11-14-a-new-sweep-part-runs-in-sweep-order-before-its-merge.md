@@ -23,3 +23,12 @@ verification; that is the price of not paying two at the close.
 ## Open
 
 - A cheaper form for a late part: only the device parts before it.
+
+Plan: one no-Gradle pass, soon (the owner's word). `tools/verify-task.ps1` gains `-SweepThrough <part>`: it runs
+`tools/sweep.ps1` from its first part through the named one on one emulator (`-Skip` for what follows), so the new
+part meets the state the earlier parts leave. The `wave` skill's Verify and `.claude/skills/brief/verifier.md` say
+when: a task whose Owns line holds `tools/sweep.ps1` or a new part's script is verified with it, never with the
+part alone; `.claude/skills/brief/implementer.md` asks such a task's report to name what in the part depends on the
+clock and how it is pinned, or to say that nothing does. Done when: `tools/test_verify_task.py` covers the option's
+command line from a fixture; a dry run names the parts it would run for `a11y`; the three skill lines in place. Out
+of scope: the cheaper form for a late part, tried once the first has been costed.
