@@ -31,3 +31,9 @@ over the kept areas that reports "N tiles repaired", unless a hash on every read
 - The cost of a hash on every read against a pass in the background; measure before choosing.
 - A tile found damaged while offline: drawn from a wider zoom until a network returns, and counted on the area's
   card.
+
+Plan: no pass of its own. The brief of ADR 0060's step 4 (hashing on `put`, the ledger) takes this file's check
+into its Done-when: a debug route flips a byte in a stored tile, and the tile is dropped, counted and fetched
+again, by a low-priority pass over the kept areas that reports "N tiles repaired", unless that task measures a
+hash on every read as cheap; a tile found damaged offline is drawn from a wider zoom and counted on the area's
+card. This file is deleted on that step's branch.
