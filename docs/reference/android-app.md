@@ -214,6 +214,15 @@ stage's. Step 1 moves nothing: every stage runs where and in the order it ran be
   median in `tools/android-startup.py` (`launchOverheadMs`). StrictMode (debug builds) counts each main-thread violation
   under the stage its stack shows (the binding's body right above the runner's frame; the platform hands violations over
   only after the message, so what runs then would mislead), else the observed stage whose mark is in force.
+- **The table of open files** (T280, `DystopoApp.growFdTable`): the kernel gives a process 64 file slots and doubles the
+  table when a file is opened past them; each growth waits for an RCU grace period (`synchronize_rcu` in
+  `expand_fdtable`) and every thread that opens a file meanwhile waits with it. The app holds about 210 files after a
+  launch, so the growths past 64 and 128 fell inside the launch: on the closing sweep of wave 32 the `world` and `assets`
+  stages' marker reads both blocked in `open()` (`expand_files`, a kernel trace) for 30 to 84 ms while the start trace's
+  sampler waited out a 62 ms grace period. `attachBaseContext` now grows the table to `FD_TABLE_SLOTS` (512) at once on a
+  thread of its own (`fd-table`; 42 to 59 ms on the sweep's emulator, `GET /debug/startup` `head.fdTableMs`), and no
+  launch thread waits in `expand_files` since. The APK's update time (`getPackageInfo`, read by both stages and the
+  trace's header) takes 0.1 to 2 ms: the system caches it per process. <!-- end T280 -->
 - **Debug routes** (`StartupRoutes.kt`, `android-debug-routes.md`): `GET /debug/launch` (every stage's thread, needs,
   gate, work, marks, times, lag, wait, delay, failure, StrictMode counts and the kinds its work does not allow; the gate;
   the slots), `POST /debug/launch/delay?stage=&ms=` (holds one stage at the next launch; `POST /debug/tracking/delay` is
@@ -259,7 +268,7 @@ nothing downloaded. `firstrun/BundledAssets.kt` (`WorldOverview`) copies it from
 never the main thread; 31 to 163 ms on the emulator), and reloads the tiles when it lands. `Packs.kt` opens it as the
 built-in pack `world`: last in vector precedence (a downloaded pack holding the whole tile wins), never primary, outside
 `packs/`, so no Offline maps row, Storage row or delete reaches it; `GET /packs` › `inUse` lists it with `builtIn` true,
-`GET /firstrun` › `assets.world` reports the copy (`state`, `thread`, `bytes`, `ms`). It answers z0 to z5 online too (no
+`GET /firstrun` › `assets.world` reports the copy (`state`, `thread`, `bytes`, `ms`; T280: `versionMs` and `checkMs`, the update time's read and the marker check, as `assets` has for the glyphs and sprites). It answers z0 to z5 online too (no
 network for the widest zooms); deeper tiles offline may be cut from it (`from a wider zoom`). Where it draws the view and
 no terrain does, the Online chip reads "from the world overview" and its card "This view comes from the world overview
 built into the app: coasts, borders and the names of countries and large cities. Zoom in or download an area for more."
