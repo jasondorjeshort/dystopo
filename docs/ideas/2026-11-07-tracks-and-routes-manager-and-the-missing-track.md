@@ -1,7 +1,6 @@
 ---
 date: 2026-11-07
 kind: bug
-related: [2026-11-07-recording-card-close-button-reads-as-stop.md]
 ---
 
 # The last recorded track vanished from the map, and tracks and routes want a manager of their own
@@ -35,16 +34,14 @@ us look at them on the desktop app."
 - A hidden track's trace never silently vanishes: the sheet says it is hidden, and the map's long-press menu
   can show it again.
 
-Plan: one pass (Opus-class, a full screen), from the survey `out/wave31-research/tracks-manager.md` [no-check:
-gitignored], recommendations 1 to 3. First the reproduction: record, start a second recording, read `GET /tracks`
-and the overlay's shown set at each step, name the action that hid the first track and fix it in the same branch.
-Then a full-screen "Tracks and routes" list built like Offline maps (`packs/PacksScreen.kt`'s pattern), opened from
-where the Tracks sheet (`tracking/TrackControls.kt`, `TracksSheet`) is opened today and replacing it: one list with
-a Tracks / Routes / All filter chip, sorted newest first (name and length as other sorts), each row with the
-activity, date, length and a visible "Hidden" or "Shown" with its eye toggle; a row menu with rename, export GPX,
-share (the system share sheet), statistics, delete; a select mode for show, hide, export and delete. A debug route
-for the screen's state and the tour's step in `tools/android-check.py`; help text; strings listed and screenshots
-(ADR 0031). Done when: `check` green; on the emulator the reproduction before and after, the list in each filter at
-font scales 1.0 and 2.0, hide and show from the list reflected on the map. Out of scope, flagged for the owner in
-the report: the kept folder sync (a new data flow; the survey's recommendation 4, export-only first), whether
-Settings also becomes a full screen, and the activity as the app's mode (its own idea, after this).
+2026-11-14 (triage): built by T262 (the cause: one transient shown id; the full-screen list with its filter chips,
+"Shown" and "Hidden" on every row, rename, export, statistics, delete) and T272 (the sorts, select mode, the
+system share sheet, the notification's Pause and Finish). Left: the folder kept in sync on a file-sharing service
+of the user's choice, and whether Settings becomes a full screen too.
+
+Question: do you want the kept folder (the storage access framework's document tree, no service built in, ADR
+0059), into which the app writes every track and route as GPX so that the desktop and the web page read the same
+files? Recommended: yes, export-only first (the app writes and never reads back), as the survey's point 4 says; a
+sync in both directions is a new data flow and wants a proposal. Settings as a full screen: recommended yes, with
+Layout C's Menu.
+Answer:
