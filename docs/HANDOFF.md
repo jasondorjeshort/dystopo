@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-14 18:15 UTC, at commit c86815a5, by main session (the ideas triaged and ranked; its commits on `main` are not pushed; no wave open)
+Updated: 2026-11-14 19:35 UTC, at commit 9266c30e, by main session (the ideas triaged and ranked, their Questions decided; its commits on `main` are not pushed; no wave open)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (no open wave: Owner actions
 and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
@@ -28,7 +28,7 @@ and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
 - **Answered 2026-11-14** (the board's Owner actions): the published v0.1.27 and v0.1.28 sheets stay; alpha upgrades
   need not be backward compatible (0033 stands until its amending ADR); the release key is used, never read.
-- Six idea Questions with a blank Answer (`node .claude/hooks/queue-list.js ideas`), and a word on the freeze idea.
+- No idea Question is open: "Trim waits" is the owner's; the rest were decided by the owner's leave with a critic (two `Waits:` are the coordinator's by that leave, the owner's to overrule: the shared map picture, the sweep's reruns).
 - On the phone, v0.1.29-alpha: the activity chip, Trip details. The strings of T263 and T278 to read (ADR 0031)
   are in their merge bodies. OpenFreeMap's terms (Later's first entry; the owner emails them).
 - Two empty folders are left for the owner: `dystopo-wt/T275` (an `rmdir` reads busy: some window sits in it) and
