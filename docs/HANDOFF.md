@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-14 08:00 UTC, at commit 4fb6575b, by main session (v0.1.29-alpha published; wave 32 closed and moved to its record)
+Updated: 2026-11-14 15:35 UTC, at commit babfd360, by main session (the owner's four answers after v0.1.29-alpha recorded; no wave open)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (no open wave: Owner actions
 and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
@@ -20,18 +20,17 @@ and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 ## Next
 
 1. The next wave planned from the board's Later and a triage of `docs/ideas/` (the `wave` skill, Plan and launch).
-2. First in it: what opens a fix-less emulator's map outside the public areas, and a check in `sweep-diff.py`.
+2. First in it: the ADR that amends 0033 on the owner's word below and what it drops (Later's line); then the key line.
 
 ## Waiting on user
 
-- **The sheets already published with v0.1.27-alpha and v0.1.28-alpha** probably hold the second phone's two frames
-  of that same place (they are in those sweeps' changed lists). The privacy scan knows no private term or box
-  there; if the place is yours, delete the two `-changes.png` assets (or say so and an agent replaces them).
-- On the phone, v0.1.29-alpha: the update from 0.1.28 moving the kept maps (T267's check on a real phone), the
-  activity chip, Trip details. The strings of T263 and T278 to read (ADR 0031) are in their merge bodies.
-- Task agents are refused the release key, so only the sweep and the draft check ran `upgrade`; say if they may read it.
-- The owner closes whatever window sits in the empty folders `dystopo-wt/T275` and `dystopo-wt/T267-verify`, then
-  removes them; and removes the empty `C:\c` folder. OpenFreeMap's terms (Later's first entry; the owner emails them).
+- **Answered 2026-11-14** (the words are on the board's Owner actions): the sheets published with v0.1.27-alpha and
+  v0.1.28-alpha stay; alpha upgrades need not be backward compatible (0033 stands until its amending ADR); the
+  release key is used, never read (Later's line: Gradle finds it from a worktree, the deny rule stays).
+- On the phone, v0.1.29-alpha: the activity chip, Trip details. The strings of T263 and T278 to read (ADR 0031)
+  are in their merge bodies. OpenFreeMap's terms (Later's first entry; the owner emails them).
+- Two empty folders are left for the owner: `dystopo-wt/T275` (an `rmdir` reads busy: some window sits in it) and
+  `C:\c` (the harness refused an agent's `rmdir` of it as a system path). `dystopo-wt/T267-verify` is gone.
 
 ## Open findings
 
