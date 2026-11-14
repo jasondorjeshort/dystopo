@@ -19,12 +19,12 @@ strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
 ## Next
 
-1. **Wave 33, drive routes pay for turns** (the owner, 2026-11-14: the next pass): planned on the board, its two
-   surveys in `out/wave33-research/`, the critic answered in the wave paragraph, the decisions in ADR 0062. Launch
-   T281 (the directed-edge drive search at zero turn cost) is launched (the owner's go, 2026-11-14); T282 (the
-   values and the drive choice) after its merge, T283 (the driving side), T284 (least fuel: its survey is running,
-   its Goal is unwritten and needs a critic); then the sweep and an alpha. The meter read 32 at the launch.
-2. After it: the other drive ideas (curvature, stops and signals, fastest or shortest) need research; the
+1. **Wave 33, drive routes pay for turns** (the owner, 2026-11-14: the next pass): on the board, its three
+   surveys in `out/wave33-research/`, both critics answered in the wave paragraph, the decisions in ADR 0062 and
+   0063. T281 (the directed-edge drive search at zero turn cost) is launched (the owner's go, 2026-11-14); then,
+   each after the last one's merge: T282 (the turn values, the drive choice), T283 (the driving side), T284 (least
+   fuel, the metric), T285 (least fuel on the phone; may move to the next wave); then the sweep and an alpha.
+2. After it: the other drive ideas (curvature, stops and signals, shortest) need research; the
    pressure-unit and Send diagnostics ideas are untriaged; then the board's Later and the ideas' Plans (the
    sweep-order rule, the days-old recording, the backup proposal, the signing step, Report recent stats, the
    power-cut part, search outside a pack) and the two ADR 0012 hits (0061, 0053).
