@@ -26,3 +26,13 @@ database, which would carry the schema problem along.
   it goes.
 - Restore over existing data: merge by id, or only into an empty install.
 - Whether the settings travel (some are seeded by region, ADR 0022).
+
+Plan: one no-Gradle pass, the `proposal` skill (a file other tools and phones read, so a major choice): a proposal
+under the next free number on the backup file, written before the ADR that amends 0033 lets any task skip a
+migration. Options at equal depth with their exit costs: one archive of open formats (GPX for tracks and routes,
+JSON for the rest) against one versioned JSON of everything against a copy of the database; what GPX cannot hold
+and where it goes; restore as a merge by id or only into an empty install; which settings travel (ADR 0022's
+seeded ones); the kept areas as a list whose tiles are fetched again; how an older app reads a newer file. Prior
+art (ADR 0039): how the established apps export and restore. Owns the proposal, its critic review and the
+proposals README line. Done when: the critic filed and every objection answered, the reversal named, the build
+order given as tasks. Out of scope: any code.
