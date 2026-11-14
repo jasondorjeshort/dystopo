@@ -1,7 +1,7 @@
 ---
 date: 2026-11-10
 kind: feature
-related: [2026-10-29-viewshed-and-peak-labels.md, 2026-11-07-turn-back-card-toggle-and-its-clock-in-the-air.md, 2026-11-07-a-freeze-and-power-draw-during-the-flight.md]
+related: [2026-10-29-viewshed-and-peak-labels.md, 2026-11-07-a-freeze-and-power-draw-during-the-flight.md]
 ---
 
 # Window-seat mode: what is passing below, from a position moved up to now
@@ -36,3 +36,13 @@ should stand at the fix moved along the course by the fix's age, not at the fix.
   diagnostics dump from a flight comes first.
 - The cone is one side of the aircraft: the user says which, or the mode shows both.
 - Names below need the base map at a coarse zoom under the aircraft, which T264's world overview supplies.
+
+Plan: two passes, the lag first; this file stays for the second. Pass one: `shared` gains a pure extrapolation
+(the fix, its speed and course, its age from `elapsedRealtimeNanos`; capped at 10 s and used only above a speed
+floor) with a test; under the flying activity the puck stands at the moved position with the fix itself faint
+behind it, `GET /readout` reports `extrapolatedM` and the fix's age, and the diagnostic dump keeps the ages of the
+recent fixes by provider, so the next real flight says whether the lag is the receiver's or the fused provider's.
+Done when: `check` green; `devtool readout --gpx` on a replayed flight reports the lag and the moved position; on
+the emulator with a flight replay the two marks are seen apart in a screenshot. Pass two, after a dump from a real
+flight has been read: "what is below" from the moved position (the viewshed at a 100 km range, the names by side
+of the course, the side asked once). Out of scope in pass one: reading `GPS_PROVIDER` directly (the dump decides).
