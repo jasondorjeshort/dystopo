@@ -11,7 +11,8 @@ import kotlin.test.assertTrue
 /**
  * T73: drive mode on synthetic road networks (about 111 m per 0.001 degree near the equator): one-ways,
  * roads closed to cars, destination-only roads, speed limits, trunks and motorways, packs without the
- * road data; and hike and bike unchanged by any of it.
+ * road data; and hike and bike unchanged by any of it. T281: every drive here runs on both the drive search (at zero
+ * turn cost) and the node search, which must agree ([BothSearches]).
  */
 class DriveRoutingTest {
     private val drive = GraphSource("test", "fp", "", 14, 0, drive = true)
@@ -42,25 +43,25 @@ class DriveRoutingTest {
             WayLine.of(minor.copy(flags = WayAttrs.ONEWAY_REVERSE), 0.0 to 0.0, 0.002 to 0.0),
         )
         // With the flow: from the middle of A-B to the middle of B-C, about 222 m.
-        val withFlow = found(Router(g).route(0.0, 0.001, 0.001, 0.002, TravelMode.DRIVE))
+        val withFlow = found(bothSearches(g).route(0.0, 0.001, 0.001, 0.002, TravelMode.DRIVE))
         assertEquals(222.6, withFlow.distanceM, 2.0)
         // Against it: from the middle of B-C back to the middle of A-B goes all the way round, about 668 m.
-        val against = found(Router(g).route(0.001, 0.002, 0.0, 0.001, TravelMode.DRIVE))
+        val against = found(bothSearches(g).route(0.001, 0.002, 0.0, 0.001, TravelMode.DRIVE))
         assertEquals(667.9, against.distanceM, 3.0)
         assertTrue(against.route.points.any { it.lat > 0.0019 && it.lon < 0.0001 }, "passes D")
         // Backwards along one side: 0.0015 -> 0.0005 on A-B is three sides plus the two bits, about 779 m.
-        val back = found(Router(g).route(0.0, 0.0015, 0.0, 0.0005, TravelMode.DRIVE))
+        val back = found(bothSearches(g).route(0.0, 0.0015, 0.0, 0.0005, TravelMode.DRIVE))
         assertEquals(779.2, back.distanceM, 3.0)
         // Hiking and cycling ignore one-ways.
-        assertEquals(222.6, found(Router(g).route(0.001, 0.002, 0.0, 0.001, TravelMode.HIKE)).distanceM, 2.0)
-        assertEquals(111.3, found(Router(g).route(0.0, 0.0015, 0.0, 0.0005, TravelMode.BIKE)).distanceM, 1.0)
+        assertEquals(222.6, found(bothSearches(g).route(0.001, 0.002, 0.0, 0.001, TravelMode.HIKE)).distanceM, 2.0)
+        assertEquals(111.3, found(bothSearches(g).route(0.0, 0.0015, 0.0, 0.0005, TravelMode.BIKE)).distanceM, 1.0)
     }
 
     @Test
     fun oneWayStreetWithNoWayRoundIsNotConnected() {
         val g = graph(WayLine.of(oneway, 0.0 to 0.0, 0.0 to 0.002))
-        found(Router(g).route(0.0, 0.0002, 0.0, 0.0018, TravelMode.DRIVE))
-        val r = failed(Router(g).route(0.0, 0.0018, 0.0, 0.0002, TravelMode.DRIVE))
+        found(bothSearches(g).route(0.0, 0.0002, 0.0, 0.0018, TravelMode.DRIVE))
+        val r = failed(bothSearches(g).route(0.0, 0.0018, 0.0, 0.0002, TravelMode.DRIVE))
         assertEquals(RouteFailure.NOT_CONNECTED, r.reason)
         assertTrue(r.message.contains("one-way"), r.message)
     }
@@ -73,13 +74,13 @@ class DriveRoutingTest {
             WayLine.of(private, 0.0 to 0.0, 0.0 to 0.009),
             WayLine.of(minor, 0.0 to 0.0, 0.002 to 0.0015, 0.002 to 0.0075, 0.0 to 0.009),
         )
-        val car = found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
+        val car = found(bothSearches(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
         assertTrue(car.distanceM > 1200, "drove around: ${car.distanceM}")
-        val walker = found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE))
+        val walker = found(bothSearches(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE))
         assertEquals(1000.8, walker.distanceM, 2.0)
         // A point only on the private road does not snap for a car: the nearest road open to cars is named.
         val gate = graph(WayLine.of(private, 0.0 to 0.0, 0.0 to 0.009), WayLine.of(minor, 0.005 to 0.0, 0.005 to 0.009))
-        val r = failed(Router(gate).route(0.0, 0.001, 0.005, 0.005, TravelMode.DRIVE, maxSnapM = 300.0))
+        val r = failed(bothSearches(gate).route(0.0, 0.001, 0.005, 0.005, TravelMode.DRIVE, maxSnapM = 300.0))
         assertEquals(RouteFailure.START_OFF_NETWORK, r.reason)
         assertTrue(r.message.contains("no road open to cars") && r.message.contains("556 m"), r.message)
     }
@@ -96,13 +97,13 @@ class DriveRoutingTest {
         )
         val g = graph(*lines)
         // Through traffic goes round.
-        val through = found(Router(g).route(-0.003, 0.0, -0.003, 0.009, TravelMode.DRIVE))
+        val through = found(bothSearches(g).route(-0.003, 0.0, -0.003, 0.009, TravelMode.DRIVE))
         assertTrue(through.distanceM > 1850, "went round: ${through.distanceM}")
         // To a house on the destination road: allowed, as the last leg.
-        val toHouse = found(Router(g).route(-0.003, 0.0, 0.0, 0.004, TravelMode.DRIVE))
+        val toHouse = found(bothSearches(g).route(-0.003, 0.0, 0.0, 0.004, TravelMode.DRIVE))
         assertEquals(333.9 + 445.2, toHouse.distanceM, 3.0)
         // From it: allowed as the first leg.
-        val fromHouse = found(Router(g).route(0.0, 0.005, -0.003, 0.009, TravelMode.DRIVE))
+        val fromHouse = found(bothSearches(g).route(0.0, 0.005, -0.003, 0.009, TravelMode.DRIVE))
         assertEquals(445.2 + 333.9, fromHouse.distanceM, 3.0)
     }
 
@@ -113,16 +114,16 @@ class DriveRoutingTest {
             WayLine.of(path, 0.0 to 0.0, 0.0 to 0.009),
             WayLine.of(minor, 0.0 to 0.0, 0.002 to 0.0015, 0.002 to 0.0075, 0.0 to 0.009),
         )
-        val car = found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
+        val car = found(bothSearches(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
         assertEquals(setOf(WayClass.MINOR), car.metersByClass.keys)
         assertTrue(car.route.description!!.contains(Router.DRIVE_NOTICE), car.route.description) // ADR 0032: the one sentence
         // 1.2 km at 40 km/h.
         assertEquals(car.distanceM / (40 / 3.6), car.timeS, 2.0)
-        val hike = found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE))
+        val hike = found(bothSearches(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE))
         assertEquals(setOf(WayClass.PATH), hike.metersByClass.keys)
         // Only a trail: a car does not get there.
         val trailOnly = graph(WayLine.of(path, 0.0 to 0.0, 0.0 to 0.009), WayLine.of(minor, 0.0 to 0.0, -0.002 to 0.0))
-        val r = failed(Router(trailOnly).route(-0.002, 0.0, 0.0, 0.009, TravelMode.DRIVE))
+        val r = failed(bothSearches(trailOnly).route(-0.002, 0.0, 0.0, 0.009, TravelMode.DRIVE))
         assertEquals(RouteFailure.END_OFF_NETWORK, r.reason)
     }
 
@@ -134,14 +135,14 @@ class DriveRoutingTest {
             WayLine.of(minor, 0.0 to 0.0, 0.0 to 0.009),
             WayLine.of(trunk, 0.0 to 0.0, 0.002 to 0.0015, 0.002 to 0.0075, 0.0 to 0.009),
         )
-        val car = found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
+        val car = found(bothSearches(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
         assertEquals(setOf(WayClass.TRUNK), car.metersByClass.keys)
         assertEquals(car.distanceM / 25.0, car.timeS, 1.0)
         // Hikers and cyclists never use the trunk, even when it is all there is.
-        assertEquals(setOf(WayClass.MINOR), found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE)).metersByClass.keys)
-        assertEquals(setOf(WayClass.MINOR), found(Router(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.BIKE)).metersByClass.keys)
+        assertEquals(setOf(WayClass.MINOR), found(bothSearches(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE)).metersByClass.keys)
+        assertEquals(setOf(WayClass.MINOR), found(bothSearches(g).route(0.0, 0.0, 0.0, 0.009, TravelMode.BIKE)).metersByClass.keys)
         val highwayOnly = graph(WayLine.of(trunk, 0.0 to 0.0, 0.0 to 0.009))
-        assertEquals(RouteFailure.NOT_CONNECTED, failed(Router(highwayOnly).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE)).reason)
+        assertEquals(RouteFailure.NOT_CONNECTED, failed(bothSearches(highwayOnly).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE)).reason)
         // A 20 km/h limit on the minor road makes it slower still; untagged it is the class speed.
         val m = CostModel(TravelMode.DRIVE)
         assertEquals(40.0, m.speedKmh(g, (0 until g.edgeCount).first { g.wayClass(it) == WayClass.MINOR }))
@@ -162,12 +163,12 @@ class DriveRoutingTest {
     @Test
     fun packsBuiltBeforeTheRoadDataRefuseDrive() {
         val old = graph(WayLine.of(minor, 0.0 to 0.0, 0.0 to 0.009), source = GraphSource("rainier-outdoors.pmtiles", "fp", "", 14, 0))
-        val r = failed(Router(old).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
+        val r = failed(bothSearches(old).route(0.0, 0.0, 0.0, 0.009, TravelMode.DRIVE))
         assertEquals(RouteFailure.DRIVE_UNSUPPORTED, r.reason)
         assertTrue(r.message.contains("rainier-outdoors.pmtiles was built before it"), r.message)
         assertEquals("drive_unsupported", r.json()["error"])
         // Hiking on the same pack is unchanged.
-        found(Router(old).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE))
+        found(bothSearches(old).route(0.0, 0.0, 0.0, 0.009, TravelMode.HIKE))
         // What decides: the pack's metadata.
         assertTrue(RoutingGraphBuilder.driveCapable(mapOf("dystopo:profile" to "outdoors", "dystopo:profile_version" to "2")))
         assertFalse(RoutingGraphBuilder.driveCapable(mapOf("dystopo:profile" to "outdoors", "version" to "1")))
@@ -191,9 +192,9 @@ class DriveRoutingTest {
         assertTrue((0 until whole.edgeCount).filter { whole.flags(it) == WayAttrs.ONEWAY }.all { whole.speedKmh(it) == 56 })
         // Every cut piece of the one-way still runs east.
         for (e in 0 until whole.edgeCount) if (whole.flags(e) == WayAttrs.ONEWAY) assertTrue(whole.nodeLon[whole.edgeFrom[e]] < whole.nodeLon[whole.edgeTo[e]])
-        val p = found(TileRouter(TiledGraph(listOf(a))).route(46.79, -121.749, 46.791, -121.711, TravelMode.DRIVE))
+        val p = found(bothSearches(TiledGraph(listOf(a))).route(46.79, -121.749, 46.791, -121.711, TravelMode.DRIVE))
         assertEquals(p.distanceM / (56 / 3.6), p.timeS, 2.0)
-        assertIs<RouteResult.Failed>(TileRouter(TiledGraph(listOf(a))).route(46.791, -121.711, 46.79, -121.749, TravelMode.DRIVE))
+        assertIs<RouteResult.Failed>(bothSearches(TiledGraph(listOf(a))).route(46.791, -121.711, 46.79, -121.749, TravelMode.DRIVE))
         // A version 3 file (before T73) is refused, saying why.
         val v3 = bytes.copyOf().also { it[4] = 3 }
         val e = kotlin.runCatching { GraphTileFile.open(v3) }.exceptionOrNull()
@@ -242,8 +243,8 @@ class DriveRoutingTest {
         } + WayLine.of(WayAttrs(WayClass.TRUNK, Surface.PAVED), 46.7950 to -121.7420, 46.7950 to -121.7300)
         val withDrive = RoutingGraphBuilder(RainierRoutingTest().cone).build(lines, base.source.copy(drive = true))
         for (mode in listOf(TravelMode.HIKE, TravelMode.BIKE)) {
-            val a = found(Router(base).route(46.7864, -121.7366, 46.8024, -121.7289, mode))
-            val b = found(Router(withDrive).route(46.7864, -121.7366, 46.8024, -121.7289, mode))
+            val a = found(bothSearches(base).route(46.7864, -121.7366, 46.8024, -121.7289, mode))
+            val b = found(bothSearches(withDrive).route(46.7864, -121.7366, 46.8024, -121.7289, mode))
             assertEquals(a.distanceM, b.distanceM, 0.05, "$mode distance")
             assertEquals(a.ascentM!!, b.ascentM!!, 0.05, "$mode ascent")
             assertEquals(a.cost, b.cost, 0.05, "$mode cost")

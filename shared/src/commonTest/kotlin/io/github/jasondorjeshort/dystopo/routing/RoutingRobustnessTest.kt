@@ -27,7 +27,8 @@ import kotlin.test.assertTrue
  * bridges and tunnels cut at a tile border are never joined to the road beneath, within one pack or
  * between two; two packs loaded in either order through one shared tile cache give the same route; a
  * route between unconnected parts of a pack fails at once from the component summary; and a corrupt
- * graph tile is read once and then skipped.
+ * graph tile is read once and then skipped. T281: a turn at a piece border is priced with the roads of every piece
+ * there, and the copies of one road where two packs overlap make no junction.
  */
 class RoutingRobustnessTest {
     private fun found(r: RouteResult): PlannedRoute {
@@ -113,7 +114,7 @@ class RoutingRobustnessTest {
         // The bridge's cut point is a node of its own level beside the road's.
         assertTrue((0 until graph.nodeCount).any { graph.nodeLevel[it] == RoutingGraph.LEVEL_BRIDGE }, "a bridge-level node")
         for ((label, files) in listOf("one pack" to union, "two packs meeting at the border" to split)) {
-            val r = TileRouter(TiledGraph(files))
+            val r = bothSearches(TiledGraph(files)) // T281: drives on both searches
             for (mode in listOf(TravelMode.HIKE, TravelMode.DRIVE)) {
                 // Along the road and along the bridge, each across the border: fine.
                 val along = found(r.route(lat, bx - 0.009, lat, bx + 0.009, mode))
@@ -125,6 +126,54 @@ class RoutingRobustnessTest {
                 assertEquals(RouteFailure.NOT_CONNECTED, f.reason, "$label $mode: ${f.message}")
             }
         }
+    }
+
+    // ---- T281: turns where pieces meet ----
+
+    private fun turnRouter(tiles: GraphPieces, table: TurnTable) = TileRouter(tiles, turns = TurnCost(table))
+
+    @Test
+    fun aTurnAtAPieceBorderIsPricedWithTheRoadsOfEveryPiece() {
+        // A road along [lat] and a side road leaving it north-east exactly on the border of z14 column x0, which is also
+        // a z11 graph tile border (2648 = 8 x 331): heading east, the side road is a left turn of about 50 degrees.
+        val bx = lonOf(x0.toDouble())
+        val lines = listOf(
+            Line(s("class" to "tertiary", "name" to "Valley Road"), listOf(lat to lonOf(x0 - 0.5), lat to bx, lat to lonOf(x0 + 0.5))),
+            Line(s("class" to "tertiary", "name" to "Side Road"), listOf(lat to bx, lat + 0.004 to bx + 0.003)),
+        )
+        val union = graphFile(lines, x0 - 1..x0, "union")
+        val variants = listOf(
+            "one graph" to WholeGraph(union.whole()),
+            "one pack, two graph tiles" to TiledGraph(listOf(union)),
+            "two packs meeting there" to TiledGraph(listOf(graphFile(lines, x0 - 1..x0 - 1, "west"), graphFile(lines, x0..x0, "east"))),
+        )
+        val from = lat to lonOf(x0 - 0.3)
+        val to = lat + 0.002 to bx + 0.0015
+        val costs = variants.map { (label, tiles) ->
+            fun cost(t: TurnTable) = found(turnRouter(tiles, t).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE)).cost
+            val zero = cost(TurnTable.ZERO)
+            assertEquals(zero + 60 * TurnCost.COST_PER_SECOND, cost(TurnCostTest.LEFT), 1e-6, "$label: the left turn")
+            assertEquals(zero + 50 * TurnCost.COST_PER_SECOND, cost(TurnCostTest.JUNCTIONS), 1e-6, "$label: three roads meet there")
+            zero
+        }
+        assertEquals(costs[0], costs[1], 0.5)
+        assertEquals(costs[0], costs[2], 0.5)
+    }
+
+    @Test
+    fun whereTwoPacksOverlapTheirCopiesOfARoadMakeNoJunction() {
+        // One road over five z14 columns in two packs overlapping by one column: along it, every join between the packs'
+        // copies (at the z14 and z11 borders in the overlap) has the road twice, and counts as two roads, not three or four.
+        val road = Line(s("class" to "tertiary", "name" to "Border Road"), listOf(lat to lonOf(x0 - 2.0) + 0.002, lat to lonOf(x0 + 3.0) - 0.002))
+        val tiles = TiledGraph(listOf(graphFile(listOf(road), x0 - 2..x0, "west"), graphFile(listOf(road), x0..x0 + 2, "east")))
+        val from = lat to lonOf(x0 - 2.0) + 0.004
+        val to = lat to lonOf(x0 + 3.0) - 0.004
+        fun drive(t: TurnTable) = found(turnRouter(tiles, t).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val zero = drive(TurnTable.ZERO)
+        assertEquals(zero.cost, drive(TurnCostTest.JUNCTIONS).cost, 1e-6, "no junction along the road")
+        assertEquals(zero.cost, drive(TurnCostTest.LEFT).cost, 1e-6, "straight on, never a reversal")
+        // Not vacuous: a table that charges every turn finds the joins (each pack border and tile border on the way).
+        assertTrue(drive(TurnTable { t -> if (t.reversal) 0.0 else 10.0 }).cost >= zero.cost + 3 * 10 * TurnCost.COST_PER_SECOND)
     }
 
     // ---- Two packs, either order, one tile cache ----
@@ -170,7 +219,7 @@ class RoutingRobustnessTest {
         val re = graphFile(roads, x0..x0 + 2, "re")
         val overlay = DriveOverlay()
         val drives = listOf(listOf(rw, re), listOf(re, rw)).map { files ->
-            found(TileRouter(TiledGraph(files, cache), overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+            found(bothSearches(TiledGraph(files, cache), overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         }
         assertEquals(drives[0].distanceM, drives[1].distanceM, 0.01)
         assertEquals(drives[0].route.points, drives[1].route.points)
@@ -199,7 +248,7 @@ class RoutingRobustnessTest {
         val w = lonOf(x0 - 2.0) + 0.002
         val a = lat to w + 0.010
         val b = lat to w + 0.045 + 0.010
-        val r = TileRouter(TiledGraph(listOf(file)))
+        val r = bothSearches(TiledGraph(listOf(file)))
         for (mode in listOf(TravelMode.HIKE, TravelMode.BIKE, TravelMode.DRIVE)) {
             val f = failed(r.route(a.first, a.second, b.first, b.second, mode))
             assertEquals(RouteFailure.NOT_CONNECTED, f.reason, "$mode")

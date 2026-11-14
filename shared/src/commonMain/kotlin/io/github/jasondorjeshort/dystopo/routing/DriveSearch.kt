@@ -380,8 +380,9 @@ internal class DriveSearch(
                 val a = g.adjEdge[i]
                 val e = a shr 1
                 val inFwd = a and 1 != 0 // m is the edge's to node: it arrives travelling forwards
-                if (edgeCost(p, e, inFwd) == Double.POSITIVE_INFINITY) continue
-                networkM[1] += g.edgeLength[e] / 2.0
+                // Not skipped when the drive may not travel it: a start at a node is a zero-length seed in either
+                // direction of its edge, and must meet here; such a state is settled but never expanded.
+                if (edgeCost(p, e, inFwd) < Double.POSITIVE_INFINITY) networkM[1] += g.edgeLength[e] / 2.0
                 val tc = if (j == null) 0.0 else turns.cost(p, e, inFwd, j, outPiece, outEdge, outFwd)
                 relax(1, state(p, 2 * e + if (inFwd) 0 else 1), dv + add + tc, v)
             }
@@ -400,8 +401,7 @@ internal class DriveSearch(
                 val a = g.adjEdge[i]
                 val e = a shr 1
                 val inFwd = a and 1 != 0
-                if (edgeCost(p, e, inFwd) == Double.POSITIVE_INFINITY) continue
-                networkM[1] += g.edgeLength[e] / 2.0
+                if (edgeCost(p, e, inFwd) < Double.POSITIVE_INFINITY) networkM[1] += g.edgeLength[e] / 2.0
                 relax(1, state(p, 2 * e + if (inFwd) 0 else 1), dv, v)
             }
         }

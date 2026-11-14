@@ -47,9 +47,10 @@ class DriveOverlayTest {
         return RoutingGraphBuilder().build(lines, source)
     }
 
-    private fun routers(g: RoutingGraph): Pair<TileRouter, TileRouter> {
+    /** The full search and the overlay, each on both drive searches (T281: [BothSearches]). */
+    private fun routers(g: RoutingGraph): Pair<Router, Router> {
         val tg = TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(g))))
-        return TileRouter(tg) to TileRouter(tg, DriveOverlay())
+        return bothSearches(tg) to bothSearches(tg, DriveOverlay())
     }
 
     @Test
@@ -191,13 +192,13 @@ class DriveOverlayTest {
         val tg = TiledGraph(listOf(archive))
         val from = 0.2 to 0.1
         val to = 1.4 to 4.3
-        val full = found(TileRouter(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
-        val one = found(TileRouter(tg, DriveOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val full = found(bothSearches(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val one = found(bothSearches(tg, DriveOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertEquals(0, one.memory["level2Tiles"], "level 2 is never built inside a search: ${one.memory}")
         val overlay = DriveOverlay()
         val cells2 = warm(overlay, archive, tg)
         assertTrue(cells2 >= 6, "level-2 cells $cells2")
-        val two = found(TileRouter(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val two = found(bothSearches(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertTrue(two.memory["level2Tiles"] as Int > 0, "${two.memory}")
         for ((label, r) in listOf("level 1" to one, "level 2" to two)) {
             assertEquals(full.cost, r.cost, full.cost * 1e-9, label)
@@ -212,7 +213,7 @@ class DriveOverlayTest {
         assertEquals(c1.size + c2.size, file.cellCount)
         val fresh = DriveOverlay()
         fresh.register(file)
-        val again = found(TileRouter(tg, fresh).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val again = found(bothSearches(tg, fresh).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertEquals(two.cost, again.cost, 1e-6)
         assertEquals(two.route.points, again.route.points)
         assertEquals(two.memory["level2Tiles"], again.memory["level2Tiles"])
