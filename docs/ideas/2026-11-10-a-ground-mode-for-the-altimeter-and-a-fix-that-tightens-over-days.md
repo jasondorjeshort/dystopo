@@ -34,3 +34,15 @@ distance off the ground."
   and the satellite geometry drift over hours, so the gain is slower than one over root n), what Android's raw
   measurements (`GnssMeasurement`) add, and how surveyors state a summit fix's confidence.
 - Whether the still detector is the accelerometer idea's step detector or a smaller one of its own.
+
+Plan: two passes, the ground mode first; this file stays for the second. Pass one: "Set my height from the ground
+here" beside T197's pin (`ReadoutEstimator.pin`, `POST /readout/calibrate?ground=1`): the phone's height above the
+ground asked once and remembered (a plain setting in the phone's registry, not synced), a still test of its own on
+the accelerometer (variance under a threshold for 3 s; not the step detector, which is not built), the DEM read at
+the fix with its slope, and a sigma from the slope, the fix's accuracy and the DEM's own error; the mark reads "Set
+from the ground"; `devtool readout` with a still log reports the pin and its sigma. Done when: `check` green with a
+sigma test (a flat cell, a steep cell, a poor fix); on the emulator the action pins from the Rainier pack's DEM and
+`GET /readout` shows the mark; strings listed (ADR 0031). Before pass two, a read-only research agent (ADR 0044,
+`benchmark.md`'s technical variant) on static averaging of a phone's fixes: the error's correlation time, what
+`GnssMeasurement` adds, how a surveyed summit states its confidence; pass two builds the averaging as a pure
+function in `shared` from that report. Out of scope in pass one: the shrinking ellipse on the map.
