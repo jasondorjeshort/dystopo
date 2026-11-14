@@ -26,9 +26,8 @@ and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
 ## Waiting on user
 
-- **Answered 2026-11-14** (the words are on the board's Owner actions): the sheets published with v0.1.27-alpha and
-  v0.1.28-alpha stay; alpha upgrades need not be backward compatible (0033 stands until its amending ADR); the
-  release key is used, never read (Later's line: Gradle finds it from a worktree, the deny rule stays).
+- **Answered 2026-11-14** (the board's Owner actions): the published v0.1.27 and v0.1.28 sheets stay; alpha upgrades
+  need not be backward compatible (0033 stands until its amending ADR); the release key is used, never read.
 - Six idea Questions with a blank Answer (`node .claude/hooks/queue-list.js ideas`), and a word on the freeze idea.
 - On the phone, v0.1.29-alpha: the activity chip, Trip details. The strings of T263 and T278 to read (ADR 0031)
   are in their merge bodies. OpenFreeMap's terms (Later's first entry; the owner emails them).
