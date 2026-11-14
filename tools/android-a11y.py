@@ -557,6 +557,7 @@ class Ctx:
         self.track_id = None
         self.recorded = None
         self.packs_aside = False
+        self.best_start = None
 
 
 def scr_map(c):
@@ -571,14 +572,53 @@ def scr_online(c):
     c.srv.ok("POST", "/online/chip?open=1")
 
 
+# T280: Trip details' start-time line is there or not by the clock. Planned at 5:19 PM Eastern on a November day (the
+# closing sweep of wave 32) every start ties (`bestStart` kind `any`) and the card draws no line; at 6:18 PM it reads
+# "Start at 11:45 AM tomorrow for the most sun", at 3:00 PM "Your start time is the sunniest". Without the line the card
+# was 54 dp shorter and the four lines above it 54 dp lower than the baseline's. The route screens plan at a fixed
+# instant (the debug clock of `POST /nav/shade`, which the start-time sweep reads: 8:00 AM at Rainier on a past date, so
+# no answer the app cached for today's date is reused) and a fixed air temperature (the sun aim, whatever a weather
+# station says), wait for the line to be worked out ("Start at 11:30 AM for the most sun"), and put the clock back after.
+BEST_START_AT = "2026-11-09T16:00:00Z"
+BEST_START_TEMP_C = 5
+
+
+def pin_clock(c):
+    c.srv.ok("POST", f"/nav/shade?at={BEST_START_AT}&tempC={BEST_START_TEMP_C}")
+
+
+def unpin_clock(c):
+    c.srv.call("POST", "/nav/shade?at=now&tempC=", timeout=20)
+
+
+def wait_best_start(c, timeout=120.0):
+    """The card's start-time line once it is worked out (`card.lines.bestStart` no longer `working`): its state and text,
+    with the sweep's answer from `GET /route` `bestStart` (`state`, `kind`, `now`, the temperature's source, any error), so
+    a frame taken without the line says why."""
+    deadline = time.time() + timeout
+    line = {}
+    while time.time() < deadline:
+        j = c.srv.ok("GET", "/route?wait=0") or {}
+        line = ((j.get("card") or {}).get("lines") or {}).get("bestStart") or {}
+        if line.get("state") not in (None, "working"):
+            b = j.get("bestStart") or {}
+            return {"state": line.get("state"), "text": line.get("text"), "answer": b.get("state"), "kind": b.get("kind"),
+                    "now": b.get("now"), "tempSource": (b.get("temperature") or {}).get("source"), "error": b.get("error")}
+        time.sleep(1.0)
+    raise RuntimeError(f"the start-time line still working after {timeout:.0f} s: {json.dumps(line)[:200]}")
+
+
 def scr_route(c):
+    pin_clock(c)
     plan_route(c.srv)
     c.srv.ok("POST", "/route/details?open=0")
 
 
 def scr_route_details(c):
+    pin_clock(c)
     plan_route(c.srv)
     c.srv.ok("POST", "/route/details?open=1")
+    c.best_start = wait_best_start(c)
 
 
 def scr_nav(c):
@@ -684,8 +724,8 @@ SCREENS = [
     ("map", scr_map, None, "map"),
     ("longpress", scr_longpress, None, "map"),
     ("online-card", scr_online, None, "map"),
-    ("route", scr_route, None, "map"),
-    ("route-details", scr_route_details, None, "map"),
+    ("route", scr_route, unpin_clock, "map"),
+    ("route-details", scr_route_details, unpin_clock, "map"),
     ("navigation", scr_nav, None, "map"),
     ("profile", scr_profile, None, "map"),
     ("activity-picker", scr_activity, None, "map"),
@@ -858,9 +898,13 @@ def run(args):
                 ts = time.time()
                 close_all(srv)
                 try:
+                    c.best_start = None
                     setup(c)
                     raster, sem, findings, info = snapshot(c, sname, scale, layer, tags)
                     entry.update(info)
+                    if c.best_start is not None:  # T280: the start-time line the frame was taken with
+                        entry["bestStart"] = c.best_start
+                        log(f"{sname}: start-time line {json.dumps(c.best_start)}")
                     taps = []
                     for tap in TAPS.get(name, []) if not args.no_taps else []:
                         try:

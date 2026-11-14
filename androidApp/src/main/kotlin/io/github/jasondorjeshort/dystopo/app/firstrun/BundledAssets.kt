@@ -27,13 +27,17 @@ object BundledAssets {
 
     fun install(context: Context, filesDir: File = context.filesDir): Map<String, Any?> {
         val started = System.currentTimeMillis()
+        val t0 = System.nanoTime()
         val version = runCatching {
             @Suppress("DEPRECATION")
             context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime.toString()
         }.getOrDefault("unknown")
+        val versionMs = (System.nanoTime() - t0) / 1e6
         val marker = File(filesDir, MARKER)
-        if (marker.isFile && marker.readText() == version && DIRS.all { File(filesDir, it).isDirectory }) {
-            lastCopy = linkedMapOf("state" to "current", "version" to version)
+        val current = marker.isFile && marker.readText() == version && DIRS.all { File(filesDir, it).isDirectory }
+        val checkMs = (System.nanoTime() - t0) / 1e6 - versionMs
+        if (current) {
+            lastCopy = linkedMapOf("state" to "current", "version" to version, "versionMs" to ms1(versionMs), "checkMs" to ms1(checkMs))
             return last
         }
         var files = 0
@@ -94,11 +98,15 @@ object WorldOverview {
      * now), the copy, then a reload once the first tile service is published. Returns what the copy did (the stage's value).
      */
     fun copy(context: Context, filesDir: File = context.filesDir): Map<String, Any?> {
+        val t0 = System.nanoTime()
         val version = runCatching {
             @Suppress("DEPRECATION")
             context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime.toString()
         }.getOrDefault("unknown")
-        val r = install(filesDir, version) { context.assets.open(ASSET) }
+        val versionMs = (System.nanoTime() - t0) / 1e6
+        val r = install(filesDir, version) { context.assets.open(ASSET) } + mapOf(
+            "versionMs" to ms1(versionMs), "checkMs" to ms1((System.nanoTime() - t0) / 1e6 - versionMs),
+        )
         last = r
         Log.i("DystopoAssets", "world overview: $r")
         if (r["state"] == "installed") reloadWhenUp()
@@ -145,3 +153,6 @@ object WorldOverview {
         app.reload()
     }
 }
+
+/** T280: a time in ms to a tenth, for the stage details. */
+internal fun ms1(ms: Double): Double = Math.round(ms * 10) / 10.0

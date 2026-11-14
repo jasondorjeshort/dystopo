@@ -30,7 +30,10 @@ Cold, each launch also waits for the map drawn (`fullyLoadedMs`) and reads `GET 
 StrictMode kinds its declared work does not allow (`undeclared`). The report gains `stageMedians` (per stage: `medianMs`,
 `maxMs`, `launches`, `thread`), `medians.fullyLoadedMs`, `undeclared` (stage, kind, launches) and `seed`. `--seed-tracks N`
 first imports N synthetic GPX tracks over Rainier (areas.json's box; fixed ids in `dystopo:id`, so a second run imports
-none) through `POST /tracks/import`, and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
+none) through `POST /tracks/import`, T280's `--clear-online-cache` empties the online tile cache (`POST /online/cache/clear`;
+the `cacheIndex` stage walks every cached file, reported per launch as `cacheWalk`), `--clear-divergences` deletes the kept
+trail divergences (`files/divergence.json`: a recording after the seed runs them over the 52 synthetic tracks, 56 records in
+80 KB, and `map.attach` parses that on the main thread, `mapview` 58 to about 200 ms), and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
 the phone's copy differs in size; then the device's load is waited out (`android_debug.wait_quiet`). `--budget` compares
 the medians with the file's ceilings (`budget`: one row per stage and frame, `red` and its `reasons`) and exits 1 when a
 median is over its ceiling or a stage shows an undeclared StrictMode kind; a stage missing from the run or from the file
@@ -102,8 +105,36 @@ def mark_medians(launches):
 
 def parse_launch(j):
     """T268: one launch's stages from `GET /debug/launch`: name, ms (None when it has no end), thread, undeclared kinds."""
-    return [{"name": st.get("name"), "ms": st.get("ms"), "thread": st.get("thread"), "undeclared": list(st.get("undeclared") or [])}
+    return [{"name": st.get("name"), "ms": st.get("ms"), "thread": st.get("thread"), "undeclared": list(st.get("undeclared") or []),
+             "startMs": st.get("startMs"), "endMs": st.get("endMs")}
             for st in (j or {}).get("stages") or [] if st.get("name")]
+
+
+def parse_cache_walk(j):
+    """T280: the online cache's index after the launch (`GET /debug/cache` `online`): `state`, `entries` and the walk's
+    `walked` files and `walkMs`."""
+    o = (j or {}).get("online") or {}
+    ix = o.get("index") or {}
+    return {"state": o.get("state"), "entries": o.get("entries"), "walked": ix.get("walked"), "walkMs": ix.get("walkMs")}
+
+
+def parse_package_reads(trace, firstrun):
+    """T280: the APK's update time as each launch read it: `assets` (main thread) and `world` (its worker) from `GET /firstrun`
+    `assets` (`versionMs`, the `getPackageInfo` call; `checkMs`, the marker and folders after it), the trace's own read
+    (`GET /debug/startup` `head.packageInfoMs`, on its I/O thread) and the growth of the table of open files at the start of
+    the process (`head.fdTableMs`, `DystopoApp.growFdTable`)."""
+    a = (firstrun or {}).get("assets") or {}
+    w = a.get("world") or {}
+    head = ((trace or {}).get("head")) or {}
+
+    def num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    keys = ("versionMs", "checkMs")
+    return {"assets": {k: a.get(k) for k in keys if k in a}, "world": {k: w.get(k) for k in keys if k in w},
+            "trace": {"packageInfoMs": num(head.get("packageInfoMs")), "fdTableMs": num(head.get("fdTableMs"))}}
 
 
 def stage_medians(launches):
@@ -382,6 +413,14 @@ def seed(args, exe, trace):
         r = trace.call("/tracks/import", "POST", text.encode("utf-8"))
         imported += len(r.get("imported") or [])
     tracks = trace.call("/tracks").get("tracks") or []
+    if args.clear_online_cache:  # T280: the cacheIndex stage walks every cached tile; an earlier part's tiles are not this part's
+        cleared = trace.call("/online/cache/clear", "POST", b"", timeout=120)
+        out["onlineCacheCleared"] = {k: cleared.get(k) for k in ("deleted", "pinnedKept")}
+    if args.clear_divergences:  # T280: an earlier part's recording leaves a divergence run over the seeded tracks (80 KB)
+        _, ls = adb(exe, args.serial, "shell", "run-as", PACKAGE, "ls", "-l", "files/divergence.json", timeout=60)
+        size = next((int(w) for w in ls.split()[3:5] if w.isdigit()), None) if "No such file" not in ls else None
+        adb(exe, args.serial, "shell", "run-as", PACKAGE, "rm", "-f", "files/divergence.json", timeout=60)
+        out["divergencesCleared"] = {"bytes": size}
     _, ls = adb(exe, args.serial, "shell", "run-as", PACKAGE, "ls", "files/packs", timeout=60)
     out.update({
         "tracks": len(tracks), "tracksImported": imported, "seedTracks": args.seed_tracks, "seedPoints": args.seed_tracks * args.seed_points,
@@ -401,7 +440,7 @@ def run(args):
     launches = []
     previous = None
     seeded = None
-    if trace and (args.seed_tracks or args.dem or args.osm):  # T268
+    if trace and (args.seed_tracks or args.dem or args.osm or args.clear_online_cache or args.clear_divergences):  # T268
         seeded = seed(args, exe, trace)
     if args.quiet:  # T268: a device still busy reads as slow
         pid = android_debug.app_pid(exe, args.serial)
@@ -434,12 +473,24 @@ def run(args):
                 if full:
                     t = parse_trace(full)
                 t["stages"] = parse_launch(launch)
+                try:  # T280: how long the update-time read took in each place
+                    t["packageReads"] = parse_package_reads(full, trace.call("/firstrun", timeout=10.0))
+                except (RuntimeError, OSError, ValueError, urllib.error.URLError) as e:
+                    t["packageReads"] = {"error": str(e)[:200]}
+                try:  # T280: what the cacheIndex stage walked (its time grows with the online cache's files)
+                    t["cacheWalk"] = parse_cache_walk(trace.call("/debug/cache", timeout=30.0))
+                except (RuntimeError, OSError, ValueError, urllib.error.URLError) as e:
+                    t["cacheWalk"] = {"error": str(e)[:200]}
             line.update(t)
             previous = None
             try:
                 previous = (trace.read().get("window") or {}).get("id")
             except (RuntimeError, OSError, ValueError, urllib.error.URLError):
                 pass
+        st = {x["name"]: x.get("ms") for x in line.get("stages") or []}
+        if "world" in st or "assets" in st:  # T280
+            log(f"launch {i + 1}: world {st.get('world')} ms, assets {st.get('assets')} ms, update-time reads {json.dumps(line.get('packageReads'))}; "
+                f"cacheIndex {st.get('cacheIndex')} ms over {json.dumps(line.get('cacheWalk'))}")
         log(f"launch {i + 1}: am {line.get('amTotalMs')} ms, {line.get('kind')}, first frame {line.get('firstFrameMs')} ms, map drawn {line.get('fullyLoadedMs')} ms, longest stall {line.get('longestStallMs')} ms, runner {line.get('launchOverheadMs')} ms")
         launches.append(line)
         time.sleep(args.settle)
@@ -466,6 +517,10 @@ def main():
     ap.add_argument("--seed-points", type=int, default=500, help="fixes per synthetic track")
     ap.add_argument("--dem", help="DEM pack copied to files/packs/dem.pmtiles first unless the phone's has its size")
     ap.add_argument("--osm", help="vector pack copied to files/packs/osm.pmtiles first unless the phone's has its size")
+    ap.add_argument("--clear-online-cache", action="store_true",
+                    help="T280: with the seed, empty the online tile cache first (pinned tiles stay): the cacheIndex stage walks every cached file")
+    ap.add_argument("--clear-divergences", action="store_true",
+                    help="T280: with the seed, delete the kept trail divergences (files/divergence.json), which the map parses on the main thread at launch")
     ap.add_argument("--quiet", type=float, default=0, help="before the launches, wait up to this many s for a quiet device")
     ap.add_argument("--budget", help="the ceilings file (tools/launch-budget.json): compare, exit 1 when red")
     ap.add_argument("--set-budget", nargs="+", metavar="REPORT", help="write --budget from one or two reports instead of launching")

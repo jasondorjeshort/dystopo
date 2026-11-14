@@ -61,7 +61,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * or stall it names), `topFreezeShare`, `blockingFrame`, `mapMs`, `activity`,
  * `processStartToAttachMs` (loading and field initialisers, not sampled), `importance`, `firstStart`, `sinceBootS`,
  * `ramAvailMb`, `ramTotalMb`, `lowMemory`, `thermal`, `batterySaver`, `heapMaxMb`, `heapUsedMb`, `gcCount`, `packs`,
- * `packBytes`, `startInfoReason`, `startInfoType`, `startInfoTimes`, `exitReason`, `exitReasonName`.
+ * `packBytes`, `startInfoReason`, `startInfoType`, `startInfoTimes`, `exitReason`, `exitReasonName`, and T280's `packageInfoMs` (the
+ * APK's update time read) and `fdTableMs` (the growth of the table of open files, `DystopoApp.FD_TABLE_SLOTS`).
  */
 object StartupTrace {
     const val TAG = "DystopoStartup"
@@ -308,6 +309,7 @@ object StartupTrace {
                 a.head["heapMaxMb"] = (rt.maxMemory() / MB).toString()
                 a.head["heapUsedMb"] = ((rt.totalMemory() - rt.freeMemory()) / MB).toString()
                 runCatching { Debug.getRuntimeStat("art.gc.gc-count") }.getOrNull()?.let { a.head["gcCount"] = it }
+                DystopoApp.fdTableMs?.let { a.head["fdTableMs"] = it.toString() } // T280
             }
             // The system finishes its record just after the first frame, so a moment later.
             if (!startInfoRead && w.firstFrameAge(now) >= START_INFO_AFTER_MS) {
@@ -382,7 +384,9 @@ object StartupTrace {
         a.head["packs"] = packs.size.toString()
         a.head["packBytes"] = packs.sumOf { p -> p.files.sumOf { it.length() } }.toString()
         val dir = reportsDir() ?: return
+        val infoT0 = System.nanoTime()
         val info = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull()
+        a.head["packageInfoMs"] = ((System.nanoTime() - infoT0) / 100_000 / 10.0).toString() // T280: the update time's call
         val seen = File(dir, PACKAGE_SEEN)
         val update = info?.lastUpdateTime ?: 0L
         a.head["firstStart"] = StartupText.firstStart(runCatching { seen.readText().trim().toLong() }.getOrNull(), info?.firstInstallTime ?: 0L, update)
