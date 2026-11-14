@@ -1,9 +1,9 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-14 19:35 UTC, at commit 9266c30e, by main session (the ideas triaged and ranked, their Questions decided; its commits on `main` are not pushed; no wave open)
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (no open wave: Owner actions
-and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
+Updated: 2026-11-14 21:30 UTC, at commit fd4eee0c plus the plan commit, by main session (wave 33 planned, researched and through its critic; ADR 0062 written; nothing launched)
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (wave 33: T281, T282, T283,
+strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
 ## Now
 
@@ -19,15 +19,14 @@ and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
 ## Next
 
-1. **Owner, 2026-11-14: the drive turn cost is the next pass, even if it takes the whole pass**: the idea
-   `docs/ideas/2026-11-14-drive-routes-pay-for-turns.md` (a Plan: an edge-based drive search with a turn cost). The
-   other drive ideas of that day (curvature, stops and signals, fastest or shortest) wait behind it for research;
-   the pressure-unit idea (mbar default, apart from feet) and Send diagnostics ending in a share are untriaged
-   owner feedback on v0.1.29-alpha and ride with it or follow it as the wave's size allows.
-2. Push the triage and these ideas (`push-verified.sh`), then plan the next wave (the `wave` skill) from the board's Later and the
-   ideas' Plans: the sweep-order rule, the days-old recording, the backup proposal and after it the ADR that amends
-   0033 (Later's line), the signing step (for Later's key line), Report recent stats, the power-cut part, search
-   outside a pack. The two ADR 0012 hits (0061, 0053; an idea each) are the coordinator's own, minutes each.
+1. **Wave 33, drive routes pay for turns** (the owner, 2026-11-14: the next pass): planned on the board, its two
+   surveys in `out/wave33-research/`, the critic answered in the wave paragraph, the decisions in ADR 0062. Launch
+   T281 (the directed-edge drive search at zero turn cost) on the owner's go, one Gradle agent at a time; T282 (the
+   values) after its merge, T283 (the driving side) after that; then the sweep and an alpha. The meter read 30.
+2. After it: the other drive ideas (curvature, stops and signals, fastest or shortest) need research; the
+   pressure-unit and Send diagnostics ideas are untriaged; then the board's Later and the ideas' Plans (the
+   sweep-order rule, the days-old recording, the backup proposal, the signing step, Report recent stats, the
+   power-cut part, search outside a pack) and the two ADR 0012 hits (0061, 0053).
 
 ## Waiting on user
 
