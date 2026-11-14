@@ -24,3 +24,13 @@ oddity or a seam bug anywhere else waits for a user. The owner, 2026-11-10: "Sur
   cells after a green result.
 - Only public points: the point is random, but the report names a cell; a cell near a personal area is a
   coincidence the privacy scan cannot tell from a hint, so the part skips cells listed in the private terms.
+
+Plan: one pass, `devtool` and the sweep's scripts. `devtool tour --random [--seed <yyyy-mm-dd>]`: a land point
+seeded by the date (UTC), rerolled while the elevation source has no data there, while its cell matches a private
+term or while it lies inside a personal area's box (`devtool.local.json`, read as `PrivacyCheck` reads it; the
+reroll is silent, so no report says a cell was skipped), rendered at z9 and z12 with the tour's checks; the point,
+the sources that answered and the cells fetched in the JSON. A sweep part `random` in `tools/sweep.ps1` and the
+nightly workflow's tour step run it; `summary.json` carries the point and the result, the sheet the two PNGs; the
+part deletes the cells it fetched after a green result and keeps them after a red one. Done when: `check` green
+with a test that one seed gives one point and that a listed cell is rerolled; three seeds rendered and their PNGs
+viewed; a red forced by a broken source names the point. Out of scope: adding a failure to `areas.json` (by hand).
