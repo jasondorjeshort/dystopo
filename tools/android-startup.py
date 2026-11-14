@@ -31,7 +31,9 @@ StrictMode kinds its declared work does not allow (`undeclared`). The report gai
 `maxMs`, `launches`, `thread`), `medians.fullyLoadedMs`, `undeclared` (stage, kind, launches) and `seed`. `--seed-tracks N`
 first imports N synthetic GPX tracks over Rainier (areas.json's box; fixed ids in `dystopo:id`, so a second run imports
 none) through `POST /tracks/import`, T280's `--clear-online-cache` empties the online tile cache (`POST /online/cache/clear`;
-the `cacheIndex` stage walks every cached file, reported per launch as `cacheWalk`), and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
+the `cacheIndex` stage walks every cached file, reported per launch as `cacheWalk`), `--clear-divergences` deletes the kept
+trail divergences (`files/divergence.json`: a recording after the seed runs them over the 52 synthetic tracks, 56 records in
+80 KB, and `map.attach` parses that on the main thread, `mapview` 58 to about 200 ms), and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
 the phone's copy differs in size; then the device's load is waited out (`android_debug.wait_quiet`). `--budget` compares
 the medians with the file's ceilings (`budget`: one row per stage and frame, `red` and its `reasons`) and exits 1 when a
 median is over its ceiling or a stage shows an undeclared StrictMode kind; a stage missing from the run or from the file
@@ -414,6 +416,11 @@ def seed(args, exe, trace):
     if args.clear_online_cache:  # T280: the cacheIndex stage walks every cached tile; an earlier part's tiles are not this part's
         cleared = trace.call("/online/cache/clear", "POST", b"", timeout=120)
         out["onlineCacheCleared"] = {k: cleared.get(k) for k in ("deleted", "pinnedKept")}
+    if args.clear_divergences:  # T280: an earlier part's recording leaves a divergence run over the seeded tracks (80 KB)
+        _, ls = adb(exe, args.serial, "shell", "run-as", PACKAGE, "ls", "-l", "files/divergence.json", timeout=60)
+        size = next((int(w) for w in ls.split()[3:5] if w.isdigit()), None) if "No such file" not in ls else None
+        adb(exe, args.serial, "shell", "run-as", PACKAGE, "rm", "-f", "files/divergence.json", timeout=60)
+        out["divergencesCleared"] = {"bytes": size}
     _, ls = adb(exe, args.serial, "shell", "run-as", PACKAGE, "ls", "files/packs", timeout=60)
     out.update({
         "tracks": len(tracks), "tracksImported": imported, "seedTracks": args.seed_tracks, "seedPoints": args.seed_tracks * args.seed_points,
@@ -433,7 +440,7 @@ def run(args):
     launches = []
     previous = None
     seeded = None
-    if trace and (args.seed_tracks or args.dem or args.osm or args.clear_online_cache):  # T268
+    if trace and (args.seed_tracks or args.dem or args.osm or args.clear_online_cache or args.clear_divergences):  # T268
         seeded = seed(args, exe, trace)
     if args.quiet:  # T268: a device still busy reads as slow
         pid = android_debug.app_pid(exe, args.serial)
@@ -512,6 +519,8 @@ def main():
     ap.add_argument("--osm", help="vector pack copied to files/packs/osm.pmtiles first unless the phone's has its size")
     ap.add_argument("--clear-online-cache", action="store_true",
                     help="T280: with the seed, empty the online tile cache first (pinned tiles stay): the cacheIndex stage walks every cached file")
+    ap.add_argument("--clear-divergences", action="store_true",
+                    help="T280: with the seed, delete the kept trail divergences (files/divergence.json), which the map parses on the main thread at launch")
     ap.add_argument("--quiet", type=float, default=0, help="before the launches, wait up to this many s for a quiet device")
     ap.add_argument("--budget", help="the ceilings file (tools/launch-budget.json): compare, exit 1 when red")
     ap.add_argument("--set-budget", nargs="+", metavar="REPORT", help="write --budget from one or two reports instead of launching")
