@@ -23,9 +23,21 @@ Recommendation (the coordinator): the cheap half first, a public fix for every s
 (`tools/android-emu.ps1`), which removes the known cause; then the sidecar and the check. The owner's wider
 question, pictures that users share, is the related idea.
 
-Question: with the sidecar kept under `out/` only, naming the viewed place and never a position, and the check
-printing "outside the public areas" without coordinates, do you want the script check on the sheet? Recommended:
-yes, in two steps: a public fix for every sweep emulator at boot first (`tools/android-emu.ps1`; it records no
-place at all), then the sidecar and the check in `tools/sweep-diff.py`. It is yours to decide because your words on
-it were about privacy, and the sidecar writes down where a map was looking.
-Answer:
+2026-11-14 (the owner left this to the coordinator, "or get an independent review to confirm"; the critic changed
+two things): yes, but the cause is found before it is fixed, and the sidecar names an area, never a centre. The
+cause of the four frames is not known (the log's entry on v0.1.29-alpha): a missing fix is one suspect, a fresh
+debug install's default server on 8765 the other (the board's Later line). And `out/` is not wholly private:
+`.github/workflows/nightly.yml` uploads `out/sweep-nightly/` whole as a workflow artifact, which the paragraph
+above does not say.
+
+Plan: two passes, a tidy-up and not first (the owner on the published sheets, 2026-11-14: "Don't care"). (1) The
+board's Later line "The sweep's frames outside the public areas": a chore reads the `view from <source>` mark of
+`StartupTrace` (`MainActivity.kt`, T228: the source's name, never a coordinate) on the a11y part's first-run
+screens and on `bothunits`' second phone and names what opens the map there; the fix follows the cause (a public
+fix at boot in `tools/android-emu.ps1`, or a pinned public view in the part). (2) One implementer: each screenshot
+of the sweep gets a sidecar line under `out/` holding the name of the `areas.json` area that contains the viewed
+centre, or `outside`, decided at capture (`GET /camera` for a debug build, in `tools/android-check.py` and the
+other capturing scripts; the fix the part set, for the release build's tap-driven parts); no coordinate is
+written anywhere. `tools/sweep-diff.py` marks an `outside` frame and refuses to write `changes.png` with one in
+it. Verify: the script's tests with a planted `outside` line; a sweep whose sheet has none. Out of scope:
+anything written into a PNG; pictures that users share (the related idea).
