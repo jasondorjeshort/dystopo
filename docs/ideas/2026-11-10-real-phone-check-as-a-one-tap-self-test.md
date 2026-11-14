@@ -1,7 +1,7 @@
 ---
 date: 2026-11-10
 kind: feature
-related: [2026-11-08-the-owners-phone-in-the-sweep.md]
+related: [2026-11-08-the-owners-phone-in-the-sweep.md, 2026-11-14-report-recent-stats-in-place-of-report-the-last-start.md]
 ---
 
 # The real-phone check as one tap: a self-test report sent like "Send diagnostics"

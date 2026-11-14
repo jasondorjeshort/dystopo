@@ -20,6 +20,11 @@ exist at every launch: `.claude/hooks/usage-gate.js` already reads `~/.claude/us
   verifier, chores) into the log entry's cost line, so the halves come free for every task.
 - The wave skill's close reads the file instead of the hand-backs.
 
+2026-11-14, the close of wave 32: the hand reading was made once (implementers 262 to 499 thousand tokens,
+verifiers 103 to 212 thousand; the `wave` skill's figure went from 2.5 to 1.0 a task) and the finding is resolved.
+Each agent's completion notice already carries its token count, tool uses and duration, so the hook at stop has
+the per-agent figure without a meter read. The owner, on keeping the figure by script: "Sure."
+
 ## Open
 
 - Overlapping agents share the meter, so a difference of readings attributes a lane's cost, not an agent's; the
