@@ -30,3 +30,14 @@ the per-agent figure without a meter read. The owner, on keeping the figure by s
 - Overlapping agents share the meter, so a difference of readings attributes a lane's cost, not an agent's; the
   token counts at stop are the per-agent figure and the readings the check on them.
 - Base-shaped: the two hooks are Hatchery's (filed there as an idea the same day; a carry-back once it works here).
+
+Plan: one no-Gradle pass in `.claude/hooks/` (base-owned files: each change a row in ADR 0037's departure table and
+a carry-back once it works here). First read what a `SubagentStop` hook is handed: one run that dumps the keys of
+its input says whether the agent's token count, tool uses and duration are there. Then `usage-gate.js` appends a
+line at every `Agent` launch (the time, the description, the model, the 5-hour and 7-day readings) and the stop
+hook (`emulator-stop.js`'s event) appends one at stop (the same readings, and the counts where the input has them)
+to one tab-separated file per session under `~/.claude/usage-state/`; `tools/agent-cost.py` [no-check: new file]
+sums a task id's lines into the log entry's cost line; the `wave` skill's close reads the file. Done when:
+`node .claude/hooks/test-hooks.js` green with cases for both lines and for a missing state file (never a refusal,
+never a throw); one real launch and stop recorded and summed. If the stop input has no counts, the report says so
+and the readings alone are kept.
