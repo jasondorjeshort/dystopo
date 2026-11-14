@@ -1,7 +1,7 @@
 ---
 date: 2026-11-10
 kind: feature
-related: [2026-10-29-viewshed-and-peak-labels.md, 2026-11-07-a-freeze-and-power-draw-during-the-flight.md]
+related: [2026-10-29-viewshed-and-peak-labels.md]
 ---
 
 # Window-seat mode: what is passing below, from a position moved up to now
