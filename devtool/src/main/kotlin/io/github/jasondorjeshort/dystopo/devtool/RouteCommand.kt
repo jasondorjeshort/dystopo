@@ -44,6 +44,11 @@ import io.github.jasondorjeshort.dystopo.store.db.TrackDb
 import io.github.jasondorjeshort.dystopo.sync.Bundle
 import java.util.Properties
 import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
+import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
+import io.github.jasondorjeshort.dystopo.routing.TileRouter
+import io.github.jasondorjeshort.dystopo.routing.TiledGraph
+import io.github.jasondorjeshort.dystopo.routing.WholeGraph
 import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
@@ -76,7 +81,12 @@ import kotlin.math.cos
  *   `directions` field's size.
  *   T108: `--mode crow` is the straight line between the points (no graph: `--pack` only names the default DEM, or give
  *   `--dem`), with `route.bearingDeg`, the profile from the DEM and one arrival in `instructions`.
- * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters.
+ *   T281: drives plan on the drive search over directed-edge states (ADR 0062); `--no-turns` plans them on the node
+ *   search instead (the owner's fast option). `--overlay-min-km K` routes over the graph file's z11 tiles with a drive
+ *   overlay for drives of K km or more (the server's 40 km is too long for a public pack) and reports the overlay
+ *   (cells built, their milliseconds) in `search.overlay`.
+ * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters; T281:
+ *   `driveStates`, the drive search's states per junction on this graph.
  *
  * Elevations come from the pack's DEM archive (`<name>-dem.pmtiles` next to it, or `--dem`).
  */
@@ -100,6 +110,8 @@ class RouteCommand : CliktCommand(name = "route") {
     private val graphFile by option("--graph", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()
     private val gpx by option("--gpx", help = "Write the route as GPX here").file()
     private val noRender by option("--no-render", help = "Skip the PNG").flag()
+    private val noTurns by option("--no-turns", help = "Drive on the node search, faster and blind to turns (T281; default: the drive search, which can price turns)").flag()
+    private val overlayMinKm by option("--overlay-min-km", help = "Route over the graph tiles with a drive overlay for drives this many km or more apart (T281; the server uses 40)").double()
     private val zoomOption by option("--zoom", help = "Render zoom (default: the deepest up to 15 that fits about 12 Mpx)").int().restrictTo(8..16)
     private val style by StyleOptions()
     private val out by option("--out", help = "Output PNG (default out/route-<pack>.png)").file()
@@ -120,10 +132,19 @@ class RouteCommand : CliktCommand(name = "route") {
             timings.time("route") { RouteResult.Found(Crow.plan(fromLat, fromLon, toLat, toLon, sampler, name)) }
         } else {
             val (graph, info) = timings.time("graph") { RouteGraphs.openOrBuild(packFile, demFile, graphFile) }
-            val router = Router(graph)
+            // T281: the whole graph as one piece (as before), or its z11 tiles with a drive overlay (--overlay-min-km).
+            val minKm = overlayMinKm
+            val driveTurns = !noTurns // T281: the one place the switch is read
+            val overlay = minKm?.let { DriveOverlay(clock = { System.nanoTime() / 1_000_000 }) }
+            val router = if (overlay == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = driveTurns) else {
+                val tiled = TiledGraph(listOf(GraphTileFile.open(File(info["file"] as String).readBytes())))
+                TileRouter(tiled, overlay, driveTurns = driveTurns, minDistanceM = minKm * 1000)
+            }
             timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
             report["graph"] = info + ("summary" to graph.json())
-            timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
+            val r = timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
+            report["search"] = linkedMapOf("driveTurns" to driveTurns, "overlayMinKm" to minKm, "overlay" to overlay?.json())
+            r
         }
         when (result) {
             is RouteResult.Failed -> {
@@ -253,7 +274,7 @@ class RouteBuildCommand : CliktCommand(name = "build") {
 
     override fun run() {
         val (graph, info) = RouteGraphs.build(pack, dem ?: RouteGraphs.defaultDem(pack), out ?: RouteGraphs.defaultFile(pack))
-        echo(pretty(info + ("summary" to graph.json()) + ("networks" to RouteGraphs.networks(graph, 6))))
+        echo(pretty(info + ("summary" to graph.json()) + ("networks" to RouteGraphs.networks(graph, 6)) + ("driveStates" to RouteGraphs.driveStates(graph))))
     }
 }
 
@@ -273,6 +294,29 @@ internal object RouteGraphs {
             val v = sample.getValue(c)
             linkedMapOf("network" to c, "km" to Router.km(m), "node" to listOf(g.nodeLat[v] / 1e6, g.nodeLon[v] / 1e6))
         }
+    }
+
+    /**
+     * T281 (ADR 0062 Decision 6): the drive search's states per junction on this graph: the directed edges a car may
+     * travel (a two-way road counts twice, a one-way once) over the nodes a car may reach (any drivable edge at them).
+     * [Router.DRIVE_STATES_PER_JUNCTION] is this factor on the public packs, rounded up.
+     */
+    fun driveStates(g: RoutingGraph): Map<String, Any?> {
+        val model = io.github.jasondorjeshort.dystopo.routing.CostModel(TravelMode.DRIVE)
+        val driveNode = BooleanArray(g.nodeCount)
+        var directed = 0L
+        for (e in 0 until g.edgeCount) {
+            if (!model.usable(g, e)) continue
+            driveNode[g.edgeFrom[e]] = true; driveNode[g.edgeTo[e]] = true
+            if (model.allows(g, e, true)) directed++
+            if (model.allows(g, e, false)) directed++
+        }
+        val nodes = driveNode.count { it }
+        return linkedMapOf(
+            "driveNodes" to nodes, "directedDriveEdges" to directed,
+            "statesPerJunction" to if (nodes == 0) null else Math.round(directed * 1000.0 / nodes) / 1000.0,
+            "factorUsed" to Router.DRIVE_STATES_PER_JUNCTION,
+        )
     }
 
     fun reader(file: File): PmtilesReader = PmtilesReader.open(FileRangeSource(file), Gzip.decompressors)

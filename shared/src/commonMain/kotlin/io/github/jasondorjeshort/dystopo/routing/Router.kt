@@ -185,6 +185,13 @@ class CostModel(val mode: TravelMode, val pace: PaceFit? = PaceFits.active[mode]
         return timeS(metres, up, down)
     }
 
+    /**
+     * T281 (ADR 0062, ADR 0063): [seconds] spent at a junction (a turn, [TurnCost]) as search cost, the way an edge's
+     * time is: drive costs are metres at [DRIVE_REF_KMH], so a second is that many metres. The one place the conversion
+     * is made, so another drive metric can price a second its own way.
+     */
+    fun secondsCost(seconds: Double): Double = seconds * DRIVE_REF_KMH / 3.6
+
     /** The smallest [weight] any edge can have: the A* heuristic's factor (keeps it admissible). */
     val minWeight: Double get() = if (mode == TravelMode.DRIVE) 1.0 else WayClass.entries.minOf { classWeight(it) }
 
@@ -381,6 +388,14 @@ interface Router {
         const val DEFAULT_SNAP_M = 300.0
         /** T89: the default settle budget of one search ([TileRouter.maxSettled]; the statewide 570 km drive in full settled 0.5 to 1.2 million). */
         const val DEFAULT_MAX_SETTLED = 1_500_000
+        /**
+         * T281 (ADR 0062 Decision 6): a drive search ([DriveSearch]) settles directed-edge states, not junctions; its limit is
+         * [TileRouter.maxSettled] times this: the directed drive edges per drive node measured on the public packs (`devtool
+         * route build`'s `driveStates`: 1.99 on rainier, 2.01 on montblanc), rounded up to the next half for denser
+         * networks. On the phone's 600,000 that is 1.5 million states, about 44 MB at 26 bytes a state and 8 a node
+         * (the node search's 42 bytes a junction made it 25 MB).
+         */
+        const val DRIVE_STATES_PER_JUNCTION = 2.5
         /** How far an off-network failure looks for the nearest line, to say how far it is. */
         const val FAR_SEARCH_M = 10_000.0
         const val PROFILE_SAMPLES = 100
@@ -424,6 +439,9 @@ fun Router(graph: RoutingGraph): Router = TileRouter(WholeGraph(graph))
  * (T89: [RoutingGraph.footComponent]; conclusive within one graph file, and across files when either
  * end's part of the network stays inside its pack); otherwise when either search runs out of nodes,
  * which takes as long as the smaller of the two networks.
+ *
+ * T281 (ADR 0062): a drive runs on [DriveSearch] instead, the same scheme over directed-edge states so it can price its
+ * turns ([turns]); [driveTurns] off keeps a drive on this node search.
  */
 class TileRouter(
     val tiles: GraphPieces,
@@ -432,7 +450,9 @@ class TileRouter(
     /**
      * T89: a search (the overlay's and the full fallback alike) that settles this many nodes stops and fails with
      * [RouteFailure.SEARCH_LIMIT], so an unreachable or very long route costs a bounded amount of time and memory
-     * (about 42 bytes of search state per node: 1.5 million nodes is about 63 MB).
+     * (about 42 bytes of search state per node: 1.5 million nodes is about 63 MB). T281: a drive search on edge states
+     * stops at this times [Router.DRIVE_STATES_PER_JUNCTION] states (26 bytes each, plus 8 per node of the pieces it
+     * touches), with the same message.
      */
     val maxSettled: Int = Router.DEFAULT_MAX_SETTLED,
     /**
@@ -441,8 +461,21 @@ class TileRouter(
      * the results and the failures' details stay metres.
      */
     val units: ContourUnits = ContourUnits.METERS,
+    /**
+     * T281 (ADR 0062): whether a drive pays for its turns, on the drive search ([DriveSearch]); off, a drive is planned on
+     * the node search, faster and blind to turns (the owner, 2026-11-14: "the fastest search should remain an option").
+     * Hike and bike always use the node search.
+     */
+    val driveTurns: Boolean = true,
+    /** T281: the turn function of the drive search ([TurnTable.DRIVE] by default; tests pass their own table). */
+    val turns: TurnCost = TurnCost(),
+    /** T281: drives whose ends are at least this far apart (great circle) go through the [overlay] ([DriveOverlay.MIN_DISTANCE_M] by default). */
+    val minDistanceM: Double = DriveOverlay.MIN_DISTANCE_M,
 ) : Router, JunctionSource {
     private fun d(m: Double) = UnitFormat.distance(m, units)
+
+    /** [UnitFormat.distance] in this router's [units] (T281: the drive search's messages). */
+    internal fun distanceText(m: Double) = d(m)
 
     override val junctions: JunctionSource get() = this
 
@@ -497,16 +530,16 @@ class TileRouter(
     }
 
     /** A snapped end: the piece it lies in and the snap on that piece's graph. */
-    private class End(val piece: GraphPiece, val snap: EdgeSnap)
+    internal class End(val piece: GraphPiece, val snap: EdgeSnap)
 
     /** One traversal of edge [e] of [piece] from fraction [f0] to [f1] of its length. */
-    private class Step(val piece: GraphPiece, val e: Int, val f0: Double, val f1: Double)
+    internal class Step(val piece: GraphPiece, val e: Int, val f0: Double, val f1: Double)
 
     /**
      * The pieces one route has asked for, each tile looked up once: the search holds these objects
      * whatever the shared cache evicts meanwhile, so a node is never met again in a reloaded copy.
      */
-    private class View(val tiles: GraphPieces, val overlay: DriveOverlay? = null, val detail: Set<Long> = emptySet()) {
+    internal class View(val tiles: GraphPieces, val overlay: DriveOverlay? = null, val detail: Set<Long> = emptySet()) {
         private val memo = HashMap<Long, List<GraphPiece>>()
         /** T89: level-2 pieces by level-2 tile (one object for all the graph tiles inside), null where level 2 does not apply. */
         private val memo2 = HashMap<Long, GraphPiece?>()
@@ -574,7 +607,7 @@ class TileRouter(
         if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the map has no trails or roads to route on")
         val model = CostModel(mode)
         val long = overlay != null && mode == TravelMode.DRIVE &&
-            TrackStats.distanceM(fromLat, fromLon, toLat, toLon) >= DriveOverlay.MIN_DISTANCE_M
+            TrackStats.distanceM(fromLat, fromLon, toLat, toLon) >= minDistanceM
         if (long) {
             // T77: the tiles around both ends in full, the rest through the overlay; if that finds nothing, everything in full.
             val near = maxOf(DriveOverlay.DETAIL_M, maxSnapM * 2)
@@ -599,6 +632,10 @@ class TileRouter(
         val s = snap(view, fromLat, fromLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
         val t = snap(view, toLat, toLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
         separate(model, s, t)?.let { return it }
+        // T281: a drive pays for its turns on the edge-state search unless the fast node search is asked for.
+        if (mode == TravelMode.DRIVE && driveTurns) {
+            return DriveSearch(this, view, model, s, t, turns, maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong()).run(name, ids)
+        }
         return Search(view, model, s, t).run(name, ids)
     }
 
@@ -684,7 +721,7 @@ class TileRouter(
         linkedMapOf("file" to file),
     )
 
-    private fun stepCost(model: CostModel, p: GraphPiece, e: Int, f0: Double, f1: Double): Double {
+    internal fun stepCost(model: CostModel, p: GraphPiece, e: Int, f0: Double, f1: Double): Double {
         // T77: a shortcut is only ever travelled whole and forwards (the ends lie in tiles searched in full).
         p.overlay?.let { o -> return if (f0 == 0.0 && f1 == 1.0) o.cost(e) else Double.POSITIVE_INFINITY }
         val g = p.graph
@@ -993,7 +1030,7 @@ class TileRouter(
         }
     }
 
-    private fun plan(
+    internal fun plan(
         model: CostModel, steps: List<Step>, cost: Double, s: End, t: End, expanded: Int, name: String, ids: UuidGenerator,
         memory: Map<String, Any?>,
     ): PlannedRoute {

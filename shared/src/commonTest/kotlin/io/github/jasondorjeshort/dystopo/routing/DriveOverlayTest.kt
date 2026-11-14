@@ -47,9 +47,10 @@ class DriveOverlayTest {
         return RoutingGraphBuilder().build(lines, source)
     }
 
-    private fun routers(g: RoutingGraph): Pair<TileRouter, TileRouter> {
+    /** The full search and the overlay, each on both drive searches (T281: [BothSearches]). */
+    private fun routers(g: RoutingGraph): Pair<Router, Router> {
         val tg = TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(g))))
-        return TileRouter(tg) to TileRouter(tg, DriveOverlay())
+        return bothSearches(tg) to bothSearches(tg, DriveOverlay())
     }
 
     @Test
@@ -114,11 +115,17 @@ class DriveOverlayTest {
         val g = grid(minorOnlyAcross = true)
         val tg = TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(g))))
         val full = found(TileRouter(tg, DriveOverlay()).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE))
-        val capped = TileRouter(tg, DriveOverlay(), maxSettled = full.expanded / 2).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE)
+        // T281: a drive search settles edge states, up to maxSettled * DRIVE_STATES_PER_JUNCTION of them.
+        val capped = TileRouter(tg, DriveOverlay(), maxSettled = (full.expanded / 2 / Router.DRIVE_STATES_PER_JUNCTION).toInt()).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE)
         assertIs<RouteResult.Failed>(capped)
         assertEquals(RouteFailure.SEARCH_LIMIT, capped.reason, capped.message)
         assertTrue(capped.details["expanded"] as Int <= full.expanded / 2 + 1, "${capped.details}")
         assertTrue(capped.message.contains("search limit"), capped.message)
+        // The fast node search (driveTurns off) keeps its limit in junctions.
+        val nodeFull = found(TileRouter(tg, DriveOverlay(), driveTurns = false).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE))
+        val nodeCapped = TileRouter(tg, DriveOverlay(), maxSettled = nodeFull.expanded / 2, driveTurns = false).route(0.05, 0.03, 0.05, 0.77, TravelMode.DRIVE)
+        assertEquals(RouteFailure.SEARCH_LIMIT, (nodeCapped as RouteResult.Failed).reason)
+        assertEquals(nodeFull.cost, full.cost, full.cost * 1e-9, "the two searches agree at zero turn cost")
     }
 
     @Test
@@ -185,13 +192,13 @@ class DriveOverlayTest {
         val tg = TiledGraph(listOf(archive))
         val from = 0.2 to 0.1
         val to = 1.4 to 4.3
-        val full = found(TileRouter(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
-        val one = found(TileRouter(tg, DriveOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val full = found(bothSearches(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val one = found(bothSearches(tg, DriveOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertEquals(0, one.memory["level2Tiles"], "level 2 is never built inside a search: ${one.memory}")
         val overlay = DriveOverlay()
         val cells2 = warm(overlay, archive, tg)
         assertTrue(cells2 >= 6, "level-2 cells $cells2")
-        val two = found(TileRouter(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val two = found(bothSearches(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertTrue(two.memory["level2Tiles"] as Int > 0, "${two.memory}")
         for ((label, r) in listOf("level 1" to one, "level 2" to two)) {
             assertEquals(full.cost, r.cost, full.cost * 1e-9, label)
@@ -206,7 +213,7 @@ class DriveOverlayTest {
         assertEquals(c1.size + c2.size, file.cellCount)
         val fresh = DriveOverlay()
         fresh.register(file)
-        val again = found(TileRouter(tg, fresh).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val again = found(bothSearches(tg, fresh).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertEquals(two.cost, again.cost, 1e-6)
         assertEquals(two.route.points, again.route.points)
         assertEquals(two.memory["level2Tiles"], again.memory["level2Tiles"])

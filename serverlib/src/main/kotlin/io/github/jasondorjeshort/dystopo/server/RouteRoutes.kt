@@ -72,6 +72,9 @@ import java.util.concurrent.atomic.AtomicLong
  *   (T89: `level2Tiles`, the z8 cells it went through). T89: once a pack's graph is open its overlay cells
  *   (z11 and z8) are built in the background and written to `<vector archive>-overlay.idx` next to the graph
  *   file; a restarted server reads them from there instead of building them (`driveOverlay.warm` in the status).
+ *   T281: a drive plans on the drive search over directed-edge states (ADR 0062; each `searches` entry then has
+ *   `searchStates`, and its `expanded` counts states); `turns=0` plans it on the node search instead, faster and
+ *   blind to turns (the owner's fast option).
  * - `POST /route/edit` with JSON `{"path": "<encoded>", "op": "move|insert|add|remove|mode|reroute|show",
  *   "index": i, "lat": .., "lon": .., "mode": "bike", "pack": "<name>"}`: T60's editor operations
  *   (move and remove reroute only the legs next to the via point; add goes into the leg it lies
@@ -131,7 +134,7 @@ object RouteRoutes {
                 if (it.size > MAX_BODY) return reply(ex, 413, mapOf("error" to "body larger than $MAX_BODY bytes"))
             }.decodeToString()
             when {
-                path == "/route" && method == "GET" -> 200 to p.plan(points(q), q["mode"] ?: "hike", q["pack"], snapOf(q["snap"]), overlay = q["overlay"] != "0")
+                path == "/route" && method == "GET" -> 200 to p.plan(points(q), q["mode"] ?: "hike", q["pack"], snapOf(q["snap"]), overlay = q["overlay"] != "0", turns = driveTurnsOf(q))
                 path == "/route/edit" && method == "POST" -> 200 to p.edit(MiniJson.parseObject(text.ifBlank { throw IllegalArgumentException("POST a JSON body") }))
                 path == "/route/gpx" && method == "POST" -> {
                     val gpx = p.gpx(MiniJson.parseObject(text.ifBlank { throw IllegalArgumentException("POST a JSON body") }))
@@ -172,6 +175,9 @@ object RouteRoutes {
         require(parts.size == 2 && lat != null && lon != null && lat in -85.0..85.0 && lon in -180.0..180.0) { "bad point '$s' (lat,lon in degrees)" }
         return lat to lon
     }
+
+    /** T281: whether a drive pays for turns: on unless `turns=0` (the one place the request names the fast node search). */
+    private fun driveTurnsOf(q: Map<String, String>): Boolean = q["turns"] != "0"
 
     private fun snapOf(s: String?): Double = s?.let {
         val v = it.toDoubleOrNull()
@@ -426,7 +432,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
      * An editor over the graphs of [pack] and every other pack near [points] (T76: one tiled network,
      * so legs cross pack borders); the reported graph info is [pack]'s, with every pack's under `graphs`.
      */
-    private fun editor(pack: Pack?, points: List<Pair<Double, Double>>, snapM: Double, overlay: Boolean = true): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
+    private fun editor(pack: Pack?, points: List<Pair<Double, Double>>, snapM: Double, overlay: Boolean = true, turns: Boolean = true): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
         val used = packsNear(pack, points)
         val opened = used.map { p -> p to runCatching { graph(p) } }
         // The reported pack's own failure is the request's error, as before; another pack's only drops it from the network.
@@ -434,7 +440,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         val ok = opened.mapNotNull { (p, r) -> r.getOrNull()?.let { p to it } }
         if (ok.isEmpty()) return Triple(RouteEditor(null, elevation, snapM), null, pack)
         val legs = java.util.Collections.synchronizedList(ArrayList<Map<String, Any?>>())
-        val router = MeasuredRouter(TileRouter(TiledGraph(ok.map { it.second.first }, tileCache), if (overlay) driveOverlay else null), legs)
+        val router = MeasuredRouter(TileRouter(TiledGraph(ok.map { it.second.first }, tileCache), if (overlay) driveOverlay else null, driveTurns = turns), legs)
         val info = ok.firstOrNull { it.first === pack }?.second?.second ?: ok.first().second.second
         // T77: `searches` fills in as the editor routes: one entry per leg searched (ms, tiles, overlay tiles, nodes).
         val all = info + ("graphs" to ok.map { (p, r) -> linkedMapOf("pack" to p.name, "action" to r.second["action"]) }) + ("searches" to legs)
@@ -455,13 +461,13 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         }
     }
 
-    /** A new route through [points] in [mode] (T60's `RouteEditor.create`). */
-    fun plan(points: List<Pair<Double, Double>>, mode: String, packName: String? = null, snapM: Double = Router.DEFAULT_SNAP_M, overlay: Boolean = true): Map<String, Any?> {
+    /** A new route through [points] in [mode] (T60's `RouteEditor.create`); T281: [turns] false plans a drive on the node search. */
+    fun plan(points: List<Pair<Double, Double>>, mode: String, packName: String? = null, snapM: Double = Router.DEFAULT_SNAP_M, overlay: Boolean = true, turns: Boolean = true): Map<String, Any?> {
         val t0 = System.nanoTime()
         require(points.size in 2..MAX_POINTS) { "2 to $MAX_POINTS points" }
         requireMode(mode)
         count("plan")
-        val (ed, info, pack) = editor(choosePack(packName, points), points, snapM, overlay)
+        val (ed, info, pack) = editor(choosePack(packName, points), points, snapM, overlay, turns)
         val path = ed.create(points, mode)
         return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(path), graphOpen = info != null)
     }

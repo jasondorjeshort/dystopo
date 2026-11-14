@@ -38,7 +38,7 @@ class DriveTimeTest {
 
     @Test
     fun theCardTheSheetAndTheReportShowTheRoutersTime() {
-        val router = Router(graph())
+        val router = bothSearches(graph()) // T281: both drive searches agree
         val plan = found(router.route(0.0, 0.001, 0.019, 0.2, TravelMode.DRIVE))
         // The router: 22 km at 65 km/h plus 2.1 km at 30 km/h (about 25 minutes), not 24 km at 45 km/h (32).
         val expected = plan.metersByClass.getValue(WayClass.SECONDARY) / (65 / 3.6) + plan.metersByClass.getValue(WayClass.MINOR) / (30 / 3.6)
@@ -65,7 +65,7 @@ class DriveTimeTest {
 
     @Test
     fun hikeAndBikePathsAreUnchangedAndLegsWithoutATimeUse45() {
-        val router = Router(graph())
+        val router = bothSearches(graph()) // T281: both drive searches agree
         val ed = RouteEditor(router)
         val hike = ed.create(listOf(0.0 to 0.001, 0.019 to 0.2), "hike")
         assertNull(hike.legs.single().timeS)

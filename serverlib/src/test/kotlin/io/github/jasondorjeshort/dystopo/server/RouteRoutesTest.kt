@@ -162,6 +162,13 @@ class RouteRoutesTest {
         val r = RoutePlanner(dir, flat).plan(listOf(at(420, 2400), at(3580, 2400)), "drive")
         assertEquals(listOf("trail"), kinds(r))
         assertEquals(emptyList<String>(), r["notes"])
+        // T281: the drive search counts states (searchStates); turns=0 plans on the node search, which has none.
+        @Suppress("UNCHECKED_CAST")
+        fun search(m: Map<String, Any?>) = ((m["graph"] as Map<String, Any?>)["searches"] as List<Map<String, Any?>>).single()
+        assertTrue((search(r)["searchStates"] as Int) > 0, "${search(r)}")
+        val fast = RoutePlanner(dir, flat).plan(listOf(at(420, 2400), at(3580, 2400)), "drive", turns = false)
+        assertEquals(null, search(fast)["searchStates"])
+        assertEquals(r["path"], fast["path"], "the same route at zero turn cost")
         // A tap on the trail snaps onto the road for a car.
         val tap = RoutePlanner(dir, flat).plan(listOf(at(420, 2048), at(3580, 2048)), "drive")
         @Suppress("UNCHECKED_CAST")

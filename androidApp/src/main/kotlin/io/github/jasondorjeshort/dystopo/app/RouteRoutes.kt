@@ -29,6 +29,9 @@ import io.github.jasondorjeshort.dystopo.routing.TripKind
  *   `waitedMs`, `testLimit`, and `size`, what `RoutingGraphBuilder.measure` read), `heapStartBytes` and `peakHeapBytes`
  *   (the heap when the build started and its peak through it), `message` when refused; `guardNow` (the limit now:
  *   `testMaxBytes`, `spareBytes`, `limitBytes`). Status `waiting` while the build waits for the guard, `refused` after.
+ * - T281: `POST /route?...&overlayMinKm=<km>` sets the distance from which drives go through the drive overlay (40 by
+ *   default; kept until set again), so a drive in a public pack exercises the level-1 cells (`driveOverlay` in
+ *   `/route/status`: `built`, `buildMs`).
  * - `POST /route/build[?force=1]`: rebuild the graph (progress in `/route/status` and `/packs`); T149: answers once the
  *   build is admitted (the state, status `building`), or refused (409, `error` `graph_refused`, `message` the route
  *   card's sentence, `graph`), at most 30 s; `force=1` builds without asking the heap guard (for measurement).
@@ -144,6 +147,7 @@ object RouteRoutes {
                 if (kind != null && mode != TravelMode.HIKE) return bad("kind= is for mode=hike (Walk or Hike); the other modes have their own kind")
                 RouteSession.newRoute(kind)
                 val wait = r.query["wait"]?.toLongOrNull()?.coerceIn(0, 300_000) ?: RouteSession.WAIT_MS
+                r.query["overlayMinKm"]?.toDoubleOrNull()?.let { RoutePlanner.overlayMinM = it * 1000 } // T281: kept until changed
                 val t0 = System.nanoTime()
                 val result = try {
                     RouteSession.plan(fromLat, fromLon, toLat, toLon, mode, r.query["name"] ?: "Route", wait)

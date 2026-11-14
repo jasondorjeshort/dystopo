@@ -40,6 +40,12 @@ import kotlin.math.min
  * nothing [TileRouter] searches again without the overlay. Only tiles that one pack alone covers get
  * an overlay; where packs overlap or meet inside a tile it is searched in full, so the joins between
  * packs (anywhere on a z14 border) stay what they are.
+ *
+ * **Turns (T281, ADR 0062).** A level-1 cell is priced, and its shortcuts unpacked, by an edge-state search with the
+ * drive search's turn function ([turns]), so a shortcut's cost holds the turns inside its cell. The turn at a border
+ * node itself is not priced (the drive search crosses a border from an out label to an in label, and a step out of a
+ * shortcut into a detail piece reads as straight on), and inside a cell a node near the border counts only the cell's
+ * own roads: ADR 0062's residual, which matters only where a border node is a junction. Level 2 is unchanged in code.
  */
 class DriveOverlay(
     /** The graph tile zoom (the level-1 cells). */
@@ -58,6 +64,8 @@ class DriveOverlay(
      * JVM `{ block -> synchronized(obj) { block() } }`.
      */
     private val buildLock: (() -> Unit) -> Unit = { it() },
+    /** T281: the turn function the cells are priced and unpacked with (the drive search's: [TurnTable.DRIVE] by default). */
+    val turns: TurnCost = TurnCost(),
 ) {
     /** One tile's level-1 overlay: the base piece's border nodes, the shortcuts between them, and how to expand them. */
     class Cell(
@@ -192,7 +200,7 @@ class DriveOverlay(
         val (cell, loadedBase) = cell(x, y, source, base)
         // A new piece per search: it carries this search's base piece and archive index.
         return cell?.let { c ->
-            GraphPiece(archive, x, y, c.graph, joinZoom = maxOf(tileZoom, source.zoom), overlay = Overlay(c) { loadedBase ?: base() ?: error("graph tile $x/$y of ${source.file} is gone") })
+            GraphPiece(archive, x, y, c.graph, joinZoom = maxOf(tileZoom, source.zoom), overlay = Overlay(c, turns) { loadedBase ?: base() ?: error("graph tile $x/$y of ${source.file} is gone") })
         }
     }
 
@@ -334,14 +342,14 @@ class DriveOverlay(
         val index = HashMap<Int, Int>(k * 2)
         for (i in 0 until k) index[border[i]] = i
         val from = IntList(); val to = IntList(); val cost = ArrayList<Double>(); val length = ArrayList<Float>()
-        val search = TileSearch(g, model)
+        val search = TileSearch(base, model, turns)
         for (i in 0 until k) {
             search.run(border[i], index.keys)
             for (j in 0 until k) {
                 if (j == i) continue
-                val c = search.dist[border[j]]
+                val c = search.nodeDist[border[j]]
                 if (c == Double.POSITIVE_INFINITY) continue
-                from.add(i); to.add(j); cost += c; length += search.len[border[j]].toFloat()
+                from.add(i); to.add(j); cost += c; length += search.nodeLen[border[j]].toFloat()
             }
         }
         val m = from.size
@@ -366,7 +374,7 @@ class DriveOverlay(
      * What makes a [GraphPiece] an overlay piece: its cell, and the base piece the shortcuts expand
      * into (held while the overlay piece is cached; the router's own view holds both during a search).
      */
-    open class Overlay(val cell: Cell?, loadBase: () -> GraphPiece) {
+    open class Overlay(val cell: Cell?, private val turns: TurnCost, loadBase: () -> GraphPiece) {
         /** The tile's own piece, loaded on the first [unpack]. */
         val base: GraphPiece by lazy(loadBase)
 
@@ -377,24 +385,20 @@ class DriveOverlay(
 
         /**
          * Shortcut [e] as the base edges it stands for, in travel order: (edge, forward) pairs of [base]'s
-         * graph, found again by the same search that priced it.
+         * graph, found again by the same search that priced it (T281: the edge-state search, turns included).
          */
         fun unpack(e: Int): List<Pair<Int, Boolean>> {
             val c = cell!!
-            val g = base.graph
             val a = c.baseNode[c.graph.edgeFrom[e]]
             val b = c.baseNode[c.graph.edgeTo[e]]
-            val s = TileSearch(g, CostModel(TravelMode.DRIVE))
+            val s = TileSearch(base, CostModel(TravelMode.DRIVE), turns)
             s.run(a, setOf(b))
             val out = ArrayList<Pair<Int, Boolean>>()
-            var v = b
-            while (v != a) {
-                val how = s.via[v]
-                check(how >= 0) { "shortcut $e of overlay ${c.x}/${c.y} does not unpack" }
-                val edge = how shr 1
-                val fwd = how and 1 == 0
-                out += edge to fwd
-                v = if (fwd) g.edgeFrom[edge] else g.edgeTo[edge]
+            var st = s.nodeState[b]
+            check(st >= 0) { "shortcut $e of overlay ${c.x}/${c.y} does not unpack" }
+            while (st >= 0) {
+                out += (st shr 1) to (st and 1 == 0)
+                st = s.parent[st]
             }
             out.reverse()
             return out
@@ -406,7 +410,7 @@ class DriveOverlay(
      * inside ([level1] gives their pieces; [step] zooms between the levels), and those into base edges.
      */
     class Overlay2(val cell2: Cell2, private val step: Int, private val level1: (Int, Int) -> GraphPiece?) :
-        Overlay(null, { error("a level-2 cell has no base tile") }) {
+        Overlay(null, TurnCost(TurnTable.ZERO), { error("a level-2 cell has no base tile") }) {
         override fun cost(e: Int): Double = cell2.cost[e]
 
         override fun expand(e: Int): List<Triple<GraphPiece, Int, Boolean>> {
@@ -522,40 +526,63 @@ class DriveOverlay(
         }
     }
 
-    /** Dijkstra over one tile's drive network (no `destination` roads), stopping once [targets] are settled. */
-    private class TileSearch(val g: RoutingGraph, val model: CostModel) {
-        val dist = DoubleArray(g.nodeCount)
-        val len = DoubleArray(g.nodeCount)
-        val via = IntArray(g.nodeCount)
-        private val closed = BooleanArray(g.nodeCount)
+    /**
+     * Dijkstra over one tile's drive network (no `destination` roads), stopping once [targets] are settled. T281: on
+     * directed-edge states (state `2 * edge + direction`, direction 0 from the edge's from node), so a turn inside the
+     * cell is priced by [turns] as the drive search prices it; the source's own edges start free of any turn (the turn
+     * at a border node is ADR 0062's residual). [nodeDist] and [nodeLen] are the cost and length to each node (by the
+     * first state that reached it), [nodeState] that state, [parent] each state's predecessor (-1 at the source).
+     */
+    private class TileSearch(val piece: GraphPiece, val model: CostModel, val turns: TurnCost) {
+        private val g = piece.graph
+        val nodeDist = DoubleArray(g.nodeCount)
+        val nodeLen = DoubleArray(g.nodeCount)
+        val nodeState = IntArray(g.nodeCount)
+        private val dist = DoubleArray(2 * g.edgeCount)
+        private val len = DoubleArray(2 * g.edgeCount)
+        val parent = IntArray(2 * g.edgeCount)
+        private val closed = BooleanArray(2 * g.edgeCount)
         private val weight = DoubleArray(g.edgeCount) { e ->
             if (g.flags(e) and WayAttrs.MOTOR_DESTINATION != 0) Double.POSITIVE_INFINITY else model.weight(g, e)
         }
+        private val pieces = listOf(piece)
 
         fun run(source: Int, targets: Set<Int>) {
-            dist.fill(Double.POSITIVE_INFINITY); via.fill(-1); closed.fill(false)
-            dist[source] = 0.0; len[source] = 0.0
+            nodeDist.fill(Double.POSITIVE_INFINITY); nodeState.fill(-1)
+            dist.fill(Double.POSITIVE_INFINITY); parent.fill(-1); closed.fill(false)
+            nodeDist[source] = 0.0; nodeLen[source] = 0.0
             val heap = MinHeap()
-            heap.push(0.0, source)
+            leave(heap, source, -1, 0.0, 0.0, null)
             var left = targets.count { it != source }
             while (heap.size > 0 && left > 0) {
-                val u = heap.pop()
-                if (closed[u]) continue
-                closed[u] = true
-                if (u != source && u in targets) left--
-                for (i in g.adjStart[u] until g.adjStart[u + 1]) {
-                    val a = g.adjEdge[i]
-                    val e = a shr 1
-                    val fwd = a and 1 == 0 // u is the edge's from node
-                    val w = weight[e]
-                    if (w == Double.POSITIVE_INFINITY || !model.allows(g, e, fwd)) continue
-                    val v = if (fwd) g.edgeTo[e] else g.edgeFrom[e]
-                    if (closed[v]) continue
-                    val c = dist[u] + g.edgeLength[e] * w
-                    if (c < dist[v]) {
-                        dist[v] = c; len[v] = len[u] + g.edgeLength[e]; via[v] = e * 2 + if (fwd) 0 else 1
-                        heap.push(c, v)
-                    }
+                val st = heap.pop()
+                if (closed[st]) continue
+                closed[st] = true
+                val e = st shr 1
+                val v = if (st and 1 == 0) g.edgeTo[e] else g.edgeFrom[e]
+                if (nodeDist[v] == Double.POSITIVE_INFINITY) {
+                    nodeDist[v] = dist[st]; nodeLen[v] = len[st]; nodeState[v] = st
+                    if (v in targets) left--
+                }
+                leave(heap, v, st, dist[st], len[st], if (turns.free) null else Junction(pieces, intArrayOf(v)))
+            }
+        }
+
+        /** Relaxes the edges leaving node [v], arrived at by state [from] (-1 at the source) with cost [c] and length [l]. */
+        private fun leave(heap: MinHeap, v: Int, from: Int, c: Double, l: Double, junction: Junction?) {
+            for (i in g.adjStart[v] until g.adjStart[v + 1]) {
+                val a = g.adjEdge[i]
+                val e = a shr 1
+                val fwd = a and 1 == 0 // v is the edge's from node
+                val w = weight[e]
+                if (w == Double.POSITIVE_INFINITY || !model.allows(g, e, fwd)) continue
+                val st = 2 * e + if (fwd) 0 else 1
+                if (closed[st]) continue
+                val tc = if (junction == null || from < 0) 0.0 else turns.cost(piece, from shr 1, from and 1 == 0, junction, piece, e, fwd)
+                val d = c + tc + g.edgeLength[e] * w
+                if (d < dist[st]) {
+                    dist[st] = d; len[st] = l + g.edgeLength[e]; parent[st] = from
+                    heap.push(d, st)
                 }
             }
         }
@@ -796,6 +823,9 @@ internal class MinHeap {
     private var node = IntArray(64)
     var size = 0
         private set
+
+    /** The smallest priority (T281: the drive search's stop rule); only when [size] > 0. */
+    fun peekKey(): Double = pri[0]
 
     fun push(p: Double, v: Int) {
         if (size == pri.size) { pri = pri.copyOf(size * 2); node = node.copyOf(size * 2) }

@@ -629,13 +629,17 @@ rebuilt and the cells are built and written again (`done`). Each offline map kee
 Before T107 the old entry stayed, so a reused graph lost its cell file (`cellFiles` empty, level-2 cells unused)
 until a restart.
 
-- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0]` (or
+- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0][&turns=0]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
   metres (default 300, as on the phone); legs follow trails, and are straight where no trail connects (DEM
   elevation every 25 m, from the offline maps or else the live `best` source). The reported offline map is `pack=` (a catalog
   id; 400 when unknown), else the first offline map holding both ends, else the start; the route uses it and every other
   offline map near the points; outside every offline map the route is straight (`notes: ["no_graph"]`). `overlay=0` plans a
-  long drive without the T77 overlay (for comparing).
+  long drive without the T77 overlay (for comparing). A drive plans on the drive search over directed-edge states, which
+  can price turns (T281, ADR 0062; the turn table is all zero until T282); `turns=0` plans it on the node search instead,
+  faster and blind to turns (the same route while the table is zero). Each `graph.searches` entry of a drive on the drive
+  search has `searchStates` and counts states in `expanded`; its limit is `maxSettled` times
+  `Router.DRIVE_STATES_PER_JUNCTION` (2.5) states, with the same `search_limit` message.
 - `POST /route/edit` with JSON `{"path", "op", "index", "lat", "lon", "mode", "pack"}`: `op` is `move`, `insert`,
   `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
   `show`. Only the legs next to a moved, added or removed point are rerouted.
