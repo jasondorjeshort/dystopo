@@ -39,9 +39,19 @@ us look at them on the desktop app."
 system share sheet, the notification's Pause and Finish). Left: the folder kept in sync on a file-sharing service
 of the user's choice, and whether Settings becomes a full screen too.
 
-Question: do you want the kept folder (the storage access framework's document tree, no service built in, ADR
-0059), into which the app writes every track and route as GPX so that the desktop and the web page read the same
-files? Recommended: yes, export-only first (the app writes and never reads back), as the survey's point 4 says; a
-sync in both directions is a new data flow and wants a proposal. Settings as a full screen: recommended yes, with
-Layout C's Menu.
-Answer:
+2026-11-14 (the owner left this to the coordinator, "or get an independent review to confirm"; a critic confirmed):
+yes to the kept folder, export-only and opt-in; a sync in both directions stays a proposal of its own. Settings as
+a full screen: yes, with Layout C's Menu (the board's Later line), not in this pass.
+
+Plan: one pass by one implementer. A "Keep a folder" row on the Tracks screen
+(`androidApp/.../app/tracks/TracksScreen.kt`) opens the system's folder picker (the one T272's Export GPX uses,
+`ShareGpx.toFolder` in `SaveFile.kt`), takes the persistable permission, and from then on the app writes one GPX
+file per track and route into that folder, rewritten when the item changes; it never reads the folder back. Off
+until the user picks a folder; a plain sentence at setup says that every recording will be written there and that
+another app may copy the folder elsewhere. A rename renames the file, a delete removes the file the app wrote,
+files the app did not write are never touched, and "Stop keeping" releases the permission and leaves the files.
+The folder is per device, not a synced key. The layout (file names, what a rename and a delete do) is written down
+in `docs/reference/android-tracks-and-sync.md` and listed in the report as a data format (ADR 0033), since the
+desktop tooling reads it. Verify: unit tests for the file naming; `GET /tracks/ui` reports the kept folder's state,
+its writes and its last error; the device tour records, renames and deletes a track and lists the folder each
+time. Out of scope: reading the folder back, any service address (ADR 0059), Settings as a full screen.
