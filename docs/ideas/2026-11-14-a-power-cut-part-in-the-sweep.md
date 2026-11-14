@@ -23,3 +23,13 @@ fetched twice, which is the figure ADR 0060's step 3 asks of its real-phone chec
 - Whether a hard stop of the emulator loses the guest's unwritten pages as a phone's power loss does (T279's merge
   body says how the damage was reproduced). Test it in isolation before the part relies on it.
 - The moment: a debug route that says "writing now", or a fixed delay after the download starts.
+
+Plan: one pass, the download case first. Before the part is written, a test in isolation: does stopping the
+emulator's process (by PID, through `tools/android-emu.ps1`) lose the guest's unwritten pages as T279's damage did;
+if it does not, the report says how T279's was made and the part uses that. Then a sweep part `powercut` in
+`tools/sweep.ps1` with a script of its own: an area download over Rainier started, the emulator stopped hard a
+fixed time after the first tile is stored (a debug route's count, not a guess), booted again, and the assertions:
+no crash line, no tile served empty, the download resumes with no tap, and the bytes fetched twice reported (the
+figure ADR 0060's step 3 asks for). Done when: the part green three times running, and red with T279's fix
+reverted on a scratch branch. Out of scope, the next passes from this file: the same during a recording and during
+T267's move.
