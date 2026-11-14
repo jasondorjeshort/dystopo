@@ -1,39 +1,40 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-14 05:25 UTC, at commit 74398a1a, by main session (T280 merged; the second closing sweep launching)
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` › Wave 32 (its second paragraph,
-"Second half, re-planned 2026-11-13"), `out/wave32-research/critic-wave32-second-half.md` [no-check: gitignored].
+Updated: 2026-11-14 07:40 UTC, at commit 6eeb5358, by main session (v0.1.29-alpha published; the wave's record chore next)
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (wave 32 until its record is
+moved to `docs/tasks/`, then the board's Later).
 
 ## Now
 
-- **v0.1.28-alpha is published** (2026-11-13 11:26 UTC, tag on 2a84ae01): the early release, T276 and T277. The
-  sweep before it was green without a rerun (`out/sweep-20261113-0446`, the next release's `-Prev`).
-- **Eight tasks are merged after it** (T267, T278, T263, T266, T268, T273, T279, T270), all for v0.1.29-alpha.
-  **The closing sweep of 0264deaf was red** (`out/sweep-20261113-1645`, the log's entry): `startup` twice (`world`
-  and `assets` near 40 ms against ceilings of 22 and 21) and `a11y` once (green in its rerun); the rest green.
-- **T280 is merged** (74398a1a; its Status line): both causes proven and fixed. **The second closing sweep** runs
-  through a Sonnet agent (no commit to `main` while it runs); the tour's direct step and fresh boots were flaky today.
+- **v0.1.29-alpha is published** (2026-11-14 07:10 UTC, tag on 6eeb5358, versionCode 1593): the closing release of
+  wave 32, nine tasks over v0.1.28-alpha (T267, T278, T263, T266, T268, T273, T279, T270, T280). Its sweep is
+  `out/sweep-20261114-0027` (green, no rerun; the next release's `-Prev`). The log has the entries.
+- **Wave 32 is closed but for its record**: a Haiku chore moves it to `docs/tasks/` by that folder's recipe and
+  lifts the Status lines' follow-ups into Later; the coordinator reads the list, commits and pushes.
+- **The sheet attached to the release was rebuilt** without four frames that show a map outside `areas.json` (the
+  a11y part's first-run screens and `bothunits`' second phone); the cause is unknown (the log's publish entry).
+- The wave skill's cost figure is 1.0 a task from this close (16 points for eleven tasks; the meter read 17).
 - The live viewer is wanted (`out/coordinator-pids.txt`). Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
 
 ## Next
 
-1. The second sweep's summary read (`-Prev out\sweep-20261113-0446`); green: the `release` skill (the notes are drafted in the
-   scratchpad, `release/notes-0.1.29.md`, with three placeholders). The release key is refused to task agents;
-   the sweep and the draft check run their scripts in the main checkout.
-2. The wave's close: README status, the allowance sentence's reading (meter 17 at 05:25 UTC on 2026-11-14; 1 at planning), the
-   Later lines from the Status lines, the record chore (wave 32's record under `docs/tasks/`).
+1. The record chore's list read, the board, the record and the index committed together and pushed.
+2. The next wave planned from the board's Later and a triage of `docs/ideas/` (the `wave` skill, Plan and launch).
+3. First in it: what opens a fix-less emulator's map outside the public areas, and a check in `sweep-diff.py`.
 
 ## Waiting on user
 
+- **The sheets already published with v0.1.27-alpha and v0.1.28-alpha** probably hold the second phone's two frames
+  of that same place (they are in those sweeps' changed lists). The privacy scan knows no private term or box
+  there; if the place is yours, delete the two `-changes.png` assets (or say so and an agent replaces them).
+- On the phone, v0.1.29-alpha: the update from 0.1.28 moving the kept maps (T267's check on a real phone), the
+  activity chip, Trip details. The strings of T263 and T278 to read (ADR 0031) are in their merge bodies.
+- Task agents are refused the release key, so only the sweep and the draft check ran `upgrade`; say if they may read it.
 - The owner closes whatever window sits in the empty folders `dystopo-wt/T275` and `dystopo-wt/T267-verify`, then
-  removes them; and removes the empty `C:\c` folder T264's first tilebuild run left.
-- On the phone, v0.1.28-alpha: the profile's Close uncovered (T277's cause was found on an emulated Android 12
-  window, not on the phone), and Walk on a town route. The strings to read (ADR 0031) are in the two merge bodies.
-- OpenFreeMap's terms cap a download at 3,000 tiles or 50 MB (Later's first entry; the owner emails them).
+  removes them; and removes the empty `C:\c` folder. OpenFreeMap's terms (Later's first entry; the owner emails them).
 
 ## Open findings
 
 - `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: guarded; T273 measured it (the sweep keeps rebooting), cause unproven.
 - `docs/findings/2026-11-10-range-cache-keeps-blocks-across-a-republish.md`: 56 stale cells deleted; the validator is T269.
-- `docs/findings/2026-11-10-wave-cost-doubled-and-the-lane-width-does-not-explain-it.md`: read the halves at wave 32's close.

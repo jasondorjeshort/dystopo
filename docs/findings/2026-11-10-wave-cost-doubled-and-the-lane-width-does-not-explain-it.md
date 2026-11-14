@@ -1,6 +1,7 @@
 ---
 date: 2026-11-10
-status: open
+status: resolved (not reproduced at wave 32's close; the figure revised)
+promoted_to: .claude/skills/wave/SKILL.md
 area: process / wave sizing (ADR 0048, ADR 0057)
 ---
 
@@ -38,8 +39,14 @@ published, one critic, five research agents, a triage and a day's idea work, and
   for the seven tasks, the sweep and the plan's edits (68 to 74 on one account, then 74 to 87 on the account the
   session moved to at 19:40 UTC), about 2.7 a task with the sweep in.
 
+At wave 32's close (2026-11-14) the doubling was not reproduced: the second half ran on a fresh meter (1 at planning, 17 at
+the close) and cost 16 points for eleven tasks, two releases, three full sweeps and a critic, about 0.75 a task after the
+fixed costs, in one lane. The halves of a task, by the token counts the harness reports at each hand-back: implementers
+ended between 262 and 499 thousand (most near 400), verifiers between 103 and 212 thousand (most near 170), so a verifier
+is about 0.4 of its implementer in tokens and less in cost (Sonnet-class against Opus-class); a cleanup chore about 60
+thousand, a sweep or draft-check agent 100 to 120 thousand. Nothing in these figures explains wave 30's 45 points; that
+close also carried a day of idea and triage work in the coordinator's own session, which no per-task figure counts.
+
 ## Next
 
-At wave 32's close, read the meter per task with the verifier script's own figures (its summary's seconds and the
-agent's token counts the harness reports at each hand-back) against the implementer's, so the two halves of a task
-are known; revise the 2.5 figure then if the band is missed. Until then the figure stands.
+None: the `wave` skill's figure is 1.0 a task from this close, and each close revises it from its own reading.
