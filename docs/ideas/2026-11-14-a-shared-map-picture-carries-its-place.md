@@ -22,6 +22,9 @@ viewer can read off it anyway, so the tag adds little the pixels do not say; the
 stands, the more private fact and not what the picture shows. Off by default and asked at the share ("Include the
 place"), never a setting that tags silently.
 
-Question: do you want map pictures to be shareable with a place attached at all, and if so the viewed place
-(recommended: off by default, a switch at the share) or the position?
-Answer:
+Waits: the coordinator, 2026-11-14, by the owner's leave ("The other decisions I leave to you, or get an
+independent review to confirm"; a critic's change to the recommendation above). Trigger: an idea or a task that
+shares a picture of the map; the app shares only GPX today, so there is nothing to attach a place to. For that
+day: a survey first (ADR 0039; the Android facts above are from memory); "off by default, asked at the share"
+stands as the provisional default; and the viewed place is not always the lesser fact, since while the map
+follows the position its centre is the position, and a tag is read by a machine where pixels are read by a person.
