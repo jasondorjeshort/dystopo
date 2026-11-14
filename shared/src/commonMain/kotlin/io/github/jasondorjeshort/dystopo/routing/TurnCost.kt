@@ -112,11 +112,15 @@ fun interface TurnTable {
 }
 
 /**
- * The turn function: [cost] of leaving a junction along one edge after arriving by another, in the router's cost units
- * (drive metres at [CostModel.DRIVE_REF_KMH]: seconds converted like an edge's time). [side] is the driving side
- * (T283 looks it up per search; right until then).
+ * The turn function: [seconds] of leaving a junction along one edge after arriving by another, and [cost], those seconds
+ * as search cost through [model]'s [CostModel.secondsCost] (today drive metres at [CostModel.DRIVE_REF_KMH], like an
+ * edge's time). [side] is the driving side (T283 looks it up per search; right until then).
  */
-class TurnCost(val table: TurnTable = TurnTable.DRIVE, val side: DrivingSide = DrivingSide.RIGHT) {
+class TurnCost(
+    val table: TurnTable = TurnTable.DRIVE,
+    val side: DrivingSide = DrivingSide.RIGHT,
+    val model: CostModel = CostModel(TravelMode.DRIVE),
+) {
     /** True when every turn is free ([TurnTable.ZERO]): the searches then skip the junction geometry altogether. */
     val free: Boolean get() = table === TurnTable.ZERO
 
@@ -133,14 +137,11 @@ class TurnCost(val table: TurnTable = TurnTable.DRIVE, val side: DrivingSide = D
         return if (s > 0) s else 0.0 // NaN and negatives read as free
     }
 
-    /** [seconds] in cost units. */
+    /** [seconds] as search cost ([CostModel.secondsCost]). */
     fun cost(inPiece: GraphPiece, inEdge: Int, inForward: Boolean, junction: Junction, outPiece: GraphPiece, outEdge: Int, outForward: Boolean): Double =
-        if (free) 0.0 else seconds(inPiece, inEdge, inForward, junction, outPiece, outEdge, outForward) * COST_PER_SECOND
+        if (free) 0.0 else model.secondsCost(seconds(inPiece, inEdge, inForward, junction, outPiece, outEdge, outForward))
 
     companion object {
-        /** Cost units per second: a drive's cost is metres at [CostModel.DRIVE_REF_KMH], so a second is that many metres. */
-        const val COST_PER_SECOND = CostModel.DRIVE_REF_KMH / 3.6
-
         /** Two ways of one class, name and level leaving a junction within this many degrees are one road. */
         const val SAME_ROAD_DEG = 5.0
 

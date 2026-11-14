@@ -35,7 +35,7 @@ class TurnCostTest {
     private fun drive(r: Router, a: Pair<Double, Double>, b: Pair<Double, Double>) = found(r.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE))
 
     /** Cost units of [s] seconds of turning. */
-    private fun sec(s: Double) = s * TurnCost.COST_PER_SECOND
+    private fun sec(s: Double) = CostModel(TravelMode.DRIVE).secondsCost(s)
 
     // ---- The geometry ----
 

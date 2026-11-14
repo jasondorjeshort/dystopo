@@ -185,6 +185,13 @@ class CostModel(val mode: TravelMode, val pace: PaceFit? = PaceFits.active[mode]
         return timeS(metres, up, down)
     }
 
+    /**
+     * T281 (ADR 0062, ADR 0063): [seconds] spent at a junction (a turn, [TurnCost]) as search cost, the way an edge's
+     * time is: drive costs are metres at [DRIVE_REF_KMH], so a second is that many metres. The one place the conversion
+     * is made, so another drive metric can price a second its own way.
+     */
+    fun secondsCost(seconds: Double): Double = seconds * DRIVE_REF_KMH / 3.6
+
     /** The smallest [weight] any edge can have: the A* heuristic's factor (keeps it admissible). */
     val minWeight: Double get() = if (mode == TravelMode.DRIVE) 1.0 else WayClass.entries.minOf { classWeight(it) }
 

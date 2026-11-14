@@ -378,7 +378,7 @@ object RoutePlanner {
             throw NotReady(wanted.firstOrNull { it.status != "error" } ?: wanted.firstOrNull() ?: primary)
         }
         // T102: descriptions and messages in the units preference.
-        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units)
+        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units, minDistanceM = overlayMinM)
         if (server == null) return Measured(local)
         val boxes = states.values.map { it.bounds }
         return Measured(FallbackRouter(local, server) { lat, lon -> boxes.any { b -> lon in b[0]..b[2] && lat in b[1]..b[3] } })
@@ -491,8 +491,15 @@ object RoutePlanner {
     /** T76: packs whose box comes this close to a route's ends join its network. */
     const val NEAR_M = 5_000.0
 
-    /** T89: one search settles at most this many junctions on the phone (about 25 MB of search state); longer drives go to the server. */
+    /**
+     * T89: one search settles at most this many junctions on the phone (about 25 MB of search state); longer drives go to
+     * the server. T281: a drive search on edge states stops at this times [Router.DRIVE_STATES_PER_JUNCTION] states
+     * (1.5 million, about 44 MB at 26 bytes a state and 8 a node), with the same message.
+     */
     const val MAX_SETTLED = 600_000
+
+    /** T281, debug builds: drives this far apart (m) use the overlay (`POST /route?overlayMinKm=`; a public pack is under 40 km). */
+    @Volatile var overlayMinM: Double = io.github.jasondorjeshort.dystopo.routing.DriveOverlay.MIN_DISTANCE_M
 
     // ---- Saved routes ----
 

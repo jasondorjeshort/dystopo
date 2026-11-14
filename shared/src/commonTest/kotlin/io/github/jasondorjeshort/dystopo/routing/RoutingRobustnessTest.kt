@@ -152,8 +152,8 @@ class RoutingRobustnessTest {
         val costs = variants.map { (label, tiles) ->
             fun cost(t: TurnTable) = found(turnRouter(tiles, t).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE)).cost
             val zero = cost(TurnTable.ZERO)
-            assertEquals(zero + 60 * TurnCost.COST_PER_SECOND, cost(TurnCostTest.LEFT), 1e-6, "$label: the left turn")
-            assertEquals(zero + 50 * TurnCost.COST_PER_SECOND, cost(TurnCostTest.JUNCTIONS), 1e-6, "$label: three roads meet there")
+            assertEquals(zero + 60 * CostModel(TravelMode.DRIVE).secondsCost(1.0), cost(TurnCostTest.LEFT), 1e-6, "$label: the left turn")
+            assertEquals(zero + 50 * CostModel(TravelMode.DRIVE).secondsCost(1.0), cost(TurnCostTest.JUNCTIONS), 1e-6, "$label: three roads meet there")
             zero
         }
         assertEquals(costs[0], costs[1], 0.5)
@@ -173,7 +173,7 @@ class RoutingRobustnessTest {
         assertEquals(zero.cost, drive(TurnCostTest.JUNCTIONS).cost, 1e-6, "no junction along the road")
         assertEquals(zero.cost, drive(TurnCostTest.LEFT).cost, 1e-6, "straight on, never a reversal")
         // Not vacuous: a table that charges every turn finds the joins (each pack border and tile border on the way).
-        assertTrue(drive(TurnTable { t -> if (t.reversal) 0.0 else 10.0 }).cost >= zero.cost + 3 * 10 * TurnCost.COST_PER_SECOND)
+        assertTrue(drive(TurnTable { t -> if (t.reversal) 0.0 else 10.0 }).cost >= zero.cost + 3 * 10 * CostModel(TravelMode.DRIVE).secondsCost(1.0))
     }
 
     // ---- Two packs, either order, one tile cache ----
