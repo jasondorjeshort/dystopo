@@ -19,7 +19,12 @@ and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 
 ## Next
 
-1. Push the triage (`push-verified.sh`), then plan the next wave (the `wave` skill) from the board's Later and the
+1. **Owner, 2026-11-14: the drive turn cost is the next pass, even if it takes the whole pass**: the idea
+   `docs/ideas/2026-11-14-drive-routes-pay-for-turns.md` (a Plan: an edge-based drive search with a turn cost). The
+   other drive ideas of that day (curvature, stops and signals, fastest or shortest) wait behind it for research;
+   the pressure-unit idea (mbar default, apart from feet) and Send diagnostics ending in a share are untriaged
+   owner feedback on v0.1.29-alpha and ride with it or follow it as the wave's size allows.
+2. Push the triage and these ideas (`push-verified.sh`), then plan the next wave (the `wave` skill) from the board's Later and the
    ideas' Plans: the sweep-order rule, the days-old recording, the backup proposal and after it the ADR that amends
    0033 (Later's line), the signing step (for Later's key line), Report recent stats, the power-cut part, search
    outside a pack. The two ADR 0012 hits (0061, 0053; an idea each) are the coordinator's own, minutes each.
