@@ -20,10 +20,9 @@ and Later), `docs/tasks/wave-32.md` for the closed wave's Status lines.
 ## Next
 
 1. Push the triage (`push-verified.sh`), then plan the next wave (the `wave` skill) from the board's Later and the
-   ideas' Plans, in this order: the sweep-order rule for a new part, the days-old recording, the backup proposal,
-   the signing step (in place of Later's key line), Report recent stats, the power-cut part, search outside a pack.
-   The two ADR 0012 hits (0061, 0053; an idea each) are the coordinator's own, minutes each.
-2. With it: the ADR that amends 0033 on the owner's word below and what it drops (Later's line), after the proposal.
+   ideas' Plans: the sweep-order rule, the days-old recording, the backup proposal and after it the ADR that amends
+   0033 (Later's line), the signing step (for Later's key line), Report recent stats, the power-cut part, search
+   outside a pack. The two ADR 0012 hits (0061, 0053; an idea each) are the coordinator's own, minutes each.
 
 ## Waiting on user
 
