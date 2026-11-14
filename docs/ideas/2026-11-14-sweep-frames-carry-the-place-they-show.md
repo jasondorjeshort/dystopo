@@ -22,3 +22,10 @@ place, so the check prints "outside the public areas" and never the coordinates.
 Recommendation (the coordinator): the cheap half first, a public fix for every sweep emulator at boot
 (`tools/android-emu.ps1`), which removes the known cause; then the sidecar and the check. The owner's wider
 question, pictures that users share, is the related idea.
+
+Question: with the sidecar kept under `out/` only, naming the viewed place and never a position, and the check
+printing "outside the public areas" without coordinates, do you want the script check on the sheet? Recommended:
+yes, in two steps: a public fix for every sweep emulator at boot first (`tools/android-emu.ps1`; it records no
+place at all), then the sidecar and the check in `tools/sweep-diff.py`. It is yours to decide because your words on
+it were about privacy, and the sidecar writes down where a map was looking.
+Answer:
