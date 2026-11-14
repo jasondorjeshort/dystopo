@@ -20,3 +20,11 @@ in `tools/sweep.ps1`). The owner, 2026-11-10: "I guess?"
 ## Open
 
 - T273's storage wait after a reboot may remove the first cause; the retry still covers the second.
+
+Plan: one small pass in `tools/sweep.ps1` and `tools/sweep-summary.py` with its test. A part that fails with a line
+from a short, listed set of device-class errors (device offline, device not found, `adb` permission denied, the
+emulator's console gone) is run once more after the guard's reboot; any other failure (a golden, a test, an
+assertion, a budget) is never retried. `steps.tsv` keeps both runs, `summary.json` gains `retried` (part, reason)
+and the sheet marks the part. Done when: the test green on fixture logs of each class and of an assertion; a forced
+device-offline (the part's own emulator stopped by PID in mid-part) is retried once and counted; a forced assertion
+is not. Out of scope: retrying a step inside a part (the tour already does, T185).
