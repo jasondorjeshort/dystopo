@@ -515,7 +515,7 @@ interface Router {
  * devtool `route --prefer` and the server's `prefer=`, each stored or sent as [key]. [TIME] (the default) is the drive
  * search with its turn seconds ([DriveSearch], [TurnTable.DRIVE]); [QUICK] the node search, blind to turns
  * ([TileRouter.driveTurns] off; T281's `--no-turns` and `turns=0` are its aliases). A key this build does not know
- * reads as [DEFAULT] ([read]); a later value (least fuel, T284) is one more line.
+ * reads as [DEFAULT] ([read]). T284: [FUEL], least fuel ([metric]); the phone reads keys through [onPhone] until T285.
  */
 enum class DrivePreference(val key: String, val turns: Boolean, val metric: DriveMetric = DriveMetric.TIME) {
     TIME("time", true),

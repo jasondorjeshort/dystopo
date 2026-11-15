@@ -80,7 +80,9 @@ import java.util.concurrent.atomic.AtomicLong
  *   blind to turns (the owner's fast option). T282: `prefer=time|quick` names the same choice (the phone's Plan drives
  *   for; `turns=0` is `prefer=quick`, an unknown value reads as time); a drive on the drive search pays for its turns,
  *   its leg time includes them and its `searches` entry has `turns` and `turnCostS`. The cell file is version 2 (cells
- *   priced with turns); an older file is refused and rebuilt by the warm-up.
+ *   priced with turns); an older file is refused and rebuilt by the warm-up. T284 (ADR 0063): `prefer=fuel` plans least
+ *   fuel; a drive's reply adds `prefer`, `metric` and `fuelIndex` and each `searches` entry `metric`, `cost` and
+ *   `fuelIndex`; the first fuel request queues the fuel warm-up into `<vector archive>-overlay-fuel.idx` (docs/SERVER.md).
  * - `POST /route/edit` with JSON `{"path": "<encoded>", "op": "move|insert|add|remove|mode|reroute|show",
  *   "index": i, "lat": .., "lon": .., "mode": "bike", "pack": "<name>"}`: T60's editor operations
  *   (move and remove reroute only the legs next to the via point; add goes into the leg it lies
