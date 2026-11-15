@@ -30,11 +30,9 @@ debug install's default server on 8765 the other (the board's Later line). And `
 `.github/workflows/nightly.yml` uploads `out/sweep-nightly/` whole as a workflow artifact, which the paragraph
 above does not say.
 
-Plan: two passes, a tidy-up and not first (the owner on the published sheets, 2026-11-14: "Don't care"). (1) The
-board's Later line "The sweep's frames outside the public areas": a chore reads the `view from <source>` mark of
-`StartupTrace` (`MainActivity.kt`, T228: the source's name, never a coordinate) on the a11y part's first-run
-screens and on `bothunits`' second phone and names what opens the map there; the fix follows the cause (a public
-fix at boot in `tools/android-emu.ps1`, or a pinned public view in the part). (2) One implementer: each screenshot
+Plan: one pass, a tidy-up and not first (the owner on the published sheets, 2026-11-14: "Don't care"). The cause
+was found and guarded by T287 (the emulator's own default fix recentred the map; `tools/android-emu.ps1` now sets a
+public fix at every boot, `docs/reference/android-emulator.md`), so what is left is the check. One implementer: each screenshot
 of the sweep gets a sidecar line under `out/` holding the name of the `areas.json` area that contains the viewed
 centre, or `outside`, decided at capture (`GET /camera` for a debug build, in `tools/android-check.py` and the
 other capturing scripts; the fix the part set, for the release build's tap-driven parts); no coordinate is
