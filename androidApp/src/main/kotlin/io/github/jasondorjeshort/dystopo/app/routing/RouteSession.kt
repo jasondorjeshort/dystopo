@@ -178,6 +178,10 @@ object RouteSession {
         Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "dystopo-route-compare").apply { isDaemon = true }
     }
     private val compareToken = java.util.concurrent.atomic.AtomicLong()
+    private val compareLock = Any()
+
+    /** T285: drops the second plan's answer (under [compareLock], so its check and its session-file write are one step). */
+    private fun dropCompare() = synchronized(compareLock) { compareToken.incrementAndGet() }
 
     /** T285: the last second plan (`GET /route` `ui.fuelCompare`): its ms, search bytes and whether it was dropped. */
     @Volatile var lastCompare: Map<String, Any?>? = null
@@ -421,7 +425,7 @@ object RouteSession {
         everydayPoints = null
         val byMode = TripKinds.byMode(travel)
         // T276: no foot chip is lit while a route on foot is planning; the other modes' kind is their own.
-        compareToken.incrementAndGet() // T285: the comparison of the route before is dropped
+        dropCompare() // T285: the comparison of the route before is dropped
         ui { phase = "planning"; mode = travel; plan = null; fuel = null; tripKind = byMode; kindReason = byMode?.let { KindReason.MODE }; message = "Planning..."; fromOpen = false }
         overlay.show(null, start, end)
         val result = try {
@@ -492,11 +496,11 @@ object RouteSession {
             val bytes = (found?.memory?.get("searchBytes") as? Number)?.toLong()
             val done = if (found != null) first.copy(leastTimeFuelIndex = found.fuelIndex, leastTimeS = found.timeS, state = LineState.READY, ms = ms, searchBytes = bytes)
             else first.copy(state = LineState.NONE, ms = ms, error = r.exceptionOrNull()?.message ?: (r.getOrNull() as? RouteResult.Failed)?.message)
-            val dropped = token != compareToken.get()
+            // A Clear or a new plan after the check waits for this write and then deletes or replaces the file.
+            val dropped = synchronized(compareLock) { (token != compareToken.get()).also { d -> if (!d) persist(p, persistedKind, done) } }
             lastCompare = linkedMapOf("routeId" to p.route.id, "ms" to ms, "searchBytes" to bytes, "expanded" to found?.expanded, "dropped" to if (dropped) "running" else null, "comparison" to done.json())
             Log.i(RoutePlanner.TAG, "least-time comparison of ${p.route.id}: ${done.percent} %, ${done.minutes} min, $ms ms, $bytes search bytes" + if (dropped) " (dropped)" else "")
             if (dropped) return@execute
-            persist(p, persistedKind, done)
             ui { if (plan === p && token == compareToken.get()) fuel = SessionFuel(p.route.id, done) }
         }
     }
@@ -504,7 +508,7 @@ object RouteSession {
     /** The failure made the session's: no plan, the message, the ends on the map. */
     private fun failed(result: RouteResult.Failed): RouteResult.Failed {
         failure = result
-        compareToken.incrementAndGet() // T285
+        dropCompare() // T285
         persist(null)
         // T276: a failed route on foot lights the tapped chip, else Hike (no share to guess from).
         val c = TripKinds.choose(mode, emptyMap(), tapped = tappedKind)
@@ -602,7 +606,7 @@ object RouteSession {
 
     fun clear() {
         waitToken.incrementAndGet() // T114: a route to here stops waiting
-        compareToken.incrementAndGet() // T285: the second plan's answer is dropped
+        dropCompare() // T285: the second plan's answer is dropped (before Clear deletes the session file)
         waitingFor = -1
         setEnds(null, null)
         failure = null
