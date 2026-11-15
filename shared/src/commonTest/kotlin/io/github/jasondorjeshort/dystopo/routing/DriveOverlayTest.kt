@@ -368,6 +368,14 @@ class DriveOverlayTest {
         val hashed = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(otherBytes, fuel) }
         assertTrue(hashed.message!!.contains("other fuel model parameters"), hashed.message)
         assertEquals(fuel, OverlayCellFile.open(otherBytes, fuel, other.hash).metric)
+        // T286: a version 1 fuel file (bridges and tunnels priced over the terrain) is refused, so the warm-up rebuilds it;
+        // the rebuilt file is version 2.
+        assertEquals(2, OverlayCellFile.FUEL_VERSION)
+        val v1 = fuelBytes.copyOf().also { it[4] = 1 }
+        val old = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(v1, fuel) }
+        assertTrue(old.message!!.contains("version 1, expected 2"), old.message)
+        val rebuilt = DriveOverlay().warm(archive, fuel) { x, y -> tg.piece(0, x, y) }
+        assertTrue(rebuilt.cells > 0 && rebuilt.file!!.contentEquals(fuelBytes) && rebuilt.file!![4].toInt() == 2, "rebuilt ${rebuilt.cells} cells")
         assertEquals("rainier-outdoors-overlay-fuel.idx", OverlayCellFile.fileNameFor("rainier-outdoors.pmtiles", fuel))
         assertEquals("rainier-outdoors-overlay.idx", OverlayCellFile.fileNameFor("rainier-outdoors.pmtiles", DriveMetric.TIME))
     }

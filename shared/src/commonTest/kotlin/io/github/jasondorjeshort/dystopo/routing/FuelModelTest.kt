@@ -75,7 +75,8 @@ class FuelModelTest {
 
     /**
      * A jittered lattice of every drivable class over steep ground (descents far past the credit's cap), with tagged
-     * speeds of 5 and 130, unpaved edges and one-ways.
+     * speeds of 5 and 130, unpaved edges and one-ways. T286: one line in five a bridge or a tunnel, so its fuel reads the
+     * straight grade between its ends, which can be steeper than the terrain's average over the line.
      */
     private fun randomGraph(rnd: Random, n: Int = 7, step: Double = 0.002): RoutingGraph {
         val classes = FuelModel.DRIVABLE
@@ -86,7 +87,11 @@ class FuelModelTest {
         fun attrs(): WayAttrs {
             val flags = when (rnd.nextInt(8)) { 0 -> WayAttrs.ONEWAY; 1 -> WayAttrs.ONEWAY_REVERSE; else -> 0 }
             val speed = when (rnd.nextInt(6)) { 0 -> 5; 1 -> 130; 2 -> 30 + 10 * rnd.nextInt(8); else -> 0 }
-            return WayAttrs(classes[rnd.nextInt(classes.size)], if (rnd.nextInt(4) == 0) Surface.UNPAVED else Surface.PAVED, flags = flags, maxspeedKmh = speed)
+            val brunnel = rnd.nextInt(5) == 0 // T286
+            return WayAttrs(
+                classes[rnd.nextInt(classes.size)], if (rnd.nextInt(4) == 0) Surface.UNPAVED else Surface.PAVED, flags = flags, maxspeedKmh = speed,
+                brunnel = brunnel, tunnel = brunnel && rnd.nextBoolean(),
+            )
         }
         val lines = ArrayList<WayLine>()
         fun p(i: Int, j: Int) = (i * step + rnd.nextDouble(-0.2, 0.2) * step) to (j * step + rnd.nextDouble(-0.2, 0.2) * step)
@@ -108,6 +113,8 @@ class FuelModelTest {
         var slow = 0
         var fast = 0
         var unpaved = 0
+        var bridges = 0
+        var tunnels = 0
         val seen = HashSet<WayClass>()
         var closest = Double.POSITIVE_INFINITY
         for (seed in 1..20) {
@@ -118,6 +125,7 @@ class FuelModelTest {
                 if (g.speedKmh(e) == 5) slow++
                 if (g.speedKmh(e) == 130) fast++
                 if (g.surface(e) == Surface.UNPAVED) unpaved++
+                when (g.brunnel(e)) { WayAttrs.BRIDGE -> bridges++; WayAttrs.TUNNEL -> tunnels++ } // T286
                 for (fwd in listOf(true, false)) {
                     if (!model.allows(g, e, fwd)) continue
                     val c = model.partCost(g, e, if (fwd) 0.0 else 1.0, if (fwd) 1.0 else 0.0)
@@ -127,13 +135,14 @@ class FuelModelTest {
                     // Partial edges too, as at a route's ends.
                     for (f in listOf(0.1, 0.5, 0.9)) assertTrue(model.partCost(g, e, if (fwd) 0.0 else 1.0, if (fwd) f else 1 - f) >= factor * len * f - 1e-9)
                     edges++
-                    val down = if (fwd) g.edgeDescent[e] else g.edgeAscent[e]
+                    val down = model.dropM(g, e, if (fwd) 0.0 else 1.0, if (fwd) 1.0 else 0.0) // T286: a marked edge's straight grade
                     if (model.fuel.massKg * model.fuel.gravity * down > 300.0 * len) steepDown++ // past the cap of a slow car's resistance
                 }
             }
         }
         assertTrue(seen.containsAll(FuelModel.DRIVABLE), "every class: $seen")
         assertTrue(edges > 1000 && steepDown > 50 && slow > 20 && fast > 20 && unpaved > 50, "edges $edges, steep descents $steepDown, 5 km/h $slow, 130 km/h $fast, unpaved $unpaved")
+        assertTrue(bridges > 30 && tunnels > 30, "marked edges: bridges $bridges, tunnels $tunnels")
         assertTrue(closest < factor * 1.6, "some edge comes near the floor: $closest per metre, factor $factor")
     }
 }

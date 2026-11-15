@@ -741,12 +741,14 @@ class DriveOverlay(
  * T284 (ADR 0063 Decision 6): the fuel cells have a file of their own, `<vector archive>-overlay-fuel.idx`, with its own
  * magic and version and, after the [GraphSource], the metric's id and a hash of the fuel model's parameters:
  * ```
- * "DYSF" u8 version(=1) u32 headerLength
+ * "DYSF" u8 version(=2; T286) u32 headerLength
  * (the graph file's GraphSource as above) str metricId (= "fuel") u32 parameterHash ([FuelModel.hash])
  * then as above, from u8 tileZoom
  * ```
  * [open] refuses a file of the other metric, of another metric id or of another parameter hash, so the warm-up rebuilds
- * it. The time file above is unchanged (`DYSO` version 3).
+ * it. The time file above is unchanged (`DYSO` version 3). T286: version 2, since a bridge or tunnel's fuel is priced on
+ * the straight grade between its ends ([CostModel.climbM]); a version 1 fuel file (priced over the terrain) is refused
+ * and rebuilt.
  */
 class OverlayCellFile private constructor(
     val source: GraphSource,
@@ -831,8 +833,8 @@ class OverlayCellFile private constructor(
     )
 
     companion object {
-        /** T284: the fuel cell file's own version (its magic is `DYSF`). */
-        const val FUEL_VERSION = 1
+        /** T284: the fuel cell file's own version (its magic is `DYSF`). T286: 2, bridges and tunnels on their straight grade. */
+        const val FUEL_VERSION = 2
         const val FUEL_SUFFIX = "-overlay-fuel.idx"
         private val FUEL_MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x46) // "DYSF"
 

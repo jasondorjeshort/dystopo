@@ -83,6 +83,10 @@ enum class TravelMode(val label: String, val display: String) {
  * costs its idle and the energy to regain speed ([turnCost]). Hike and bike ignore the metric. Under every metric a
  * route's time stays the sum of its edges' times ([edgeTimeS]) and its turn seconds; [fuelJ] prices any route's fuel
  * (its `fuelIndex`) with [fuel].
+ *
+ * T286: a drive on a bridge or in a tunnel climbs and descends only the straight grade between the edge's two ends
+ * ([climbM], [dropM]), not the terrain under or over it, in its fuel, its `fuelIndex` and its reported ascent; least
+ * time and quick do not read the climb.
  */
 class CostModel(
     val mode: TravelMode,
@@ -234,10 +238,81 @@ class CostModel(
     fun fuelJ(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
         val part = abs(f1 - f0)
         if (part == 0.0) return 0.0
-        val fwd = f1 > f0
-        val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
-        val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
-        return fuelJ(g, e, g.edgeLength[e] * part, up, down)
+        return fuelJ(g, e, g.edgeLength[e] * part, climbM(g, e, f0, f1), dropM(g, e, f0, f1))
+    }
+
+    /**
+     * T286: the rise of edge [e] of [g] from its `from` node to its `to` node when a drive reads it on the straight grade:
+     * a drive on a bridge or a tunnel ([RoutingGraph.brunnel]). NaN otherwise (or when a height is unknown), where the
+     * stored [RoutingGraph.edgeAscent] and [RoutingGraph.edgeDescent] (the terrain sampled along the line at build) apply.
+     * The stored figures of a tunnel climb the ground above it and those of a bridge descend into the valley it spans; a
+     * road on a bridge or in a tunnel does neither. Hike and bike keep the stored figures.
+     *
+     * The straight grade runs between the marked line's two ends, its portals: a marked line is cut into several edges
+     * wherever it crosses a z14 tile border of the pack (T89: a node of [RoutingGraph.nodeLevel] bridge or tunnel) or its
+     * way is split, and every such inner node's height is the terrain's above it (the Mont Blanc tunnel is ten edges, its
+     * inner nodes up to 3,517 m). So [portal] walks the marked chain from each end of [e] to the first node that an
+     * unmarked edge touches, and [e] takes its length's share of the rise between those two heights. The walk stays in
+     * [g] (one graph tile, or the whole graph): a chain cut at the tile's own border, or branching inside the bridge or
+     * tunnel, ends there at the terrain's height, a known coarseness (rare: a z11 graph tile is about 13 km across here).
+     */
+    fun straightRise(g: RoutingGraph, e: Int): Double {
+        if (mode != TravelMode.DRIVE || g.brunnel(e) == 0 || g.nodeEle.isEmpty()) return Double.NaN
+        val back = portal(g, e, g.edgeFrom[e])
+        val ahead = portal(g, e, g.edgeTo[e])
+        val len = g.edgeLength[e].toDouble()
+        val chain = back.second + len + ahead.second
+        return if (chain > 0) (ahead.first - back.first) * len / chain else 0.0
+    }
+
+    /**
+     * T286: walking the marked chain from node [v] away from edge [e] of [g]: the first node an unmarked edge touches (a
+     * portal), else where the chain ends or branches; its height and the metres walked to it. Edges of no length (a
+     * level's join at a cut) are passed over.
+     */
+    private fun portal(g: RoutingGraph, e: Int, v: Int): Pair<Double, Double> {
+        val adjStart = g.adjStart
+        val adjEdge = g.adjEdge
+        var node = v
+        var prev = e
+        var walked = 0.0
+        var steps = 0
+        while (steps++ < MAX_PORTAL_STEPS) {
+            var next = -1
+            var nextCount = 0
+            var open = false
+            for (i in adjStart[node] until adjStart[node + 1]) {
+                val e2 = adjEdge[i] shr 1
+                if (e2 == prev || g.edgeLength[e2] <= 0f) continue
+                if (g.brunnel(e2) == 0) { open = true; break }
+                next = e2
+                nextCount++
+            }
+            if (open || nextCount != 1) break
+            walked += g.edgeLength[next]
+            node = if (g.edgeFrom[next] == node) g.edgeTo[next] else g.edgeFrom[next]
+            prev = next
+            if (node == v) break
+        }
+        return g.nodeEle[node].toDouble() to walked
+    }
+
+    /**
+     * T286: the climb of edge [e] of [g] travelled from fraction [f0] to [f1] of its length: the stored ascent (or descent,
+     * travelled back) in proportion, or for a drive on a bridge or tunnel the rise from end to end on the straight grade
+     * ([straightRise]) when positive. Every drive cost, its `fuelIndex` and its reported ascent read it.
+     */
+    fun climbM(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
+        val r = straightRise(g, e)
+        if (!r.isNaN()) return max(0.0, r * (f1 - f0))
+        return (if (f1 > f0) g.edgeAscent[e] else g.edgeDescent[e]) * abs(f1 - f0)
+    }
+
+    /** T286: the descent of edge [e] of [g] from fraction [f0] to [f1], as [climbM] reads the climb. */
+    fun dropM(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
+        val r = straightRise(g, e)
+        if (!r.isNaN()) return max(0.0, -r * (f1 - f0))
+        return (if (f1 > f0) g.edgeDescent[e] else g.edgeAscent[e]) * abs(f1 - f0)
     }
 
     /**
@@ -253,8 +328,8 @@ class CostModel(
         val w = weight(g, e)
         if (w.isInfinite()) return Double.POSITIVE_INFINITY
         val len = g.edgeLength[e] * part
-        val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
-        val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
+        val up = climbM(g, e, f0, f1)
+        val down = dropM(g, e, f0, f1)
         if (byFuel) return fuelJ(g, e, len, up, down) / fuel.divisorJPerM
         return len * w + slopePenalty(len, up, down)
     }
@@ -314,6 +389,9 @@ class CostModel(
 
         /** The average speed a drive route's summary assumes on legs the router did not plan (straight or imported; T89). */
         const val DRIVE_SUMMARY_KMH = 45.0
+
+        /** T286: the most edges [straightRise]'s walk to a bridge's or tunnel's portal takes (the Mont Blanc tunnel: ten). */
+        const val MAX_PORTAL_STEPS = 64
 
         /** T73: the speed drive mode assumes on an untagged line of class [c], km/h; 0 when cars may not use it. */
         fun driveSpeedKmh(c: WayClass): Double = when (c) {
@@ -1191,9 +1269,8 @@ class TileRouter(
             if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else { runs += nm to metres; runRoadM += 0.0 }
             if (g.wayClass(st.e).code >= WayClass.SERVICE.code) runRoadM[runRoadM.size - 1] += metres.toDouble()
             val part = abs(st.f1 - st.f0)
-            val fwd = st.f1 > st.f0
-            ascent += (if (fwd) g.edgeAscent[st.e] else g.edgeDescent[st.e]) * part
-            descent += (if (fwd) g.edgeDescent[st.e] else g.edgeAscent[st.e]) * part
+            ascent += model.climbM(g, st.e, st.f0, st.f1) // T286: a drive's bridge or tunnel on its straight grade
+            descent += model.dropM(g, st.e, st.f0, st.f1)
             byClass[g.wayClass(st.e)] = (byClass[g.wayClass(st.e)] ?: 0.0) + g.edgeLength[st.e] * part
             if (g.sac(st.e) > 0) graded[g.wayClass(st.e)] = (graded[g.wayClass(st.e)] ?: 0.0) + g.edgeLength[st.e] * part // T276
             for (p in subPoints(g, st.e, st.f0, st.f1)) {
