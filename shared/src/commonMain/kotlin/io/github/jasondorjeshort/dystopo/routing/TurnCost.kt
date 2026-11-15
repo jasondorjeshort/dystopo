@@ -2,7 +2,7 @@ package io.github.jasondorjeshort.dystopo.routing
 
 import kotlin.math.abs
 
-/**
+/*
  * T281 (ADR 0062): what a drive pays for a turn, computed on the fly from the graph's geometry (no table per junction,
  * no change to the graph file). The drive search ([DriveSearch]) and the overlay's cell build and unpack
  * ([DriveOverlay]) ask it at every junction they pass, for the edge they arrived by and the edge they leave on.
@@ -12,14 +12,9 @@ import kotlin.math.abs
  * distinct drivable roads at the junction across every piece that has a node there (twins included, parallel copies of
  * one road where packs overlap counted once: [Junction.roads]), whether the outgoing way is the incoming one taken back
  * (a reversal, read from geometry, never from edge ids) and whether the turn crosses oncoming traffic for the
- * [DrivingSide]. What a turn costs is the [TurnTable]'s: [TurnTable.DRIVE] since T282 ([DriveTurns], ADR 0062 Decision 4).
+ * [DrivingSide] (T283: [DrivingSides], in `DrivingSide.kt`). What a turn costs is the [TurnTable]'s: [TurnTable.DRIVE]
+ * since T282 ([DriveTurns], ADR 0062 Decision 4).
  */
-enum class DrivingSide {
-    /** Traffic keeps right: a left turn crosses it. The default where the side is not known. */
-    RIGHT,
-    /** Traffic keeps left: a right turn crosses it. */
-    LEFT,
-}
 
 /** One drivable way at a junction: edge [edge] of [piece] leaving the junction from its from node ([atFrom]) or its to node. */
 class JunctionRoad(val piece: GraphPiece, val edge: Int, val atFrom: Boolean) {
@@ -191,11 +186,13 @@ object DriveTurns : TurnTable {
 /**
  * The turn function: [seconds] of leaving a junction along one edge after arriving by another, and [cost], those seconds
  * as search cost through [model]'s [CostModel.secondsCost] (today drive metres at [CostModel.DRIVE_REF_KMH], like an
- * edge's time). [side] is the driving side (T283 looks it up per search; right until then).
+ * edge's time). [side] is the driving side; T283: null (the default) means "the side where it is used", which
+ * [at] fixes from [DrivingSides] (once per search at the route's start, once per overlay cell at the cell's centre);
+ * a TurnCost used without [at] reads null as right.
  */
 class TurnCost(
     val table: TurnTable = TurnTable.DRIVE,
-    val side: DrivingSide = DrivingSide.RIGHT,
+    val side: DrivingSide? = null,
     val model: CostModel = CostModel(TravelMode.DRIVE),
 ) {
     /** True when every turn is free ([TurnTable.ZERO]): the searches then skip the junction geometry altogether. */
@@ -209,7 +206,7 @@ class TurnCost(
     fun seconds(inPiece: GraphPiece, inEdge: Int, inForward: Boolean, junction: Junction, outPiece: GraphPiece, outEdge: Int, outForward: Boolean): Double {
         if (free) return 0.0
         // The way in, seen from the junction: it leaves the junction from its head end.
-        val turn = Turn(JunctionRoad(inPiece, inEdge, atFrom = !inForward), JunctionRoad(outPiece, outEdge, atFrom = outForward), junction, side)
+        val turn = Turn(JunctionRoad(inPiece, inEdge, atFrom = !inForward), JunctionRoad(outPiece, outEdge, atFrom = outForward), junction, side ?: DrivingSide.RIGHT)
         val s = table.seconds(turn)
         return if (s > 0) s else 0.0 // NaN and negatives read as free
     }

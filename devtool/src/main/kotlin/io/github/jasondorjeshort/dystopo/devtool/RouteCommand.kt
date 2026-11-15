@@ -88,6 +88,8 @@ import kotlin.math.cos
  *   (the seconds, in `timeS`). `--overlay-min-km K` routes over the graph file's z11 tiles with a drive
  *   overlay for drives of K km or more (the server's 40 km is too long for a public pack) and reports the overlay
  *   (cells built, their milliseconds) in `search.overlay`.
+ *   T283: `search.drivingSide` (`left` or `right`, drives only): the side the turns are priced for, from the table at
+ *   the start ([io.github.jasondorjeshort.dystopo.routing.DrivingSides]).
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters; T281:
  *   `driveStates`, the drive search's states per junction on this graph.
  *
@@ -149,7 +151,9 @@ class RouteCommand : CliktCommand(name = "route") {
             timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
             report["graph"] = info + ("summary" to graph.json())
             val r = timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
-            report["search"] = linkedMapOf("prefer" to preference.key, "driveTurns" to driveTurns, "overlayMinKm" to minKm, "overlay" to overlay?.json())
+            // T283: the driving side the drive search prices its turns with (looked up at the start; null for hike and bike).
+            val side = if (TravelMode.of(mode) == TravelMode.DRIVE) io.github.jasondorjeshort.dystopo.routing.DrivingSides.at(fromLat, fromLon).key else null
+            report["search"] = linkedMapOf("prefer" to preference.key, "driveTurns" to driveTurns, "drivingSide" to side, "overlayMinKm" to minKm, "overlay" to overlay?.json())
             r
         }
         when (result) {
