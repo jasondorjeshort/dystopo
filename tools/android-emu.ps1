@@ -41,6 +41,11 @@
 # run-as, then POST /settings?server= once it runs); without it a debug build on an emulator uses the host's 8765, the
 # coordinator's live viewer, so a task or sweep emulator should pass its own server or none.
 #
+# T287: -Fix "lat,lon" (default Paradise at Rainier, 46.7864,-121.7366) is sent with `adb emu geo fix` after every boot
+# or -SnapshotLoad, also with -BootOnly, before the install and the first launch: an emulator never given a fix reports
+# its own default position, outside the public areas, and the app's first launch recentres there. -NoFix sends none;
+# a phone (-NoEmulator) gets none. A part that sets its own fix later still does.
+#
 # Needs tools\android-sdk.ps1 first. The AVD lives under -AvdHome (default ANDROID_AVD_HOME, else <sdk>\avd);
 # each takes about 6 GB, so put several on a big disk. -Stop -Delete removes the AVD after stopping it.
 # The emulator needs CPU virtualization: Windows Hypervisor Platform (WHPX) or the Android Emulator
@@ -137,7 +142,12 @@ param(
     # T273: load this snapshot into the running emulator instead of booting it, then launch the app (no install, no push).
     [string]$SnapshotLoad = '',
     # T273: the longest wait for the guest's storage after a boot or a load.
-    [int]$StorageWaitSeconds = 180
+    [int]$StorageWaitSeconds = 180,
+    # T287: the emulator's GPS fix ("lat,lon"), sent after the boot (or the load) and before the install and the first
+    # launch. Default Paradise at Rainier, inside the pushed pack (the value tools\android-firstrun.py uses).
+    [string]$Fix = '46.7864,-121.7366',
+    # T287: send no fix (the emulator keeps its own default position, outside the public areas).
+    [switch]$NoFix
 )
 $ErrorActionPreference = 'Stop'
 # T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
@@ -153,7 +163,12 @@ elseif (-not $env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME = Join-Path $sdk 'av
 if ($Delete -and -not $Stop) { throw '-Delete goes with -Stop' }
 foreach ($n in @($SnapshotSave, $SnapshotLoad | Where-Object { $_ })) { if ($n -notmatch '^[\w.-]+$') { throw "a snapshot name is letters, digits, '.', '_' or '-' (got '$n')" } }
 if (($SnapshotSave -or $SnapshotLoad) -and ($NoEmulator -or $Stop -or $Forward)) { throw '-SnapshotSave and -SnapshotLoad go with an emulator, not with -NoEmulator, -Stop or -Forward' }
-if ($Api -gt 0) { $SystemImage = "system-images;android-$Api;google_apis;x86_64" }
+if ($Fix -notmatch '^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$' -or [math]::Abs([double]$Matches[1]) -gt 90 -or [math]::Abs([double]$Matches[2]) -gt 180) {
+    throw "-Fix is ""lat,lon"" in degrees (got '$Fix')"
+}
+# `geo fix` takes the longitude first.
+$script:fixLat = $Matches[1]; $script:fixLon = $Matches[2]
+if ($Api -gt 0) { $SystemImage ="system-images;android-$Api;google_apis;x86_64" }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
 $emulator = Join-Path $sdk 'emulator\emulator.exe'
 $package = 'io.github.jasondorjeshort.dystopo'
@@ -825,6 +840,16 @@ if (-not $NoEmulator) {
     if ($NetDelay) { Adb emu network delay $NetDelay | Out-Null; Write-Host "network delay $NetDelay" }
 }
 if ($Locale) { Write-Host ("locale: " + ((Adb shell getprop persist.sys.locale) -join '').Trim()) }
+# T287: a fix on a public area before the app is installed or launched, on every path that ends with an emulator of the
+# script's own (a cold boot, -BootOnly, a -SnapshotLoad; -Stop and -Forward leave earlier). Without one an emulator
+# reports its own default position, which is outside the public areas, and a first launch with no pack recentres there.
+if ($NoEmulator -or $script:serial -notmatch '^emulator-\d+$') { Write-Host "fix: none sent ($script:serial is not an emulator)" }
+elseif ($NoFix) { Write-Host 'fix: none sent (-NoFix; the emulator keeps its own position)' }
+else {
+    $reply = @(Adb emu geo fix $script:fixLon $script:fixLat | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($reply -notcontains 'OK' -or ($reply | Where-Object { $_ -match '^KO' })) { throw "geo fix $Fix failed: $($reply -join ' | ')" }
+    Write-Host "fix: $Fix (adb emu geo fix; -Fix to change it, -NoFix for none)"
+}
 if ($BootOnly) {
     if ($SnapshotSave) { Save-EmuSnapshot } # T273
     Write-Host "ANDROID_SERIAL=$script:serial (boot only: nothing installed)"
