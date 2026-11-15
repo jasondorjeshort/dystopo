@@ -83,6 +83,10 @@ enum class TravelMode(val label: String, val display: String) {
  * costs its idle and the energy to regain speed ([turnCost]). Hike and bike ignore the metric. Under every metric a
  * route's time stays the sum of its edges' times ([edgeTimeS]) and its turn seconds; [fuelJ] prices any route's fuel
  * (its `fuelIndex`) with [fuel].
+ *
+ * T286: a drive on a bridge or in a tunnel climbs and descends only the straight grade between the edge's two ends
+ * ([climbM], [dropM]), not the terrain under or over it, in its fuel, its `fuelIndex` and its reported ascent; least
+ * time and quick do not read the climb.
  */
 class CostModel(
     val mode: TravelMode,
@@ -234,10 +238,39 @@ class CostModel(
     fun fuelJ(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
         val part = abs(f1 - f0)
         if (part == 0.0) return 0.0
-        val fwd = f1 > f0
-        val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
-        val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
-        return fuelJ(g, e, g.edgeLength[e] * part, up, down)
+        return fuelJ(g, e, g.edgeLength[e] * part, climbM(g, e, f0, f1), dropM(g, e, f0, f1))
+    }
+
+    /**
+     * T286: the end-to-end rise of edge [e] of [g] (its `to` node's height less its `from` node's) when a drive reads it
+     * on the straight grade: a drive on a bridge or a tunnel ([RoutingGraph.brunnel]), both ends' heights known. NaN
+     * otherwise, where the stored [RoutingGraph.edgeAscent] and [RoutingGraph.edgeDescent] (the terrain sampled along the
+     * line at build) apply. The stored figures of a tunnel climb the ground above it and those of a bridge descend into
+     * the valley it spans; a road on a bridge or in a tunnel does neither. A marked edge cut at a tile border
+     * ([GraphTiler]) keeps the rule per piece, the cut point's height being the terrain's there: a known coarseness
+     * (a tunnel cut under a ridge reads the ridge's height at the cut). Hike and bike keep the stored figures.
+     */
+    fun straightRise(g: RoutingGraph, e: Int): Double {
+        if (mode != TravelMode.DRIVE || g.brunnel(e) == 0 || g.nodeEle.isEmpty()) return Double.NaN
+        return (g.nodeEle[g.edgeTo[e]] - g.nodeEle[g.edgeFrom[e]]).toDouble()
+    }
+
+    /**
+     * T286: the climb of edge [e] of [g] travelled from fraction [f0] to [f1] of its length: the stored ascent (or descent,
+     * travelled back) in proportion, or for a drive on a bridge or tunnel the rise from end to end on the straight grade
+     * ([straightRise]) when positive. Every drive cost, its `fuelIndex` and its reported ascent read it.
+     */
+    fun climbM(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
+        val r = straightRise(g, e)
+        if (!r.isNaN()) return max(0.0, r * (f1 - f0))
+        return (if (f1 > f0) g.edgeAscent[e] else g.edgeDescent[e]) * abs(f1 - f0)
+    }
+
+    /** T286: the descent of edge [e] of [g] from fraction [f0] to [f1], as [climbM] reads the climb. */
+    fun dropM(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
+        val r = straightRise(g, e)
+        if (!r.isNaN()) return max(0.0, -r * (f1 - f0))
+        return (if (f1 > f0) g.edgeDescent[e] else g.edgeAscent[e]) * abs(f1 - f0)
     }
 
     /**
@@ -253,8 +286,8 @@ class CostModel(
         val w = weight(g, e)
         if (w.isInfinite()) return Double.POSITIVE_INFINITY
         val len = g.edgeLength[e] * part
-        val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
-        val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
+        val up = climbM(g, e, f0, f1)
+        val down = dropM(g, e, f0, f1)
         if (byFuel) return fuelJ(g, e, len, up, down) / fuel.divisorJPerM
         return len * w + slopePenalty(len, up, down)
     }
@@ -1191,9 +1224,8 @@ class TileRouter(
             if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else { runs += nm to metres; runRoadM += 0.0 }
             if (g.wayClass(st.e).code >= WayClass.SERVICE.code) runRoadM[runRoadM.size - 1] += metres.toDouble()
             val part = abs(st.f1 - st.f0)
-            val fwd = st.f1 > st.f0
-            ascent += (if (fwd) g.edgeAscent[st.e] else g.edgeDescent[st.e]) * part
-            descent += (if (fwd) g.edgeDescent[st.e] else g.edgeAscent[st.e]) * part
+            ascent += model.climbM(g, st.e, st.f0, st.f1) // T286: a drive's bridge or tunnel on its straight grade
+            descent += model.dropM(g, st.e, st.f0, st.f1)
             byClass[g.wayClass(st.e)] = (byClass[g.wayClass(st.e)] ?: 0.0) + g.edgeLength[st.e] * part
             if (g.sac(st.e) > 0) graded[g.wayClass(st.e)] = (graded[g.wayClass(st.e)] ?: 0.0) + g.edgeLength[st.e] * part // T276
             for (p in subPoints(g, st.e, st.f0, st.f1)) {

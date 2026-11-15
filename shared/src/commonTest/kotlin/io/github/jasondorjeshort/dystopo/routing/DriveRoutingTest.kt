@@ -399,7 +399,7 @@ class DriveRoutingTest {
                 classes[rnd.nextInt(classes.size)], if (rnd.nextInt(5) == 0) Surface.UNPAVED else Surface.PAVED,
                 flags = when (rnd.nextInt(8)) { 0 -> WayAttrs.ONEWAY; 1 -> WayAttrs.ONEWAY_REVERSE; else -> 0 },
                 maxspeedKmh = if (rnd.nextInt(4) == 0) 20 + 10 * rnd.nextInt(10) else 0,
-            )
+            ).let { if (rnd.nextInt(6) == 0) it.copy(brunnel = true, tunnel = rnd.nextBoolean()) else it } // T286: some bridges and tunnels
             val pts = Array(n) { i -> Array(n) { j -> (i * step + rnd.nextDouble(-0.25, 0.25) * step) to (j * step + rnd.nextDouble(-0.25, 0.25) * step) } }
             val lines = ArrayList<WayLine>()
             for (i in 0 until n) for (j in 0 until n) {
@@ -423,5 +423,132 @@ class DriveRoutingTest {
             }
         }
         assertTrue(routes > 150 && differ > 10, "routes $routes, of which $differ differ from least time")
+    }
+
+    // ---- T286: a bridge or tunnel on the straight grade between its ends ----
+
+    /** The edge of [g] whose attributes mark a bridge or tunnel of [kind] ([WayAttrs.BRIDGE], [WayAttrs.TUNNEL]). */
+    private fun marked(g: RoutingGraph, kind: Int): Int = (0 until g.edgeCount).single { g.brunnel(it) == kind }
+
+    @Test
+    fun leastFuelTakesTheTunnelUnderTheHillAndReportsTheEndsRise() {
+        // A (0, 0) to B 8 km east. The ground rises 100 m from A to B with a 400 m hill halfway. Three secondary roads:
+        // straight over the hill (split at its summit), a tunnel under it 220 m to the south (its ends at A and B), and a
+        // flat road round, 10.4 km, beyond the hill. Least time takes the road over (the shortest); least fuel the tunnel,
+        // whose climb is the 100 m rise from end to end. Without the mark the tunnel climbs the hill's flank as the road
+        // over does and least fuel goes round; least time is the same route at the same cost either way.
+        val bLon = 0.072
+        val mid = bLon / 2
+        val ground = ElevationSampler { lat, lon ->
+            val d = io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(lat, lon, 0.0, mid)
+            100.0 * (lon / bLon).coerceIn(0.0, 1.0) + if (d >= 2500.0) 0.0 else 400.0 * (1 + kotlin.math.cos(kotlin.math.PI * d / 2500.0)) / 2
+        }
+        fun graph(mark: Boolean) = RoutingGraphBuilder(ground).build(listOf(
+            WayLine.of(minor, 0.0 to -0.005, 0.0 to 0.0),
+            WayLine.of(secondary, 0.0 to 0.0, 0.0 to mid), WayLine.of(secondary, 0.0 to mid, 0.0 to bLon),
+            WayLine.of(secondary.copy(brunnel = mark, tunnel = mark), 0.0 to 0.0, -0.002 to 0.012, -0.002 to bLon - 0.012, 0.0 to bLon),
+            WayLine.of(secondary, 0.0 to 0.0, -0.030 to mid, 0.0 to bLon),
+            WayLine.of(minor, 0.0 to bLon, 0.0 to bLon + 0.005),
+        ), drive)
+        val a = 0.0 to -0.0025
+        val b = 0.0 to bLon + 0.0025
+        fun go(r: Router) = found(r.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE))
+        val g = graph(true)
+        val plain = graph(false)
+        val tunnel = marked(g, WayAttrs.TUNNEL)
+        val rise = (g.nodeEle[g.edgeTo[tunnel]] - g.nodeEle[g.edgeFrom[tunnel]]).toDouble()
+        assertEquals(100.0, kotlin.math.abs(rise), 1.0, "the ends' rise")
+        assertTrue(g.edgeAscent[tunnel] + g.edgeDescent[tunnel] > 700.0, "the terrain over the tunnel: +${g.edgeAscent[tunnel]} -${g.edgeDescent[tunnel]}")
+        val model = CostModel(TravelMode.DRIVE, metric = DriveMetric.FUEL)
+        val up = rise > 0 // from its from node, uphill
+        assertEquals(kotlin.math.abs(rise), model.climbM(g, tunnel, if (up) 0.0 else 1.0, if (up) 1.0 else 0.0), 1e-9)
+        assertEquals(0.0, model.dropM(g, tunnel, if (up) 0.0 else 1.0, if (up) 1.0 else 0.0))
+
+        val fuel = go(fuelRouter(g))
+        assertEquals(8600.0, fuel.distanceM, 60.0, "least fuel through the tunnel (with the streets at each end)")
+        assertEquals(100.0, fuel.ascentM!!, 2.0, "the reported ascent is the ends' rise")
+        assertTrue(fuel.descentM!! < 2.0, "${fuel.descentM}")
+        val time = go(TileRouter(WholeGraph(g)))
+        assertTrue(time.distanceM < fuel.distanceM && time.ascentM!! > 450.0, "least time over the hill: ${time.distanceM} m, +${time.ascentM}")
+        // Without the mark: least fuel goes round on the flat road, the tunnel's line reads the terrain, least time is unchanged.
+        val plainFuel = go(fuelRouter(plain))
+        assertTrue(plainFuel.distanceM > 10000.0 && plainFuel.ascentM!! < 110.0, "round: ${plainFuel.distanceM} m, +${plainFuel.ascentM}")
+        val plainTunnel = (0 until plain.edgeCount).single { plain.edgeLength[it] == g.edgeLength[tunnel] && plain.edgeFrom[it] == g.edgeFrom[tunnel] }
+        assertTrue(model.climbM(plain, plainTunnel, 0.0, 1.0) + model.climbM(plain, plainTunnel, 1.0, 0.0) > 700.0, "the unmarked line climbs the hill")
+        val plainTime = go(TileRouter(WholeGraph(plain)))
+        assertEquals(plainTime.distanceM, time.distanceM)
+        assertEquals(plainTime.timeS, time.timeS)
+        assertEquals(plainTime.cost, time.cost)
+        // A hike keeps the terrain's figures on the marked edge.
+        val hike = CostModel(TravelMode.HIKE)
+        assertEquals(g.edgeAscent[tunnel].toDouble(), hike.climbM(g, tunnel, 0.0, 1.0), 1e-6)
+        assertEquals(g.edgeDescent[tunnel].toDouble(), hike.dropM(g, tunnel, 0.0, 1.0), 1e-6)
+    }
+
+    @Test
+    fun aBridgeOverAValleyNeitherDescendsNorClimbs() {
+        // One secondary road A to B, 3 km east, across a 200 m deep valley 1.4 km wide: on a bridge between its rims, or
+        // the same line unmarked (as the terrain reads it, down into the valley and up again).
+        val bLon = 0.027
+        val ground = ElevationSampler { _, lon ->
+            val c = bLon / 2
+            val half = 0.0063
+            if (kotlin.math.abs(lon - c) >= half) 500.0 else 500.0 - 200.0 * (1 + kotlin.math.cos(kotlin.math.PI * (lon - c) / half)) / 2
+        }
+        fun graph(mark: Boolean) = RoutingGraphBuilder(ground).build(listOf(
+            WayLine.of(minor, 0.0 to -0.005, 0.0 to 0.0),
+            WayLine.of(secondary.copy(brunnel = mark), 0.0 to 0.0, 0.0 to 0.005, 0.0 to 0.010, 0.0 to 0.015, 0.0 to 0.020, 0.0 to bLon),
+            WayLine.of(minor, 0.0 to bLon, 0.0 to bLon + 0.005),
+        ), drive)
+        val a = 0.0 to -0.0025
+        val b = 0.0 to bLon + 0.0025
+        fun go(r: Router) = found(r.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE))
+        val g = graph(true)
+        assertEquals(WayAttrs.BRIDGE, g.brunnel(marked(g, WayAttrs.BRIDGE)))
+        val bridge = go(fuelRouter(g))
+        val road = go(fuelRouter(graph(false)))
+        assertEquals(road.distanceM, bridge.distanceM, 1e-6)
+        assertTrue(bridge.ascentM!! < 1.0 && bridge.descentM!! < 1.0, "the bridge: +${bridge.ascentM} -${bridge.descentM}")
+        assertTrue(road.ascentM!! > 180.0 && road.descentM!! > 180.0, "unmarked: +${road.ascentM} -${road.descentM}")
+        assertTrue(bridge.fuelIndex!! < road.fuelIndex!!, "the bridge ${bridge.fuelIndex} J, through the valley ${road.fuelIndex} J")
+        // Least time does not read the climb: the same time and cost; its reported ascent follows the rule too.
+        val t1 = go(TileRouter(WholeGraph(g)))
+        val t0 = go(TileRouter(WholeGraph(graph(false))))
+        assertEquals(t0.timeS, t1.timeS)
+        assertEquals(t0.cost, t1.cost)
+        assertTrue(t1.ascentM!! < 1.0, "${t1.ascentM}")
+    }
+
+    @Test
+    fun aMarkedEdgeDrivenBothWaysClimbsOneWayAndDescendsTheOther() {
+        // A 4 km tunnel whose west portal is at 100 m and east portal at 300 m, under a 900 m ridge: east-bound climbs the
+        // 200 m rise and descends nothing, west-bound the reverse; a part of it takes its share of the rise.
+        val bLon = 0.036
+        val ground = ElevationSampler { _, lon ->
+            val ramp = 100.0 + 200.0 * (lon / bLon).coerceIn(0.0, 1.0)
+            ramp + 900.0 * kotlin.math.max(0.0, 1 - kotlin.math.abs(lon - bLon / 2) / (bLon / 2.5))
+        }
+        val g = RoutingGraphBuilder(ground).build(listOf(
+            WayLine.of(minor, 0.0 to -0.005, 0.0 to 0.0),
+            WayLine.of(secondary.copy(brunnel = true, tunnel = true), 0.0 to 0.0, 0.0 to bLon / 2, 0.0 to bLon),
+            WayLine.of(minor, 0.0 to bLon, 0.0 to bLon + 0.005),
+        ), drive)
+        val a = 0.0 to -0.0025
+        val b = 0.0 to bLon + 0.0025
+        val east = found(fuelRouter(g).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE))
+        val west = found(fuelRouter(g).route(b.first, b.second, a.first, a.second, TravelMode.DRIVE))
+        assertEquals(200.0, east.ascentM!!, 2.0)
+        assertTrue(east.descentM!! < 1.0, "${east.descentM}")
+        assertEquals(200.0, west.descentM!!, 2.0)
+        assertTrue(west.ascentM!! < 1.0, "${west.ascentM}")
+        assertTrue(east.fuelIndex!! > west.fuelIndex!!, "east ${east.fuelIndex} J, west ${west.fuelIndex} J")
+        val e = marked(g, WayAttrs.TUNNEL)
+        assertTrue(g.edgeAscent[e] + g.edgeDescent[e] > 1600.0, "the stored terrain: +${g.edgeAscent[e]} -${g.edgeDescent[e]}")
+        val model = CostModel(TravelMode.DRIVE, metric = DriveMetric.FUEL)
+        val rise = (g.nodeEle[g.edgeTo[e]] - g.nodeEle[g.edgeFrom[e]]).toDouble()
+        val up = rise > 0
+        assertEquals(kotlin.math.abs(rise) / 2, model.climbM(g, e, if (up) 0.25 else 0.75, if (up) 0.75 else 0.25), 1e-6)
+        assertEquals(0.0, model.climbM(g, e, if (up) 0.75 else 0.25, if (up) 0.25 else 0.75))
+        assertEquals(kotlin.math.abs(rise) / 2, model.dropM(g, e, if (up) 0.75 else 0.25, if (up) 0.25 else 0.75), 1e-6)
     }
 }
