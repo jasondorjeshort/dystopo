@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-15
 
+- T283: The driving side: left-hand-traffic regions turn the two sides around (after T282; small)
 - T282: Turns cost time: the values, the planned time, the cells rebuilt (after T281)
 
 ### 2026-11-14
