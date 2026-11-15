@@ -168,7 +168,7 @@ if ($Fix -notmatch '^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$' -
 }
 # `geo fix` takes the longitude first.
 $script:fixLat = $Matches[1]; $script:fixLon = $Matches[2]
-if ($Api -gt 0) { $SystemImage ="system-images;android-$Api;google_apis;x86_64" }
+if ($Api -gt 0) { $SystemImage = "system-images;android-$Api;google_apis;x86_64" }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
 $emulator = Join-Path $sdk 'emulator\emulator.exe'
 $package = 'io.github.jasondorjeshort.dystopo'
