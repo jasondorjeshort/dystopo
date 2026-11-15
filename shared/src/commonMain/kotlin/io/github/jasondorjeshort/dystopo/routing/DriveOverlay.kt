@@ -49,6 +49,7 @@ import kotlin.math.min
  * T282: the table is [TurnTable.DRIVE]'s real seconds, the cell file is version 2 (an older one is refused and
  * rebuilt), [json]'s `borderJunctions` counts the level-1 border nodes built here that are junctions, and a quick drive
  * (the node search, [TileRouter.driveTurns] off) uses these same cells, so it pays the turns inside its far cells.
+ * T283: each level-1 cell is priced and unpacked with the driving side at its centre ([DrivingSides]); file version 3.
  */
 class DriveOverlay(
     /** The graph tile zoom (the level-1 cells). */
