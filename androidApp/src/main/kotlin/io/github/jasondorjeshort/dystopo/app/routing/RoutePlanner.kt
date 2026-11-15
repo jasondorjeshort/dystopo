@@ -170,7 +170,7 @@ object RoutePlanner {
         val s = AppSettings.server.trim().trimEnd('/')
         if (!s.startsWith("http://") && !s.startsWith("https://")) return null
         remote?.takeIf { it.server == s }?.let { return it }
-        return RemoteRouter(s, ::httpGet, { SystemClock.elapsedRealtime() }, { AppSettings.units }).also { remote = it }
+        return RemoteRouter(s, ::httpGet, { SystemClock.elapsedRealtime() }, { AppSettings.units }, { AppSettings.drivePreference }).also { remote = it } // T282: prefer=
     }
 
     /** GET through the cleartext policy (T79: plain http only to home-network hosts), for [RemoteRouter]. */
@@ -378,7 +378,8 @@ object RoutePlanner {
             throw NotReady(wanted.firstOrNull { it.status != "error" } ?: wanted.firstOrNull() ?: primary)
         }
         // T102: descriptions and messages in the units preference.
-        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units, minDistanceM = overlayMinM)
+        // T282: Plan drives for (least time on the drive search; quicker planning on the node search).
+        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units, minDistanceM = overlayMinM, driveTurns = AppSettings.drivePreference.turns)
         if (server == null) return Measured(local)
         val boxes = states.values.map { it.bounds }
         return Measured(FallbackRouter(local, server) { lat, lon -> boxes.any { b -> lon in b[0]..b[2] && lat in b[1]..b[3] } })

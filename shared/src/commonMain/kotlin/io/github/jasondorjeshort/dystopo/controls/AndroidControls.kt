@@ -66,6 +66,7 @@ object AndroidControls {
         row("setHeight", "navigation", 27, ControlKind.ACTION),
         row("estimatePosition", "navigation", 28),
         row("readoutExtended", "navigation", 35), // T257: the page's last row, after the map elements' 29 to 34 (T263: 28 is a row now)
+        row("drivePreference", "navigation", 38), // T282: Plan drives for, after the elements' 36 and 37
         row("syncStatus", "sync", 1, ControlKind.LINK),
         row("share", "sync", 2, ControlKind.LINK),
         row("updates", "about", 1),

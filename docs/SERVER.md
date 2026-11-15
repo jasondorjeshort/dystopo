@@ -612,13 +612,16 @@ trip and downloads its corridor (`POST /area`, below) to navigate offline.
 z8 tile and the cheapest drive between them through its level-1 cells) lets a long drive search mostly z8 cells;
 only the server builds it (the phone stays on level 1), in the warm-up and never inside a search. When the
 warm-up has built both levels for every tile of an offline map it writes them to `<vector archive>-overlay.idx` beside
-`<vector archive>-graph.idx` (`DYSO` version 1, each cell with its own checksum; `rainier-outdoors-overlay.idx` is
+`<vector archive>-graph.idx` (`DYSO` version 2 since T282, each cell with its own checksum; `rainier-outdoors-overlay.idx` is
 1,549 bytes: 15 level-1 and 2 level-2 cells, a warm-up of 0.1 to 0.2 s). A restarted server reads that
 file instead of building (cells on demand through ranged reads): the offline map's `warm` entry says `loaded` with
 `cells`, `bytes` and `ms` (1 to 2 ms for Rainier) and `built` and `level2Built` stay 0. The file is valid for
 the one graph build it names (the graph file's source name, fingerprints and build time) and the overlay's zooms; a
 rebuilt graph (the offline map changed, an older `DYSG` version, the graph file deleted) makes it stale, and the
-warm-up then builds again and overwrites it, as it does for a file that cannot be read (a truncated one, say).
+warm-up then builds again and overwrites it, as it does for a file that cannot be read (a truncated one, say). T282: a
+version 1 file (cells priced before turns cost anything) is refused the same way and rebuilt once at version 2; on the
+`rainier` offline map that warm-up took 119 ms (level 1 87 ms), `montblanc` 71 ms. The overlay's `borderJunctions` counts the
+level-1 border nodes built here that are junctions (a turn there is not priced: ADR 0062's residual).
 Delete it to force a rebuild; nothing else reads it. It is not written when the cells no longer all fit in
 memory (an offline map with more than 65,536 of them; `file` and `bytes` are null in its `warm` entry), and an offline map
 without drive data (outdoors profile 1) has neither a cell file nor a `warm` entry. T107: a file of an offline map replaced
@@ -629,17 +632,22 @@ rebuilt and the cells are built and written again (`done`). Each offline map kee
 Before T107 the old entry stayed, so a reused graph lost its cell file (`cellFiles` empty, level-2 cells unused)
 until a restart.
 
-- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0][&turns=0]` (or
+- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0][&prefer=time|quick]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
   metres (default 300, as on the phone); legs follow trails, and are straight where no trail connects (DEM
   elevation every 25 m, from the offline maps or else the live `best` source). The reported offline map is `pack=` (a catalog
   id; 400 when unknown), else the first offline map holding both ends, else the start; the route uses it and every other
   offline map near the points; outside every offline map the route is straight (`notes: ["no_graph"]`). `overlay=0` plans a
   long drive without the T77 overlay (for comparing). A drive plans on the drive search over directed-edge states, which
-  can price turns (T281, ADR 0062; the turn table is all zero until T282); `turns=0` plans it on the node search instead,
-  faster and blind to turns (the same route while the table is zero). Each `graph.searches` entry of a drive on the drive
-  search has `searchStates` and counts states in `expanded`; its limit is `maxSettled` times
-  `Router.DRIVE_STATES_PER_JUNCTION` (2.5) states, with the same `search_limit` message.
+  prices turns (T281, ADR 0062; T282: the seconds a turn costs, `TurnTable.DRIVE`, are part of the leg's and the summary's
+  `timeS`). `prefer=` is the phone's Plan drives for (ADR 0063): `time` (the default, least time on the drive search) or
+  `quick` (quicker planning: the node search, blind to turns); `turns=0` is T281's alias of `prefer=quick`, and a value
+  this server does not know reads as `time`. Each `graph.searches` entry of a drive on the drive search has
+  `searchStates`, `turns` and `turnCostS` (the turns it paid for and their seconds) and counts states in `expanded`; its
+  limit is `maxSettled` times `Router.DRIVE_STATES_PER_JUNCTION` (2.5) states, with the same `search_limit` message. A
+  quick drive of 40 km or more goes through the same overlay cells, which are priced with turns (built once, not a
+  second time without them): it pays the turns inside its far cells and none near its ends, so its cost lies between
+  the node search's and the drive search's in full, and its time counts no turn (accepted, T282).
 - `POST /route/edit` with JSON `{"path", "op", "index", "lat", "lon", "mode", "pack"}`: `op` is `move`, `insert`,
   `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
   `show`. Only the legs next to a moved, added or removed point are rerouted.

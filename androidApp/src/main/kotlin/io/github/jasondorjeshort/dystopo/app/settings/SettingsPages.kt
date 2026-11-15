@@ -125,6 +125,15 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
+        // T282: how a drive is planned (ADR 0063 Decision 1): the line under the title describes the choice made.
+        SettingsRow.DRIVE_PREFERENCE -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.drivePreference
+            Setting(row.label, DRIVE_PREFERENCE_CHOICES.first { it.first == v }.third, help = "settings.drivePreference") {
+                for ((p, label, _) in DRIVE_PREFERENCE_CHOICES) Option(label, v == p) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.DRIVE_PREFERENCE, p)) }
+            }
+        }
+        // end T282
         SettingsRow.NAV_SPEECH -> {
             // T126: spoken turn directions (nav/NavSpeech), off by default.
             val on = AppSettings.navSpeech
@@ -438,6 +447,13 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
 }
 
 /** T213: the Show trail disagreements row's line under its title (ADR 0031 string). */
+// T282: Plan drives for's choices, their labels and lines (ADR 0063 Decision 1's first wording; ADR 0031: the owner's to
+// adjust), in the order the row shows them (Quicker planning last).
+internal val DRIVE_PREFERENCE_CHOICES: List<Triple<io.github.jasondorjeshort.dystopo.routing.DrivePreference, String, String>> = listOf(
+    Triple(io.github.jasondorjeshort.dystopo.routing.DrivePreference.TIME, "Least time", "The quickest drive, counting the seconds turns cost."),
+    Triple(io.github.jasondorjeshort.dystopo.routing.DrivePreference.QUICK, "Quicker planning", "Least time without counting turns. Long routes appear sooner; the drive may be a little slower."),
+)
+// end T282
 // T263: the activity rows' lines (ADR 0031: the owner's to adjust).
 internal const val TRACK_ACTIVITY_LINE = "what you are doing now, shown on the map's activity chip: Record and new routes start from it, and the rows below set its recording"
 internal const val RECORD_ASK_ACTIVITY_LINE = "Record shows the activities first; off, it starts at once with the current activity"
@@ -626,6 +642,13 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             "A route follows trails and roads, so its start and end move to the nearest one. Route snap is how far they " +
                 "may move: a point farther off is refused, and the card names the nearest trail and how far away it is."
         },
+        // T282
+        HelpText("settings.drivePreference", "Plan drives for", at(SettingsGroup.NAVIGATION, "Plan drives for"), show = page(SettingsGroup.NAVIGATION)) {
+            "How the phone plans a drive. Least time finds the quickest drive, counting the seconds each turn costs, so it " +
+                "keeps to the main road rather than turning off for a shortcut. Quicker planning skips the turns: long routes " +
+                "appear sooner and the drive may be a little slower. Drives your server plans follow it too."
+        },
+        // end T282
         HelpText("settings.navSpeech", "Spoken directions", at(SettingsGroup.NAVIGATION, "Navigation: Spoken directions"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "While you navigate a route, the phone says each turn aloud once, as the card shows it, with the distance " +
                 "in your units: \"In ${if (units == ContourUnits.FEET) "500 ft" else "150 m"}, turn left onto the trail\". Other audio is turned down while it speaks. It " +

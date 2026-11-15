@@ -26,6 +26,8 @@ class RemoteRouter(
     private val clock: () -> Long = { 0L },
     /** T102 (from T101): the units of the route description ([UnitFormat]; the phone's preference, read per route). */
     private val units: () -> ContourUnits = { ContourUnits.METERS },
+    /** T282: how a drive is planned (the phone's Plan drives for), sent as `prefer=` on drive requests; read per route. */
+    private val drivePreference: () -> DrivePreference = { DrivePreference.DEFAULT },
 ) : Router {
     /** The last request: URL, status or error, milliseconds (for status pages). */
     var last: Map<String, Any?>? = null
@@ -41,7 +43,8 @@ class RemoteRouter(
         if (mode == TravelMode.CROW) return RouteResult.Found(Crow.plan(fromLat, fromLon, toLat, toLon, null, name, ids, units()))
         val base = server.trimEnd('/')
         val snap = maxSnapM.coerceIn(10.0, 2000.0).roundToLong()
-        val url = "$base/route?from=${c(fromLat)},${c(fromLon)}&to=${c(toLat)},${c(toLon)}&mode=${mode.label}&snap=$snap"
+        val url = "$base/route?from=${c(fromLat)},${c(fromLon)}&to=${c(toLat)},${c(toLon)}&mode=${mode.label}&snap=$snap" +
+            if (mode == TravelMode.DRIVE) "&prefer=${drivePreference().key}" else "" // T282: servers before it ignore the parameter
         val t0 = clock()
         requests++
         val (status, body) = try {
