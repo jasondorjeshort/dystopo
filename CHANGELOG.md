@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-15
+
+- T287: Every emulator boots with a fix on a public area (tools lane, first; chore-sized)
+
 ## v0.1.30-alpha (2026-11-15)
 
 ### 2026-11-15
