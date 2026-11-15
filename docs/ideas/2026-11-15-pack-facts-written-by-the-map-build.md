@@ -16,3 +16,17 @@ is the rest and the common record. The owner, 2026-11-15: okay.
 ## Open
 
 - A format question (a pack field other phones read): a proposal before building (`CLAUDE.md`, Decisions).
+
+Question: one proposal for a single pack and graph revision that carries all of it, yes? Recommended: yes
+(`proposal` skill, a critic, an ADR), covering the driving side per pack, a named-roads count, stop and signal
+points (`2026-11-14-drive-stops-and-signals-cost-time.md`) and the graph builder's bridge and tunnel heights (the
+next wave's task, which would otherwise spend a graph version alone), so packs and graphs are rebuilt once. Found
+2026-11-15: pack facts already have a home, the archive's metadata (`dystopo:*` keys from `tilebuild`'s
+`Attribution.extraMetadata` and `OutdoorsProfile.extraArchiveMetadata`, read through `PmtilesReader.metadata()`
+by the phone, the server and the graph builder), so the format question is which keys, not a new file. The road
+names of `montblanc` first, a chore before the proposal: the profile writes road names at z14 only
+(`OutdoorsProfile.kt`) and the graph builder reads the pack's top zoom, so a pack built below z14 has none; read
+that pack's top zoom and one tile's `name` attributes. If that is the cause, the fact to record is the zoom and
+the fix is in the profile or the pack recipe, not in a count.
+
+Answer:
