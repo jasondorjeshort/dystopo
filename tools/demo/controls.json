@@ -1007,6 +1007,19 @@
       }
     },
     {
+      "id": "drivePreference",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 38,
+          "zone": "settings",
+          "row": "drivePreference"
+        }
+      }
+    },
+    {
       "id": "syncStatus",
       "kind": "link",
       "platforms": ["android"],
