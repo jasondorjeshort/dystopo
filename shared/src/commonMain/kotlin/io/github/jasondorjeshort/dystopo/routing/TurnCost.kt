@@ -205,8 +205,17 @@ class TurnCost(
      */
     fun seconds(inPiece: GraphPiece, inEdge: Int, inForward: Boolean, junction: Junction, outPiece: GraphPiece, outEdge: Int, outForward: Boolean): Double {
         if (free) return 0.0
+        return seconds(turn(inPiece, inEdge, inForward, junction, outPiece, outEdge, outForward))
+    }
+
+    /** T290: the [Turn] [seconds] prices (its angle, side and roads, for a route's cost table, [RoutePrice]). */
+    fun turn(inPiece: GraphPiece, inEdge: Int, inForward: Boolean, junction: Junction, outPiece: GraphPiece, outEdge: Int, outForward: Boolean): Turn =
         // The way in, seen from the junction: it leaves the junction from its head end.
-        val turn = Turn(JunctionRoad(inPiece, inEdge, atFrom = !inForward), JunctionRoad(outPiece, outEdge, atFrom = outForward), junction, side ?: DrivingSide.RIGHT)
+        Turn(JunctionRoad(inPiece, inEdge, atFrom = !inForward), JunctionRoad(outPiece, outEdge, atFrom = outForward), junction, side ?: DrivingSide.RIGHT)
+
+    /** T290: what [turn] costs in seconds under [table] (the one place the result is clamped). */
+    fun seconds(turn: Turn): Double {
+        if (free) return 0.0
         val s = table.seconds(turn)
         return if (s > 0) s else 0.0 // NaN and negatives read as free
     }

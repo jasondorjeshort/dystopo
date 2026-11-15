@@ -47,6 +47,8 @@ internal class DriveSearch(
     private val turns: TurnCost,
     private val maxSettled: Int,
     private val maxStates: Long,
+    /** T290: the driving side a kept trace records ([TileRouter.keepTrace]); null keeps none. */
+    private val traceSide: DrivingSide? = null,
 ) {
     private val pieces = ArrayList<GraphPiece>()
     private var stateBase = IntArray(16)
@@ -517,7 +519,10 @@ internal class DriveSearch(
             if (o == null) expandedSteps += st
             else for ((p, e, fwd) in o.expand(st.e)) expandedSteps += if (fwd) TileRouter.Step(p, e, 0.0, 1.0) else TileRouter.Step(p, e, 1.0, 0.0)
         }
-        return RouteResult.Found(router.plan(model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory, along.seconds, along.count, along.fuelJ))
+        return RouteResult.Found(router.plan(
+            model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory, along.seconds, along.count, along.fuelJ,
+            router.trace(view, steps, s, t, traceSide), // T290
+        ))
     }
 
     /**
@@ -557,6 +562,127 @@ internal class DriveSearch(
         }
         return sum
     }
+
+    // ---- T290: the table this search sums, row by row ----
+
+    /**
+     * T290: the cost table of [steps] (a route in travel order, as [run] makes them before an overlay's shortcuts are
+     * unpacked: zero-length end steps kept, since the turn off or onto one is priced), priced as this search adds them and
+     * by its own functions: each base step's [partCost] (a `destination` road outside the ends' zones is infinite, as
+     * in the search), a shortcut's stored cost with [DriveOverlay.Overlay.turnsAlong] for its inner turns, and from one
+     * base step to the next the turn function on the junction [turnsAlong] fills (twins included); a step into or out of
+     * a shortcut is a border crossing, unpriced. Never runs the search. [preference] says what the totals count
+     * ([DrivePreference.QUICK]: no turns; then [turns] must be free).
+     */
+    internal fun price(steps: List<TileRouter.Step>, preference: DrivePreference): RoutePrice {
+        val b = RoutePriceBuilder(router, model, preference, turns.side ?: DrivingSide.RIGHT)
+        for (i in steps.indices) {
+            val st = steps[i]
+            val o = st.piece.overlay
+            if (o != null) b.shortcut(o.cost(st.e), o.expand(st.e), if (preference.turns) o.turnsAlong(st.e) else null)
+            else b.edge(st.piece.graph, st.e, st.f0, st.f1, partCost(st.piece, st.e, st.f0, st.f1))
+            if (i == steps.size - 1) break
+            val nx = steps[i + 1]
+            val g = st.piece.graph
+            val inFwd = headForward(st)
+            val node = if (inFwd) g.edgeTo[st.e] else g.edgeFrom[st.e]
+            val lat = g.nodeLat[node] / E6
+            val lon = g.nodeLon[node] / E6
+            if (o != null || nx.piece.overlay != null) { b.border(lat, lon); continue }
+            if (turns.free) continue
+            junction(st.piece, node)
+            val turn = turns.turn(st.piece, st.e, inFwd, junctionView(), nx.piece, nx.e, tailForward(nx))
+            val sec = turns.seconds(turn)
+            if (sec <= 0 && !turn.reversal && turn.roads <= 2) continue // a bend of one road, or a tile cut
+            val og = nx.piece.graph
+            b.turn(turn, lat, lon, sec, turns.model.turnCost(sec, og, nx.e), if (sec > 0) model.turnFuelJ(sec, og, nx.e) else 0.0)
+        }
+        return b.build()
+    }
+
+    /**
+     * T290: the steps of a drive along [points], a line lying on the graph's own geometry, walked node to node from the
+     * start's snap ([s]) to the goal's ([t]): at each junction (twins included) the edge whose points are the line's next
+     * points within [tolM] (as [TileRouter.plan] lays them: a point equal to the one before dropped), one the drive may
+     * travel that way. Returns the steps, or null and the index of the first point the walk could not reach.
+     */
+    internal fun walk(points: List<Pair<Double, Double>>, tolM: Double): Pair<List<TileRouter.Step>?, Int> {
+        val last = points.size - 1
+        fun near(lat: Double, lon: Double, i: Int) = TrackStats.distanceM(lat, lon, points[i].first, points[i].second) <= tolM
+        var deepest = 0 // the furthest point any step's points reached, so a refusal names the point that left the geometry
+        // The index of the last point step [st] lays when it starts at point [i]; -1 when its points leave the line.
+        fun match(st: TileRouter.Step, i: Int): Int {
+            val sub = router.subPoints(st.piece.graph, st.e, st.f0, st.f1)
+            if (!near(sub[0].lat, sub[0].lon, i)) return -1
+            var k = i
+            var prev = sub[0]
+            for (j in 1 until sub.size) {
+                val q = sub[j]
+                if (q.lat == prev.lat && q.lon == prev.lon) continue
+                prev = q
+                if (++k > last || !near(q.lat, q.lon, k)) return -1
+                if (k > deepest) deepest = k
+            }
+            return k
+        }
+        fun refused(i: Int): Pair<List<TileRouter.Step>?, Int> = null to minOf(maxOf(i + 1, deepest + 1), last)
+        fun drivable(st: TileRouter.Step) = st.f0 == st.f1 || partCost(st.piece, st.e, st.f0, st.f1) < Double.POSITIVE_INFINITY
+        val es = s.snap.edge
+        val fs = s.snap.fraction
+        if (s.piece === t.piece && es == t.snap.edge) {
+            val direct = TileRouter.Step(s.piece, es, fs, t.snap.fraction)
+            if (drivable(direct) && match(direct, 0) == last) return listOf(direct) to -1
+        }
+        val steps = ArrayList<TileRouter.Step>()
+        var i = -1
+        // The first step: along the start's edge one way or the other (zero-length when the start is at its end).
+        for (tip in doubleArrayOf(1.0, 0.0)) {
+            val st = TileRouter.Step(s.piece, es, fs, tip)
+            if (!drivable(st)) continue
+            val k = match(st, 0)
+            if (k > i) { i = k; if (steps.isEmpty()) steps += st else steps[0] = st }
+        }
+        if (steps.isEmpty()) return refused(0)
+        var idle = 0
+        while (steps.size <= 4 * points.size + 16) {
+            val st = steps.last()
+            val g = st.piece.graph
+            junction(st.piece, if (headForward(st)) g.edgeTo[st.e] else g.edgeFrom[st.e])
+            var next: TileRouter.Step? = null
+            var nextK = -1
+            for (k in memPieces.indices) {
+                val q = memPieces[k]
+                if (q.overlay != null) continue
+                val m = memNodes[k]
+                val gq = q.graph
+                for (a in gq.adjStart[m] until gq.adjStart[m + 1]) {
+                    val e2 = gq.adjEdge[a] shr 1
+                    val atFrom = gq.adjEdge[a] and 1 == 0
+                    if (q === t.piece && e2 == t.snap.edge) {
+                        val goal = TileRouter.Step(q, e2, if (atFrom) 0.0 else 1.0, t.snap.fraction)
+                        if (drivable(goal) && match(goal, i) == last) { steps += goal; return steps to -1 }
+                    }
+                    val whole = TileRouter.Step(q, e2, if (atFrom) 0.0 else 1.0, if (atFrom) 1.0 else 0.0)
+                    if (!drivable(whole)) continue
+                    val kk = match(whole, i)
+                    if (kk > nextK) { next = whole; nextK = kk }
+                }
+            }
+            if (next == null || nextK < 0) return refused(i)
+            // An edge of no length (a level's join at a cut) moves along no point: a few in a row at most.
+            idle = if (nextK == i) idle + 1 else 0
+            if (idle > 4) return refused(i)
+            steps += next
+            i = nextK
+        }
+        return refused(i)
+    }
+
+    /** T290: whether step [st] arrives at its edge's to node (a zero-length step at fraction 1 arrives there; at 0, at its from node). */
+    private fun headForward(st: TileRouter.Step): Boolean = if (st.f0 == st.f1) st.f1 == 1.0 else st.f1 > st.f0
+
+    /** T290: whether step [st] leaves from its edge's from node (a zero-length step at fraction 0 does: the goal entered there). */
+    private fun tailForward(st: TileRouter.Step): Boolean = if (st.f0 == st.f1) st.f0 == 0.0 else st.f1 > st.f0
 
     /** The step that took the forward search from [prev] to [v], in travel order; null for a border crossing. */
     private fun forwardStep(prev: Int, v: Int): TileRouter.Step? {

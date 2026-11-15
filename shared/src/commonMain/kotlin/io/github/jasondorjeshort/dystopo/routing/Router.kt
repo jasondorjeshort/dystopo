@@ -480,6 +480,11 @@ data class PlannedRoute(
      * the node search (Quicker planning) counts its edges only, as its time counts no turns. Null off drive routes.
      */
     val fuelIndex: Double? = null,
+    /**
+     * T290: on a drive planned by a router that keeps them ([TileRouter.keepTrace]), what [TileRouter.price] needs to
+     * price it edge by edge and turn by turn; null otherwise (by default, a restored or a server's plan). Not in [json].
+     */
+    val trace: RouteTrace? = null,
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
@@ -677,10 +682,18 @@ class TileRouter(
      * interface is unchanged; there is no quick form of least fuel ([driveTurns] must stay on).
      */
     val metric: DriveMetric = DriveMetric.TIME,
+    /**
+     * T290: whether a drive's plan keeps its steps ([PlannedRoute.trace]) so [price] can give its cost table later. Off by
+     * default: a plan that does not ask pays nothing (devtool's `--breakdown` and the phone's debug build turn it on).
+     */
+    val keepTrace: Boolean = false,
 ) : Router, JunctionSource {
     init {
         require(metric == DriveMetric.TIME || driveTurns) { "least fuel has no quick form: it plans on the drive search" }
     }
+
+    /** T290: the drive preference this router plans with ([driveTurns] and [metric]). */
+    val preference: DrivePreference get() = if (!driveTurns) DrivePreference.QUICK else if (metric == DriveMetric.FUEL) DrivePreference.FUEL else DrivePreference.TIME
 
     private fun d(m: Double) = UnitFormat.distance(m, units)
 
@@ -846,14 +859,80 @@ class TileRouter(
         val s = snap(view, fromLat, fromLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.START_OFF_NETWORK, "start", fromLat, fromLon, maxSnapM)
         val t = snap(view, toLat, toLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
         separate(model, s, t)?.let { return it }
+        // T290: the side a kept trace prices its turns for (the one the drive search uses; null: no trace kept).
+        val traceSide = if (keepTrace && mode == TravelMode.DRIVE) turns.side ?: DrivingSides.at(fromLat, fromLon) else null
         // T281: a drive pays for its turns on the edge-state search unless the fast node search is asked for.
         // T283: the driving side looked up once, at the route's start ([DrivingSides]).
         // T284: under fuel the turn function prices its seconds through the fuel model ([CostModel.turnCost]).
         if (mode == TravelMode.DRIVE && driveTurns) {
             val tc = if (model.byFuel) TurnCost(turns.table, turns.side, model) else turns
-            return DriveSearch(this, view, model, s, t, tc.at(fromLat, fromLon), maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong()).run(name, ids)
+            return DriveSearch(this, view, model, s, t, tc.at(fromLat, fromLon), maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong(), traceSide).run(name, ids)
         }
-        return Search(view, model, s, t).run(name, ids)
+        return Search(view, model, s, t, traceSide).run(name, ids)
+    }
+
+    /** T290: the trace a plan keeps ([keepTrace]): the search's [steps] as run made them, its ends and its view's end areas. */
+    internal fun trace(view: View, steps: List<Step>, s: End, t: End, side: DrivingSide?): RouteTrace? =
+        side?.let { RouteTrace(this, steps, s, t, if (view.overlay != null) view.detail else null, preference, it) }
+
+    /**
+     * T290: the cost table of [plan], a drive this router planned while keeping its steps ([keepTrace]), under
+     * [preference]. Under the plan's own preference its own steps are priced as the search priced them (an overlay
+     * shortcut as one summed row, a border crossing as an unpriced row), so the sums are the plan's `timeS`,
+     * `turnCostS`, `cost` and `fuelIndex`. Under another preference its base edges are priced in full (the overlay's
+     * cells are per metric), the turns as that preference's search prices them, none under [DrivePreference.QUICK].
+     * Throws [IllegalArgumentException] for a plan without a trace ([RoutePrice.unavailableReason]) or another router's.
+     */
+    fun price(plan: PlannedRoute, preference: DrivePreference? = null): RoutePrice {
+        val tr = requireNotNull(plan.trace) { RoutePrice.unavailableReason(plan) ?: "no trace" }
+        require(tr.router === this) { "the plan was made by another router" }
+        val pref = preference ?: tr.preference
+        if (pref == tr.preference) {
+            val view = if (tr.detail != null) View(tiles, overlay, tr.detail, pref.metric) else View(tiles)
+            return pricer(view, pref, tr.s, tr.t, tr.side).price(tr.steps, pref)
+        }
+        val base = ArrayList<Step>(tr.steps.size)
+        for (st in tr.steps) {
+            val o = st.piece.overlay
+            if (o == null) base += st
+            else for ((p, e, fwd) in o.expand(st.e)) base += if (fwd) Step(p, e, 0.0, 1.0) else Step(p, e, 1.0, 0.0)
+        }
+        return pricer(View(tiles), pref, tr.s, tr.t, tr.side).price(base, pref)
+    }
+
+    /**
+     * T290: the cost table of a drive along [points], a line that lies on the graph's own geometry (one `devtool route
+     * --gpx` wrote from this graph), under [preference]: walked node to node from its first point to its last, each edge
+     * the one whose points the line's next points are (within [toleranceM]). Any other line is refused at the first point
+     * that leaves the geometry: a free-hand line needs map matching ([TrackMatch] snaps single points, not a chain of
+     * edges), a follow-up.
+     */
+    fun priceLine(points: List<Pair<Double, Double>>, preference: DrivePreference = this.preference, toleranceM: Double = LINE_TOLERANCE_M): LinePrice {
+        if (points.size < 2) return LinePrice.Refused("a line needs at least two points", 0, points.firstOrNull()?.first, points.firstOrNull()?.second)
+        val view = View(tiles)
+        val model = CostModel(TravelMode.DRIVE, metric = preference.metric)
+        val accept: (GraphPiece, Int) -> Boolean = { p, e -> p.graph.source.drive && model.usable(p.graph, e) }
+        fun refused(i: Int, why: String) = LinePrice.Refused("point $i of ${points.size} $why: only a line on this graph's own geometry " +
+            "(as route --gpx writes it) can be priced; a free-hand line needs map matching", i, points[i].first, points[i].second)
+        val (aLat, aLon) = points.first()
+        val (bLat, bLon) = points.last()
+        val s = snap(view, aLat, aLon, toleranceM, accept) ?: return refused(0, "is not on a road open to cars")
+        val t = snap(view, bLat, bLon, toleranceM, accept) ?: return refused(points.size - 1, "is not on a road open to cars")
+        val search = pricer(view, preference, s, t, turns.side ?: DrivingSides.at(aLat, aLon))
+        val (steps, bad) = search.walk(points, toleranceM)
+        if (steps == null) return refused(bad, "leaves the road network's geometry")
+        return LinePrice.Priced(search.price(steps, preference), steps.size)
+    }
+
+    /** T290: a drive search that only prices (never runs) under [preference], with its turn function as [route] makes it. */
+    private fun pricer(view: View, preference: DrivePreference, s: End, t: End, side: DrivingSide): DriveSearch {
+        val model = CostModel(TravelMode.DRIVE, metric = preference.metric)
+        val tc = when {
+            !preference.turns -> TurnCost(TurnTable.ZERO)
+            model.byFuel -> TurnCost(turns.table, side, model)
+            else -> TurnCost(turns.table, side, turns.model)
+        }
+        return DriveSearch(this, view, model, s, t, tc, maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong())
     }
 
     /**
@@ -950,7 +1029,7 @@ class TileRouter(
      * best cost, the parent and how it was reached ([via]: `edge * 2 + reversed` for an edge
      * travelled from the parent, -1 for a step to a twin, -2/-3 for the partial edge of an end).
      */
-    private inner class Search(val view: View, val model: CostModel, val s: End, val t: End) {
+    private inner class Search(val view: View, val model: CostModel, val s: End, val t: End, val traceSide: DrivingSide? = null) {
         private val pieces = ArrayList<GraphPiece>()
         private val bases = IntList()
         private val baseOf = HashMap<GraphPiece, Int>()
@@ -1218,7 +1297,7 @@ class TileRouter(
                 if (o == null) expandedSteps += st
                 else for ((p, e, fwd) in o.expand(st.e)) expandedSteps += if (fwd) Step(p, e, 0.0, 1.0) else Step(p, e, 1.0, 0.0)
             }
-            return RouteResult.Found(plan(model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory))
+            return RouteResult.Found(plan(model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory, trace = trace(view, steps, s, t, traceSide)))
         }
 
         /** The step that reached [v] in direction [d], in travel order; null for a twin. */
@@ -1245,6 +1324,8 @@ class TileRouter(
         turns: Int? = null,
         /** T284: the fuel of those turns ([CostModel.turnFuelJ]), joules; part of the drive's `fuelIndex`. */
         turnFuelJ: Double = 0.0,
+        /** T290: the steps kept for [price] ([keepTrace]); null when not asked for. */
+        trace: RouteTrace? = null,
     ): PlannedRoute {
         val pts = ArrayList<RoutePoint>()
         var ascent = 0.0
@@ -1296,11 +1377,12 @@ class TileRouter(
             graded, // T276
             turns, if (turns != null) turnS else null, // T282
             if (model.mode == TravelMode.DRIVE) model.metric else null, if (model.mode == TravelMode.DRIVE) fuelJ + turnFuelJ else null, // T284
+            trace, // T290
         )
     }
 
-    /** The points of edge [e] between fractions [f0] and [f1] of its length, in travel order, ends interpolated. */
-    private fun subPoints(g: RoutingGraph, e: Int, f0: Double, f1: Double): List<RoutePoint> {
+    /** The points of edge [e] between fractions [f0] and [f1] of its length, in travel order, ends interpolated (T290: also [RoutePriceBuilder]'s). */
+    internal fun subPoints(g: RoutingGraph, e: Int, f0: Double, f1: Double): List<RoutePoint> {
         val cum = g.cumulative(e)
         val total = cum.last()
         val n = cum.size
@@ -1389,5 +1471,7 @@ class TileRouter(
         fun tileKey(x: Int, y: Int): Long = (y.toLong() shl 32) or (x.toLong() and 0xFFFFFFFFL)
         /** T73: how many `destination` edges one end's zone may hold (a gated area's streets, a long private drive). */
         const val MAX_DESTINATION_EDGES = 5000
+        /** T290: how far a point of a line [priceLine] prices may lie from the graph's own (a GPX's decimals). */
+        const val LINE_TOLERANCE_M = 0.5
     }
 }
