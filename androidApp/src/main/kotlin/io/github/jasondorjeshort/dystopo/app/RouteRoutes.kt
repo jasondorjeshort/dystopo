@@ -21,9 +21,12 @@ import io.github.jasondorjeshort.dystopo.routing.TripKind
  *   request right after it (`GET /route`, `GET /nav/directions?route=current`, `POST /nav/start?route=current`) has it.
  *   T108: `mode=crow` is the straight line with the DEM pack's heights (no graph, never 503); its `route` has
  *   `bearingDeg` and one arrival in `instructions`. T256: shown as "Line", the geodesic, anywhere; no heights: no `profile`.
- * - `GET /route[?profile=1][&wait=ms]`: the current route (or failure) and the card's state. T217: `wait` is how long the
- *   computed blocks (`water`, `exposure`, `bestStart`, `pastEffort`) wait for their answer (default 10 s each; `wait=0`
- *   answers at once, `computing` until then).
+ * - `GET /route[?profile=1][&wait=ms][&breakdown=1]`: the current route (or failure) and the card's state. T217: `wait` is
+ *   how long the computed blocks (`water`, `exposure`, `bestStart`, `pastEffort`) wait for their answer (default 10 s each;
+ *   `wait=0` answers at once, `computing` until then). T290: `breakdown=1` adds `breakdown`, the drive's cost table as the
+ *   drive search sums it (devtool `route --breakdown`'s object: `prefer`, `metric`, `drivingSide`, `totals`, `edges`,
+ *   `turns`) with `state` `ready` and `ms`; `state` `unavailable` and a `reason` for a route with no steps on the phone
+ *   (restored from the session file after a relaunch, planned by a server, not a drive; a release build keeps none).
  * - `GET /route/status`: the graph for the active pack (status, build progress, timings, size). T149: `guard` (the last
  *   build's admission: `estimateBytes`, `limitBytes`, `refused`, `stage` `now|afterTrim|afterWait|refused|forced`,
  *   `waitedMs`, `testLimit`, and `size`, what `RoutingGraphBuilder.measure` read), `heapStartBytes` and `peakHeapBytes`
@@ -166,7 +169,11 @@ object RouteRoutes {
                     is RouteResult.Failed -> Response.json(result.json() + mapOf("planMs" to ms), 422)
                 }
             }
-            "GET" to "/route" -> Response.json(current(app, r.query["profile"] == "1", r.query["wait"]?.toLongOrNull()?.coerceIn(0, 60_000) ?: 10_000))
+            "GET" to "/route" -> {
+                val state = current(app, r.query["profile"] == "1", r.query["wait"]?.toLongOrNull()?.coerceIn(0, 60_000) ?: 10_000)
+                // T290: the drive's cost table, only when asked (it prices the route again; the plan paid nothing for it).
+                Response.json(if (r.query["breakdown"] == "1") state + ("breakdown" to RoutePlanner.breakdownJson(RouteSession.plan)) else state)
+            }
             "POST" to "/route/details" -> { // T278: the Trip details row, as a tap on it
                 val open = when (r.query["open"]) { "1", "true" -> true; "0", "false" -> false; else -> return bad("open=1|0 required") }
                 app.map.onMain { io.github.jasondorjeshort.dystopo.app.routing.TripDetails.setOpen(open) }

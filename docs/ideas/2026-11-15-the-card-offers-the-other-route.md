@@ -1,7 +1,7 @@
 ---
 date: 2026-11-15
 kind: feature
-related: [2026-11-15-the-route-card-says-why-this-route.md, 2026-11-14-drive-preference-fastest-balanced-or-shortest.md]
+related: [2026-11-14-drive-preference-fastest-or-shortest.md, 2026-11-15-a-drive-is-a-speed-profile.md]
 ---
 
 # The card offers the other route: pick the trade on the card, not in Settings
@@ -18,6 +18,10 @@ default the card opens on. The owner, 2026-11-15: do it, definitely.
   it runs at once or on a tap.
 - When the two are the same road the card says nothing, as now under 3 %.
 - A route the server planned: the server would have to return both.
+- 2026-11-15 (T290, from the idea "the route card says why this route", deleted with that task, whose cheap half it
+  built): when the routes differ, each row may say why in the words of the cost table, such as "2 turns fewer, 300 m
+  longer". The table is `TileRouter.price` (devtool `route --breakdown --against`, the phone's `GET
+  /route?breakdown=1`); the survey of 2026-11-15 found no app that says in words why a route was chosen.
 
 Plan: one implementer, phone only, after the speed-profile pass has settled what the fuel percentages are (a card
 that offers "47 % less fuel" must be right first). The survey of 2026-11-15 found this shape in the mainstream

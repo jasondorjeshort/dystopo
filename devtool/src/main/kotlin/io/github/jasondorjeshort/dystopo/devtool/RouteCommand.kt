@@ -65,6 +65,9 @@ import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder
+import io.github.jasondorjeshort.dystopo.routing.LinePrice
+import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
+import io.github.jasondorjeshort.dystopo.routing.RoutePrice
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import kotlinx.serialization.json.Json
@@ -107,6 +110,11 @@ import kotlin.math.cos
  *   warm-up does, writes the cell file next to the graph file (`<archive>-overlay.idx`, or `<archive>-overlay-fuel.idx`
  *   for fuel) and reports `search.overlayWarm`. `--fixture devtool/fixtures/fuel-pass.json --drive west-east` routes on
  *   the committed synthetic fixture instead of a pack (no PNG: it has no DEM).
+ *   T290: `--breakdown` (drives) adds `breakdown`, the route's cost table under its `--prefer`, as the drive search sums
+ *   it ([TileRouter.price]: per edge, per turn, per overlay shortcut and border crossing, and the totals); `--against
+ *   time|fuel|quick` also plans that preference's route and prices each route under both (`against`). `--price <gpx>`
+ *   plans nothing: it prices the GPX's line (its first route, else its first track), which must lie on the graph's own
+ *   geometry as `--gpx` writes it ([TileRouter.priceLine]); any other line is refused (exit 1) at its first point off it.
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters; T281:
  *   `driveStates`, the drive search's states per junction on this graph.
  *
@@ -141,12 +149,18 @@ class RouteCommand : CliktCommand(name = "route") {
     private val zoomOption by option("--zoom", help = "Render zoom (default: the deepest up to 15 that fits about 12 Mpx)").int().restrictTo(8..16)
     private val style by StyleOptions()
     private val out by option("--out", help = "Output PNG (default out/route-<pack>.png)").file()
+    private val breakdown by option("--breakdown", help = "Drives: add the route's cost table under its --prefer, edge by edge and turn by turn, as the search sums it (T290)").flag()
+    private val against by option("--against", help = "With --breakdown: also plan the drive under this preference and price each route under both (T290)").choice(*DrivePreference.entries.map { it.key }.toTypedArray())
+    private val priceGpx by option("--price", help = "Instead of planning, price the drive along this GPX's line under --prefer: a line route --gpx wrote from this graph; any other is refused (T290)").file(mustExist = true, canBeDir = false)
 
     override fun run() {
         if (currentContext.invokedSubcommand != null) return
+        if ((breakdown || priceGpx != null) && mode != "drive" && fixture == null) throw UsageError("--breakdown and --price price drives: add --mode drive")
+        if (against != null && !breakdown) throw UsageError("--against needs --breakdown")
         fixture?.let { return runFixture(it) }
         val crow = mode == "crow"
         val packFile = pack ?: dem.takeIf { crow } ?: throw UsageError("--pack is required (for --mode crow, --pack or --dem)")
+        priceGpx?.let { return runPrice(packFile, it) }
         val (fromLat, fromLon) = latLon(from ?: throw UsageError("--from lat,lon is required"), "--from")
         val (toLat, toLon) = latLon(to ?: throw UsageError("--to lat,lon is required"), "--to")
         val timings = Timings()
@@ -163,20 +177,27 @@ class RouteCommand : CliktCommand(name = "route") {
             val minKm = overlayMinKm
             // T281: the one place the switches are read; T282: --prefer, --no-turns its alias for quick.
             val preference = if (noTurns) DrivePreference.QUICK else DrivePreference.read(prefer)
-            val driveTurns = preference.turns
             val overlay = minKm?.let { DriveOverlay(clock = { System.nanoTime() / 1_000_000 }) }
             var warmed: Map<String, Any?>? = null
-            val router = if (overlay == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = driveTurns, metric = preference.metric) else {
+            // T290: a router per preference (--against plans a second drive on the same graph and overlay); a plan keeps
+            // its steps only when --breakdown asks for its table.
+            var tiled: TiledGraph? = null
+            if (overlay != null && minKm != null) {
                 val graphFile = File(info["file"] as String)
                 val archive = GraphTileFile.open(graphFile.readBytes())
-                val tiled = TiledGraph(listOf(archive))
+                tiled = TiledGraph(listOf(archive))
                 if (overlayWarm) warmed = timings.time("overlayWarm") { warm(overlay, archive, tiled, preference.metric, graphFile, packFile) }
-                TileRouter(tiled, overlay, driveTurns = driveTurns, minDistanceM = minKm * 1000, metric = preference.metric)
             }
+            fun router(p: DrivePreference): TileRouter = if (tiled == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = p.turns, metric = p.metric, keepTrace = breakdown)
+                else TileRouter(tiled, overlay, driveTurns = p.turns, minDistanceM = minKm * 1000, metric = p.metric, keepTrace = breakdown)
+            val router = router(preference)
             timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
             report["graph"] = info + ("summary" to graph.json())
             val r = timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
             report["search"] = searchJson(preference, mode, fromLat, fromLon, minKm, overlay, warmed)
+            if (r is RouteResult.Found && breakdown) breakdownInto(report, router, r.plan, timings) { p ->
+                router(p).route(fromLat, fromLon, toLat, toLon, TravelMode.DRIVE, snap, name)
+            }
             r
         }
         when (result) {
@@ -255,11 +276,14 @@ class RouteCommand : CliktCommand(name = "route") {
         val timings = Timings()
         val minKm = overlayMinKm
         val overlay = minKm?.let { DriveOverlay(clock = { System.nanoTime() / 1_000_000 }) }
-        val router = if (overlay == null || minKm == null) TileRouter(WholeGraph(fx.graph), driveTurns = preference.turns, metric = preference.metric)
-            else TileRouter(TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(fx.graph)))), overlay, driveTurns = preference.turns, minDistanceM = minKm * 1000, metric = preference.metric)
+        val tiled = if (overlay == null || minKm == null) null else TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(fx.graph))))
+        fun router(p: DrivePreference): TileRouter = if (tiled == null || minKm == null) TileRouter(WholeGraph(fx.graph), driveTurns = p.turns, metric = p.metric, keepTrace = breakdown)
+            else TileRouter(tiled, overlay, driveTurns = p.turns, minDistanceM = minKm * 1000, metric = p.metric, keepTrace = breakdown)
+        val router = router(preference)
         val r = timings.time("route") { router.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE, snap, label) }
         val report = linkedMapOf<String, Any?>("fixture" to file.path, "drive" to label, "graph" to fx.graph.json())
         report["search"] = searchJson(preference, "drive", a.first, a.second, minKm, overlay, null)
+        if (r is RouteResult.Found && breakdown) breakdownInto(report, router, r.plan, timings) { p -> router(p).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE, snap, label) }
         when (r) {
             is RouteResult.Failed -> {
                 report["route"] = null; report["failure"] = r.json(); report["timingsMs"] = timings.ms
@@ -273,6 +297,65 @@ class RouteCommand : CliktCommand(name = "route") {
                 echo(pretty(report))
             }
         }
+    }
+
+    /**
+     * T290: `breakdown`, [plan]'s cost table under its own preference; with `--against`, `against`: the other preference's
+     * route ([planOther] plans it on the same graph), each route priced under both preferences, and the differences under
+     * each (the other route less this one; `fuelSavedPercent` is this route's saving against the other).
+     */
+    private fun breakdownInto(report: MutableMap<String, Any?>, router: TileRouter, plan: PlannedRoute, timings: Timings, planOther: (DrivePreference) -> RouteResult) {
+        val own = timings.time("breakdown") { router.price(plan) }
+        // The table's sums against the plan's own figures, unrounded: (plan - table) / plan, each within 1e-6 when right.
+        fun rel(p: Double?, t: Double): Double? = p?.let { if (it == 0.0) t else (it - t) / it }
+        report["breakdown"] = own.json() + ("sumsAgainstPlan" to linkedMapOf(
+            "timeS" to rel(plan.timeS, own.timeS), "turnCostS" to rel(plan.turnCostS, own.turnS), "cost" to rel(plan.cost, own.cost),
+            "fuelIndex" to rel(plan.fuelIndex, own.fuelJ), "turns" to (plan.turns == own.turns), "points" to (plan.route.points.size == own.points),
+        ))
+        val other = DrivePreference.of(against) ?: return
+        val r = timings.time("against") { planOther(other) }
+        if (r !is RouteResult.Found) {
+            report["against"] = linkedMapOf("prefer" to other.key, "failure" to (r as RouteResult.Failed).json())
+            return
+        }
+        val o = r.plan
+        val oRouter = o.trace!!.router
+        val thisUnderOther = router.price(plan, other)
+        val otherOwn = oRouter.price(o)
+        val otherUnderThis = oRouter.price(o, own.preference)
+        report["against"] = linkedMapOf(
+            "prefer" to other.key,
+            "route" to linkedMapOf(
+                "distanceM" to PlannedRoute.r1(o.distanceM), "timeS" to Math.round(o.timeS), "cost" to PlannedRoute.r1(o.cost), "metric" to o.metric?.key,
+                "fuelIndex" to o.fuelIndex?.let { Math.round(it) }, "turns" to o.turns, "turnCostS" to o.turnCostS?.let(PlannedRoute::r1),
+                "points" to o.route.points.size, "sameLine" to (o.route.points == plan.route.points),
+            ),
+            // Under each preference: the other route less this one.
+            "differences" to linkedMapOf(own.preference.key to RoutePrice.difference(own, otherUnderThis), other.key to RoutePrice.difference(thisUnderOther, otherOwn)),
+            "thisUnderOther" to thisUnderOther.json(), "other" to otherOwn.json(), "otherUnderThis" to otherUnderThis.json(),
+        )
+    }
+
+    /** T290: `--price <gpx>`: the drive along the GPX's line under `--prefer` ([TileRouter.priceLine]); exit 1 when refused. */
+    private fun runPrice(packFile: File, gpxFile: File) {
+        val doc = Gpx.parse(gpxFile.readText(Charsets.UTF_8))
+        val line = doc.routes.firstOrNull()?.points?.map { it.lat to it.lon }
+            ?: doc.tracks.firstOrNull()?.segments?.flatMap { s -> s.points.map { it.lat to it.lon } }
+            ?: throw UsageError("${gpxFile.path} has no route and no track")
+        val timings = Timings()
+        val (graph, info) = timings.time("graph") { RouteGraphs.openOrBuild(packFile, dem ?: RouteGraphs.defaultDem(packFile), graphFile) }
+        val preference = if (noTurns) DrivePreference.QUICK else DrivePreference.read(prefer)
+        val router = TileRouter(WholeGraph(graph), driveTurns = preference.turns, metric = preference.metric)
+        val report = linkedMapOf<String, Any?>("pack" to packFile.path, "gpx" to gpxFile.path, "graph" to info, "linePoints" to line.size)
+        report["search"] = searchJson(preference, "drive", line.first().first, line.first().second, null, null, null)
+        val r = timings.time("price") { router.priceLine(line, preference) }
+        when (r) {
+            is LinePrice.Priced -> { report["steps"] = r.steps; report["price"] = r.price.json() }
+            is LinePrice.Refused -> report["failure"] = r.json()
+        }
+        report["timingsMs"] = timings.ms
+        echo(pretty(report))
+        if (r is LinePrice.Refused) throw ProgramResult(1)
     }
 
     private fun render(doc: GpxDocument, demFile: File?, packFile: File, timings: Timings): Map<String, Any?> {

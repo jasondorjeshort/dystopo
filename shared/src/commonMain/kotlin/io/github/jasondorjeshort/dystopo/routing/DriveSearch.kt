@@ -609,6 +609,7 @@ internal class DriveSearch(
     internal fun walk(points: List<Pair<Double, Double>>, tolM: Double): Pair<List<TileRouter.Step>?, Int> {
         val last = points.size - 1
         fun near(lat: Double, lon: Double, i: Int) = TrackStats.distanceM(lat, lon, points[i].first, points[i].second) <= tolM
+        var deepest = 0 // the furthest point any step's points reached, so a refusal names the point that left the geometry
         // The index of the last point step [st] lays when it starts at point [i]; -1 when its points leave the line.
         fun match(st: TileRouter.Step, i: Int): Int {
             val sub = router.subPoints(st.piece.graph, st.e, st.f0, st.f1)
@@ -620,9 +621,11 @@ internal class DriveSearch(
                 if (q.lat == prev.lat && q.lon == prev.lon) continue
                 prev = q
                 if (++k > last || !near(q.lat, q.lon, k)) return -1
+                if (k > deepest) deepest = k
             }
             return k
         }
+        fun refused(i: Int): Pair<List<TileRouter.Step>?, Int> = null to minOf(maxOf(i + 1, deepest + 1), last)
         fun drivable(st: TileRouter.Step) = st.f0 == st.f1 || partCost(st.piece, st.e, st.f0, st.f1) < Double.POSITIVE_INFINITY
         val es = s.snap.edge
         val fs = s.snap.fraction
@@ -639,7 +642,7 @@ internal class DriveSearch(
             val k = match(st, 0)
             if (k > i) { i = k; if (steps.isEmpty()) steps += st else steps[0] = st }
         }
-        if (steps.isEmpty()) return null to 1
+        if (steps.isEmpty()) return refused(0)
         var idle = 0
         while (steps.size <= 4 * points.size + 16) {
             val st = steps.last()
@@ -665,14 +668,14 @@ internal class DriveSearch(
                     if (kk > nextK) { next = whole; nextK = kk }
                 }
             }
-            if (next == null || nextK < 0) return null to minOf(i + 1, last)
+            if (next == null || nextK < 0) return refused(i)
             // An edge of no length (a level's join at a cut) moves along no point: a few in a row at most.
             idle = if (nextK == i) idle + 1 else 0
-            if (idle > 4) return null to minOf(i + 1, last)
+            if (idle > 4) return refused(i)
             steps += next
             i = nextK
         }
-        return null to minOf(i + 1, last)
+        return refused(i)
     }
 
     /** T290: whether step [st] arrives at its edge's to node (a zero-length step at fraction 1 arrives there; at 0, at its from node). */

@@ -392,7 +392,22 @@ object RoutePlanner {
         TileRouter(
             TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units,
             minDistanceM = overlayMinM, driveTurns = preference.turns, metric = preference.metric,
+            keepTrace = io.github.jasondorjeshort.dystopo.app.BuildConfig.DEBUG, // T290: `GET /route?breakdown=1`; a release build keeps none
         )
+
+    /**
+     * T290, `GET /route?breakdown=1`: [plan]'s cost table ([TileRouter.price], `state` `ready`), or `state` `unavailable`
+     * with the `reason` when it has no steps: restored from the session file, planned by a server, or no drive.
+     */
+    fun breakdownJson(plan: io.github.jasondorjeshort.dystopo.routing.PlannedRoute?): Map<String, Any?> {
+        if (plan == null) return linkedMapOf("state" to "unavailable", "reason" to "no route")
+        val trace = plan.trace ?: return linkedMapOf("state" to "unavailable", "reason" to io.github.jasondorjeshort.dystopo.routing.RoutePrice.unavailableReason(plan))
+        val t0 = System.nanoTime()
+        return runCatching { trace.router.price(plan).json() }.fold(
+            { linkedMapOf<String, Any?>("state" to "ready", "ms" to (System.nanoTime() - t0) / 1_000_000) + it },
+            { linkedMapOf("state" to "error", "reason" to (it.message ?: it.toString())) },
+        )
+    }
 
     /**
      * T285 (ADR 0063 Decision 7): the least-time drive between the ends of a least-fuel plan, on the packs on the device only
