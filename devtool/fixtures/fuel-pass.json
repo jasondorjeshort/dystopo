@@ -1,0 +1,18 @@
+{
+  "name": "fuel-pass",
+  "note": "T284 (ADR 0063): a synthetic road network at no real place (open sea at 0 N 0 E), where least time and least fuel differ. Two towns 12 km apart, a straight secondary road over a 400 m pass between them (65 km/h, about 11 min) and a primary road round through the flat valley (75 km/h, about 17 km, 14 min). Least time takes the pass; least fuel the valley. devtool route --fixture devtool/fixtures/fuel-pass.json --drive <label> --prefer time|fuel|quick.",
+  "baseM": 100,
+  "hills": [
+    { "lat": 0.0, "lon": 0.054, "heightM": 400, "radiusM": 3000 }
+  ],
+  "lines": [
+    { "class": "minor", "name": "West Street", "points": [[0.0, -0.01], [0.0, 0.0]] },
+    { "class": "secondary", "name": "Pass Road", "points": [[0.0, 0.0], [0.0, 0.027], [0.0, 0.054], [0.0, 0.081], [0.0, 0.108]] },
+    { "class": "primary", "name": "Valley Road", "points": [[0.0, 0.0], [-0.04, 0.025], [-0.04, 0.054], [-0.04, 0.083], [0.0, 0.108]] },
+    { "class": "minor", "name": "East Street", "points": [[0.0, 0.108], [0.0, 0.118]] }
+  ],
+  "drives": [
+    { "label": "west-east", "from": [0.0, -0.005], "to": [0.0, 0.113] },
+    { "label": "east-west", "from": [0.0, 0.113], "to": [0.0, -0.005] }
+  ]
+}

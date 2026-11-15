@@ -50,6 +50,12 @@ import kotlin.math.min
  * rebuilt), [json]'s `borderJunctions` counts the level-1 border nodes built here that are junctions, and a quick drive
  * (the node search, [TileRouter.driveTurns] off) uses these same cells, so it pays the turns inside its far cells.
  * T283: each level-1 cell is priced and unpacked with the driving side at its centre ([DrivingSides]); file version 3.
+ *
+ * **Metrics (T284, ADR 0063 Decision 6).** Every cell belongs to one [DriveMetric]: the metric is part of the cell key
+ * (one LRU for both), of [register], [unregister], [hasFile] and [cellsOf], and each metric has its own cell file (the
+ * fuel file `<vector>-overlay-fuel.idx`, [OverlayCellFile]). A fuel cell is priced and unpacked with fuel edge costs and
+ * fuel turn costs ([CostModel.byFuel]); level 2 is the same code over the fuel level-1 cells. The time cells and the time
+ * file are never touched by a fuel build. [warm] is the full warm-up of one graph file for one metric.
  */
 class DriveOverlay(
     /** The graph tile zoom (the level-1 cells). */
@@ -103,11 +109,21 @@ class DriveOverlay(
         val buildMs: Long,
     )
 
-    /** A cell of one graph file (its [GraphSource] names the file and the build, so a rebuilt pack gets new cells). */
-    private data class Key(val source: GraphSource, val level: Int, val x: Int, val y: Int)
+    /**
+     * A cell of one graph file (its [GraphSource] names the file and the build, so a rebuilt pack gets new cells) and one
+     * metric (T284).
+     */
+    private data class Key(val source: GraphSource, val metric: DriveMetric, val level: Int, val x: Int, val y: Int)
 
     private val cells = LinkedHashMap<Key, Any?>()
-    private val files = HashMap<GraphSource, OverlayCellFile>()
+    private val files = HashMap<Pair<GraphSource, DriveMetric>, OverlayCellFile>()
+
+    /** T284: the cost model of each metric's cells (drive, [FuelModel.DEFAULT]). */
+    private val models: Map<DriveMetric, CostModel> = DriveMetric.entries.associateWith { CostModel(TravelMode.DRIVE, metric = it) }
+
+    /** T284: [turns] pricing its seconds through [metric]'s cost model. */
+    private fun turnsFor(metric: DriveMetric): TurnCost =
+        if (metric == DriveMetric.TIME) turns else TurnCost(turns.table, turns.side, models.getValue(metric))
     var built = 0L
         private set
     var hits = 0L
@@ -132,22 +148,24 @@ class DriveOverlay(
     /** T89: whether level 2 is on (its zoom below the graph tile zoom). */
     val level2: Boolean get() = level2Zoom in 0 until tileZoom
 
-    /** T89: cells of the graph file [file] describes are read from it from now on (and not built). */
-    fun register(file: OverlayCellFile) = lock { files[file.source] = file }
+    /** T89: cells of the graph file [file] describes are read from it from now on (and not built); T284: for its metric. */
+    fun register(file: OverlayCellFile) = lock { files[file.source to file.metric] = file }
 
-    /** T89: forgets the cell file of [source] (its graph was rebuilt or its pack removed). */
-    fun unregister(source: GraphSource) = lock { files.remove(source) }
+    /** T89: forgets the cell file of [source] (its graph was rebuilt or its pack removed); T284: of [metric], or of every metric. */
+    fun unregister(source: GraphSource, metric: DriveMetric? = null) = lock {
+        for (m in DriveMetric.entries) if (metric == null || m == metric) files.remove(source to m)
+    }
 
-    /** T89: whether a cell file is registered for [source]. */
-    fun hasFile(source: GraphSource): Boolean {
+    /** T89: whether a cell file is registered for [source]; T284: for [metric]. */
+    fun hasFile(source: GraphSource, metric: DriveMetric = DriveMetric.TIME): Boolean {
         var has = false
-        lock { has = files.containsKey(source) }
+        lock { has = files.containsKey(source to metric) }
         return has
     }
 
-    private fun file(source: GraphSource): OverlayCellFile? {
+    private fun file(source: GraphSource, metric: DriveMetric): OverlayCellFile? {
         var f: OverlayCellFile? = null
-        lock { f = files[source] }
+        lock { f = files[source to metric] }
         return f
     }
 
@@ -165,11 +183,11 @@ class DriveOverlay(
     }
 
     /** The level-1 cell of tile ([x], [y]) of [source]: cached, else from its cell file, else built from [base]; and the base piece if it was loaded. */
-    private fun cell(x: Int, y: Int, source: GraphSource, base: () -> GraphPiece?): Pair<Cell?, GraphPiece?> {
-        val k = Key(source, 1, x, y)
+    private fun cell(x: Int, y: Int, source: GraphSource, metric: DriveMetric, base: () -> GraphPiece?): Pair<Cell?, GraphPiece?> {
+        val k = Key(source, metric, 1, x, y)
         val (found, c) = cached(k)
         if (found) return c as Cell? to null
-        file(source)?.let { f ->
+        file(source, metric)?.let { f ->
             val got = f.cell1(x, y)
             lock { loaded++ }
             keep(k, got)
@@ -181,7 +199,7 @@ class DriveOverlay(
             val (again, c2) = cached(k)
             if (again) { result = c2 as Cell? to null; return@l }
             val b = base() ?: return@l
-            val made = build(b)
+            val made = build(b, metric)
             lock {
                 built++
                 if (made != null) { buildMs += made.buildMs; shortcuts += made.cost.size; borderNodes += made.baseNode.size; borderJunctions += made.borderJunctions }
@@ -196,10 +214,10 @@ class DriveOverlay(
      * The overlay piece of tile ([x], [y]) when one pack alone has the tile and it has drive data, else
      * null (the caller searches the base pieces). Built on first use and kept.
      */
-    fun piece(x: Int, y: Int, base: List<GraphPiece>): GraphPiece? {
+    fun piece(x: Int, y: Int, base: List<GraphPiece>, metric: DriveMetric = DriveMetric.TIME): GraphPiece? {
         if (base.size != 1) return null
         val b = base[0]
-        return piece(x, y, b.archive, b.graph.source) { b }
+        return piece(x, y, b.archive, b.graph.source, metric) { b }
     }
 
     /**
@@ -207,12 +225,12 @@ class DriveOverlay(
      * base tile is loaded through [base] only when the cell is neither cached nor on file, or a shortcut
      * is expanded, so a long drive does not decode the tiles it passes through.
      */
-    fun piece(x: Int, y: Int, archive: Int, source: GraphSource, base: () -> GraphPiece?): GraphPiece? {
+    fun piece(x: Int, y: Int, archive: Int, source: GraphSource, metric: DriveMetric = DriveMetric.TIME, base: () -> GraphPiece?): GraphPiece? {
         if (!source.drive) return null
-        val (cell, loadedBase) = cell(x, y, source, base)
+        val (cell, loadedBase) = cell(x, y, source, metric, base)
         // A new piece per search: it carries this search's base piece and archive index.
         return cell?.let { c ->
-            GraphPiece(archive, x, y, c.graph, joinZoom = maxOf(tileZoom, source.zoom), overlay = Overlay(c, cellTurns(x, y)) { loadedBase ?: base() ?: error("graph tile $x/$y of ${source.file} is gone") })
+            GraphPiece(archive, x, y, c.graph, joinZoom = maxOf(tileZoom, source.zoom), overlay = Overlay(c, cellTurns(x, y, metric)) { loadedBase ?: base() ?: error("graph tile $x/$y of ${source.file} is gone") })
         }
     }
 
@@ -221,12 +239,12 @@ class DriveOverlay(
      * file (never built here); null otherwise or when the tile has no border crossing. [level1] gives the
      * level-1 piece of a graph tile inside, for expanding the shortcuts a route uses.
      */
-    fun piece2(x2: Int, y2: Int, archive: Int, source: GraphSource, level1: (Int, Int) -> GraphPiece?): GraphPiece? {
+    fun piece2(x2: Int, y2: Int, archive: Int, source: GraphSource, metric: DriveMetric = DriveMetric.TIME, level1: (Int, Int) -> GraphPiece?): GraphPiece? {
         if (!level2 || !source.drive) return null
-        val k = Key(source, 2, x2, y2)
+        val k = Key(source, metric, 2, x2, y2)
         val (found, c) = cached(k)
         val cell: Cell2? = if (found) c as Cell2? else {
-            val f = file(source) ?: return null
+            val f = file(source, metric) ?: return null
             f.cell2(x2, y2).also { got -> lock { loaded++ }; keep(k, got) }
         }
         cell ?: return null
@@ -240,9 +258,9 @@ class DriveOverlay(
      * level-1 cells of the graph tiles inside it that [has]; [base] loads a graph tile when its level-1 cell
      * must be built. For the server's warm-up and tests; searches never call it.
      */
-    fun buildLevel2(x2: Int, y2: Int, source: GraphSource, has: (Int, Int) -> Boolean, base: (Int, Int) -> GraphPiece?): Cell2? {
+    fun buildLevel2(x2: Int, y2: Int, source: GraphSource, has: (Int, Int) -> Boolean, metric: DriveMetric = DriveMetric.TIME, base: (Int, Int) -> GraphPiece?): Cell2? {
         if (!level2 || !source.drive) return null
-        val k = Key(source, 2, x2, y2)
+        val k = Key(source, metric, 2, x2, y2)
         val (found, c) = cached(k)
         if (found) return c as Cell2?
         val t0 = clock()
@@ -252,7 +270,7 @@ class DriveOverlay(
             val x = (x2 shl step) + dx
             val y = (y2 shl step) + dy
             if (!has(x, y)) continue
-            cell(x, y, source) { base(x, y) }.first?.let { subs += it }
+            cell(x, y, source, metric) { base(x, y) }.first?.let { subs += it }
         }
         val union = Union(subs)
         // Border nodes of the level-2 cell: level-1 border nodes on its own border, one per place and level.
@@ -305,12 +323,12 @@ class DriveOverlay(
      * T89: every cell of [source] that is cached now, both levels, for writing a cell file after a warm-up
      * ([OverlayCellFile.encode]); empty cells are left out (a file lists the cells that exist).
      */
-    fun cellsOf(source: GraphSource): Pair<List<Cell>, List<Cell2>> {
+    fun cellsOf(source: GraphSource, metric: DriveMetric = DriveMetric.TIME): Pair<List<Cell>, List<Cell2>> {
         val one = ArrayList<Cell>()
         val two = ArrayList<Cell2>()
         lock {
             for ((k, v) in cells) {
-                if (k.source != source) continue
+                if (k.source != source || k.metric != metric) continue
                 if (v is Cell) one += v
                 if (v is Cell2) two += v
             }
@@ -326,17 +344,44 @@ class DriveOverlay(
                 "borderNodes" to borderNodes, "borderJunctions" to borderJunctions, "shortcuts" to shortcuts, "minClass" to MIN_CLASS.label,
                 // T89: the second level and the cell files.
                 "level2Zoom" to if (level2) level2Zoom else null, "level2Built" to built2, "level2Used" to used2,
-                "loadedFromFiles" to loaded, "cellFiles" to files.keys.map { it.file },
+                "loadedFromFiles" to loaded, "cellFiles" to files.keys.map { (src, m) -> OverlayCellFile.fileNameFor(src.file, m) }, // T284: per metric
+                "fuelTiles" to cells.keys.count { it.metric == DriveMetric.FUEL }, // T284: of `tiles`, the fuel cells
             )
         }
         return out
     }
 
+    /** T284: what [warm] did: the cells built at each level, their milliseconds, and the cell file's bytes when it could be written. */
+    class Warmed(val cells: Int, val level2Cells: Int, val level1Ms: Long, val level2Ms: Long, val file: ByteArray?)
+
+    /**
+     * The full warm-up of one graph file ([archive]) for [metric] (T89's server warm-up, shared by the server and devtool
+     * since T284): every level-1 cell, then every level-2 cell from them, then the cell file's bytes
+     * ([OverlayCellFile.encode]) when every cell is still in memory. [base] loads a graph tile.
+     */
+    fun warm(archive: GraphTileArchive, metric: DriveMetric = DriveMetric.TIME, base: (Int, Int) -> GraphPiece?): Warmed {
+        val t0 = clock()
+        var cells1 = 0
+        var cells2 = 0
+        for (e in archive.entries) if (piece(e.x, e.y, 0, archive.source, metric) { base(e.x, e.y) } != null) cells1++
+        val ms1 = clock() - t0
+        if (level2) {
+            val step = tileZoom - level2Zoom
+            for ((x2, y2) in archive.entries.map { (it.x shr step) to (it.y shr step) }.toSet()) {
+                if (buildLevel2(x2, y2, archive.source, archive::has, metric, base) != null) cells2++
+            }
+        }
+        val ms2 = clock() - t0 - ms1
+        val (one, two) = cellsOf(archive.source, metric)
+        val bytes = if (one.size == cells1 && two.size == cells2) OverlayCellFile.encode(archive.source, tileZoom, level2Zoom, one, two, metric) else null
+        return Warmed(cells1, cells2, ms1, ms2, bytes)
+    }
+
     /** The overlay cell of one base piece; null when the tile has no border crossing of a large road. */
-    fun build(base: GraphPiece): Cell? {
+    fun build(base: GraphPiece, metric: DriveMetric = DriveMetric.TIME): Cell? {
         val t0 = clock()
         val g = base.graph
-        val model = CostModel(TravelMode.DRIVE)
+        val model = models.getValue(metric) // T284: the metric's costs (which roads count is the same for both)
         val z = tileZoom
         // Border nodes: on the tile's border, with a road of MIN_CLASS or larger open to cars.
         val border = IntList()
@@ -359,7 +404,7 @@ class DriveOverlay(
         val index = HashMap<Int, Int>(k * 2)
         for (i in 0 until k) index[border[i]] = i
         val from = IntList(); val to = IntList(); val cost = ArrayList<Double>(); val length = ArrayList<Float>()
-        val search = TileSearch(base, model, cellTurns(base.x, base.y))
+        val search = TileSearch(base, model, cellTurns(base.x, base.y, metric))
         for (i in 0 until k) {
             search.run(border[i], index.keys)
             for (j in 0 until k) {
@@ -381,8 +426,8 @@ class DriveOverlay(
      * T283: [turns] with the driving side of level-1 cell ([x], [y]), looked up at the cell's centre ([TurnCost.at]), so a
      * cell is priced and unpacked alike whichever route asks for it.
      */
-    private fun cellTurns(x: Int, y: Int): TurnCost =
-        turns.at(WebMercator.yToLat(y + 0.5, tileZoom), WebMercator.xToLon(x + 0.5, tileZoom))
+    private fun cellTurns(x: Int, y: Int, metric: DriveMetric): TurnCost =
+        turnsFor(metric).at(WebMercator.yToLat(y + 0.5, tileZoom), WebMercator.xToLon(x + 0.5, tileZoom))
 
     /** Whether a node lies on the border of tile ([x], [y]) at zoom [z] (within [GraphPieces.JOIN_M]). */
     private fun onBorder(lonE6: Int, latE6: Int, x: Int, y: Int, z: Int): Boolean {
@@ -415,7 +460,7 @@ class DriveOverlay(
             val c = cell!!
             val a = c.baseNode[c.graph.edgeFrom[e]]
             val b = c.baseNode[c.graph.edgeTo[e]]
-            val s = TileSearch(base, CostModel(TravelMode.DRIVE), turns)
+            val s = TileSearch(base, turns.model, turns) // T284: the cell's metric is its turn function's model's
             s.run(a, setOf(b))
             val out = ArrayList<Pair<Int, Boolean>>()
             var st = s.nodeState[b]
@@ -432,21 +477,19 @@ class DriveOverlay(
          * T282: the turns shortcut [e] pays inside its cell and their seconds (turns of zero seconds not counted), asked
          * of the turn function along its [unpack] exactly as the cell build priced them (the cell's own roads only).
          */
-        open fun turnsAlong(e: Int): Pair<Int, Double> {
-            if (turns.free) return 0 to 0.0
+        open fun turnsAlong(e: Int): TurnSum {
+            val sum = TurnSum()
+            if (turns.free) return sum
             val edges = unpack(e)
             val g = base.graph
             val pieces = listOf(base)
-            var count = 0
-            var total = 0.0
             for (i in 0 until edges.size - 1) {
                 val (e1, f1) = edges[i]
                 val (e2, f2) = edges[i + 1]
                 val node = if (f1) g.edgeTo[e1] else g.edgeFrom[e1]
-                val sec = turns.seconds(base, e1, f1, Junction(pieces, intArrayOf(node)), base, e2, f2)
-                if (sec > 0) { count++; total += sec }
+                sum.add(turns.seconds(base, e1, f1, Junction(pieces, intArrayOf(node)), base, e2, f2), turns.model, g, e2)
             }
-            return count to total
+            return sum
         }
     }
 
@@ -462,11 +505,10 @@ class DriveOverlay(
             chain(e).flatMap { (p, sc) -> p.overlay!!.expand(sc) }
 
         /** T282: the level-1 cells' turns along shortcut [e] (the joins between them are border nodes: not priced). */
-        override fun turnsAlong(e: Int): Pair<Int, Double> {
-            var count = 0
-            var total = 0.0
-            for ((p, sc) in chain(e)) { val (n, sec) = p.overlay!!.turnsAlong(sc); count += n; total += sec }
-            return count to total
+        override fun turnsAlong(e: Int): TurnSum {
+            val sum = TurnSum()
+            for ((p, sc) in chain(e)) sum.add(p.overlay!!.turnsAlong(sc))
+            return sum
         }
 
         /** Shortcut [e] as the level-1 pieces and their shortcuts it runs through, in travel order. */
@@ -597,8 +639,11 @@ class DriveOverlay(
         private val len = DoubleArray(2 * g.edgeCount)
         val parent = IntArray(2 * g.edgeCount)
         private val closed = BooleanArray(2 * g.edgeCount)
-        private val weight = DoubleArray(g.edgeCount) { e ->
-            if (g.flags(e) and WayAttrs.MOTOR_DESTINATION != 0) Double.POSITIVE_INFINITY else model.weight(g, e)
+        /** T284: each directed edge's whole cost by state ([CostModel.partCost]: direction-aware under fuel). */
+        private val cost = DoubleArray(2 * g.edgeCount) { st ->
+            val e = st shr 1
+            if (g.flags(e) and WayAttrs.MOTOR_DESTINATION != 0) Double.POSITIVE_INFINITY
+            else if (st and 1 == 0) model.partCost(g, e, 0.0, 1.0) else model.partCost(g, e, 1.0, 0.0)
         }
         private val pieces = listOf(piece)
 
@@ -629,12 +674,11 @@ class DriveOverlay(
                 val a = g.adjEdge[i]
                 val e = a shr 1
                 val fwd = a and 1 == 0 // v is the edge's from node
-                val w = weight[e]
-                if (w == Double.POSITIVE_INFINITY || !model.allows(g, e, fwd)) continue
                 val st = 2 * e + if (fwd) 0 else 1
-                if (closed[st]) continue
+                val w = cost[st]
+                if (w == Double.POSITIVE_INFINITY || closed[st]) continue
                 val tc = if (junction == null || from < 0) 0.0 else turns.cost(piece, from shr 1, from and 1 == 0, junction, piece, e, fwd)
-                val d = c + tc + g.edgeLength[e] * w
+                val d = c + tc + w
                 if (d < dist[st]) {
                     dist[st] = d; len[st] = l + g.edgeLength[e]; parent[st] = from
                     heap.push(d, st)
@@ -690,6 +734,16 @@ class DriveOverlay(
  * ```
  * A file lists every cell that exists for the graph file (a tile missing from it has no cell). It is
  * written after a full warm-up and is valid only for the [GraphSource] it names.
+ *
+ * T284 (ADR 0063 Decision 6): the fuel cells have a file of their own, `<vector archive>-overlay-fuel.idx`, with its own
+ * magic and version and, after the [GraphSource], the metric's id and a hash of the fuel model's parameters:
+ * ```
+ * "DYSF" u8 version(=1) u32 headerLength
+ * (the graph file's GraphSource as above) str metricId (= "fuel") u32 parameterHash ([FuelModel.hash])
+ * then as above, from u8 tileZoom
+ * ```
+ * [open] refuses a file of the other metric, of another metric id or of another parameter hash, so the warm-up rebuilds
+ * it. The time file above is unchanged (`DYSO` version 3).
  */
 class OverlayCellFile private constructor(
     val source: GraphSource,
@@ -699,6 +753,8 @@ class OverlayCellFile private constructor(
     val cellCount: Int,
     val fileBytes: Long,
     private val read: (Long, Int) -> ByteArray,
+    /** T284: whose cells these are. */
+    val metric: DriveMetric = DriveMetric.TIME,
 ) {
     private class Shortcuts(val from: IntArray, val to: IntArray, val cost: DoubleArray, val length: FloatArray)
 
@@ -767,11 +823,20 @@ class OverlayCellFile private constructor(
     }
 
     fun json(): Map<String, Any?> = linkedMapOf(
-        "file" to source.file, "builtAtMs" to source.builtAtMs, "tileZoom" to tileZoom, "level2Zoom" to level2Zoom,
+        "file" to source.file, "metric" to metric.key, "builtAtMs" to source.builtAtMs, "tileZoom" to tileZoom, "level2Zoom" to level2Zoom,
         "cells" to cellCount, "bytes" to fileBytes,
     )
 
     companion object {
+        /** T284: the fuel cell file's own version (its magic is `DYSF`). */
+        const val FUEL_VERSION = 1
+        const val FUEL_SUFFIX = "-overlay-fuel.idx"
+        private val FUEL_MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x46) // "DYSF"
+
+        /** T284: the cell file of [metric] next to a vector archive: [fileNameFor] for time, `<archive name>-overlay-fuel.idx` for fuel. */
+        fun fileNameFor(vectorFileName: String, metric: DriveMetric): String =
+            if (metric == DriveMetric.TIME) fileNameFor(vectorFileName) else vectorFileName.substringBeforeLast('.') + FUEL_SUFFIX
+
         /**
          * T283: 3, each level-1 cell priced with the driving side at its centre (2: T282, every cell priced right-hand;
          * 1: T89 to T281, turns free); an older file is refused and rebuilt.
@@ -787,8 +852,14 @@ class OverlayCellFile private constructor(
         private fun zz(v: Int): Long = ((v shl 1) xor (v shr 31)).toLong() and 0xFFFFFFFFL
         private fun unzz(v: Long): Int = ((v ushr 1) xor -(v and 1)).toInt()
 
-        /** The cells of one graph file ([source]) as a cell file. */
-        fun encode(source: GraphSource, tileZoom: Int, level2Zoom: Int, one: List<DriveOverlay.Cell>, two: List<DriveOverlay.Cell2>): ByteArray {
+        /**
+         * The cells of one graph file ([source]) as a cell file; T284: of [metric] (fuel: the `DYSF` file, with the metric's
+         * id and [parameterHash] in its header; time: the `DYSO` file, byte for byte as before).
+         */
+        fun encode(
+            source: GraphSource, tileZoom: Int, level2Zoom: Int, one: List<DriveOverlay.Cell>, two: List<DriveOverlay.Cell2>,
+            metric: DriveMetric = DriveMetric.TIME, parameterHash: Int = FuelModel.DEFAULT.hash,
+        ): ByteArray {
             class Entry(val level: Int, val x: Int, val y: Int, val body: ByteArray)
             fun body(nodes: Int, writeRef: ByteWriter.(Int) -> Unit, g: RoutingGraph, cost: DoubleArray): ByteArray {
                 val w = ByteWriter(64 + nodes * 12 + g.edgeCount * 16)
@@ -819,12 +890,14 @@ class OverlayCellFile private constructor(
             }
             val h = ByteWriter(256 + entries.size * 12)
             h.str(source.file); h.str(source.fingerprint); h.str(source.demFingerprint); h.u8(source.zoom); h.u64(source.builtAtMs)
+            val fuel = metric != DriveMetric.TIME
+            if (fuel) { h.str(metric.key); h.u32(parameterHash.toLong() and 0xFFFFFFFFL) } // T284
             h.u8(tileZoom); h.u8(level2Zoom); h.u8(DriveOverlay.MIN_CLASS.code)
             h.varint(entries.size.toLong())
             for (e in entries) { h.u8(e.level); h.varint(e.x.toLong()); h.varint(e.y.toLong()); h.varint(e.body.size.toLong()) }
             val header = h.toByteArray()
             val head = ByteWriter(9 + header.size)
-            head.bytes(MAGIC); head.u8(VERSION); head.u32(header.size.toLong() + 4); head.bytes(header)
+            head.bytes(if (fuel) FUEL_MAGIC else MAGIC); head.u8(if (fuel) FUEL_VERSION else VERSION); head.u32(header.size.toLong() + 4); head.bytes(header)
             val headBytes = head.toByteArray()
             val out = ByteWriter(headBytes.size + 4 + entries.sumOf { it.body.size })
             out.bytes(headBytes)
@@ -836,12 +909,18 @@ class OverlayCellFile private constructor(
         /**
          * Opens a cell file through [read] (offset, length) -> bytes, reading only its header. Throws
          * IllegalArgumentException for anything but a valid file of [VERSION] (T282: a version 1 file, priced before turns cost, is refused).
+         * T284: of [metric]: a time file (`DYSO`) when [metric] is time, else a fuel file (`DYSF`, [FUEL_VERSION]) whose
+         * metric id is [metric]'s and whose parameter hash is [parameterHash]; anything else is refused.
          */
-        fun open(read: (Long, Int) -> ByteArray): OverlayCellFile {
+        fun open(metric: DriveMetric = DriveMetric.TIME, parameterHash: Int = FuelModel.DEFAULT.hash, read: (Long, Int) -> ByteArray): OverlayCellFile {
             val first = read(0, 9)
-            require(first.size == 9 && first.copyOfRange(0, 4).contentEquals(MAGIC)) { "not an overlay cell file" }
+            val magic = if (first.size == 9) first.copyOfRange(0, 4) else ByteArray(0)
+            val fuel = magic.contentEquals(FUEL_MAGIC)
+            require(fuel || magic.contentEquals(MAGIC)) { "not an overlay cell file" }
+            require(fuel == (metric != DriveMetric.TIME)) { "a ${if (fuel) "fuel" else "time"} overlay cell file, expected ${metric.key}" } // T284
             val version = first[4].toInt() and 0xFF
-            require(version == VERSION) { "overlay cell file version $version, expected $VERSION" }
+            val want = if (fuel) FUEL_VERSION else VERSION
+            require(version == want) { "overlay cell file version $version, expected $want" }
             val headerLength = ByteReader(first, 5).u32()
             require(headerLength in 4..(64L shl 20)) { "bad overlay cell file header length $headerLength" }
             val rest = read(9, headerLength.toInt())
@@ -851,6 +930,12 @@ class OverlayCellFile private constructor(
             try {
                 val r = ByteReader(all.copyOfRange(0, all.size - 4), 9)
                 val src = GraphSource(r.str(), r.str(), r.str(), r.u8(), r.u64(), drive = true)
+                if (fuel) {
+                    val id = r.str()
+                    require(id == metric.key) { "overlay cell file of metric '$id', expected ${metric.key}" }
+                    val hash = r.u32().toInt()
+                    require(hash == parameterHash) { "overlay cell file priced with other ${metric.key} model parameters (hash ${hash.toUInt()}, expected ${parameterHash.toUInt()})" }
+                }
                 val tz = r.u8()
                 val z2 = r.u8()
                 r.u8() // minClass
@@ -863,14 +948,14 @@ class OverlayCellFile private constructor(
                     dir[key(level, x, y)] = longArrayOf(offset, len.toLong())
                     offset += len
                 }
-                return OverlayCellFile(src, tz, z2, dir, n, offset, read)
+                return OverlayCellFile(src, tz, z2, dir, n, offset, read, if (fuel) metric else DriveMetric.TIME)
             } catch (e: IllegalStateException) {
                 throw IllegalArgumentException("corrupt overlay cell file header: ${e.message}", e)
             }
         }
 
         /** [open] over bytes in memory. */
-        fun open(bytes: ByteArray): OverlayCellFile = open { offset, length ->
+        fun open(bytes: ByteArray, metric: DriveMetric = DriveMetric.TIME, parameterHash: Int = FuelModel.DEFAULT.hash): OverlayCellFile = open(metric, parameterHash) { offset, length ->
             bytes.copyOfRange(offset.coerceAtMost(bytes.size.toLong()).toInt(), minOf(bytes.size.toLong(), offset + length).toInt())
         }
     }

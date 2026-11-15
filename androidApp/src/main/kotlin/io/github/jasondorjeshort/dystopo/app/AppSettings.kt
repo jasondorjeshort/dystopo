@@ -615,9 +615,10 @@ object AppSettings {
     // T282: "Plan drives for" (ADR 0063 Decision 1): `time` (Least time, the default) or `quick` (Quicker planning); a
     // stored value this build does not know (a later `fuel`) reads as the default and is not written back. Synced.
     val DRIVE_PREFERENCE = add(Setting(KEY_DRIVE_PREFERENCE, io.github.jasondorjeshort.dystopo.routing.DrivePreference.DEFAULT, true,
-        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.routing.DrivePreference.of(it) }),
-        { io.github.jasondorjeshort.dystopo.routing.DrivePreference.of(it.toString()) },
-        { "$KEY_DRIVE_PREFERENCE must be one of ${io.github.jasondorjeshort.dystopo.routing.DrivePreference.entries.joinToString(", ") { p -> p.key }} (got $it)" }))
+        // T284: onPhone, so a stored, synced or posted fuel reads as time until T285 offers it (T285 removes the guard).
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.routing.DrivePreference.onPhone(it) }),
+        { io.github.jasondorjeshort.dystopo.routing.DrivePreference.onPhone(it.toString()) },
+        { "$KEY_DRIVE_PREFERENCE must be one of ${io.github.jasondorjeshort.dystopo.routing.DrivePreference.entries.filter { p -> io.github.jasondorjeshort.dystopo.routing.DrivePreference.onPhone(p.key) != null }.joinToString(", ") { p -> p.key }} (got $it)" }))
     // end T282
 }
 
