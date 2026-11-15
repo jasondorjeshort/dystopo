@@ -926,7 +926,8 @@ internal object LineState {
  * [percent] is `100 x (1 - fuel(fuel route) / fuel(time route))` rounded to a whole percent, [minutes] the difference of
  * the planned times rounded to a minute (ADR 0063 Decision 7), never below 0 (a least-time route is never the slower one;
  * a rounding of the two searches could read a few seconds the other way). The line shows when [percent] is
- * [MIN_PERCENT] or more ("hidden under 3 percent", read on the whole percent the line would show), the minutes always
+ * [MIN_PERCENT] or more ("hidden under 3 percent", read on the whole percent the line would show; under 30 s longer
+ * reads "under a minute longer", not longer at all "no longer", from 1 minute "M min longer"), the minutes always
  * with it, never for a server's plan; a server that did not plan for least fuel when it was asked gets [SERVER_TIME].
  */
 data class FuelComparison(
@@ -963,7 +964,14 @@ data class FuelComparison(
             if (state != LineState.READY) return null
             val n = percent ?: return null
             val m = minutes ?: return null
-            return if (n >= MIN_PERCENT) "about $n % less fuel than the least-time route, $m min longer" else null
+            if (n < MIN_PERCENT) return null
+            // The coordinator's wording for the two cases M = 0 (ADR 0031: the owner's to adjust).
+            val longer = when {
+                m >= 1 -> "$m min longer"
+                (timeS ?: 0.0) - (leastTimeS ?: 0.0) > 0 -> "under a minute longer"
+                else -> "no longer"
+            }
+            return "about $n % less fuel than the least-time route, $longer"
         }
 
     /** `card.fuel` in `GET /route`: the metric and both numbers whether or not the line shows. */

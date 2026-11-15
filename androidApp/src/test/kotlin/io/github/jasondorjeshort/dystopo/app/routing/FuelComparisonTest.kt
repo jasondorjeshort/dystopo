@@ -34,7 +34,13 @@ class FuelComparisonTest {
         val done = c.copy(leastTimeFuelIndex = 23_800_000.0, leastTimeS = 461.0, state = LineState.READY)
         assertEquals(33, done.percent)
         assertEquals(0, done.minutes)
-        assertEquals("about 33 % less fuel than the least-time route, 0 min longer", done.line)
+        assertEquals("about 33 % less fuel than the least-time route, under a minute longer", done.line)
+        // Not longer at all (0 s, or the least-time route a few seconds slower): "no longer".
+        assertEquals("about 33 % less fuel than the least-time route, no longer", done.copy(timeS = 461.0).line)
+        assertEquals("about 33 % less fuel than the least-time route, no longer", done.copy(timeS = 455.0).line)
+        // 90 s rounds to 2 min (half up).
+        assertEquals("about 33 % less fuel than the least-time route, 2 min longer", done.copy(timeS = 551.0).line)
+        assertEquals(2, done.copy(timeS = 551.0).json()["minutes"])
         val slower = done.copy(timeS = 461.0 + 150.0)
         assertEquals("about 33 % less fuel than the least-time route, 3 min longer", slower.line)
         assertEquals(1, done.copy(timeS = 491.0).minutes, "30 s rounds up to a minute")
@@ -50,7 +56,7 @@ class FuelComparisonTest {
         assertNull(c.line)
         assertEquals(false, c.json()["shown"])
         assertEquals(2, c.json()["percent"])
-        assertEquals("about 3 % less fuel than the least-time route, 0 min longer", c.copy(fuelIndex = 97.0).line)
+        assertEquals("about 3 % less fuel than the least-time route, under a minute longer", c.copy(fuelIndex = 97.0).line)
         // The same road under both: 0 %, hidden (the rainier drives).
         assertNull(c.copy(fuelIndex = 100.0, timeS = 590.0).line)
         // A least-time route a few seconds slower (the two searches' rounding) reads 0 minutes, never "-1 min longer".
