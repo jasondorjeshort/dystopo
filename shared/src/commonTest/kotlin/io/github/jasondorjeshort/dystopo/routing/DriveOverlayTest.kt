@@ -291,4 +291,84 @@ class DriveOverlayTest {
         assertTrue(quickFull.cost <= quickOver.cost + 1e-6 && quickOver.cost <= full.cost + 1e-6, "quick ${quickFull.cost}, quick through the cells ${quickOver.cost}, full ${full.cost}")
         assertEquals(null, quickOver.turnCostS)
     }
+
+    // ---- T284: least fuel through the overlay (ADR 0063 Decision 6) ----
+
+    /** [wideGrid]'s roads over rolling ground (about 600 m of relief), some unpaved, so fuel depends on the direction. */
+    private fun hillyWideGrid(): RoutingGraph {
+        val road = WayAttrs(WayClass.SECONDARY, Surface.PAVED, name = "Grid Highway")
+        val minor = WayAttrs(WayClass.MINOR, Surface.UNPAVED)
+        val lines = ArrayList<WayLine>()
+        var v = 0.0
+        var i = 0
+        while (v <= 4.4 + 1e-9) { lines += WayLine.of(if (i++ % 3 == 1) minor else road, 0.0 to v, 1.6 to v); v += 0.2 }
+        v = 0.0
+        while (v <= 1.6 + 1e-9) { lines += WayLine.of(road, v to 0.0, v to 4.4); v += 0.2 }
+        val ground = ElevationSampler { lat, lon -> 500.0 + 300.0 * kotlin.math.sin(lat * 7) * kotlin.math.cos(lon * 5) }
+        return RoutingGraphBuilder(ground).build(lines, source)
+    }
+
+    @Test
+    fun underFuelTheOverlayCostsWhatTheFullSearchCostsAndTheFuelFileIsItsOwn() {
+        val g = hillyWideGrid()
+        val archive = GraphTileFile.open(GraphTileFile.encode(g))
+        val tg = TiledGraph(listOf(archive))
+        val fuel = DriveMetric.FUEL
+        for ((from, to) in listOf((0.2 to 0.1) to (1.4 to 4.3), (1.4 to 4.3) to (0.2 to 0.1), (1.6 to 0.3) to (0.2 to 3.9))) {
+            val full = found(TileRouter(tg, metric = fuel).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+            val one = found(TileRouter(tg, DriveOverlay(), metric = fuel).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+            assertEquals(fuel, full.metric)
+            assertTrue(one.memory["overlayTiles"] as Int > 0, "${one.memory}")
+            assertEquals(full.cost, one.cost, full.cost * 1e-9, "$from -> $to level 1")
+            assertEquals(full.timeS, one.timeS, 0.01, "$from -> $to level 1")
+            assertEquals(full.fuelIndex!!, one.fuelIndex!!, full.fuelIndex!! * 1e-9, "$from -> $to level 1 fuelIndex")
+        }
+        // Both levels warmed for each metric; the time cells and their file's bytes are unchanged by the fuel build.
+        val overlay = DriveOverlay()
+        val timeWarm = overlay.warm(archive) { x, y -> tg.piece(0, x, y) }
+        val timeBytes = timeWarm.file!!
+        val fuelWarm = overlay.warm(archive, fuel) { x, y -> tg.piece(0, x, y) }
+        assertTrue(fuelWarm.level2Cells >= 6 && fuelWarm.cells == timeWarm.cells, "fuel ${fuelWarm.cells}/${fuelWarm.level2Cells}, time ${timeWarm.cells}")
+        val (t1, t2) = overlay.cellsOf(archive.source)
+        assertTrue(timeBytes.contentEquals(OverlayCellFile.encode(archive.source, overlay.tileZoom, overlay.level2Zoom, t1, t2)), "the time file's bytes after the fuel build")
+        assertTrue(overlay.json()["fuelTiles"] as Int >= fuelWarm.cells + fuelWarm.level2Cells, "${overlay.json()}")
+        val from = 0.2 to 0.1
+        val to = 1.4 to 4.3
+        val full = found(TileRouter(tg, metric = fuel).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val two = found(TileRouter(tg, overlay, metric = fuel).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertTrue(two.memory["level2Tiles"] as Int > 0, "${two.memory}")
+        assertEquals(full.cost, two.cost, full.cost * 1e-9, "level 2")
+        // A time drive through the same overlay still costs what the full time search costs.
+        val timeFull = found(TileRouter(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertEquals(timeFull.cost, found(TileRouter(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE)).cost, timeFull.cost * 1e-9)
+        // The fuel file: its own magic and version, read back by a fresh overlay that then builds nothing.
+        val fuelBytes = fuelWarm.file!!
+        assertEquals("DYSF", fuelBytes.copyOfRange(0, 4).decodeToString())
+        assertEquals(OverlayCellFile.FUEL_VERSION, fuelBytes[4].toInt())
+        val file = OverlayCellFile.open(fuelBytes, fuel)
+        assertEquals(fuel, file.metric)
+        val fresh = DriveOverlay()
+        fresh.register(file)
+        assertTrue(fresh.hasFile(archive.source, fuel) && !fresh.hasFile(archive.source))
+        val again = found(TileRouter(tg, fresh, metric = fuel).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertEquals(two.cost, again.cost, 1e-6)
+        assertEquals(0L, fresh.json()["built"], "${fresh.json()}")
+        assertEquals(listOf("grid-outdoors.pmtiles (fuel)"), fresh.json()["cellFiles"])
+        fresh.unregister(archive.source, DriveMetric.TIME)
+        assertTrue(fresh.hasFile(archive.source, fuel))
+        // Refused: a fuel file read for time, a time file read for fuel, and a fuel file of other model parameters.
+        val asTime = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(fuelBytes) }
+        assertTrue(asTime.message!!.contains("a fuel overlay cell file, expected time"), asTime.message)
+        val asFuel = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(timeBytes, fuel) }
+        assertTrue(asFuel.message!!.contains("a time overlay cell file, expected fuel"), asFuel.message)
+        val other = FuelModel(classFactor = FuelModel.FIRST_CLASS_FACTORS + (WayClass.MINOR to 1.4))
+        assertTrue(other.hash != FuelModel.DEFAULT.hash)
+        val (f1, f2) = overlay.cellsOf(archive.source, fuel)
+        val otherBytes = OverlayCellFile.encode(archive.source, overlay.tileZoom, overlay.level2Zoom, f1, f2, fuel, other.hash)
+        val hashed = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(otherBytes, fuel) }
+        assertTrue(hashed.message!!.contains("other fuel model parameters"), hashed.message)
+        assertEquals(fuel, OverlayCellFile.open(otherBytes, fuel, other.hash).metric)
+        assertEquals("rainier-outdoors-overlay-fuel.idx", OverlayCellFile.fileNameFor("rainier-outdoors.pmtiles", fuel))
+        assertEquals("rainier-outdoors-overlay.idx", OverlayCellFile.fileNameFor("rainier-outdoors.pmtiles", DriveMetric.TIME))
+    }
 }

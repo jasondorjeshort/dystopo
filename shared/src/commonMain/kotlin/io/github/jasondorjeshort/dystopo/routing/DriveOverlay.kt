@@ -225,7 +225,10 @@ class DriveOverlay(
      * base tile is loaded through [base] only when the cell is neither cached nor on file, or a shortcut
      * is expanded, so a long drive does not decode the tiles it passes through.
      */
-    fun piece(x: Int, y: Int, archive: Int, source: GraphSource, metric: DriveMetric = DriveMetric.TIME, base: () -> GraphPiece?): GraphPiece? {
+    fun piece(x: Int, y: Int, archive: Int, source: GraphSource, base: () -> GraphPiece?): GraphPiece? = piece(x, y, archive, source, DriveMetric.TIME, base)
+
+    /** [piece] of [metric]'s cells (T284). */
+    fun piece(x: Int, y: Int, archive: Int, source: GraphSource, metric: DriveMetric, base: () -> GraphPiece?): GraphPiece? {
         if (!source.drive) return null
         val (cell, loadedBase) = cell(x, y, source, metric, base)
         // A new piece per search: it carries this search's base piece and archive index.
@@ -344,7 +347,7 @@ class DriveOverlay(
                 "borderNodes" to borderNodes, "borderJunctions" to borderJunctions, "shortcuts" to shortcuts, "minClass" to MIN_CLASS.label,
                 // T89: the second level and the cell files.
                 "level2Zoom" to if (level2) level2Zoom else null, "level2Built" to built2, "level2Used" to used2,
-                "loadedFromFiles" to loaded, "cellFiles" to files.keys.map { (src, m) -> OverlayCellFile.fileNameFor(src.file, m) }, // T284: per metric
+                "loadedFromFiles" to loaded, "cellFiles" to files.keys.map { (src, m) -> if (m == DriveMetric.TIME) src.file else "${src.file} (${m.key})" }, // T284: a fuel file marked
                 "fuelTiles" to cells.keys.count { it.metric == DriveMetric.FUEL }, // T284: of `tiles`, the fuel cells
             )
         }

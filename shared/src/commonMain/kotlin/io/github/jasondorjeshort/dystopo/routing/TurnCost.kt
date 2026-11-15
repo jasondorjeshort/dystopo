@@ -250,4 +250,8 @@ class TurnSum {
     }
 
     fun add(other: TurnSum) { count += other.count; seconds += other.seconds; fuelJ += other.fuelJ }
+
+    /** The count and the seconds, as T282 returned them. */
+    operator fun component1(): Int = count
+    operator fun component2(): Double = seconds
 }
