@@ -17,3 +17,15 @@ time, distance, turns or fuel index moved, with the figures under each. The owne
 
 - The list: the six drives of wave 33's reports are a start; which hikes and rides.
 - Whether a route that changed fails the sweep or only shows (it should only show: a wave may mean to change it).
+
+Plan: one implementer. A list file `tools/route-sheet.txt` (name, pack, mode, from, to): the six drives of
+`docs/reference/devtool-commands.md` (the `route` line), each under `--prefer time`, `fuel` and `quick`, and the
+hikes and rides of `tools/routing-tour.txt` on the `rainier` and `montblanc` packs. A sweep part `route-sheet` in
+`tools/sweep.ps1` runs devtool `route` per line with `--out` into `<sweep>/route-sheet/<name>.png` and keeps each
+JSON; a line whose pack is not in `out/` is skipped by name in the part's JSON, not failed. A small
+`tools/route-diff.py` pairs by name with `-Prev`, calls a route changed when distance, time, turns, `fuelIndex` or
+a hash of its points moved, and writes `route-changes.png` (old and new picture side by side, the figures and
+their differences under each) and `route-changes.json`; `summary.json` gets the count. A changed route only
+shows; a route not found fails the part. Verify: the script's tests with two planted JSON sets; one sweep against
+`out/sweep-20261114-2352` (no pairs yet, every route listed as new), the sheet viewed. Out of scope: the phone's
+planner, private packs (the list holds `areas.json` names only).
