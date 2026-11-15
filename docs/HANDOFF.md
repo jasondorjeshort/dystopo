@@ -1,44 +1,40 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-15 06:25 UTC, at the commit after c8afdf87, by main session (wave 33: all six tasks merged, the sweep green, v0.1.30-alpha being published)
-Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (wave 33: T281, T282, T283,
-strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
+Updated: 2026-11-15 07:00 UTC, at the commit after cfb19f53, by main session (wave 33 closed, v0.1.30-alpha published)
+Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (no wave is open),
+`docs/tasks/wave-33.md` for the closed wave, ADR 0062 and 0063.
 
 ## Now
 
-- **v0.1.29-alpha is published** (2026-11-14 07:10 UTC, tag on 6eeb5358, versionCode 1593): the closing release of
-  wave 32, nine tasks over v0.1.28-alpha (T267, T278, T263, T266, T268, T273, T279, T270, T280). Its sweep is
-  `out/sweep-20261114-0027` (green, no rerun; the next release's `-Prev`). The log has the entries.
-- **Wave 32 is closed**: its record is `docs/tasks/wave-32.md`, its follow-ups are in the board's Later (one line a
-  task, the done ones struck), and no agent, emulator or task branch is left.
-- **The sheet attached to the release was rebuilt** without four frames that show a map outside `areas.json` (the
-  a11y part's first-run screens and `bothunits`' second phone); the cause is unknown (the log's publish entry).
-- The wave skill's cost figure is 1.0 a task from this close (16 points for eleven tasks; the meter read 17).
-- The live viewer is wanted (`out/coordinator-pids.txt`). Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
+- **v0.1.30-alpha is published** (2026-11-15 06:44 UTC, tag on cfb19f53, versionCode 1676): wave 33, six tasks
+  over v0.1.29-alpha (T281, T282, T283, T284, T286, T285): drive routes pay for turns, and Plan drives for
+  (Least time, Least fuel, Quicker planning). Its sweep is `out/sweep-20261114-2352` (green, no rerun; the next
+  release's `-Prev`). The log has the entry.
+- **Wave 33 is closed**: its record is `docs/tasks/wave-33.md`, its follow-ups are in the board's Later, and no
+  agent, emulator or task branch is left. The meter read 39 at the close against a figure of 43 (1.0 a task stays).
+- **The release's sheet was rebuilt again**, without five frames showing a map outside `areas.json` (now also the device tour's two navigation-card frames); cause unknown, a Later line.
+- The live viewer is wanted (`out/coordinator-pids.txt`). Rules: no force push; a false `:devtool:compileTestKotlin` failure or an out-of-memory Kotlin compile clears with `:devtool:clean check "-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\?\` delete.
 
 ## Next
 
-1. **Wave 33, drive routes pay for turns** (the owner, 2026-11-14: the next pass): on the board, its three
-   surveys in `out/wave33-research/`, both critics answered in the wave paragraph, the decisions in ADR 0062 and
-   0063. T281 (the directed-edge drive search at zero turn cost, 1049d14b) and T282 (the turn values, the drive choice, 6c5b7e5a), T283 (the driving side, 2905835a) and T284 (least fuel, the metric, 6dba2a2f) and T286 (a tunnel priced on its portals' grade, 4835a526) and T285 (least fuel on the phone, 72833bc7) are merged, all six; the post-wave sweep is green (`out/sweep-20261114-2352` on c8afdf87, no rerun; the next release's `-Prev`);
-   on green the alpha (v0.1.30-alpha), then the wave's close (record, meter, README). Next wave: the graph builder interpolating tunnel and bridge heights (T286's Status).
-2. After it: the other drive ideas (curvature, stops and signals, shortest) need research; the
-   pressure-unit and Send diagnostics ideas are untriaged; then the board's Later and the ideas' Plans (the
-   sweep-order rule, the days-old recording, the backup proposal, the signing step, Report recent stats, the
-   power-cut part, search outside a pack) and the two ADR 0012 hits (0061, 0053).
+1. **Plan the next wave** (critic first, `wave` skill): the graph builder interpolating tunnel and bridge
+   heights between portals (T286's follow-up: it ends the tile-border remainder and corrects the profile, hike
+   and bike); a drive in the sweep (Later's first line: no part opens Plan drives for or a drive's card);
+   whether the `montblanc` pack lacks road names or the data does (T282).
+2. The other drive ideas (curvature, stops and signals, shortest) need research; the pressure-unit and Send diagnostics ideas are untriaged (`triage` skill).
+3. Then the board's Later, the ideas' Plans and the two ADR 0012 hits (0061, 0053).
 
 ## Waiting on user
 
-- **Answered 2026-11-14** (the board's Owner actions): the published v0.1.27 and v0.1.28 sheets stay; alpha upgrades
-  need not be backward compatible (0033 stands until its amending ADR); the release key is used, never read.
-- No idea Question is open: "Trim waits" is the owner's; the rest were decided by the owner's leave with a critic (two `Waits:` are the coordinator's by that leave, the owner's to overrule: the shared map picture, the sweep's reruns).
-- On the phone, v0.1.29-alpha: the activity chip, Trip details. The strings of T263 and T278 to read (ADR 0031)
-  are in their merge bodies. OpenFreeMap's terms (Later's first entry; the owner emails them).
-- Two empty folders are left for the owner: `dystopo-wt/T275` (an `rmdir` reads busy: some window sits in it) and
-  `C:\c` (the harness refused an agent's `rmdir` of it as a system path). `dystopo-wt/T267-verify` is gone.
+- **On the phone, v0.1.30-alpha** (ADR 0031, the owner adjusts): the names Least time, Least fuel, Quicker
+  planning and their help; the card's "about N % less fuel than the least-time route, M min longer" (and "under a
+  minute longer", "no longer", the coordinator's wording); whether a town's 33 % and 47 % read as believable (the
+  model's turn fuel, T284's Status); the owner's own bug (two left turns onto a side road). Strings: the merge
+  bodies of T282 and T285.
+- Still from v0.1.29-alpha: the activity chip, Trip details; OpenFreeMap's terms (the owner emails them). Left for the owner: the empty folders `dystopo-wt/T275` (busy) and `C:\c`, a stray `msg.txt` in `dystopo-wt`.
 
 ## Open findings
 
-- `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: guarded; T273 measured it (the sweep keeps rebooting), cause unproven.
+- `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md`: guarded; cause unproven.
 - `docs/findings/2026-11-10-range-cache-keeps-blocks-across-a-republish.md`: 56 stale cells deleted; the validator is T269.
