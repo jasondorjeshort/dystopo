@@ -253,10 +253,13 @@ class DriveOverlayTest {
         // Another graph's file is not used for this one, and a damaged file is refused.
         assertNull(file.cell1(-1, -1))
         kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(OverlayCellFile.encode(archive.source, 11, 8, c1, c2).copyOf(30)) }
-        // T282: a file of version 1 (cells priced before turns cost anything) is refused, so the server rebuilds it.
-        val old = OverlayCellFile.encode(archive.source, 11, 8, c1, c2).also { it[4] = 1 }
-        val refused = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(old) }
-        assertTrue(refused.message!!.contains("version 1, expected 2"), refused.message)
+        // T282: a file of version 1 (cells priced before turns cost anything) is refused, so the server rebuilds it;
+        // T283: so is version 2 (every cell priced right-hand).
+        for (v in 1..2) {
+            val old = OverlayCellFile.encode(archive.source, 11, 8, c1, c2).also { it[4] = v.toByte() }
+            val refused = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(old) }
+            assertTrue(refused.message!!.contains("version $v, expected 3"), refused.message)
+        }
     }
 
     @Test

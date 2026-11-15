@@ -503,7 +503,10 @@ class TileRouter(
      * the node search's and the drive search's in full, and its time (edges only) does not show them. Accepted (T282).
      */
     val driveTurns: Boolean = true,
-    /** T281: the turn function of the drive search ([TurnTable.DRIVE] by default; tests pass their own table). */
+    /**
+     * T281: the turn function of the drive search ([TurnTable.DRIVE] by default; tests pass their own table). T283: its
+     * side, when not given, is looked up per search at the route's start ([TurnCost.at]).
+     */
     val turns: TurnCost = TurnCost(),
     /** T281: drives whose ends are at least this far apart (great circle) go through the [overlay] ([DriveOverlay.MIN_DISTANCE_M] by default). */
     val minDistanceM: Double = DriveOverlay.MIN_DISTANCE_M,
@@ -669,8 +672,9 @@ class TileRouter(
         val t = snap(view, toLat, toLon, maxSnapM, accept) ?: return offNetwork(view, model, RouteFailure.END_OFF_NETWORK, "end", toLat, toLon, maxSnapM)
         separate(model, s, t)?.let { return it }
         // T281: a drive pays for its turns on the edge-state search unless the fast node search is asked for.
+        // T283: the driving side looked up once, at the route's start ([DrivingSides]).
         if (mode == TravelMode.DRIVE && driveTurns) {
-            return DriveSearch(this, view, model, s, t, turns, maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong()).run(name, ids)
+            return DriveSearch(this, view, model, s, t, turns.at(fromLat, fromLon), maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong()).run(name, ids)
         }
         return Search(view, model, s, t).run(name, ids)
     }

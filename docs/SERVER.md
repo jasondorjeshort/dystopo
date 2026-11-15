@@ -612,7 +612,7 @@ trip and downloads its corridor (`POST /area`, below) to navigate offline.
 z8 tile and the cheapest drive between them through its level-1 cells) lets a long drive search mostly z8 cells;
 only the server builds it (the phone stays on level 1), in the warm-up and never inside a search. When the
 warm-up has built both levels for every tile of an offline map it writes them to `<vector archive>-overlay.idx` beside
-`<vector archive>-graph.idx` (`DYSO` version 2 since T282, each cell with its own checksum; `rainier-outdoors-overlay.idx` is
+`<vector archive>-graph.idx` (`DYSO` version 3 since T283, each cell with its own checksum; `rainier-outdoors-overlay.idx` is
 1,549 bytes: 15 level-1 and 2 level-2 cells, a warm-up of 0.1 to 0.2 s). A restarted server reads that
 file instead of building (cells on demand through ranged reads): the offline map's `warm` entry says `loaded` with
 `cells`, `bytes` and `ms` (1 to 2 ms for Rainier) and `built` and `level2Built` stay 0. The file is valid for
@@ -620,7 +620,7 @@ the one graph build it names (the graph file's source name, fingerprints and bui
 rebuilt graph (the offline map changed, an older `DYSG` version, the graph file deleted) makes it stale, and the
 warm-up then builds again and overwrites it, as it does for a file that cannot be read (a truncated one, say). T282: a
 version 1 file (cells priced before turns cost anything) is refused the same way and rebuilt once at version 2; on the
-`rainier` offline map that warm-up took 119 ms (level 1 87 ms), `montblanc` 71 ms. The overlay's `borderJunctions` counts the
+`rainier` offline map that warm-up took 119 ms (level 1 87 ms), `montblanc` 71 ms. T283: version 2 priced every cell right-hand; version 3 prices each level-1 cell with the driving side at its centre (`DrivingSides`), so a version 2 file is refused and rebuilt once in the same way. The overlay's `borderJunctions` counts the
 level-1 border nodes built here that are junctions (a turn there is not priced: ADR 0062's residual).
 Delete it to force a rebuild; nothing else reads it. It is not written when the cells no longer all fit in
 memory (an offline map with more than 65,536 of them; `file` and `bytes` are null in its `warm` entry), and an offline map

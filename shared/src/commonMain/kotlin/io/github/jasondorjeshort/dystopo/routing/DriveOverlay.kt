@@ -49,6 +49,7 @@ import kotlin.math.min
  * T282: the table is [TurnTable.DRIVE]'s real seconds, the cell file is version 2 (an older one is refused and
  * rebuilt), [json]'s `borderJunctions` counts the level-1 border nodes built here that are junctions, and a quick drive
  * (the node search, [TileRouter.driveTurns] off) uses these same cells, so it pays the turns inside its far cells.
+ * T283: each level-1 cell is priced and unpacked with the driving side at its centre ([DrivingSides]); file version 3.
  */
 class DriveOverlay(
     /** The graph tile zoom (the level-1 cells). */
@@ -211,7 +212,7 @@ class DriveOverlay(
         val (cell, loadedBase) = cell(x, y, source, base)
         // A new piece per search: it carries this search's base piece and archive index.
         return cell?.let { c ->
-            GraphPiece(archive, x, y, c.graph, joinZoom = maxOf(tileZoom, source.zoom), overlay = Overlay(c, turns) { loadedBase ?: base() ?: error("graph tile $x/$y of ${source.file} is gone") })
+            GraphPiece(archive, x, y, c.graph, joinZoom = maxOf(tileZoom, source.zoom), overlay = Overlay(c, cellTurns(x, y)) { loadedBase ?: base() ?: error("graph tile $x/$y of ${source.file} is gone") })
         }
     }
 
@@ -358,7 +359,7 @@ class DriveOverlay(
         val index = HashMap<Int, Int>(k * 2)
         for (i in 0 until k) index[border[i]] = i
         val from = IntList(); val to = IntList(); val cost = ArrayList<Double>(); val length = ArrayList<Float>()
-        val search = TileSearch(base, model, turns)
+        val search = TileSearch(base, model, cellTurns(base.x, base.y))
         for (i in 0 until k) {
             search.run(border[i], index.keys)
             for (j in 0 until k) {
@@ -375,6 +376,13 @@ class DriveOverlay(
         )
         return Cell(base.x, base.y, IntArray(k) { border[it] }, cost.toDoubleArray(), graph, clock() - t0, junctions)
     }
+
+    /**
+     * T283: [turns] with the driving side of level-1 cell ([x], [y]), looked up at the cell's centre ([TurnCost.at]), so a
+     * cell is priced and unpacked alike whichever route asks for it.
+     */
+    private fun cellTurns(x: Int, y: Int): TurnCost =
+        turns.at(WebMercator.yToLat(y + 0.5, tileZoom), WebMercator.xToLon(x + 0.5, tileZoom))
 
     /** Whether a node lies on the border of tile ([x], [y]) at zoom [z] (within [GraphPieces.JOIN_M]). */
     private fun onBorder(lonE6: Int, latE6: Int, x: Int, y: Int, z: Int): Boolean {
@@ -670,7 +678,7 @@ class DriveOverlay(
  * through ranged reads, like graph tiles.
  *
  * ```
- * "DYSO" u8 version(=2; T282) u32 headerLength
+ * "DYSO" u8 version(=3; T283) u32 headerLength
  * str sourceFile, str fingerprint, str demFingerprint, u8 sourceZoom, u64 builtAtMs   (the graph file's GraphSource)
  * u8 tileZoom, u8 level2Zoom, u8 minClass
  * varint cellCount, per cell: u8 level, varint x, varint y, varint bodyLength
@@ -764,8 +772,11 @@ class OverlayCellFile private constructor(
     )
 
     companion object {
-        /** T282: 2, cells priced with [TurnTable.DRIVE]'s turn seconds (1: T89 to T281, turns free); an older file is refused and rebuilt. */
-        const val VERSION = 2
+        /**
+         * T283: 3, each level-1 cell priced with the driving side at its centre (2: T282, every cell priced right-hand;
+         * 1: T89 to T281, turns free); an older file is refused and rebuilt.
+         */
+        const val VERSION = 3
         const val SUFFIX = "-overlay.idx"
         private val MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x4F) // "DYSO"
 
