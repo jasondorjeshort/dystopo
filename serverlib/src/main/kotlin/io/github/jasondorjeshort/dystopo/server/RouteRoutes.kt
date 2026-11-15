@@ -23,6 +23,8 @@ import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
 import io.github.jasondorjeshort.dystopo.routing.GraphTileCache
 import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
 import io.github.jasondorjeshort.dystopo.routing.GraphTiler
+import io.github.jasondorjeshort.dystopo.routing.DrivePreference
+import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.OverlayCellFile
 import io.github.jasondorjeshort.dystopo.routing.RouteResult
 import io.github.jasondorjeshort.dystopo.routing.Router
@@ -74,7 +76,10 @@ import java.util.concurrent.atomic.AtomicLong
  *   file; a restarted server reads them from there instead of building them (`driveOverlay.warm` in the status).
  *   T281: a drive plans on the drive search over directed-edge states (ADR 0062; each `searches` entry then has
  *   `searchStates`, and its `expanded` counts states); `turns=0` plans it on the node search instead, faster and
- *   blind to turns (the owner's fast option).
+ *   blind to turns (the owner's fast option). T282: `prefer=time|quick` names the same choice (the phone's Plan drives
+ *   for; `turns=0` is `prefer=quick`, an unknown value reads as time); a drive on the drive search pays for its turns,
+ *   its leg time includes them and its `searches` entry has `turns` and `turnCostS`. The cell file is version 2 (cells
+ *   priced with turns); an older file is refused and rebuilt by the warm-up.
  * - `POST /route/edit` with JSON `{"path": "<encoded>", "op": "move|insert|add|remove|mode|reroute|show",
  *   "index": i, "lat": .., "lon": .., "mode": "bike", "pack": "<name>"}`: T60's editor operations
  *   (move and remove reroute only the legs next to the via point; add goes into the leg it lies
@@ -176,8 +181,11 @@ object RouteRoutes {
         return lat to lon
     }
 
-    /** T281: whether a drive pays for turns: on unless `turns=0` (the one place the request names the fast node search). */
-    private fun driveTurnsOf(q: Map<String, String>): Boolean = q["turns"] != "0"
+    /**
+     * T281: whether a drive pays for turns (the one place the request names the fast node search). T282: `prefer=time|quick`
+     * ([DrivePreference]; a value this build does not know reads as time), `turns=0` an alias of `prefer=quick`.
+     */
+    internal fun driveTurnsOf(q: Map<String, String>): Boolean = q["turns"] != "0" && DrivePreference.read(q["prefer"]).turns
 
     private fun snapOf(s: String?): Double = s?.let {
         val v = it.toDoubleOrNull()
@@ -456,7 +464,9 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             val r = inner.route(fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
             val ms = (System.nanoTime() - t0) / 1_000_000
             if (r is RouteResult.Found) lastMemory = r.plan.memory
-            legs += linkedMapOf<String, Any?>("ms" to ms, "found" to (r is RouteResult.Found)) + ((r as? RouteResult.Found)?.plan?.let { p -> p.memory + ("expanded" to p.expanded) } ?: emptyMap())
+            legs += linkedMapOf<String, Any?>("ms" to ms, "found" to (r is RouteResult.Found)) + ((r as? RouteResult.Found)?.plan?.let { p ->
+                p.memory + ("expanded" to p.expanded) + (p.turnCostS?.let { mapOf("turns" to p.turns, "turnCostS" to PlannedRoute.r1(it)) } ?: emptyMap()) // T282
+            } ?: emptyMap())
             return r
         }
     }

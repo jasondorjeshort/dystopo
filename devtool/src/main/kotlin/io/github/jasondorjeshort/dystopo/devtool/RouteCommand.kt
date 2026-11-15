@@ -45,6 +45,7 @@ import io.github.jasondorjeshort.dystopo.sync.Bundle
 import java.util.Properties
 import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
+import io.github.jasondorjeshort.dystopo.routing.DrivePreference
 import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
 import io.github.jasondorjeshort.dystopo.routing.TileRouter
 import io.github.jasondorjeshort.dystopo.routing.TiledGraph
@@ -82,7 +83,9 @@ import kotlin.math.cos
  *   T108: `--mode crow` is the straight line between the points (no graph: `--pack` only names the default DEM, or give
  *   `--dem`), with `route.bearingDeg`, the profile from the DEM and one arrival in `instructions`.
  *   T281: drives plan on the drive search over directed-edge states (ADR 0062); `--no-turns` plans them on the node
- *   search instead (the owner's fast option). `--overlay-min-km K` routes over the graph file's z11 tiles with a drive
+ *   search instead (the owner's fast option). T282: `--prefer time|quick` (the phone's Plan drives for; `--no-turns` is
+ *   `--prefer quick`); a drive on the drive search pays for its turns and its `route` JSON has `turns` and `turnCostS`
+ *   (the seconds, in `timeS`). `--overlay-min-km K` routes over the graph file's z11 tiles with a drive
  *   overlay for drives of K km or more (the server's 40 km is too long for a public pack) and reports the overlay
  *   (cells built, their milliseconds) in `search.overlay`.
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters; T281:
@@ -110,7 +113,8 @@ class RouteCommand : CliktCommand(name = "route") {
     private val graphFile by option("--graph", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()
     private val gpx by option("--gpx", help = "Write the route as GPX here").file()
     private val noRender by option("--no-render", help = "Skip the PNG").flag()
-    private val noTurns by option("--no-turns", help = "Drive on the node search, faster and blind to turns (T281; default: the drive search, which can price turns)").flag()
+    private val prefer by option("--prefer", help = "How a drive is planned (T282, the phone's Plan drives for): time (default: least time, turns priced) or quick (quicker planning, blind to turns)").choice(*DrivePreference.entries.map { it.key }.toTypedArray())
+    private val noTurns by option("--no-turns", help = "The same as --prefer quick (T281's switch)").flag()
     private val overlayMinKm by option("--overlay-min-km", help = "Route over the graph tiles with a drive overlay for drives this many km or more apart (T281; the server uses 40)").double()
     private val zoomOption by option("--zoom", help = "Render zoom (default: the deepest up to 15 that fits about 12 Mpx)").int().restrictTo(8..16)
     private val style by StyleOptions()
@@ -134,7 +138,9 @@ class RouteCommand : CliktCommand(name = "route") {
             val (graph, info) = timings.time("graph") { RouteGraphs.openOrBuild(packFile, demFile, graphFile) }
             // T281: the whole graph as one piece (as before), or its z11 tiles with a drive overlay (--overlay-min-km).
             val minKm = overlayMinKm
-            val driveTurns = !noTurns // T281: the one place the switch is read
+            // T281: the one place the switches are read; T282: --prefer, --no-turns its alias for quick.
+            val preference = if (noTurns) DrivePreference.QUICK else DrivePreference.read(prefer)
+            val driveTurns = preference.turns
             val overlay = minKm?.let { DriveOverlay(clock = { System.nanoTime() / 1_000_000 }) }
             val router = if (overlay == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = driveTurns) else {
                 val tiled = TiledGraph(listOf(GraphTileFile.open(File(info["file"] as String).readBytes())))
@@ -143,7 +149,7 @@ class RouteCommand : CliktCommand(name = "route") {
             timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
             report["graph"] = info + ("summary" to graph.json())
             val r = timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
-            report["search"] = linkedMapOf("driveTurns" to driveTurns, "overlayMinKm" to minKm, "overlay" to overlay?.json())
+            report["search"] = linkedMapOf("prefer" to preference.key, "driveTurns" to driveTurns, "overlayMinKm" to minKm, "overlay" to overlay?.json())
             r
         }
         when (result) {
