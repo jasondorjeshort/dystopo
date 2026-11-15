@@ -12,8 +12,8 @@ import kotlin.test.fail
 
 /**
  * T281 (ADR 0062): the drive search on directed-edge states ([DriveSearch]) and the turn function's geometry
- * ([TurnCost]). The production table is all zero in T281, so every test that needs a turn to cost something passes a
- * test-only table: [LEFT] (a turn across traffic of 30 degrees or more 60 s, a reversal 100 s), [RANDOM] (a seeded
+ * ([TurnCost]). T282: the production table ([DriveTurns], the T282 section below); the T281 tests keep their
+ * test-only tables: [LEFT] (a turn across traffic of 30 degrees or more 60 s, a reversal 100 s), [RANDOM] (a seeded
  * pseudo-random cost per pair of edges) or [JUNCTIONS] (50 s at a node of three or more roads).
  *
  * Synthetic roads near the equator (about 111 m per 0.001 degree); points are (lat, lon).
@@ -85,7 +85,7 @@ class TurnCostTest {
         assertEquals(before + 8L * fresh.edgeCount, fresh.approxBytes())
         // The zero table never builds a junction's roads (nor the bearings).
         assertEquals(0.0, TurnCost(TurnTable.ZERO).cost(p, south, true, Junction(listOf(p), intArrayOf(x)), p, south, false))
-        assertTrue(TurnCost().free, "T281: the drive table is all zero")
+        assertTrue(!TurnCost().free, "T282: the drive table prices turns")
     }
 
     // ---- The search ----
@@ -406,7 +406,190 @@ class TurnCostTest {
         assertTrue(throughOverlay >= 30 && exact >= 10 && residual >= 3, "through the overlay $throughOverlay, exact $exact, with the residual $residual")
     }
 
+    // ---- T282: the production table (ADR 0062 Decision 4) ----
+
+    private fun drive(g: RoutingGraph, a: Pair<Double, Double>, b: Pair<Double, Double>) = drive(TileRouter(WholeGraph(g)), a, b)
+
+    private fun PlannedRoute.passes(lat: Double, lon: Double) = route.points.any { abs(it.lat - lat) < 1e-7 && abs(it.lon - lon) < 1e-7 }
+
+    @Test
+    fun theTableFollowsTheAngleTheSideAndTheClass() {
+        assertEquals(0.0, DriveTurns.angleSeconds(29.9, true))
+        assertEquals(0.75, DriveTurns.angleSeconds(45.0, false), 1e-9)
+        assertEquals(3.0, DriveTurns.angleSeconds(90.0, false), 1e-9)
+        assertEquals(4.5, DriveTurns.angleSeconds(120.0, false), 1e-9)
+        assertEquals(6.0, DriveTurns.angleSeconds(170.0, false), 1e-9)
+        assertEquals(7.0, DriveTurns.angleSeconds(90.0, true), 1e-9)
+        assertEquals(9.0, DriveTurns.angleSeconds(150.0, true), 1e-9)
+        // A crossroads: Valley Road (primary) south to north, a service road east, a minor road west.
+        val valley = WayAttrs(WayClass.PRIMARY, Surface.PAVED, name = "Valley Road")
+        val g = graph(
+            WayLine.of(valley, -0.002 to 0.0, 0.0 to 0.0, 0.002 to 0.0),
+            WayLine.of(WayAttrs(WayClass.SERVICE, Surface.PAVED), 0.0 to 0.0, 0.0 to 0.002), WayLine.of(minor, 0.0 to 0.0, 0.0 to -0.002),
+        )
+        val p = GraphPiece(0, 0, 0, g, joinZoom = -1)
+        val x = (0 until g.nodeCount).first { g.nodeLat[it] == 0 && g.nodeLon[it] == 0 }
+        val j = Junction(listOf(p), intArrayOf(x))
+        assertEquals(4, j.roads.size)
+        fun road(lat: Double, lon: Double): JunctionRoad {
+            val e = (0 until g.edgeCount).first { e ->
+                val o = if (g.edgeFrom[e] == x) g.edgeTo[e] else g.edgeFrom[e]
+                abs(g.nodeLat[o] / 1e6 - lat) < 1e-7 && abs(g.nodeLon[o] / 1e6 - lon) < 1e-7
+            }
+            return JunctionRoad(p, e, g.edgeFrom[e] == x)
+        }
+        val south = road(-0.002, 0.0)
+        val north = road(0.002, 0.0)
+        val east = road(0.0, 0.002)
+        val west = road(0.0, -0.002)
+        fun sec(from: JunctionRoad, to: JunctionRoad) = DriveTurns.seconds(Turn(from, to, j, DrivingSide.RIGHT))
+        assertEquals(0.0, sec(south, north), 1e-9, "straight on")
+        assertEquals(3.0 + 3.0 + 2.0, sec(south, east), 0.05, "right onto the service road: 3 s, 4 class steps capped at 3, 2 s rough")
+        assertEquals(7.0 + 3.0, sec(south, west), 0.05, "left onto the minor road: 7 s across traffic, 3 class steps")
+        assertEquals(3.0, sec(west, south), 0.05, "right onto the primary road: nothing for joining a higher class")
+        assertEquals(0.0, sec(east, west), 1e-9, "straight across")
+        assertEquals(DriveTurns.REVERSAL_S, sec(south, south), 1e-9, "a reversal")
+        // Where traffic keeps left the sides swap.
+        assertEquals(3.0 + 3.0, DriveTurns.seconds(Turn(south, west, j, DrivingSide.LEFT)), 0.05)
+    }
+
+    @Test
+    fun theOwnersShapeKeepsToTheMainRoad() {
+        // The owner, 2026-11-14: a same-speed side road reached by two left turns, a few metres shorter, beat the main
+        // road. Main Road runs north from A through J1, bends left at C1 (two roads only: free) and runs west through C2.
+        // Side Road leaves it at J1 by a left turn and rejoins it at C2 by another, 2.2 m shorter.
+        val main = WayAttrs(WayClass.TERTIARY, Surface.PAVED, name = "Main Road")
+        val side = WayAttrs(WayClass.TERTIARY, Surface.PAVED, name = "Side Road")
+        val g = graph(
+            WayLine.of(main, -0.002 to 0.0, 0.0 to 0.0, 0.002 to 0.0, 0.002 to -0.002, 0.002 to -0.004),
+            WayLine.of(side, 0.0 to 0.0, 0.00002 to -0.002, 0.002 to -0.002),
+        )
+        val a = -0.001 to 0.0
+        val b = 0.002 to -0.003
+        val zero = drive(router(g, TurnTable.ZERO), a, b)
+        assertTrue(zero.passes(0.00002, -0.002), "at zero cost the side road: ${zero.route.points}")
+        val table = drive(g, a, b)
+        assertTrue(table.passes(0.002, 0.0), "with the table the main road: ${table.route.points}")
+        assertTrue(table.distanceM > zero.distanceM + 2.0, "${table.distanceM} against ${zero.distanceM}")
+        assertEquals(0, table.turns)
+        assertEquals(0.0, table.turnCostS!!, 1e-9)
+        // The side road pays a left turn at each end, 7 s each: the drive search's route there costs the zero route plus 14 s.
+        val forced = drive(router(g, DriveTurns), a, 0.001 to -0.002)
+        assertEquals(1, forced.turns)
+        assertEquals(DriveTurns.ACROSS_90_S, forced.turnCostS!!, 0.1)
+        assertTrue(zero.cost + CostModel(TravelMode.DRIVE).secondsCost(2 * DriveTurns.ACROSS_90_S - 0.5) > table.cost, "${zero.cost} ${table.cost}")
+        // Blind to turns (Quicker planning): the side road, and no turn fields.
+        val quick = drive(TileRouter(WholeGraph(g), driveTurns = false), a, b)
+        assertEquals(zero.distanceM, quick.distanceM, 0.01)
+        assertEquals(null, quick.turnCostS)
+        assertTrue("turnCostS" !in quick.json(), "${quick.json().keys}")
+        assertTrue("turnCostS" in table.json() && "turns" in table.json())
+    }
+
+    @Test
+    fun aRoadThatBendsAtASpurStaysFree() {
+        // Pass Road heads east to X and bends north there; an unnamed minor spur goes straight on east. The bend is the
+        // through exit: free both ways. Where the spur is Pass Road too (two exits match), the bend is a priced left.
+        val pass = WayAttrs(WayClass.SECONDARY, Surface.PAVED, name = "Pass Road")
+        fun g(spur: WayAttrs) = graph(WayLine.of(pass, 0.0 to -0.002, 0.0 to 0.0, 0.002 to 0.0), WayLine.of(spur, 0.0 to 0.0, 0.0 to 0.001))
+        val up = drive(g(minor), 0.0 to -0.001, 0.001 to 0.0)
+        assertEquals(0.0, up.turnCostS!!, 1e-9)
+        assertEquals(0, up.turns)
+        assertEquals(0.0, drive(g(minor), 0.001 to 0.0, 0.0 to -0.001).turnCostS!!, 1e-9)
+        val ambiguous = drive(g(pass), 0.0 to -0.001, 0.001 to 0.0)
+        assertEquals(1, ambiguous.turns)
+        assertEquals(DriveTurns.ACROSS_90_S, ambiguous.turnCostS!!, 0.1)
+        // The planned time includes the seconds.
+        assertEquals(up.timeS + DriveTurns.ACROSS_90_S, ambiguous.timeS, 0.2)
+    }
+
+    @Test
+    fun theRoadThroughAHairpinIsCheaperThanTheLotInside() {
+        // T108's case (Sunrise Point): a secondary road climbs to a hairpin apex A, where a viewpoint spur leaves (three
+        // roads, so the hairpin itself is the through exit), and comes back down; a service lot joins the two legs below.
+        // At zero cost the lot is about 9 s quicker; with the table it pays 11 s of turns (in: a right, 3 class steps,
+        // onto a rough road; out: a right) and the road through the apex, free, wins. Without the through exit the
+        // 163 degree hairpin would pay 6 s and the lot would still win.
+        val road = WayAttrs(WayClass.SECONDARY, Surface.PAVED, name = "Sunrise Road")
+        val g = graph(
+            WayLine.of(road, -0.003 to 0.0, -0.002 to 0.0, 0.0 to 0.0003, -0.002 to 0.0006, -0.003 to 0.0006),
+            WayLine.of(WayAttrs(WayClass.SERVICE, Surface.PAVED), -0.002 to 0.0, -0.002 to 0.0006),
+            WayLine.of(WayAttrs(WayClass.SERVICE, Surface.PAVED, name = "Viewpoint"), 0.0 to 0.0003, 0.0005 to 0.0003),
+        )
+        val a = -0.0028 to 0.0
+        val b = -0.0028 to 0.0006
+        val zero = drive(router(g, TurnTable.ZERO), a, b)
+        assertTrue(!zero.passes(0.0, 0.0003), "at zero cost through the lot: ${zero.route.points}")
+        val table = drive(g, a, b)
+        assertTrue(table.passes(0.0, 0.0003), "with the table through the apex: ${table.route.points}")
+        assertEquals(0.0, table.turnCostS!!, 1e-9)
+        assertTrue(table.timeS < zero.timeS + 11.0, "${table.timeS} against the lot's ${zero.timeS + 11.0}")
+        assertTrue(table.timeS + 6.0 > zero.timeS + 11.0, "the through exit decides it: ${table.timeS} + 6 against ${zero.timeS + 11.0}")
+    }
+
+    @Test
+    fun aRoundaboutIsPricedByItsAnglesAlone() {
+        // A roundabout the graph does not mark: four one-way arcs, anticlockwise (right-hand traffic), radius about 33 m,
+        // named "Circle"; four minor arms. Entering from the south, each exit pays a right turn in and a right turn out;
+        // the ring itself is free (the through exit at each arm).
+        val ring = WayAttrs(WayClass.MINOR, Surface.PAVED, flags = WayAttrs.ONEWAY, name = "Circle")
+        val r = 0.0003
+        fun arc(a0: Double): WayLine {
+            val pts = (0..6).map { k -> val t = (a0 + 90.0 * k / 6) * kotlin.math.PI / 180; r * kotlin.math.sin(t) to r * kotlin.math.cos(t) }
+            return WayLine.of(ring, *pts.toTypedArray())
+        }
+        // Angles anticlockwise from east: east (0) -> north (90) -> west (180) -> south (270) -> east.
+        val g = graph(
+            arc(0.0), arc(90.0), arc(180.0), arc(270.0),
+            WayLine.of(minor, -r to 0.0, -0.002 to 0.0), WayLine.of(minor, r to 0.0, 0.002 to 0.0),
+            WayLine.of(minor, 0.0 to r, 0.0 to 0.002), WayLine.of(minor, 0.0 to -r, 0.0 to -0.002),
+        )
+        val south = -0.0015 to 0.0
+        val costs = listOf(0.0 to 0.0015, 0.0015 to 0.0, 0.0 to -0.0015).map { b -> drive(g, south, b) }
+        // T282's report states these: two rights of about 67 degrees, 1.9 s each, 3.75 s whichever exit.
+        for ((i, p) in costs.withIndex()) {
+            assertEquals(2, p.turns, "exit ${i + 1}: ${p.turnCostS}")
+            assertEquals(ROUNDABOUT_S, p.turnCostS!!, 0.1, "exit ${i + 1}")
+        }
+    }
+
+    @Test
+    fun aStartAtANodeAtZeroCostIsTheNodeSearchsRoute() {
+        // T281's fix (a start at a node seeds a zero-length state in both directions, so the backward search does not skip
+        // states it may not travel), at zero cost: every node of a small grid with one-way streets as the start, to
+        // every other node, on both searches ([BothSearches] fails on any difference).
+        val oneway = minor.copy(flags = WayAttrs.ONEWAY)
+        val g = graph(
+            WayLine.of(oneway, 0.0 to 0.0, 0.0 to 0.002), WayLine.of(minor, 0.0 to 0.002, 0.0 to 0.004),
+            WayLine.of(oneway, 0.002 to 0.004, 0.002 to 0.002), WayLine.of(minor, 0.002 to 0.002, 0.002 to 0.0),
+            WayLine.of(minor, 0.0 to 0.0, 0.002 to 0.0), WayLine.of(oneway, 0.0 to 0.002, 0.002 to 0.002),
+            WayLine.of(minor, 0.0 to 0.004, 0.002 to 0.004), WayLine.of(oneway, 0.002 to 0.0, 0.003 to 0.0),
+        )
+        val both = bothSearches(g)
+        val nodes = (0 until g.nodeCount).map { g.nodeLat[it] / 1e6 to g.nodeLon[it] / 1e6 }
+        var routes = 0
+        for (a in nodes) for (b in nodes) {
+            if (a == b) continue
+            both.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE)
+            routes++
+        }
+        assertTrue(routes >= 30, "$routes routes")
+    }
+
+    @Test
+    fun aDrivePreferenceIsReadWithUnknownKeysAsTheDefault() {
+        assertEquals(DrivePreference.TIME, DrivePreference.DEFAULT)
+        assertEquals(DrivePreference.QUICK, DrivePreference.of(" Quick "))
+        assertEquals(null, DrivePreference.of("fuel"))
+        assertEquals(DrivePreference.TIME, DrivePreference.read("fuel"))
+        assertEquals(DrivePreference.TIME, DrivePreference.read(null))
+        assertTrue(DrivePreference.TIME.turns && !DrivePreference.QUICK.turns)
+    }
+
     companion object {
+        /** T282: the turn seconds of any exit of [aRoundaboutIsPricedByItsAnglesAlone]'s roundabout. */
+        const val ROUNDABOUT_S = 3.75
+
         /** Test-only: a turn across traffic of 30 degrees or more 60 s, a reversal 100 s, anything else free. */
         val LEFT = TurnTable { t ->
             when {
@@ -484,4 +667,4 @@ internal fun bothSearches(g: RoutingGraph): Router = bothSearches(WholeGraph(g))
 
 /** T281: [BothSearches] over [tiles] (with [overlay], shared by both). */
 internal fun bothSearches(tiles: GraphPieces, overlay: DriveOverlay? = null): Router =
-    BothSearches(TileRouter(tiles, overlay), TileRouter(tiles, overlay, driveTurns = false))
+    BothSearches(TileRouter(tiles, overlay, turns = TurnCost(TurnTable.ZERO)), TileRouter(tiles, overlay, driveTurns = false))

@@ -317,6 +317,13 @@ data class PlannedRoute(
      * the paved trails at Paradise are footways); read by [TripKinds.guess]. Empty when the router knows no grades.
      */
     val gradedMetersByClass: Map<WayClass, Double> = emptyMap(),
+    /**
+     * T282 (ADR 0062 Decision 7): on a drive planned on the drive search, the turns it paid for (those of more than zero
+     * seconds) and their seconds, which [timeS] includes; null on hike, bike and crow routes and on a drive planned on
+     * the node search (Quicker planning).
+     */
+    val turns: Int? = null,
+    val turnCostS: Double? = null,
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
@@ -331,7 +338,10 @@ data class PlannedRoute(
         "memory" to memory.ifEmpty { null }, // T76
         "instructions" to Directions.cued(instructions).map { it.json(mode) }, // T102; T116: texts with the default level's "then" cues
         "profile" to if (profileSamples) profile.map { listOf(r1(it.distanceM), it.eleM?.let(::r1)) } else null,
-    ).also { m -> pace?.let { m["pace"] = it.json() } } // T164: only when the time is the user's own
+    ).also { m ->
+        pace?.let { m["pace"] = it.json() } // T164: only when the time is the user's own
+        if (turnCostS != null) { m["turns"] = turns; m["turnCostS"] = r1(turnCostS) } // T282: drive routes on the drive search only
+    }
 
     companion object {
         fun r1(v: Double) = (v * 10).roundToLong() / 10.0
@@ -419,6 +429,28 @@ interface Router {
     }
 }
 
+/**
+ * T282 (ADR 0063 Decision 1): how a drive is planned, one choice: the phone's "Plan drives for" (a synced setting),
+ * devtool `route --prefer` and the server's `prefer=`, each stored or sent as [key]. [TIME] (the default) is the drive
+ * search with its turn seconds ([DriveSearch], [TurnTable.DRIVE]); [QUICK] the node search, blind to turns
+ * ([TileRouter.driveTurns] off; T281's `--no-turns` and `turns=0` are its aliases). A key this build does not know
+ * reads as [DEFAULT] ([read]); a later value (least fuel, T284) is one more line.
+ */
+enum class DrivePreference(val key: String, val turns: Boolean) {
+    TIME("time", true),
+    QUICK("quick", false);
+
+    companion object {
+        val DEFAULT = TIME
+
+        /** The preference named [key] (any case, trimmed), or null for one this build does not know. */
+        fun of(key: String?): DrivePreference? = key?.trim()?.lowercase()?.let { k -> entries.firstOrNull { it.key == k } }
+
+        /** [of], with an unknown or missing key read as [DEFAULT]. */
+        fun read(key: String?): DrivePreference = of(key) ?: DEFAULT
+    }
+}
+
 /** A [TileRouter] over one in-memory graph (no tiles): tests, tools, and the T60 editor's single-graph callers. */
 fun Router(graph: RoutingGraph): Router = TileRouter(WholeGraph(graph))
 
@@ -464,7 +496,11 @@ class TileRouter(
     /**
      * T281 (ADR 0062): whether a drive pays for its turns, on the drive search ([DriveSearch]); off, a drive is planned on
      * the node search, faster and blind to turns (the owner, 2026-11-14: "the fastest search should remain an option").
-     * Hike and bike always use the node search.
+     * Hike and bike always use the node search. T282: [DrivePreference.QUICK] ("Quicker planning"). Through the
+     * [overlay] the node search pays the cells' shortcut costs, which hold the turns inside each far cell (the cells are
+     * built once, with [TurnTable.DRIVE], not a second time without turns), so a quick drive of
+     * [DriveOverlay.MIN_DISTANCE_M] or more pays the turns in its far cells and none near its ends: its cost lies between
+     * the node search's and the drive search's in full, and its time (edges only) does not show them. Accepted (T282).
      */
     val driveTurns: Boolean = true,
     /** T281: the turn function of the drive search ([TurnTable.DRIVE] by default; tests pass their own table). */
@@ -1033,6 +1069,9 @@ class TileRouter(
     internal fun plan(
         model: CostModel, steps: List<Step>, cost: Double, s: End, t: End, expanded: Int, name: String, ids: UuidGenerator,
         memory: Map<String, Any?>,
+        /** T282: a drive search's turn seconds (added to the drive's time) and their count; null [turns] for the node search. */
+        turnS: Double = 0.0,
+        turns: Int? = null,
     ): PlannedRoute {
         val pts = ArrayList<RoutePoint>()
         var ascent = 0.0
@@ -1067,7 +1106,7 @@ class TileRouter(
         val distance = TrackStats.of(track).distanceM
         val hasEle = pts.any { it.ele != null }
         // T164: a fitted pace times the route's points piece by piece (as the trip summary does); else Naismith as before.
-        val time = if (model.mode == TravelMode.DRIVE) driveS else model.pathTimeS(if (hasEle) track[0] else emptyList(), distance, if (hasEle) ascent else 0.0)
+        val time = if (model.mode == TravelMode.DRIVE) driveS + turnS else model.pathTimeS(if (hasEle) track[0] else emptyList(), distance, if (hasEle) ascent else 0.0)
         fun minVia(i: Int) = if (model.mode != TravelMode.DRIVE && runRoadM[i] * 2 > runs[i].second) Router.MIN_VIA_ROAD_M else Router.MIN_VIA_M
         val via = runs.filterIndexed { i, it -> it.first != null && it.second >= minVia(i) }.map { it.first!! to it.second }
             .fold(ArrayList<Pair<String, Double>>()) { acc, r -> if (acc.isNotEmpty() && acc.last().first == r.first) acc[acc.size - 1] = r.first to acc.last().second + r.second else acc += r; acc }
@@ -1082,6 +1121,7 @@ class TileRouter(
             Directions.of(pts, model.mode, this), // T102
             model.pace, // T164
             graded, // T276
+            turns, if (turns != null) turnS else null, // T282
         )
     }
 

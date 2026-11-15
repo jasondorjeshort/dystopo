@@ -46,6 +46,9 @@ import kotlin.math.min
  * node itself is not priced (the drive search crosses a border from an out label to an in label, and a step out of a
  * shortcut into a detail piece reads as straight on), and inside a cell a node near the border counts only the cell's
  * own roads: ADR 0062's residual, which matters only where a border node is a junction. Level 2 is unchanged in code.
+ * T282: the table is [TurnTable.DRIVE]'s real seconds, the cell file is version 2 (an older one is refused and
+ * rebuilt), [json]'s `borderJunctions` counts the level-1 border nodes built here that are junctions, and a quick drive
+ * (the node search, [TileRouter.driveTurns] off) uses these same cells, so it pays the turns inside its far cells.
  */
 class DriveOverlay(
     /** The graph tile zoom (the level-1 cells). */
@@ -77,6 +80,11 @@ class DriveOverlay(
         val cost: DoubleArray,
         val graph: RoutingGraph,
         val buildMs: Long,
+        /**
+         * T282 (ADR 0062 Decision 5): border nodes that are junctions (counted when the cell is built; 0 for a cell read
+         * from a file): the turn at such a node is not priced, ADR 0062's residual.
+         */
+        val borderJunctions: Int = 0,
     )
 
     /**
@@ -108,6 +116,9 @@ class DriveOverlay(
     var shortcuts = 0L
         private set
     var borderNodes = 0L
+        private set
+    /** T282: of [borderNodes] (level 1, built here), those that are junctions ([Cell.borderJunctions]). */
+    var borderJunctions = 0L
         private set
     /** T89: cells read from cell files, level-2 cells built, level-2 pieces handed to searches. */
     var loaded = 0L
@@ -172,7 +183,7 @@ class DriveOverlay(
             val made = build(b)
             lock {
                 built++
-                if (made != null) { buildMs += made.buildMs; shortcuts += made.cost.size; borderNodes += made.baseNode.size }
+                if (made != null) { buildMs += made.buildMs; shortcuts += made.cost.size; borderNodes += made.baseNode.size; borderJunctions += made.borderJunctions }
             }
             keep(k, made)
             result = made to b
@@ -311,7 +322,7 @@ class DriveOverlay(
         lock {
             out = linkedMapOf(
                 "tiles" to cells.size, "built" to built, "hits" to hits, "buildMs" to buildMs,
-                "borderNodes" to borderNodes, "shortcuts" to shortcuts, "minClass" to MIN_CLASS.label,
+                "borderNodes" to borderNodes, "borderJunctions" to borderJunctions, "shortcuts" to shortcuts, "minClass" to MIN_CLASS.label,
                 // T89: the second level and the cell files.
                 "level2Zoom" to if (level2) level2Zoom else null, "level2Built" to built2, "level2Used" to used2,
                 "loadedFromFiles" to loaded, "cellFiles" to files.keys.map { it.file },
@@ -339,6 +350,11 @@ class DriveOverlay(
         }
         val k = border.size
         if (k == 0) return null
+        // T282: a border node is a junction when its own drivable roads and the road it continues into across the
+        // border (a cut: one more road) are three or more. A junction exactly at a cut with more roads on the far side
+        // counts as one road there.
+        var junctions = 0
+        for (i in 0 until k) if (Junction(listOf(base), intArrayOf(border[i])).roads.size + 1 > 2) junctions++
         val index = HashMap<Int, Int>(k * 2)
         for (i in 0 until k) index[border[i]] = i
         val from = IntList(); val to = IntList(); val cost = ArrayList<Double>(); val length = ArrayList<Float>()
@@ -357,7 +373,7 @@ class DriveOverlay(
             g.source, IntArray(k) { g.nodeLon[border[it]] }, IntArray(k) { g.nodeLat[border[it]] }, ByteArray(k) { g.nodeLevel[border[it]] }, // T89: joins match levels
             from.toArray(), to.toArray(), FloatArray(m) { length[it] },
         )
-        return Cell(base.x, base.y, IntArray(k) { border[it] }, cost.toDoubleArray(), graph, clock() - t0)
+        return Cell(base.x, base.y, IntArray(k) { border[it] }, cost.toDoubleArray(), graph, clock() - t0, junctions)
     }
 
     /** Whether a node lies on the border of tile ([x], [y]) at zoom [z] (within [GraphPieces.JOIN_M]). */
@@ -403,6 +419,27 @@ class DriveOverlay(
             out.reverse()
             return out
         }
+
+        /**
+         * T282: the turns shortcut [e] pays inside its cell and their seconds (turns of zero seconds not counted), asked
+         * of the turn function along its [unpack] exactly as the cell build priced them (the cell's own roads only).
+         */
+        open fun turnsAlong(e: Int): Pair<Int, Double> {
+            if (turns.free) return 0 to 0.0
+            val edges = unpack(e)
+            val g = base.graph
+            val pieces = listOf(base)
+            var count = 0
+            var total = 0.0
+            for (i in 0 until edges.size - 1) {
+                val (e1, f1) = edges[i]
+                val (e2, f2) = edges[i + 1]
+                val node = if (f1) g.edgeTo[e1] else g.edgeFrom[e1]
+                val sec = turns.seconds(base, e1, f1, Junction(pieces, intArrayOf(node)), base, e2, f2)
+                if (sec > 0) { count++; total += sec }
+            }
+            return count to total
+        }
     }
 
     /**
@@ -413,7 +450,19 @@ class DriveOverlay(
         Overlay(null, TurnCost(TurnTable.ZERO), { error("a level-2 cell has no base tile") }) {
         override fun cost(e: Int): Double = cell2.cost[e]
 
-        override fun expand(e: Int): List<Triple<GraphPiece, Int, Boolean>> {
+        override fun expand(e: Int): List<Triple<GraphPiece, Int, Boolean>> =
+            chain(e).flatMap { (p, sc) -> p.overlay!!.expand(sc) }
+
+        /** T282: the level-1 cells' turns along shortcut [e] (the joins between them are border nodes: not priced). */
+        override fun turnsAlong(e: Int): Pair<Int, Double> {
+            var count = 0
+            var total = 0.0
+            for ((p, sc) in chain(e)) { val (n, sec) = p.overlay!!.turnsAlong(sc); count += n; total += sec }
+            return count to total
+        }
+
+        /** Shortcut [e] as the level-1 pieces and their shortcuts it runs through, in travel order. */
+        private fun chain(e: Int): List<Pair<GraphPiece, Int>> {
             val c = cell2
             val subs = ArrayList<Cell>()
             val subPieces = ArrayList<GraphPiece>()
@@ -444,9 +493,7 @@ class DriveOverlay(
                 v = s.parent[v]
             }
             chain.reverse()
-            val out = ArrayList<Triple<GraphPiece, Int, Boolean>>()
-            for ((ci, sc) in chain) out += subPieces[ci].overlay!!.expand(sc)
-            return out
+            return chain.map { (ci, sc) -> subPieces[ci] to sc }
         }
     }
 
@@ -623,7 +670,7 @@ class DriveOverlay(
  * through ranged reads, like graph tiles.
  *
  * ```
- * "DYSO" u8 version(=1) u32 headerLength
+ * "DYSO" u8 version(=2; T282) u32 headerLength
  * str sourceFile, str fingerprint, str demFingerprint, u8 sourceZoom, u64 builtAtMs   (the graph file's GraphSource)
  * u8 tileZoom, u8 level2Zoom, u8 minClass
  * varint cellCount, per cell: u8 level, varint x, varint y, varint bodyLength
@@ -717,7 +764,8 @@ class OverlayCellFile private constructor(
     )
 
     companion object {
-        const val VERSION = 1
+        /** T282: 2, cells priced with [TurnTable.DRIVE]'s turn seconds (1: T89 to T281, turns free); an older file is refused and rebuilt. */
+        const val VERSION = 2
         const val SUFFIX = "-overlay.idx"
         private val MAGIC = byteArrayOf(0x44, 0x59, 0x53, 0x4F) // "DYSO"
 
@@ -776,7 +824,7 @@ class OverlayCellFile private constructor(
 
         /**
          * Opens a cell file through [read] (offset, length) -> bytes, reading only its header. Throws
-         * IllegalArgumentException for anything but a valid version 1 file.
+         * IllegalArgumentException for anything but a valid file of [VERSION] (T282: a version 1 file, priced before turns cost, is refused).
          */
         fun open(read: (Long, Int) -> ByteArray): OverlayCellFile {
             val first = read(0, 9)
