@@ -34,6 +34,11 @@ import io.github.jasondorjeshort.dystopo.routing.TripKind
  * T276: two more optional keys, `tripKind` (`everyday`, `backcountry`) and `tripKindReason` (`mode`, `share`, `tap`,
  * `unknown`; `tap` when a tapped Walk or Hike chose it), so a relaunch restores the kind and a held tap. A restored plan
  * has no share in town to guess from again; a file without the keys reads by the mode (on foot: Hike, `unknown`).
+ *
+ * T285 (ADR 0063 Decision 7), optional keys on a drive: `metric` (`time`, `fuel`) and `fuelIndex` (the plan's), and
+ * `fuel`: what it was asked for (`prefer`), whether a server planned it (`remote`), and the least-time plan's
+ * `leastTimeFuelIndex` and `leastTimeS` once the phone has planned it (with that plan's `ms` and `searchBytes`), so the
+ * card's line survives a restart. A file without them reads as before T285: no line.
  */
 object SessionRoute {
     const val VERSION = 1
@@ -48,12 +53,15 @@ object SessionRoute {
         val from: RouteOrigin.End? = null, val to: RouteOrigin.End? = null,
         /** T276: the kind and its reason, when the file has them. */
         val kind: TripKind? = null, val kindReason: KindReason? = null,
+        /** T285: the drive's comparison with least time, when the file has it (`working` reads as `none`: it never finished). */
+        val fuel: FuelComparison? = null,
     )
 
     fun encode(
         p: PlannedRoute, start: Pair<Double, Double>, end: Pair<Double, Double>, now: Long,
         from: RouteOrigin.End? = null, to: RouteOrigin.End? = null,
         kind: TripKind? = null, kindReason: KindReason? = null,
+        fuel: FuelComparison? = null,
     ): String = JsonWriter.write(
         linkedMapOf(
             "version" to VERSION, "savedAt" to now, "id" to p.route.id, "name" to p.route.name, "description" to p.route.description,
@@ -63,8 +71,27 @@ object SessionRoute {
             "via" to p.via.map { listOf(it.first, it.second) },
             "instructions" to p.instructions.map { it.json(p.mode) },
             "start" to listOf(start.first, start.second), "end" to listOf(end.first, end.second),
-        ) + listOfNotNull(fixJson("startFix", from), fixJson("endFix", to), kind?.let { "tripKind" to it.key }, kindReason?.let { "tripKindReason" to it.key }),
+        ) + listOfNotNull(
+            fixJson("startFix", from), fixJson("endFix", to), kind?.let { "tripKind" to it.key }, kindReason?.let { "tripKindReason" to it.key },
+            p.metric?.let { "metric" to it.key }, p.fuelIndex?.let { "fuelIndex" to it }, fuel?.let { "fuel" to fuelJson(it) }, // T285
+        ),
     )
+
+    /** T285: the comparison as the file keeps it. */
+    private fun fuelJson(f: FuelComparison): Map<String, Any?> = linkedMapOf<String, Any?>(
+        "prefer" to f.prefer?.key, "remote" to f.remote, "state" to f.state,
+        "leastTimeFuelIndex" to f.leastTimeFuelIndex, "leastTimeS" to f.leastTimeS, "ms" to f.ms, "searchBytes" to f.searchBytes,
+    ).filterValues { it != null }
+
+    private fun fuelOf(m: Map<*, *>?, plan: PlannedRoute): FuelComparison? {
+        if (m == null || plan.mode != TravelMode.DRIVE) return null
+        fun num(k: String) = (m[k] as? Number)?.toDouble()
+        val state = (m["state"] as? String)?.takeIf { it == LineState.READY } ?: LineState.NONE
+        return FuelComparison(
+            io.github.jasondorjeshort.dystopo.routing.DrivePreference.of(m["prefer"] as? String), plan.metric, m["remote"] == true,
+            plan.fuelIndex, plan.timeS, num("leastTimeFuelIndex"), num("leastTimeS"), state, num("ms")?.toLong(), num("searchBytes")?.toLong(),
+        )
+    }
 
     private fun fixJson(key: String, e: RouteOrigin.End?): Pair<String, Any?>? {
         val f = e?.fix ?: return null
@@ -97,12 +124,15 @@ object SessionRoute {
             via = (m["via"] as? List<*>).orEmpty().mapNotNull { v -> (v as? List<*>)?.let { (it[0] as String) to (it[1] as Number).toDouble() } },
             memory = linkedMapOf("restored" to true),
             instructions = (m["instructions"] as? List<*>).orEmpty().mapNotNull { Instruction.parse(it as? Map<*, *>) },
+            metric = if (mode == TravelMode.DRIVE) io.github.jasondorjeshort.dystopo.routing.DriveMetric.of(m["metric"] as? String) else null, // T285
+            fuelIndex = if (mode == TravelMode.DRIVE) num("fuelIndex") else null,
         )
         val start = pair("start")
         val end = pair("end")
         Restored(
             plan, start, end, (num("savedAt") ?: 0.0).toLong(), fixEnd(m["startFix"] as? Map<*, *>, start), fixEnd(m["endFix"] as? Map<*, *>, end),
             TripKind.of(m["tripKind"] as? String), KindReason.of(m["tripKindReason"] as? String),
+            fuelOf(m["fuel"] as? Map<*, *>, plan),
         )
     }.getOrNull()
 }

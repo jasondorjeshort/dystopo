@@ -19,6 +19,10 @@ import kotlin.math.roundToLong
  *
  * [fetch] does the HTTP GET (the platform's client; on the phone through the cleartext policy) and
  * returns the status and body; it may throw on a network error. [server] is the base URL.
+ *
+ * T285: a drive's plan carries the metric the server says it used ([PlannedRoute.metric]; least time when the reply names
+ * none, as servers before T284 planned) and its `fuelIndex`; `memory` keeps the reply's `prefer` and `metric` as
+ * `remotePrefer` and `remoteMetric`. The phone never compares a server's plan with a second one (ADR 0063 Decision 7).
  */
 class RemoteRouter(
     val server: String,
@@ -108,13 +112,20 @@ class RemoteRouter(
         val instructions = (json["instructions"] as? List<*>)?.mapNotNull { Instruction.parse(it as? Map<*, *>) } ?: emptyList()
         val route = Route(ids.next(), name, pts, description = desc, type = mode.label)
         fun end(lat: Double, lon: Double, p: RoutePoint) = EdgeSnap(-1, 0, 0.0, p.lat, p.lon, TrackStats.distanceM(lat, lon, p.lat, p.lon))
+        // T285 (ADR 0063 Decision 7): a drive's reply echoes the metric the server used (T284's `metric`); a server before T284
+        // names none and planned for least time, so the card can say least fuel was not applied. Its `fuelIndex` is kept.
+        val drive = mode == TravelMode.DRIVE
+        val metric = if (drive) DriveMetric.of(json["metric"] as? String) ?: DriveMetric.TIME else null
+        val fuelIndex = if (drive) (json["fuelIndex"] as? Number)?.toDouble() else null
         return RouteResult.Found(
             PlannedRoute(
                 route, mode, stats.distanceM, ascent, descent, time, TrackStats.profile(track, Router.PROFILE_SAMPLES),
                 cost = 0.0, edges = 0, start = end(fromLat, fromLon, pts.first()), end = end(toLat, toLon, pts.last()), expanded = 0,
                 metersByClass = emptyMap(), via = emptyList(),
-                memory = linkedMapOf("remote" to server, "remoteMs" to ms, "serverMs" to json["ms"], "pack" to json["pack"]),
+                memory = linkedMapOf("remote" to server, "remoteMs" to ms, "serverMs" to json["ms"], "pack" to json["pack"]) +
+                    if (drive) linkedMapOf("remotePrefer" to json["prefer"], "remoteMetric" to json["metric"]) else emptyMap(),
                 instructions = instructions,
+                metric = metric, fuelIndex = fuelIndex,
             ),
         )
     }

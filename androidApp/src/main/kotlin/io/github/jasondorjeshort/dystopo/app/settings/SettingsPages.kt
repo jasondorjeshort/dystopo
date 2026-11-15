@@ -448,9 +448,11 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
 
 /** T213: the Show trail disagreements row's line under its title (ADR 0031 string). */
 // T282: Plan drives for's choices, their labels and lines (ADR 0063 Decision 1's first wording; ADR 0031: the owner's to
-// adjust), in the order the row shows them (Quicker planning last).
+// adjust), in the order the row shows them (Quicker planning last; T285: Least fuel second).
 internal val DRIVE_PREFERENCE_CHOICES: List<Triple<io.github.jasondorjeshort.dystopo.routing.DrivePreference, String, String>> = listOf(
     Triple(io.github.jasondorjeshort.dystopo.routing.DrivePreference.TIME, "Least time", "The quickest drive, counting the seconds turns cost."),
+    // T285: the third value, least fuel (ADR 0063 Decisions 1 and 7).
+    Triple(io.github.jasondorjeshort.dystopo.routing.DrivePreference.FUEL, "Least fuel", "Favours steady roads and fewer climbs and turns. An estimate for an average car; it can take longer."),
     Triple(io.github.jasondorjeshort.dystopo.routing.DrivePreference.QUICK, "Quicker planning", "Least time without counting turns. Long routes appear sooner; the drive may be a little slower."),
 )
 // end T282
@@ -644,9 +646,9 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         },
         // T282
         HelpText("settings.drivePreference", "Plan drives for", at(SettingsGroup.NAVIGATION, "Plan drives for"), show = page(SettingsGroup.NAVIGATION)) {
-            "How the phone plans a drive. Least time finds the quickest drive, counting the seconds each turn costs, so it " +
-                "keeps to the main road rather than turning off for a shortcut. Quicker planning skips the turns: long routes " +
-                "appear sooner and the drive may be a little slower. Drives your server plans follow it too."
+            "How the phone plans a drive. Least time is the quickest, counting the seconds turns cost. Least fuel favours " +
+                "steady roads and fewer climbs and turns; the route card says how much fuel it saves and the minutes it adds. " +
+                "Quicker planning skips the turns, so long routes appear sooner. Drives your server plans follow it too."
         },
         // end T282
         HelpText("settings.navSpeech", "Spoken directions", at(SettingsGroup.NAVIGATION, "Navigation: Spoken directions"), show = page(SettingsGroup.NAVIGATION)) { units ->
