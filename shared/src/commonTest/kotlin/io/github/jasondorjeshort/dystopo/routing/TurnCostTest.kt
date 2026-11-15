@@ -580,8 +580,12 @@ class TurnCostTest {
     fun aDrivePreferenceIsReadWithUnknownKeysAsTheDefault() {
         assertEquals(DrivePreference.TIME, DrivePreference.DEFAULT)
         assertEquals(DrivePreference.QUICK, DrivePreference.of(" Quick "))
-        assertEquals(null, DrivePreference.of("fuel"))
-        assertEquals(DrivePreference.TIME, DrivePreference.read("fuel"))
+        // T284: fuel is a value now (least fuel); the phone reads it as time until T285 ([DrivePreference.onPhone]).
+        assertEquals(DrivePreference.FUEL, DrivePreference.of("fuel"))
+        assertEquals(null, DrivePreference.onPhone("fuel"))
+        assertEquals(DrivePreference.QUICK, DrivePreference.onPhone("quick"))
+        assertEquals(DrivePreference.TIME, DrivePreference.read("diesel"))
+        assertTrue(DrivePreference.FUEL.turns && DrivePreference.FUEL.metric == DriveMetric.FUEL && DrivePreference.QUICK.metric == DriveMetric.TIME)
         assertEquals(DrivePreference.TIME, DrivePreference.read(null))
         assertTrue(DrivePreference.TIME.turns && !DrivePreference.QUICK.turns)
     }

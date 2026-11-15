@@ -185,8 +185,8 @@ object DriveTurns : TurnTable {
 
 /**
  * The turn function: [seconds] of leaving a junction along one edge after arriving by another, and [cost], those seconds
- * as search cost through [model]'s [CostModel.secondsCost] (today drive metres at [CostModel.DRIVE_REF_KMH], like an
- * edge's time). [side] is the driving side; T283: null (the default) means "the side where it is used", which
+ * as search cost through [model]'s [CostModel.turnCost] (under time drive metres at [CostModel.DRIVE_REF_KMH], like an
+ * edge's time; T284, under fuel the turn's fuel, which needs the out-edge's speed). [side] is the driving side; T283: null (the default) means "the side where it is used", which
  * [at] fixes from [DrivingSides] (once per search at the route's start, once per overlay cell at the cell's centre);
  * a TurnCost used without [at] reads null as right.
  */
@@ -211,9 +211,9 @@ class TurnCost(
         return if (s > 0) s else 0.0 // NaN and negatives read as free
     }
 
-    /** [seconds] as search cost ([CostModel.secondsCost]). */
+    /** [seconds] as search cost ([CostModel.turnCost]; T284: onto [outEdge], whose speed a fuel cost reads). */
     fun cost(inPiece: GraphPiece, inEdge: Int, inForward: Boolean, junction: Junction, outPiece: GraphPiece, outEdge: Int, outForward: Boolean): Double =
-        if (free) 0.0 else model.secondsCost(seconds(inPiece, inEdge, inForward, junction, outPiece, outEdge, outForward))
+        if (free) 0.0 else model.turnCost(seconds(inPiece, inEdge, inForward, junction, outPiece, outEdge, outForward), outPiece.graph, outEdge)
 
     companion object {
         /** Two ways of one class, name and level leaving a junction within this many degrees are one road. */
@@ -230,4 +230,28 @@ class TurnCost(
         /** The angle between two bearings, 0 to 180. */
         fun angleBetween(a: Double, b: Double): Double = abs(signed(a - b))
     }
+}
+
+/**
+ * T282, T284: the turns along a route or a shortcut as the search priced them: how many cost more than zero seconds, their
+ * seconds and their fuel ([CostModel.turnFuelJ], the route's `fuelIndex` share).
+ */
+class TurnSum {
+    var count = 0
+        private set
+    var seconds = 0.0
+        private set
+    var fuelJ = 0.0
+        private set
+
+    /** A turn of [sec] onto edge [outEdge] of [g] (nothing when it costs no seconds). */
+    fun add(sec: Double, model: CostModel, g: RoutingGraph, outEdge: Int) {
+        if (sec > 0) { count++; seconds += sec; fuelJ += model.turnFuelJ(sec, g, outEdge) }
+    }
+
+    fun add(other: TurnSum) { count += other.count; seconds += other.seconds; fuelJ += other.fuelJ }
+
+    /** The count and the seconds, as T282 returned them. */
+    operator fun component1(): Int = count
+    operator fun component2(): Double = seconds
 }

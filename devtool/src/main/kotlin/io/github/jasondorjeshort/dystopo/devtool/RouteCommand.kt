@@ -44,9 +44,19 @@ import io.github.jasondorjeshort.dystopo.store.db.TrackDb
 import io.github.jasondorjeshort.dystopo.sync.Bundle
 import java.util.Properties
 import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DriveMetric
 import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
 import io.github.jasondorjeshort.dystopo.routing.DrivePreference
+import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
+import io.github.jasondorjeshort.dystopo.routing.FuelModel
+import io.github.jasondorjeshort.dystopo.routing.GraphSource
+import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
 import io.github.jasondorjeshort.dystopo.routing.GraphTileFile
+import io.github.jasondorjeshort.dystopo.routing.OverlayCellFile
+import io.github.jasondorjeshort.dystopo.routing.Surface
+import io.github.jasondorjeshort.dystopo.routing.WayAttrs
+import io.github.jasondorjeshort.dystopo.routing.WayClass
+import io.github.jasondorjeshort.dystopo.routing.WayLine
 import io.github.jasondorjeshort.dystopo.routing.TileRouter
 import io.github.jasondorjeshort.dystopo.routing.TiledGraph
 import io.github.jasondorjeshort.dystopo.routing.WholeGraph
@@ -90,6 +100,13 @@ import kotlin.math.cos
  *   (cells built, their milliseconds) in `search.overlay`.
  *   T283: `search.drivingSide` (`left` or `right`, drives only): the side the turns are priced for, from the table at
  *   the start ([io.github.jasondorjeshort.dystopo.routing.DrivingSides]).
+ *   T284 (ADR 0063): `--prefer fuel` plans least fuel (the drive search on the fuel model's costs); every drive's `route`
+ *   JSON names its `metric` (`time` or `fuel`) beside `cost` and carries `fuelIndex` (its fuel in the model's joules, for
+ *   comparing routes only), and `search.metric` and `search.fuelModel` say which ran. `--overlay-warm` (with
+ *   `--overlay-min-km`) first builds every overlay cell of the graph file for the metric, both levels, as the server's
+ *   warm-up does, writes the cell file next to the graph file (`<archive>-overlay.idx`, or `<archive>-overlay-fuel.idx`
+ *   for fuel) and reports `search.overlayWarm`. `--fixture devtool/fixtures/fuel-pass.json --drive west-east` routes on
+ *   the committed synthetic fixture instead of a pack (no PNG: it has no DEM).
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters; T281:
  *   `driveStates`, the drive search's states per junction on this graph.
  *
@@ -115,15 +132,19 @@ class RouteCommand : CliktCommand(name = "route") {
     private val graphFile by option("--graph", help = "Graph file (default: <archive name>-graph.idx next to the pack, e.g. rainier-outdoors-graph.idx)").file()
     private val gpx by option("--gpx", help = "Write the route as GPX here").file()
     private val noRender by option("--no-render", help = "Skip the PNG").flag()
-    private val prefer by option("--prefer", help = "How a drive is planned (T282, the phone's Plan drives for): time (default: least time, turns priced) or quick (quicker planning, blind to turns)").choice(*DrivePreference.entries.map { it.key }.toTypedArray())
+    private val prefer by option("--prefer", help = "How a drive is planned (T282, the phone's Plan drives for): time (default: least time, turns priced), quick (quicker planning, blind to turns) or fuel (T284: least fuel, an estimate for an average car)").choice(*DrivePreference.entries.map { it.key }.toTypedArray())
     private val noTurns by option("--no-turns", help = "The same as --prefer quick (T281's switch)").flag()
     private val overlayMinKm by option("--overlay-min-km", help = "Route over the graph tiles with a drive overlay for drives this many km or more apart (T281; the server uses 40)").double()
+    private val overlayWarm by option("--overlay-warm", help = "With --overlay-min-km: first build every overlay cell of the graph file for the drive's metric and write its cell file next to the graph file (T284)").flag()
+    private val fixture by option("--fixture", help = "Route on a synthetic road fixture (JSON, e.g. devtool/fixtures/fuel-pass.json) instead of a pack (T284)").file(mustExist = true, canBeDir = false)
+    private val drive by option("--drive", help = "With --fixture: the label of one of its drives (its start and end; a drive)")
     private val zoomOption by option("--zoom", help = "Render zoom (default: the deepest up to 15 that fits about 12 Mpx)").int().restrictTo(8..16)
     private val style by StyleOptions()
     private val out by option("--out", help = "Output PNG (default out/route-<pack>.png)").file()
 
     override fun run() {
         if (currentContext.invokedSubcommand != null) return
+        fixture?.let { return runFixture(it) }
         val crow = mode == "crow"
         val packFile = pack ?: dem.takeIf { crow } ?: throw UsageError("--pack is required (for --mode crow, --pack or --dem)")
         val (fromLat, fromLon) = latLon(from ?: throw UsageError("--from lat,lon is required"), "--from")
@@ -144,16 +165,18 @@ class RouteCommand : CliktCommand(name = "route") {
             val preference = if (noTurns) DrivePreference.QUICK else DrivePreference.read(prefer)
             val driveTurns = preference.turns
             val overlay = minKm?.let { DriveOverlay(clock = { System.nanoTime() / 1_000_000 }) }
-            val router = if (overlay == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = driveTurns) else {
-                val tiled = TiledGraph(listOf(GraphTileFile.open(File(info["file"] as String).readBytes())))
-                TileRouter(tiled, overlay, driveTurns = driveTurns, minDistanceM = minKm * 1000)
+            var warmed: Map<String, Any?>? = null
+            val router = if (overlay == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = driveTurns, metric = preference.metric) else {
+                val graphFile = File(info["file"] as String)
+                val archive = GraphTileFile.open(graphFile.readBytes())
+                val tiled = TiledGraph(listOf(archive))
+                if (overlayWarm) warmed = timings.time("overlayWarm") { warm(overlay, archive, tiled, preference.metric, graphFile, packFile) }
+                TileRouter(tiled, overlay, driveTurns = driveTurns, minDistanceM = minKm * 1000, metric = preference.metric)
             }
             timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
             report["graph"] = info + ("summary" to graph.json())
             val r = timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
-            // T283: the driving side the drive search prices its turns with (looked up at the start; null for hike and bike).
-            val side = if (TravelMode.of(mode) == TravelMode.DRIVE) io.github.jasondorjeshort.dystopo.routing.DrivingSides.at(fromLat, fromLon).key else null
-            report["search"] = linkedMapOf("prefer" to preference.key, "driveTurns" to driveTurns, "drivingSide" to side, "overlayMinKm" to minKm, "overlay" to overlay?.json())
+            report["search"] = searchJson(preference, mode, fromLat, fromLon, minKm, overlay, warmed)
             r
         }
         when (result) {
@@ -189,6 +212,63 @@ class RouteCommand : CliktCommand(name = "route") {
                     report["gpx"] = f.path
                 }
                 if (!noRender) report["render"] = render(doc, demFile, packFile, timings)
+                report["timingsMs"] = timings.ms
+                echo(pretty(report))
+            }
+        }
+    }
+
+    /** T281 to T284: the `search` object: how the route was planned. */
+    private fun searchJson(preference: DrivePreference, mode: String, fromLat: Double, fromLon: Double, minKm: Double?, overlay: DriveOverlay?, warmed: Map<String, Any?>?): Map<String, Any?> {
+        val isDrive = TravelMode.of(mode) == TravelMode.DRIVE
+        // T283: the driving side the drive search prices its turns with (looked up at the start; null for hike and bike).
+        val side = if (isDrive) io.github.jasondorjeshort.dystopo.routing.DrivingSides.at(fromLat, fromLon).key else null
+        return linkedMapOf(
+            "prefer" to preference.key, "driveTurns" to preference.turns, "metric" to if (isDrive) preference.metric.key else null, // T284
+            "fuelModel" to if (isDrive && preference.metric == DriveMetric.FUEL) FuelModel.DEFAULT.json() else null,
+            "drivingSide" to side, "overlayMinKm" to minKm, "overlayWarm" to warmed, "overlay" to overlay?.json(),
+        )
+    }
+
+    /**
+     * T284: the server's full warm-up of [archive] for [metric] ([DriveOverlay.warm]), its cell file written next to the
+     * graph file ([graphFile]) as `<pack archive>-overlay.idx` or `-overlay-fuel.idx`.
+     */
+    private fun warm(overlay: DriveOverlay, archive: GraphTileArchive, tiled: TiledGraph, metric: DriveMetric, graphFile: File, packFile: File): Map<String, Any?> {
+        val t0 = System.nanoTime()
+        val w = overlay.warm(archive, metric) { x, y -> tiled.piece(0, x, y) }
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        val cellFile = File(graphFile.absoluteFile.parentFile, OverlayCellFile.fileNameFor(packFile.name, metric))
+        w.file?.let { cellFile.writeBytes(it) }
+        return linkedMapOf(
+            "metric" to metric.key, "tiles" to archive.entries.size, "cells" to w.cells, "level2Cells" to w.level2Cells,
+            "ms" to ms, "level1Ms" to w.level1Ms, "level2Ms" to w.level2Ms, "file" to cellFile.path.takeIf { w.file != null }, "bytes" to w.file?.size,
+        )
+    }
+
+    /** T284: one drive of a synthetic fixture ([RouteFixture]) under `--prefer`, printed as a pack's route is (no PNG: no DEM). */
+    private fun runFixture(file: File) {
+        val fx = RouteFixture.load(file)
+        val label = drive ?: throw UsageError("--drive <label> is required with --fixture (${fx.drives.keys.joinToString()})")
+        val (a, b) = fx.drives[label] ?: throw UsageError("no drive '$label' in ${file.path} (${fx.drives.keys.joinToString()})")
+        val preference = if (noTurns) DrivePreference.QUICK else DrivePreference.read(prefer)
+        val timings = Timings()
+        val minKm = overlayMinKm
+        val overlay = minKm?.let { DriveOverlay(clock = { System.nanoTime() / 1_000_000 }) }
+        val router = if (overlay == null || minKm == null) TileRouter(WholeGraph(fx.graph), driveTurns = preference.turns, metric = preference.metric)
+            else TileRouter(TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(fx.graph)))), overlay, driveTurns = preference.turns, minDistanceM = minKm * 1000, metric = preference.metric)
+        val r = timings.time("route") { router.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE, snap, label) }
+        val report = linkedMapOf<String, Any?>("fixture" to file.path, "drive" to label, "graph" to fx.graph.json())
+        report["search"] = searchJson(preference, "drive", a.first, a.second, minKm, overlay, null)
+        when (r) {
+            is RouteResult.Failed -> {
+                report["route"] = null; report["failure"] = r.json(); report["timingsMs"] = timings.ms
+                echo(pretty(report))
+                throw ProgramResult(1)
+            }
+            is RouteResult.Found -> {
+                report["route"] = r.plan.json(profileSamples = false)
+                report["render"] = mapOf("skipped" to "a fixture has no DEM pack")
                 report["timingsMs"] = timings.ms
                 echo(pretty(report))
             }
@@ -389,3 +469,52 @@ internal object RouteGraphs {
 }
 
 private fun pretty(value: Any?): String = reportJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(MiniJson.encode(value)))
+
+/**
+ * T284: a synthetic road network for devtool `route --fixture` (ADR 0063: no public drive need differ between least time
+ * and least fuel, so the committed fixture shows that they can). JSON: `baseM` (the ground's height), `hills` (each
+ * `lat`, `lon`, `heightM`, `radiusM`: a smooth bump, `heightM x (1 + cos(pi d / radiusM)) / 2` within the radius), `lines`
+ * (each `class`, optional `name`, `maxspeed`, `surface`, `oneway`, and `points` as [lat, lon]) and `drives` (each `label`,
+ * `from` and `to` as [lat, lon]). The graph is built as a pack's is, its heights sampled from the hills.
+ */
+internal object RouteFixture {
+    class Fixture(val graph: RoutingGraph, val drives: Map<String, Pair<Pair<Double, Double>, Pair<Double, Double>>>)
+
+    fun load(file: File): Fixture {
+        val root = MiniJson.parseObject(file.readText())
+        fun num(v: Any?, what: String): Double = (v as? Number)?.toDouble() ?: throw CliktError("${file.path}: $what must be a number")
+        fun point(v: Any?, what: String): Pair<Double, Double> {
+            val l = v as? List<*> ?: throw CliktError("${file.path}: $what must be [lat, lon]")
+            return num(l.getOrNull(0), what) to num(l.getOrNull(1), what)
+        }
+        val base = (root["baseM"] as? Number)?.toDouble() ?: 0.0
+        val hills = (root["hills"] as? List<*> ?: emptyList<Any?>()).map { h ->
+            val m = h as? Map<*, *> ?: throw CliktError("${file.path}: a hill must be an object")
+            doubleArrayOf(num(m["lat"], "hill lat"), num(m["lon"], "hill lon"), num(m["heightM"], "hill heightM"), num(m["radiusM"], "hill radiusM"))
+        }
+        val sampler = ElevationSampler { lat, lon ->
+            base + hills.sumOf { h ->
+                val d = io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(lat, lon, h[0], h[1])
+                if (d >= h[3]) 0.0 else h[2] * (1 + cos(PI * d / h[3])) / 2
+            }
+        }
+        val lines = (root["lines"] as? List<*> ?: throw CliktError("${file.path}: lines required")).map { l ->
+            val m = l as? Map<*, *> ?: throw CliktError("${file.path}: a line must be an object")
+            val cls = WayClass.entries.firstOrNull { it.label == m["class"] } ?: throw CliktError("${file.path}: unknown class ${m["class"]}")
+            val attrs = WayAttrs(
+                cls, Surface.of((m["surface"] as? String) ?: "paved"), flags = if (m["oneway"] == true) WayAttrs.ONEWAY else 0,
+                name = m["name"] as? String, maxspeedKmh = (m["maxspeed"] as? Number)?.toInt() ?: 0,
+            )
+            val pts = (m["points"] as? List<*> ?: throw CliktError("${file.path}: a line needs points")).map { point(it, "a line point") }
+            WayLine.of(attrs, *pts.toTypedArray())
+        }
+        val source = GraphSource("fixture-${file.nameWithoutExtension}.pmtiles", "fixture", "fixture", 14, 0, drive = true)
+        val graph = RoutingGraphBuilder(sampler, "fixture").build(lines, source)
+        val drives = LinkedHashMap<String, Pair<Pair<Double, Double>, Pair<Double, Double>>>()
+        for (d in root["drives"] as? List<*> ?: emptyList<Any?>()) {
+            val m = d as? Map<*, *> ?: continue
+            drives[m["label"] as? String ?: continue] = point(m["from"], "a drive's from") to point(m["to"], "a drive's to")
+        }
+        return Fixture(graph, drives)
+    }
+}

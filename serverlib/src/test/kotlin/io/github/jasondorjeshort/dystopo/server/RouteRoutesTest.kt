@@ -21,6 +21,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.TileType
 import io.github.jasondorjeshort.dystopo.routing.Directions
 import io.github.jasondorjeshort.dystopo.routing.DirectionsText
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
+import io.github.jasondorjeshort.dystopo.routing.DriveMetric
 import io.github.jasondorjeshort.dystopo.routing.OverlayCellFile
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.sync.Bundle
@@ -178,7 +179,19 @@ class RouteRoutesTest {
         assertTrue(RouteRoutes.driveTurnsOf(mapOf("prefer" to "time")))
         assertTrue(!RouteRoutes.driveTurnsOf(mapOf("prefer" to "quick")))
         assertTrue(!RouteRoutes.driveTurnsOf(mapOf("turns" to "0")))
-        assertTrue(RouteRoutes.driveTurnsOf(mapOf("prefer" to "fuel")), "a value this build does not know reads as least time")
+        // T284: prefer=fuel plans least fuel (on the drive search); turns=0 keeps the quick search, which has no fuel form.
+        assertTrue(RouteRoutes.driveTurnsOf(mapOf("prefer" to "fuel")))
+        assertEquals(DriveMetric.FUEL, RouteRoutes.driveMetricOf(mapOf("prefer" to "fuel")))
+        assertEquals(DriveMetric.TIME, RouteRoutes.driveMetricOf(mapOf("prefer" to "fuel", "turns" to "0")))
+        assertEquals(DriveMetric.TIME, RouteRoutes.driveMetricOf(mapOf("prefer" to "diesel")), "a value this build does not know reads as least time")
+        assertTrue(RouteRoutes.driveTurnsOf(mapOf("prefer" to "diesel")))
+        val eco = RoutePlanner(dir, flat).plan(listOf(at(420, 2400), at(3580, 2400)), "drive", metric = DriveMetric.FUEL)
+        assertEquals("fuel", eco["prefer"]); assertEquals("fuel", eco["metric"])
+        assertEquals("fuel", search(eco)["metric"])
+        assertTrue((eco["fuelIndex"] as Long) > 0 && eco["fuelIndex"] == search(eco)["fuelIndex"], "$eco")
+        assertEquals(r["path"], eco["path"], "the same road")
+        assertEquals("time", r["metric"]); assertEquals("time", r["prefer"]); assertEquals("quick", fast["prefer"])
+        assertEquals(eco["fuelIndex"], r["fuelIndex"], "the same road, the same fuel")
         // A tap on the trail snaps onto the road for a car.
         val tap = RoutePlanner(dir, flat).plan(listOf(at(420, 2048), at(3580, 2048)), "drive")
         @Suppress("UNCHECKED_CAST")
@@ -281,6 +294,35 @@ class RouteRoutesTest {
         val src = FileRangeSource(cellFile)
         assertEquals(2, OverlayCellFile.open { o, l -> src.read(o, l) }.cellCount, "the cell file holds the new graph's cells")
         assertTrue(cellFile.lastModified() >= before)
+
+        // T284: the first fuel request plans least fuel at once (level-1 cells built in the search) and queues the fuel
+        // warm-up, which writes its own file; the time file's bytes are untouched.
+        val timeBytes = cellFile.readBytes()
+        val fuelFile = File(dir, "w-outdoors-overlay-fuel.idx")
+        assertTrue(!fuelFile.exists())
+        val eco = p.plan(listOf(from, to), "drive", metric = DriveMetric.FUEL)
+        assertEquals("fuel", eco["metric"], eco.toString())
+        val until = System.currentTimeMillis() + 20_000
+        var fuelWarm: Map<String, Any?>? = null
+        while (System.currentTimeMillis() < until) {
+            fuelWarm = warm(p).singleOrNull { it["metric"] == "fuel" }?.takeIf { it["state"] != "queued" }
+            if (fuelWarm != null) break
+            Thread.sleep(20)
+        }
+        assertEquals("done", fuelWarm?.get("state"), warm(p).toString())
+        assertEquals(2, fuelWarm!!["cells"], fuelWarm.toString())
+        assertTrue(fuelFile.isFile && timeBytes.contentEquals(cellFile.readBytes()), "the fuel file beside an unchanged time file")
+        val fsrc = FileRangeSource(fuelFile)
+        assertEquals(2, OverlayCellFile.open(DriveMetric.FUEL) { o, l -> fsrc.read(o, l) }.cellCount)
+        assertEquals("time", warm(p).first { it["metric"] == "time" }["metric"], "the time warm-up's entry kept")
+        assertEquals("done", p.overlayWarm("w")?.get("state"), "the catalog reads the time warm-up")
+        // A restarted server's first fuel request reads the fuel file (registered, nothing built).
+        val q = RoutePlanner(dir, flat)
+        q.plan(listOf(from, to), "drive", metric = DriveMetric.FUEL)
+        val until2 = System.currentTimeMillis() + 20_000
+        while (System.currentTimeMillis() < until2 && warm(q).none { it["metric"] == "fuel" && it["state"] != "queued" }) Thread.sleep(20)
+        assertEquals("loaded", warm(q).first { it["metric"] == "fuel" }["state"], warm(q).toString())
+        assertTrue("w-outdoors.pmtiles (fuel)" in (overlay(q)["cellFiles"] as List<*>), overlay(q).toString())
     }
 
     @Test

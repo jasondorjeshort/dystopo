@@ -17,6 +17,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
 import io.github.jasondorjeshort.dystopo.routing.Directions
+import io.github.jasondorjeshort.dystopo.routing.DriveMetric
 import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
@@ -79,7 +80,9 @@ import java.util.concurrent.atomic.AtomicLong
  *   blind to turns (the owner's fast option). T282: `prefer=time|quick` names the same choice (the phone's Plan drives
  *   for; `turns=0` is `prefer=quick`, an unknown value reads as time); a drive on the drive search pays for its turns,
  *   its leg time includes them and its `searches` entry has `turns` and `turnCostS`. The cell file is version 2 (cells
- *   priced with turns); an older file is refused and rebuilt by the warm-up.
+ *   priced with turns); an older file is refused and rebuilt by the warm-up. T284 (ADR 0063): `prefer=fuel` plans least
+ *   fuel; a drive's reply adds `prefer`, `metric` and `fuelIndex` and each `searches` entry `metric`, `cost` and
+ *   `fuelIndex`; the first fuel request queues the fuel warm-up into `<vector archive>-overlay-fuel.idx` (docs/SERVER.md).
  * - `POST /route/edit` with JSON `{"path": "<encoded>", "op": "move|insert|add|remove|mode|reroute|show",
  *   "index": i, "lat": .., "lon": .., "mode": "bike", "pack": "<name>"}`: T60's editor operations
  *   (move and remove reroute only the legs next to the via point; add goes into the leg it lies
@@ -139,7 +142,7 @@ object RouteRoutes {
                 if (it.size > MAX_BODY) return reply(ex, 413, mapOf("error" to "body larger than $MAX_BODY bytes"))
             }.decodeToString()
             when {
-                path == "/route" && method == "GET" -> 200 to p.plan(points(q), q["mode"] ?: "hike", q["pack"], snapOf(q["snap"]), overlay = q["overlay"] != "0", turns = driveTurnsOf(q))
+                path == "/route" && method == "GET" -> 200 to p.plan(points(q), q["mode"] ?: "hike", q["pack"], snapOf(q["snap"]), overlay = q["overlay"] != "0", turns = driveTurnsOf(q), metric = driveMetricOf(q))
                 path == "/route/edit" && method == "POST" -> 200 to p.edit(MiniJson.parseObject(text.ifBlank { throw IllegalArgumentException("POST a JSON body") }))
                 path == "/route/gpx" && method == "POST" -> {
                     val gpx = p.gpx(MiniJson.parseObject(text.ifBlank { throw IllegalArgumentException("POST a JSON body") }))
@@ -186,6 +189,9 @@ object RouteRoutes {
      * ([DrivePreference]; a value this build does not know reads as time), `turns=0` an alias of `prefer=quick`.
      */
     internal fun driveTurnsOf(q: Map<String, String>): Boolean = q["turns"] != "0" && DrivePreference.read(q["prefer"]).turns
+
+    /** T284: what a drive is optimised for: `prefer=fuel` is least fuel (unless `turns=0` asks for the quick search, which has no fuel form). */
+    internal fun driveMetricOf(q: Map<String, String>): DriveMetric = if (q["turns"] == "0") DriveMetric.TIME else DrivePreference.read(q["prefer"]).metric
 
     private fun snapOf(s: String?): Double = s?.let {
         val v = it.toDoubleOrNull()
@@ -262,20 +268,26 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
      * (z11), then level 2 (z8, T89), then writes them to the pack's cell file ([OverlayCellFile]). T89: when that
      * file already holds this graph's cells it is read instead (registered with [driveOverlay]) and nothing is built.
      */
-    private fun warmKey(pack: Pack, archive: GraphTileArchive) = pack.name + "|" + archive.source.builtAtMs
+    private fun warmKey(pack: Pack, archive: GraphTileArchive, metric: DriveMetric = DriveMetric.TIME) =
+        pack.name + "|" + archive.source.builtAtMs + if (metric == DriveMetric.TIME) "" else "|" + metric.key
 
-    private fun warm(pack: Pack, archive: GraphTileArchive) {
+    /**
+     * T284 (ADR 0063 Decision 6): [metric]'s warm-up, once per graph build and metric: the time one when the graph opens,
+     * the fuel one on the first fuel request (until it ends a fuel drive builds the level-1 cells it reaches, as the phone
+     * always does). Each reads, or writes, its own cell file; the time file is never touched by the fuel warm-up.
+     */
+    private fun warm(pack: Pack, archive: GraphTileArchive, metric: DriveMetric = DriveMetric.TIME) {
         if (!warmOverlay || !archive.source.drive) return
-        val key = warmKey(pack, archive)
-        if (warm.putIfAbsent(key, mapOf("pack" to pack.name, "state" to "queued")) != null) return
-        val cellFile = File(pack.vector.absoluteFile.parentFile, OverlayCellFile.fileNameFor(pack.vector.name))
+        val key = warmKey(pack, archive, metric)
+        if (warm.putIfAbsent(key, mapOf("pack" to pack.name, "metric" to metric.key, "state" to "queued")) != null) return
+        val cellFile = File(pack.vector.absoluteFile.parentFile, OverlayCellFile.fileNameFor(pack.vector.name, metric))
         if (cellFile.isFile) {
             val t0 = System.nanoTime()
-            val f = runCatching { val src = FileRangeSource(cellFile); OverlayCellFile.open { o, l -> src.read(o, l) } }.getOrNull()
+            val f = runCatching { val src = FileRangeSource(cellFile); OverlayCellFile.open(metric) { o, l -> src.read(o, l) } }.getOrNull()
             if (f != null && f.source == archive.source && f.tileZoom == driveOverlay.tileZoom && f.level2Zoom == driveOverlay.level2Zoom) {
                 driveOverlay.register(f)
                 warm[key] = linkedMapOf(
-                    "pack" to pack.name, "state" to "loaded", "file" to cellFile.name, "cells" to f.cellCount, "bytes" to f.fileBytes,
+                    "pack" to pack.name, "metric" to metric.key, "state" to "loaded", "file" to cellFile.name, "cells" to f.cellCount, "bytes" to f.fileBytes,
                     "ms" to (System.nanoTime() - t0) / 1_000_000,
                 )
                 return
@@ -283,38 +295,21 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
         }
         warmer.execute {
             val t0 = System.nanoTime()
-            var cells = 0
-            var cells2 = 0
             try {
-                for (e in archive.entries) {
-                    if (driveOverlay.piece(e.x, e.y, 0, archive.source) { tileCache.get(archive, 0, e.x, e.y) } != null) cells++
-                }
-                val ms1 = (System.nanoTime() - t0) / 1_000_000
-                // T89: the second level, from the first.
-                val step = driveOverlay.tileZoom - driveOverlay.level2Zoom
-                if (driveOverlay.level2) {
-                    for ((x2, y2) in archive.entries.map { (it.x shr step) to (it.y shr step) }.toSet()) {
-                        if (driveOverlay.buildLevel2(x2, y2, archive.source, archive::has) { x, y -> tileCache.get(archive, 0, x, y) } != null) cells2++
-                    }
-                }
-                val ms2 = (System.nanoTime() - t0) / 1_000_000 - ms1
-                // T89: the cell file, when every cell is still in memory (the cache keeps 65,536).
-                val (one, two) = driveOverlay.cellsOf(archive.source)
-                var written: Long? = null
-                if (one.size == cells && two.size == cells2) {
-                    val bytes = OverlayCellFile.encode(archive.source, driveOverlay.tileZoom, driveOverlay.level2Zoom, one, two)
+                // T89: level 1, then level 2 from it, then the cell file when every cell is still in memory (the cache keeps 65,536).
+                val w = driveOverlay.warm(archive, metric) { x, y -> tileCache.get(archive, 0, x, y) }
+                w.file?.let { bytes ->
                     val tmp = File(cellFile.path + ".tmp")
                     tmp.writeBytes(bytes)
                     if (!tmp.renameTo(cellFile)) { cellFile.delete(); tmp.renameTo(cellFile) }
-                    written = bytes.size.toLong()
                 }
                 warm[key] = linkedMapOf(
-                    "pack" to pack.name, "state" to "done", "tiles" to archive.entries.size, "cells" to cells, "level2Cells" to cells2,
-                    "ms" to (System.nanoTime() - t0) / 1_000_000, "level1Ms" to ms1, "level2Ms" to ms2,
-                    "file" to cellFile.name.takeIf { written != null }, "bytes" to written,
+                    "pack" to pack.name, "metric" to metric.key, "state" to "done", "tiles" to archive.entries.size, "cells" to w.cells, "level2Cells" to w.level2Cells,
+                    "ms" to (System.nanoTime() - t0) / 1_000_000, "level1Ms" to w.level1Ms, "level2Ms" to w.level2Ms,
+                    "file" to cellFile.name.takeIf { w.file != null }, "bytes" to w.file?.size?.toLong(),
                 )
             } catch (e: Exception) {
-                warm[key] = linkedMapOf("pack" to pack.name, "state" to "failed", "error" to (e.message ?: e.toString()))
+                warm[key] = linkedMapOf("pack" to pack.name, "metric" to metric.key, "state" to "failed", "error" to (e.message ?: e.toString()))
             }
         }
     }
@@ -380,7 +375,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
                     // file only changed its timestamp reopens the same graph file (the same source and key): without
                     // this, warm() returned early and the cell file unregistered above stayed unregistered until a
                     // restart (new cells built at level 1 only, `cellFiles` empty while `warm` still said loaded).
-                    warm.remove(warmKey(pack, old.archive))
+                    for (m in DriveMetric.entries) warm.remove(warmKey(pack, old.archive, m)) // T284: the fuel warm-up's too
                 }
                 warm(pack, a) // T77
                 failures.remove(pack.name)
@@ -440,15 +435,21 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
      * An editor over the graphs of [pack] and every other pack near [points] (T76: one tiled network,
      * so legs cross pack borders); the reported graph info is [pack]'s, with every pack's under `graphs`.
      */
-    private fun editor(pack: Pack?, points: List<Pair<Double, Double>>, snapM: Double, overlay: Boolean = true, turns: Boolean = true): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
+    private fun editor(
+        pack: Pack?, points: List<Pair<Double, Double>>, snapM: Double, overlay: Boolean = true, turns: Boolean = true,
+        /** T284: least fuel for a `prefer=fuel` plan; the editor operations plan least time. */
+        metric: DriveMetric = DriveMetric.TIME,
+    ): Triple<RouteEditor, Map<String, Any?>?, Pack?> {
         val used = packsNear(pack, points)
         val opened = used.map { p -> p to runCatching { graph(p) } }
         // The reported pack's own failure is the request's error, as before; another pack's only drops it from the network.
         opened.firstOrNull { it.first === pack }?.second?.exceptionOrNull()?.let { throw it }
         val ok = opened.mapNotNull { (p, r) -> r.getOrNull()?.let { p to it } }
         if (ok.isEmpty()) return Triple(RouteEditor(null, elevation, snapM), null, pack)
+        // T284: the first fuel request queues each pack's fuel warm-up (level 1, level 2, the file) in the background.
+        if (metric != DriveMetric.TIME && overlay) for ((p, r) in ok) warm(p, r.first, metric)
         val legs = java.util.Collections.synchronizedList(ArrayList<Map<String, Any?>>())
-        val router = MeasuredRouter(TileRouter(TiledGraph(ok.map { it.second.first }, tileCache), if (overlay) driveOverlay else null, driveTurns = turns), legs)
+        val router = MeasuredRouter(TileRouter(TiledGraph(ok.map { it.second.first }, tileCache), if (overlay) driveOverlay else null, driveTurns = turns, metric = metric), legs)
         val info = ok.firstOrNull { it.first === pack }?.second?.second ?: ok.first().second.second
         // T77: `searches` fills in as the editor routes: one entry per leg searched (ms, tiles, overlay tiles, nodes).
         val all = info + ("graphs" to ok.map { (p, r) -> linkedMapOf("pack" to p.name, "action" to r.second["action"]) }) + ("searches" to legs)
@@ -465,21 +466,35 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
             val ms = (System.nanoTime() - t0) / 1_000_000
             if (r is RouteResult.Found) lastMemory = r.plan.memory
             legs += linkedMapOf<String, Any?>("ms" to ms, "found" to (r is RouteResult.Found)) + ((r as? RouteResult.Found)?.plan?.let { p ->
-                p.memory + ("expanded" to p.expanded) + (p.turnCostS?.let { mapOf("turns" to p.turns, "turnCostS" to PlannedRoute.r1(it)) } ?: emptyMap()) // T282
+                p.memory + ("expanded" to p.expanded) + (p.turnCostS?.let { mapOf("turns" to p.turns, "turnCostS" to PlannedRoute.r1(it)) } ?: emptyMap()) + // T282
+                    (p.metric?.let { mapOf("metric" to it.key, "cost" to PlannedRoute.r1(p.cost), "fuelIndex" to p.fuelIndex?.let(Math::round)) } ?: emptyMap()) // T284
             } ?: emptyMap())
             return r
         }
     }
 
-    /** A new route through [points] in [mode] (T60's `RouteEditor.create`); T281: [turns] false plans a drive on the node search. */
-    fun plan(points: List<Pair<Double, Double>>, mode: String, packName: String? = null, snapM: Double = Router.DEFAULT_SNAP_M, overlay: Boolean = true, turns: Boolean = true): Map<String, Any?> {
+    /**
+     * A new route through [points] in [mode] (T60's `RouteEditor.create`); T281: [turns] false plans a drive on the node
+     * search. T284: [metric] fuel plans it for least fuel; a drive's reply adds `prefer` and `metric` (what it was planned
+     * for) and `fuelIndex` (the sum of its legs' fuel in the model's joules; null when no leg was routed).
+     */
+    fun plan(
+        points: List<Pair<Double, Double>>, mode: String, packName: String? = null, snapM: Double = Router.DEFAULT_SNAP_M, overlay: Boolean = true,
+        turns: Boolean = true, metric: DriveMetric = DriveMetric.TIME,
+    ): Map<String, Any?> {
         val t0 = System.nanoTime()
         require(points.size in 2..MAX_POINTS) { "2 to $MAX_POINTS points" }
         requireMode(mode)
         count("plan")
-        val (ed, info, pack) = editor(choosePack(packName, points), points, snapM, overlay, turns)
+        val m = if (turns) metric else DriveMetric.TIME // the quick search has no fuel form
+        val (ed, info, pack) = editor(choosePack(packName, points), points, snapM, overlay, turns, if (mode == "drive") m else DriveMetric.TIME)
         val path = ed.create(points, mode)
-        return reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(path), graphOpen = info != null)
+        val out = reply(pack, path, ed.takeNotes(), info, t0, ed.takeMessages(), ed.directions(path), graphOpen = info != null)
+        if (mode != "drive") return out
+        @Suppress("UNCHECKED_CAST")
+        val legs = (info?.get("searches") as? List<Map<String, Any?>>)?.toList().orEmpty().filter { it["found"] == true }
+        val prefer = if (!turns) DrivePreference.QUICK else DrivePreference.entries.first { it.turns && it.metric == m }
+        return out + linkedMapOf("prefer" to prefer.key, "metric" to m.key, "fuelIndex" to legs.mapNotNull { it["fuelIndex"] as? Long }.takeIf { it.isNotEmpty() }?.sum())
     }
 
     /** One editor operation on an encoded path (see [RouteRoutes]). */
@@ -637,7 +652,7 @@ class RoutePlanner(val outDir: File, private val elevation: ElevationSampler? = 
     }
 
     /** T202: the drive-overlay warm-up of [packName]'s open graph (`queued`, `loaded`, `done`, `failed` with timings), or null. */
-    fun overlayWarm(packName: String): Map<String, Any?>? = warm.values.lastOrNull { it["pack"] == packName }
+    fun overlayWarm(packName: String): Map<String, Any?>? = warm.values.lastOrNull { it["pack"] == packName && it["metric"] != DriveMetric.FUEL.key } // T284: the time warm-up's
 
     fun status(): Map<String, Any?> = linkedMapOf(
         "outDir" to outDir.path, "requests" to requests.mapValues { it.value.get() }.toSortedMap(), "errors" to errors.get(),

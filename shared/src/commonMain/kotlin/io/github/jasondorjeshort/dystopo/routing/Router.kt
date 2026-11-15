@@ -76,8 +76,25 @@ enum class TravelMode(val label: String, val display: String) {
  * and [pathTimeS] time the walk on the fitted curve, and [slopePenalty] becomes the fit's extra time over the flat
  * time, as equivalent flat metres at the fit's flat speed (never negative, so the A* heuristic stays admissible). The
  * class, surface and SAC weights are kept. [fitted] says which ("your pace" or the standard estimate).
+ *
+ * T284 (ADR 0063): a drive's [metric]: [DriveMetric.TIME] (the above) or [DriveMetric.FUEL], where an edge costs its fuel
+ * ([FuelModel.edgeJ], direction-aware: ascent and descent swap) over [FuelModel.divisorJPerM], so a cost is "equivalent
+ * metres at the most economical flat speed", the potential's factor is [FuelModel.minCostPerM] ([minWeight]) and a turn
+ * costs its idle and the energy to regain speed ([turnCost]). Hike and bike ignore the metric. Under every metric a
+ * route's time stays the sum of its edges' times ([edgeTimeS]) and its turn seconds; [fuelJ] prices any route's fuel
+ * (its `fuelIndex`) with [fuel].
  */
-class CostModel(val mode: TravelMode, val pace: PaceFit? = PaceFits.active[mode]?.takeIf { it.mode == mode && mode in PaceFits.FITTED }) {
+class CostModel(
+    val mode: TravelMode,
+    val pace: PaceFit? = PaceFits.active[mode]?.takeIf { it.mode == mode && mode in PaceFits.FITTED },
+    /** T284: what a drive is optimised for (hike and bike: ignored). */
+    val metric: DriveMetric = DriveMetric.TIME,
+    /** T284: the car whose fuel [DriveMetric.FUEL] costs and [fuelJ] reports. */
+    val fuel: FuelModel = FuelModel.DEFAULT,
+) {
+    /** T284: true for a drive optimised for fuel. */
+    val byFuel: Boolean get() = mode == TravelMode.DRIVE && metric == DriveMetric.FUEL
+
     /** T164: true when this model times routes on the user's fitted pace ([pace]). */
     val fitted: Boolean get() = pace != null
 
@@ -192,8 +209,61 @@ class CostModel(val mode: TravelMode, val pace: PaceFit? = PaceFits.active[mode]
      */
     fun secondsCost(seconds: Double): Double = seconds * DRIVE_REF_KMH / 3.6
 
-    /** The smallest [weight] any edge can have: the A* heuristic's factor (keeps it admissible). */
-    val minWeight: Double get() = if (mode == TravelMode.DRIVE) 1.0 else WayClass.entries.minOf { classWeight(it) }
+    /**
+     * T284 (ADR 0063 Decision 4): a turn of [seconds] onto edge [outEdge] of [g] as search cost: [secondsCost] under time;
+     * under fuel the turn's fuel ([FuelModel.turnJ]: idle over the seconds plus regaining the out-edge's speed, never
+     * negative, nothing for a turn of no seconds) over [FuelModel.divisorJPerM].
+     */
+    fun turnCost(seconds: Double, g: RoutingGraph, outEdge: Int): Double =
+        if (byFuel) turnFuelJ(seconds, g, outEdge) / fuel.divisorJPerM else secondsCost(seconds)
+
+    /** T284: [FuelModel.turnJ] of a turn of [seconds] onto edge [outEdge] of [g] (at its drive speed, unpaved slower). */
+    fun turnFuelJ(seconds: Double, g: RoutingGraph, outEdge: Int): Double = fuel.turnJ(seconds, driveMps(g, outEdge))
+
+    /** T284: the speed a car drives edge [e] at, m/s: [speedKmh], slower on unpaved ([surfaceWeight]), as [edgeTimeS] times it. */
+    fun driveMps(g: RoutingGraph, e: Int): Double = speedKmh(g, e) / 3.6 / surfaceWeight(g.surface(e))
+
+    /**
+     * T284: the fuel of [metres] of edge [e] with [up] of climb and [down] of descent ([FuelModel.edgeJ], timed by
+     * [edgeTimeS], its class's unsteadiness and its surface factor), joules.
+     */
+    fun fuelJ(g: RoutingGraph, e: Int, metres: Double, up: Double, down: Double): Double =
+        fuel.edgeJ(metres, edgeTimeS(g, e, metres), up, down, fuel.unsteadiness(g.wayClass(e)), fuel.surfaceFactor(g.surface(e)))
+
+    /** T284: [fuelJ] of edge [e] from fraction [f0] to [f1] of its length (the direction of travel from the order). */
+    fun fuelJ(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
+        val part = abs(f1 - f0)
+        if (part == 0.0) return 0.0
+        val fwd = f1 > f0
+        val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
+        val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
+        return fuelJ(g, e, g.edgeLength[e] * part, up, down)
+    }
+
+    /**
+     * The search cost of edge [e] of [g] from fraction [f0] to [f1] of its length (T284: moved here from the router, which
+     * calls it for base pieces): infinite where this mode may not go that way; else `length x weight + slope penalty`,
+     * or under fuel the part's fuel over [FuelModel.divisorJPerM].
+     */
+    fun partCost(g: RoutingGraph, e: Int, f0: Double, f1: Double): Double {
+        val part = abs(f1 - f0)
+        if (part == 0.0) return 0.0
+        val fwd = f1 > f0
+        if (!allows(g, e, fwd)) return Double.POSITIVE_INFINITY
+        val w = weight(g, e)
+        if (w.isInfinite()) return Double.POSITIVE_INFINITY
+        val len = g.edgeLength[e] * part
+        val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
+        val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
+        if (byFuel) return fuelJ(g, e, len, up, down) / fuel.divisorJPerM
+        return len * w + slopePenalty(len, up, down)
+    }
+
+    /**
+     * The smallest [weight] any edge can have: the A* heuristic's factor (keeps it admissible). T284: under fuel the least
+     * cost per metre ([FuelModel.minCostPerM]).
+     */
+    val minWeight: Double get() = if (byFuel) fuel.minCostPerM else if (mode == TravelMode.DRIVE) 1.0 else WayClass.entries.minOf { classWeight(it) }
 
     /** Penalty in equivalent metres for climbing [ascentM] and descending [descentM] over [lengthM]. */
     fun slopePenalty(lengthM: Double, ascentM: Double, descentM: Double): Double {
@@ -324,12 +394,21 @@ data class PlannedRoute(
      */
     val turns: Int? = null,
     val turnCostS: Double? = null,
+    /** T284 (ADR 0063): on a drive, the metric its [cost] is in (Quicker planning: time); null on hike, bike and crow. */
+    val metric: DriveMetric? = null,
+    /**
+     * T284 (ADR 0063 Decision 7): on a drive, its fuel in the model's joules ([CostModel.fuelJ] of every edge plus the fuel
+     * of the turns it paid for), whatever it was planned for: for comparing routes only, never shown as litres. A drive on
+     * the node search (Quicker planning) counts its edges only, as its time counts no turns. Null off drive routes.
+     */
+    val fuelIndex: Double? = null,
 ) {
     fun json(profileSamples: Boolean = true): Map<String, Any?> = linkedMapOf(
         "id" to route.id, "name" to route.name, "mode" to mode.label,
         "distanceM" to r1(distanceM), "ascentM" to ascentM?.let(::r1), "descentM" to descentM?.let(::r1),
         "timeS" to timeS.roundToLong(), "time" to hm(timeS),
         "points" to route.points.size, "edges" to edges, "expanded" to expanded, "cost" to r1(cost),
+        "metric" to metric?.key, // T284: what cost is in (drive routes; null otherwise)
         "start" to snapJson(start), "end" to snapJson(end),
         "metersByClass" to metersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) },
         "gradedMetersByClass" to gradedMetersByClass.entries.sortedByDescending { it.value }.associate { it.key.label to r1(it.value) }, // T276
@@ -341,6 +420,8 @@ data class PlannedRoute(
     ).also { m ->
         pace?.let { m["pace"] = it.json() } // T164: only when the time is the user's own
         if (turnCostS != null) { m["turns"] = turns; m["turnCostS"] = r1(turnCostS) } // T282: drive routes on the drive search only
+        if (metric == null) m.remove("metric")
+        fuelIndex?.let { m["fuelIndex"] = it.roundToLong() } // T284: drive routes, joules of the model's car
     }
 
     companion object {
@@ -434,14 +515,22 @@ interface Router {
  * devtool `route --prefer` and the server's `prefer=`, each stored or sent as [key]. [TIME] (the default) is the drive
  * search with its turn seconds ([DriveSearch], [TurnTable.DRIVE]); [QUICK] the node search, blind to turns
  * ([TileRouter.driveTurns] off; T281's `--no-turns` and `turns=0` are its aliases). A key this build does not know
- * reads as [DEFAULT] ([read]); a later value (least fuel, T284) is one more line.
+ * reads as [DEFAULT] ([read]). T284: [FUEL], least fuel ([metric]); the phone reads keys through [onPhone] until T285.
  */
-enum class DrivePreference(val key: String, val turns: Boolean) {
+enum class DrivePreference(val key: String, val turns: Boolean, val metric: DriveMetric = DriveMetric.TIME) {
     TIME("time", true),
-    QUICK("quick", false);
+    QUICK("quick", false),
+    /** T284 (ADR 0063): least fuel, on the drive search with [DriveMetric.FUEL]; there is no quick form of it. */
+    FUEL("fuel", true, DriveMetric.FUEL);
 
     companion object {
         val DEFAULT = TIME
+
+        /**
+         * T284: the values the phone offers until T285 builds its third ("Least fuel"): [of] without [FUEL], so a stored,
+         * synced or posted `fuel` on the phone still reads as least time (T282's behaviour). T285 removes this.
+         */
+        fun onPhone(key: String?): DrivePreference? = of(key)?.takeIf { it != FUEL }
 
         /** The preference named [key] (any case, trimmed), or null for one this build does not know. */
         fun of(key: String?): DrivePreference? = key?.trim()?.lowercase()?.let { k -> entries.firstOrNull { it.key == k } }
@@ -510,7 +599,17 @@ class TileRouter(
     val turns: TurnCost = TurnCost(),
     /** T281: drives whose ends are at least this far apart (great circle) go through the [overlay] ([DriveOverlay.MIN_DISTANCE_M] by default). */
     val minDistanceM: Double = DriveOverlay.MIN_DISTANCE_M,
+    /**
+     * T284 (ADR 0063): what a drive is optimised for ([DrivePreference.metric]): least time, or least fuel on the drive
+     * search with fuel costs, fuel turn costs and the [overlay]'s fuel cells. A constructor property, so the [Router]
+     * interface is unchanged; there is no quick form of least fuel ([driveTurns] must stay on).
+     */
+    val metric: DriveMetric = DriveMetric.TIME,
 ) : Router, JunctionSource {
+    init {
+        require(metric == DriveMetric.TIME || driveTurns) { "least fuel has no quick form: it plans on the drive search" }
+    }
+
     private fun d(m: Double) = UnitFormat.distance(m, units)
 
     /** [UnitFormat.distance] in this router's [units] (T281: the drive search's messages). */
@@ -578,7 +677,11 @@ class TileRouter(
      * The pieces one route has asked for, each tile looked up once: the search holds these objects
      * whatever the shared cache evicts meanwhile, so a node is never met again in a reloaded copy.
      */
-    internal class View(val tiles: GraphPieces, val overlay: DriveOverlay? = null, val detail: Set<Long> = emptySet()) {
+    internal class View(
+        val tiles: GraphPieces, val overlay: DriveOverlay? = null, val detail: Set<Long> = emptySet(),
+        /** T284: whose overlay cells this view reads (the metric's own cells; quick reads the time cells). */
+        val metric: DriveMetric = DriveMetric.TIME,
+    ) {
         private val memo = HashMap<Long, List<GraphPiece>>()
         /** T89: level-2 pieces by level-2 tile (one object for all the graph tiles inside), null where level 2 does not apply. */
         private val memo2 = HashMap<Long, GraphPiece?>()
@@ -606,8 +709,8 @@ class TileRouter(
         fun level1(x: Int, y: Int): GraphPiece? {
             val o = overlay ?: return null
             val src = tiles.sources(x, y)
-            return if (src == null) o.piece(x, y, tiles.pieces(x, y))
-            else if (src.size == 1) o.piece(x, y, src[0].first, src[0].second) { tiles.piece(src[0].first, x, y) }
+            return if (src == null) o.piece(x, y, tiles.pieces(x, y), metric)
+            else if (src.size == 1) o.piece(x, y, src[0].first, src[0].second, metric) { tiles.piece(src[0].first, x, y) }
             else null
         }
 
@@ -632,7 +735,7 @@ class TileRouter(
                     if (only == null) only = src[0] else if (only.second != src[0].second) return@getOrPut null
                 }
                 val (index, source) = only ?: return@getOrPut null
-                o.piece2(x2, y2, index, source) { sx, sy -> level1(sx, sy) }?.also { level2Tiles++ }
+                o.piece2(x2, y2, index, source, metric) { sx, sy -> level1(sx, sy) }?.also { level2Tiles++ }
             }
         }
     }
@@ -644,7 +747,7 @@ class TileRouter(
         // T108: crow is a straight line, never a search (no heights here: the editor and the phone pass their DEM to Crow).
         if (mode == TravelMode.CROW) return RouteResult.Found(Crow.plan(fromLat, fromLon, toLat, toLon, null, name, ids, units))
         if (tiles.isEmpty) return RouteResult.Failed(RouteFailure.EMPTY_GRAPH, "the map has no trails or roads to route on")
-        val model = CostModel(mode)
+        val model = CostModel(mode, metric = if (mode == TravelMode.DRIVE) metric else DriveMetric.TIME) // T284
         val long = overlay != null && mode == TravelMode.DRIVE &&
             TrackStats.distanceM(fromLat, fromLon, toLat, toLon) >= minDistanceM
         if (long) {
@@ -655,7 +758,7 @@ class TileRouter(
                 val b = TiledGraph.around(lat, lon, near)
                 for ((x, y) in tiles.tilesIn(b[0], b[1], b[2], b[3])) detail += tileKey(x, y)
             }
-            val r = route(View(tiles, overlay, detail), model, fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
+            val r = route(View(tiles, overlay, detail, model.metric), model, fromLat, fromLon, toLat, toLon, mode, maxSnapM, name, ids)
             // T89: a component-summary refusal is final; only a search the overlay could not carry is repeated in full (within the budget).
             if (r !is RouteResult.Failed || r.reason != RouteFailure.NOT_CONNECTED || r.details["componentSummary"] == true) return r
         }
@@ -673,8 +776,10 @@ class TileRouter(
         separate(model, s, t)?.let { return it }
         // T281: a drive pays for its turns on the edge-state search unless the fast node search is asked for.
         // T283: the driving side looked up once, at the route's start ([DrivingSides]).
+        // T284: under fuel the turn function prices its seconds through the fuel model ([CostModel.turnCost]).
         if (mode == TravelMode.DRIVE && driveTurns) {
-            return DriveSearch(this, view, model, s, t, turns.at(fromLat, fromLon), maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong()).run(name, ids)
+            val tc = if (model.byFuel) TurnCost(turns.table, turns.side, model) else turns
+            return DriveSearch(this, view, model, s, t, tc.at(fromLat, fromLon), maxSettled, (maxSettled * Router.DRIVE_STATES_PER_JUNCTION).toLong()).run(name, ids)
         }
         return Search(view, model, s, t).run(name, ids)
     }
@@ -764,17 +869,7 @@ class TileRouter(
     internal fun stepCost(model: CostModel, p: GraphPiece, e: Int, f0: Double, f1: Double): Double {
         // T77: a shortcut is only ever travelled whole and forwards (the ends lie in tiles searched in full).
         p.overlay?.let { o -> return if (f0 == 0.0 && f1 == 1.0) o.cost(e) else Double.POSITIVE_INFINITY }
-        val g = p.graph
-        val part = abs(f1 - f0)
-        if (part == 0.0) return 0.0
-        val fwd = f1 > f0
-        if (!model.allows(g, e, fwd)) return Double.POSITIVE_INFINITY
-        val w = model.weight(g, e)
-        if (w.isInfinite()) return Double.POSITIVE_INFINITY
-        val len = g.edgeLength[e] * part
-        val up = (if (fwd) g.edgeAscent[e] else g.edgeDescent[e]) * part
-        val down = (if (fwd) g.edgeDescent[e] else g.edgeAscent[e]) * part
-        return len * w + model.slopePenalty(len, up, down)
+        return model.partCost(p.graph, e, f0, f1)
     }
 
     /**
@@ -1076,6 +1171,8 @@ class TileRouter(
         /** T282: a drive search's turn seconds (added to the drive's time) and their count; null [turns] for the node search. */
         turnS: Double = 0.0,
         turns: Int? = null,
+        /** T284: the fuel of those turns ([CostModel.turnFuelJ]), joules; part of the drive's `fuelIndex`. */
+        turnFuelJ: Double = 0.0,
     ): PlannedRoute {
         val pts = ArrayList<RoutePoint>()
         var ascent = 0.0
@@ -1085,11 +1182,12 @@ class TileRouter(
         val runs = ArrayList<Pair<String?, Double>>() // T49: consecutive stretches by way name
         val runRoadM = ArrayList<Double>() // T87: metres of each run on roads (service and up)
         var driveS = 0.0 // T73
+        var fuelJ = 0.0 // T284
         for (st in steps) {
             val g = st.piece.graph
             val nm = g.name(st.e)
             val metres = g.edgeLength[st.e] * abs(st.f1 - st.f0)
-            if (model.mode == TravelMode.DRIVE) driveS += model.edgeTimeS(g, st.e, metres.toDouble())
+            if (model.mode == TravelMode.DRIVE) { driveS += model.edgeTimeS(g, st.e, metres.toDouble()); fuelJ += model.fuelJ(g, st.e, st.f0, st.f1) }
             if (runs.isNotEmpty() && runs.last().first == nm) runs[runs.size - 1] = nm to runs.last().second + metres else { runs += nm to metres; runRoadM += 0.0 }
             if (g.wayClass(st.e).code >= WayClass.SERVICE.code) runRoadM[runRoadM.size - 1] += metres.toDouble()
             val part = abs(st.f1 - st.f0)
@@ -1126,6 +1224,7 @@ class TileRouter(
             model.pace, // T164
             graded, // T276
             turns, if (turns != null) turnS else null, // T282
+            if (model.mode == TravelMode.DRIVE) model.metric else null, if (model.mode == TravelMode.DRIVE) fuelJ + turnFuelJ else null, // T284
         )
     }
 

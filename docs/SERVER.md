@@ -632,7 +632,7 @@ rebuilt and the cells are built and written again (`done`). Each offline map kee
 Before T107 the old entry stayed, so a reused graph lost its cell file (`cellFiles` empty, level-2 cells unused)
 until a restart.
 
-- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0][&prefer=time|quick]` (or
+- `GET /route?from=lat,lon&to=lat,lon[&via=lat,lon;lat,lon][&mode=hike|bike|drive][&pack=<name>][&snap=m][&overlay=0][&prefer=time|fuel|quick]` (or
   `points=lat,lon;lat,lon;...`, 2 to 50): a route through the points, each snapped onto a trail within `snap`
   metres (default 300, as on the phone); legs follow trails, and are straight where no trail connects (DEM
   elevation every 25 m, from the offline maps or else the live `best` source). The reported offline map is `pack=` (a catalog
@@ -648,6 +648,20 @@ until a restart.
   quick drive of 40 km or more goes through the same overlay cells, which are priced with turns (built once, not a
   second time without them): it pays the turns inside its far cells and none near its ends, so its cost lies between
   the node search's and the drive search's in full, and its time counts no turn (accepted, T282).
+  T284 (ADR 0063): `prefer=fuel` plans least fuel: the drive search on the fuel model's costs (one invented car's fuel
+  energy per directed edge, ascent and descent swapped by direction; a turn costs its idle and the energy to regain
+  speed), never with `turns=0` (quick has no fuel form). A drive's reply adds `prefer` (`time`, `fuel` or `quick`),
+  `metric` (`time` or `fuel`: what its legs were planned for; quick is `time`) and `fuelIndex` (the sum of its
+  routed legs' fuel in the model's joules, whatever the metric, for comparing routes only, never litres; null when no
+  leg was routed); each drive `searches` entry adds `metric`, `cost` and `fuelIndex`. Fuel has overlay cells of its
+  own (the metric is part of the cell key; one LRU) and its own cell file, `<vector archive>-overlay-fuel.idx`
+  (`DYSF` version 1, the metric's id and a hash of the model's parameters in its header; a file of another metric,
+  id or hash is refused and rebuilt). Fuel cells are built only on demand: the first fuel request queues one
+  background fuel warm-up per offline map it uses (level 1, level 2, the file; or reads the file when it matches), and
+  until it ends a long fuel drive builds the level-1 cells it reaches, as the phone always does. The time file and
+  cells are never touched by it. `driveOverlay.warm` has one entry per metric (`metric`), `cellFiles` marks a fuel
+  file `<archive> (fuel)` and `fuelTiles` counts the fuel cells. The editor operations (`POST /route/edit`) and the
+  browser demo plan least time.
 - `POST /route/edit` with JSON `{"path", "op", "index", "lat", "lon", "mode", "pack"}`: `op` is `move`, `insert`,
   `add` (into the nearest leg within 150 m, else the new end; answers `index`), `remove`, `mode`, `reroute` or
   `show`. Only the legs next to a moved, added or removed point are rerouted.

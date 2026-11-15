@@ -264,4 +264,164 @@ class DriveRoutingTest {
             TravelMode.BIKE to doubleArrayOf(2761.2075, 453.7901, 14281.0284),
         )
     }
+
+    // ---- T284: least fuel (ADR 0063) ----
+
+    private val secondary = WayAttrs(WayClass.SECONDARY, Surface.PAVED)
+
+    /** A router planning for least fuel ([DriveMetric.FUEL]) with [turns]. */
+    private fun fuelRouter(g: RoutingGraph, turns: TurnCost = TurnCost()) = TileRouter(WholeGraph(g), turns = turns, metric = DriveMetric.FUEL)
+
+    @Test
+    fun leastTimeTakesTheHillAndLeastFuelTheFlatRoad() {
+        // From A (0, 0) to B 8 km east: straight over a 300 m hill (split at its summit), or 10 km round on the flat, both
+        // secondary roads at 65 km/h, with a short street at each end. Least time takes the 8 km; least fuel the 10 km:
+        // 300 m of climb is about 10 km of flat driving at the best speed.
+        val bLon = 0.07194
+        val mid = bLon / 2
+        val ground = ElevationSampler { lat, lon ->
+            val d = io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(lat, lon, 0.0, mid)
+            if (d >= 2500.0) 0.0 else 300.0 * (1 + kotlin.math.cos(kotlin.math.PI * d / 2500.0)) / 2
+        }
+        val g = RoutingGraphBuilder(ground).build(listOf(
+            WayLine.of(minor, 0.0 to -0.005, 0.0 to 0.0),
+            WayLine.of(secondary, 0.0 to 0.0, 0.0 to mid), WayLine.of(secondary, 0.0 to mid, 0.0 to bLon),
+            WayLine.of(secondary, 0.0 to 0.0, -0.0270 to mid, 0.0 to bLon),
+            WayLine.of(minor, 0.0 to bLon, 0.0 to bLon + 0.005),
+        ), drive)
+        val a = 0.0 to -0.0025
+        val b = 0.0 to bLon + 0.0025
+        val time = found(TileRouter(WholeGraph(g)).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE))
+        val fuel = found(fuelRouter(g).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE))
+        assertEquals(DriveMetric.TIME, time.metric)
+        assertEquals(DriveMetric.FUEL, fuel.metric)
+        assertEquals(8556.0, time.distanceM, 30.0, "over the hill")
+        assertTrue(time.ascentM!! > 290.0, "${time.ascentM}")
+        assertEquals(10556.0, fuel.distanceM, 60.0, "round on the flat")
+        assertTrue(fuel.ascentM!! < 10.0, "${fuel.ascentM}")
+        assertTrue(fuel.timeS > time.timeS && fuel.fuelIndex!! < time.fuelIndex!! * 0.8, "fuel ${fuel.timeS} s ${fuel.fuelIndex} J, time ${time.timeS} s ${time.fuelIndex} J")
+        assertEquals(fuel.fuelIndex!! / FuelModel.DEFAULT.divisorJPerM, fuel.cost, 1e-6 * fuel.cost, "a fuel cost is joules over the divisor")
+        // T284: a least-fuel route's time is the sum of its edges' times and its turn seconds.
+        val edgesS = fuel.metersByClass.entries.sumOf { (c, m) -> m / (CostModel.driveSpeedKmh(c) / 3.6) }
+        assertEquals(edgesS + fuel.turnCostS!!, fuel.timeS, 0.01)
+        assertEquals(time.timeS, found(TileRouter(WholeGraph(g)).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE)).timeS)
+        // Its JSON names the metric beside the cost and carries fuelIndex; a hike carries neither.
+        val json = fuel.json(profileSamples = false)
+        assertEquals("fuel", json["metric"])
+        assertEquals(listOf("cost", "metric"), json.keys.toList().let { k -> k.subList(k.indexOf("cost"), k.indexOf("cost") + 2) })
+        assertEquals(kotlin.math.round(fuel.fuelIndex!!).toLong(), json["fuelIndex"])
+        val hike = found(TileRouter(WholeGraph(g)).route(a.first, a.second, b.first, b.second, TravelMode.HIKE)).json(profileSamples = false)
+        assertTrue("metric" !in hike && "fuelIndex" !in hike, "$hike")
+    }
+
+    @Test
+    fun aToBDiffersFromBToAOnASlope() {
+        // A (0, 0) to B 5 km east over a 300 m ridge: steep from A (1 km up), gentle to B (4 km down), split at the top.
+        // A flat road round is 13.2 km. Up the steep side the climb is the same both ways, but the descent credit is
+        // capped at half the resistance of the descending edge: 4 km of it from A, 1 km from B. So least fuel goes over
+        // the ridge from A to B and round on the flat from B to A; least time takes the ridge both ways. No turns priced.
+        val top = 0.009
+        val bLon = 0.045
+        val ground = ElevationSampler { lat, lon ->
+            if (kotlin.math.abs(lat) > 1e-5 || lon <= 0.0 || lon >= bLon) 0.0
+            else if (lon <= top) 300.0 * lon / top else 300.0 * (bLon - lon) / (bLon - top)
+        }
+        val g = RoutingGraphBuilder(ground).build(listOf(
+            WayLine.of(minor, 0.0 to -0.005, 0.0 to 0.0),
+            WayLine.of(secondary, 0.0 to 0.0, 0.0 to top), WayLine.of(secondary, 0.0 to top, 0.0 to bLon),
+            WayLine.of(secondary, 0.0 to 0.0, -0.055 to bLon / 2, 0.0 to bLon),
+            WayLine.of(minor, 0.0 to bLon, 0.0 to bLon + 0.005),
+        ), drive)
+        val zero = TurnCost(TurnTable.ZERO)
+        val a = 0.0 to -0.0025
+        val b = 0.0 to bLon + 0.0025
+        fun go(r: Router, from: Pair<Double, Double>, to: Pair<Double, Double>) = found(r.route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val ab = go(fuelRouter(g, zero), a, b)
+        val ba = go(fuelRouter(g, zero), b, a)
+        assertTrue(ab.distanceM < 6000.0 && ab.ascentM!! > 290.0, "A to B over the ridge: ${ab.distanceM} m, +${ab.ascentM}")
+        assertTrue(ba.distanceM > 13000.0 && ba.ascentM!! < 1.0, "B to A round on the flat: ${ba.distanceM} m, +${ba.ascentM}")
+        for ((from, to) in listOf(a to b, b to a)) assertTrue(go(TileRouter(WholeGraph(g), turns = zero), from, to).distanceM < 6000.0, "least time takes the ridge")
+    }
+
+    /**
+     * The reference under fuel: a one-directional Dijkstra over directed-edge states written plainly (as TurnCostTest's),
+     * with the fuel model's edge costs ([CostModel.partCost]) and fuel turn costs.
+     */
+    private fun fuelReference(g: RoutingGraph, turns: TurnCost, a: Pair<Double, Double>, b: Pair<Double, Double>): Double {
+        val model = turns.model
+        val s = g.nearest(a.first, a.second, Router.DEFAULT_SNAP_M) { model.usable(g, it) } ?: return Double.POSITIVE_INFINITY
+        val t = g.nearest(b.first, b.second, Router.DEFAULT_SNAP_M) { model.usable(g, it) } ?: return Double.POSITIVE_INFINITY
+        val piece = GraphPiece(0, 0, 0, g, joinZoom = -1)
+        fun part(e: Int, f0: Double, f1: Double) = model.partCost(g, e, f0, f1)
+        var best = if (s.edge == t.edge) part(s.edge, s.fraction, t.fraction) else Double.POSITIVE_INFINITY
+        val dist = DoubleArray(2 * g.edgeCount) { Double.POSITIVE_INFINITY }
+        val done = BooleanArray(2 * g.edgeCount)
+        val heap = MinHeap()
+        fun offer(st: Int, c: Double) { if (c < dist[st]) { dist[st] = c; heap.push(c, st) } }
+        offer(2 * s.edge, part(s.edge, s.fraction, 1.0))
+        offer(2 * s.edge + 1, part(s.edge, s.fraction, 0.0))
+        while (heap.size > 0) {
+            val st = heap.pop()
+            if (done[st]) continue
+            done[st] = true
+            val c = dist[st]
+            if (c >= best) break
+            val e = st shr 1
+            val fwd = st and 1 == 0
+            val v = if (fwd) g.edgeTo[e] else g.edgeFrom[e]
+            val j = Junction(listOf(piece), intArrayOf(v))
+            if (v == g.edgeFrom[t.edge]) best = minOf(best, c + turns.cost(piece, e, fwd, j, piece, t.edge, true) + part(t.edge, 0.0, t.fraction))
+            if (v == g.edgeTo[t.edge]) best = minOf(best, c + turns.cost(piece, e, fwd, j, piece, t.edge, false) + part(t.edge, 1.0, t.fraction))
+            for (i in g.adjStart[v] until g.adjStart[v + 1]) {
+                val ad = g.adjEdge[i]
+                val e2 = ad shr 1
+                val atFrom = ad and 1 == 0
+                val w = part(e2, if (atFrom) 0.0 else 1.0, if (atFrom) 1.0 else 0.0)
+                if (w == Double.POSITIVE_INFINITY) continue
+                offer(2 * e2 + if (atFrom) 0 else 1, c + turns.cost(piece, e, fwd, j, piece, e2, atFrom) + w)
+            }
+        }
+        return best
+    }
+
+    @Test
+    fun underFuelTheBidirectionalSearchEqualsAPlainEdgeDijkstraOnRandomGraphs() {
+        val classes = listOf(WayClass.SERVICE, WayClass.MINOR, WayClass.TERTIARY, WayClass.SECONDARY, WayClass.PRIMARY, WayClass.TRUNK)
+        var routes = 0
+        var differ = 0
+        for (seed in 1..20) {
+            val rnd = kotlin.random.Random(500 + seed)
+            val n = 6
+            val step = 0.002
+            val peak = rnd.nextDouble(0.0, n * step) to rnd.nextDouble(0.0, n * step)
+            val ground = ElevationSampler { lat, lon -> 400.0 / (1 + ((lat - peak.first) * (lat - peak.first) + (lon - peak.second) * (lon - peak.second)) / (2 * step * step)) }
+            fun attrs() = WayAttrs(
+                classes[rnd.nextInt(classes.size)], if (rnd.nextInt(5) == 0) Surface.UNPAVED else Surface.PAVED,
+                flags = when (rnd.nextInt(8)) { 0 -> WayAttrs.ONEWAY; 1 -> WayAttrs.ONEWAY_REVERSE; else -> 0 },
+                maxspeedKmh = if (rnd.nextInt(4) == 0) 20 + 10 * rnd.nextInt(10) else 0,
+            )
+            val pts = Array(n) { i -> Array(n) { j -> (i * step + rnd.nextDouble(-0.25, 0.25) * step) to (j * step + rnd.nextDouble(-0.25, 0.25) * step) } }
+            val lines = ArrayList<WayLine>()
+            for (i in 0 until n) for (j in 0 until n) {
+                if (j + 1 < n && rnd.nextInt(10) < 8) lines += WayLine.of(attrs(), pts[i][j], pts[i][j + 1])
+                if (i + 1 < n && rnd.nextInt(10) < 8) lines += WayLine.of(attrs(), pts[i][j], pts[i + 1][j])
+            }
+            val g = RoutingGraphBuilder(ground).build(lines, drive)
+            val turns = TurnCost(TurnTable.DRIVE, DrivingSide.RIGHT, CostModel(TravelMode.DRIVE, metric = DriveMetric.FUEL))
+            val r = fuelRouter(g, TurnCost(TurnTable.DRIVE, DrivingSide.RIGHT))
+            repeat(12) {
+                val a = rnd.nextDouble(0.0, 0.01) to rnd.nextDouble(0.0, 0.01)
+                val b = rnd.nextDouble(0.0, 0.01) to rnd.nextDouble(0.0, 0.01)
+                val want = fuelReference(g, turns, a, b)
+                val got = r.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE)
+                if (want == Double.POSITIVE_INFINITY) { assertIs<RouteResult.Failed>(got, "seed $seed $a -> $b"); return@repeat }
+                val p = found(got)
+                assertEquals(want, p.cost, 1e-6 * maxOf(1.0, want), "seed $seed $a -> $b")
+                routes++
+                val t = TileRouter(WholeGraph(g), turns = TurnCost(TurnTable.DRIVE, DrivingSide.RIGHT)).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE)
+                if (t is RouteResult.Found && kotlin.math.abs(t.plan.distanceM - p.distanceM) > 1.0) differ++
+            }
+        }
+        assertTrue(routes > 150 && differ > 10, "routes $routes, of which $differ differ from least time")
+    }
 }
