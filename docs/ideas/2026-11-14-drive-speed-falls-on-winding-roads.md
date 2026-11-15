@@ -23,3 +23,15 @@ it fixes the owner's case, so this idea has to show a case it still gets wrong.
 - Whether the cap needs a per-edge field in the graph tiles (a format change, ADR 0033) or reads the geometry at
   search time (slower).
 - Whether a motorway or trunk is exempt (recommended: a gentle cap only below primary).
+
+Plan: after the pass of `2026-11-15-a-drive-is-a-speed-profile.md`, whose finding gives the size of the error on
+the public mountain drives; if no public drive moves by 5 percent this pass records that here as a dated line and
+builds nothing. The survey of 2026-11-15: the car profiles of the published routers do not lower speed for
+curvature (class, tagged limit, surface and turn penalties only; curvature is a motorcycle preference), so this
+departs from common practice and has to earn it by that measurement. Comfortable lateral acceleration in the road
+literature is 0.31 to 0.40 g. Build: a per-edge curve speed computed from the edge's geometry in memory
+(`RoutingGraph`'s points, cached lazily as `endBearing` is; no graph format change), the least `sqrt(a * r)` over a
+smoothed 25 m window with `a` 2.5 m/s2, applied in `CostModel.speedKmh` below primary only; the overlay's cell
+versions go up one. Verify: unit tests on a synthetic hairpin and a straight; the six public drives of
+`docs/reference/devtool-commands.md` before and after, PNGs viewed, against a published driving time where one
+exists. Out of scope: surface and smoothness caps, the fuel model's own speed terms.
