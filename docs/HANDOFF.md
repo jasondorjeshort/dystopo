@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-15 04:00 UTC, at the commit after merge 6dba2a2f, by main session (wave 33 open: T281 to T284 merged, T286 launched)
+Updated: 2026-11-15 05:20 UTC, at the commit after merge 4835a526, by main session (wave 33 open: T281 to T284 and T286 merged, T285 launched)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (wave 33: T281, T282, T283,
 strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
@@ -21,8 +21,8 @@ strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
 1. **Wave 33, drive routes pay for turns** (the owner, 2026-11-14: the next pass): on the board, its three
    surveys in `out/wave33-research/`, both critics answered in the wave paragraph, the decisions in ADR 0062 and
-   0063. T281 (the directed-edge drive search at zero turn cost, 1049d14b) and T282 (the turn values, the drive choice, 6c5b7e5a), T283 (the driving side, 2905835a) and T284 (least fuel, the metric, 6dba2a2f) are merged; T286 (a tunnel priced by the terrain above it, found by T284) is launched; then,
-   each after the last one's merge: T285 (least fuel on the phone; may move to the next wave); then the sweep and an alpha.
+   0063. T281 (the directed-edge drive search at zero turn cost, 1049d14b) and T282 (the turn values, the drive choice, 6c5b7e5a), T283 (the driving side, 2905835a) and T284 (least fuel, the metric, 6dba2a2f) and T286 (a tunnel priced on its portals' grade, 4835a526) are merged; T285 (least fuel on the phone) is launched;
+   then the sweep and an alpha. Next wave: the graph builder interpolating tunnel and bridge heights (T286's Status).
 2. After it: the other drive ideas (curvature, stops and signals, shortest) need research; the
    pressure-unit and Send diagnostics ideas are untriaged; then the board's Later and the ideas' Plans (the
    sweep-order rule, the days-old recording, the backup proposal, the signing step, Report recent stats, the
