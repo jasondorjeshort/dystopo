@@ -22,3 +22,15 @@ drive through a lit town prices its lights in the route JSON.
 
 - Whether a signal costs a fixed average (about 15 s) or less on a through road than on a turn.
 - The extra size of the graph tiles (measure it).
+
+Plan: pass one is the count and nothing else; the build waits for the pack and graph revision of
+`2026-11-15-pack-facts-written-by-the-map-build.md` (one format change, not two). Found 2026-11-15: the graph is
+built from the pack's `transportation` lines only (`RoutingGraphBuilder.build`), no layer carries these points and
+the graph has no per-node flags, so the build is a profile change (points into a layer), a pack rebuild and a
+graph version. Survey: one router charges 2 s a signal, 2 s a stop and 1 s a give-way, with `direction=` and
+`stop=minor` honoured; another scales its turn seconds by a per-edge stop impact; world counts are 2.0 million
+signals, 2.6 million stops and 1.7 million give-ways, uneven by region, with no published completeness figure.
+Pass one, a chore with one finding (`finding` skill): count the three tags, and how many carry `direction=`, in
+the cached extracts of `rainier`, `mont-blanc`, `bonneville` and one dense public town, per kilometre of drivable
+road; state published per-signal and per-stop delays with sources (the survey could not read the engineering
+manuals); say whether a town drive of wave 33 passes any. Out of scope: any code in `shared` or `tilebuild`.
