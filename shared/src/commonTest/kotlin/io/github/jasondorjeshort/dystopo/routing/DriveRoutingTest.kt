@@ -521,8 +521,10 @@ class DriveRoutingTest {
 
     @Test
     fun aMarkedEdgeDrivenBothWaysClimbsOneWayAndDescendsTheOther() {
-        // A 4 km tunnel whose west portal is at 100 m and east portal at 300 m, under a 900 m ridge: east-bound climbs the
-        // 200 m rise and descends nothing, west-bound the reverse; a part of it takes its share of the rise.
+        // A 4 km tunnel whose west portal is at 100 m and east portal at 300 m, under a 900 m ridge, in three edges (as a
+        // pack's tile borders cut a long one; the inner nodes take the terrain's height, over 700 m): east-bound climbs the
+        // 200 m rise between the portals and descends nothing, west-bound the reverse; each edge and each part of one takes
+        // its length's share of the rise.
         val bLon = 0.036
         val ground = ElevationSampler { _, lon ->
             val ramp = 100.0 + 200.0 * (lon / bLon).coerceIn(0.0, 1.0)
@@ -530,7 +532,9 @@ class DriveRoutingTest {
         }
         val g = RoutingGraphBuilder(ground).build(listOf(
             WayLine.of(minor, 0.0 to -0.005, 0.0 to 0.0),
-            WayLine.of(secondary.copy(brunnel = true, tunnel = true), 0.0 to 0.0, 0.0 to bLon / 2, 0.0 to bLon),
+            WayLine.of(secondary.copy(brunnel = true, tunnel = true), 0.0 to 0.0, 0.0 to bLon / 3),
+            WayLine.of(secondary.copy(brunnel = true, tunnel = true), 0.0 to bLon / 3, 0.0 to bLon / 2, 0.0 to 2 * bLon / 3),
+            WayLine.of(secondary.copy(brunnel = true, tunnel = true), 0.0 to 2 * bLon / 3, 0.0 to bLon),
             WayLine.of(minor, 0.0 to bLon, 0.0 to bLon + 0.005),
         ), drive)
         val a = 0.0 to -0.0025
@@ -542,10 +546,19 @@ class DriveRoutingTest {
         assertEquals(200.0, west.descentM!!, 2.0)
         assertTrue(west.ascentM!! < 1.0, "${west.ascentM}")
         assertTrue(east.fuelIndex!! > west.fuelIndex!!, "east ${east.fuelIndex} J, west ${west.fuelIndex} J")
-        val e = marked(g, WayAttrs.TUNNEL)
-        assertTrue(g.edgeAscent[e] + g.edgeDescent[e] > 1600.0, "the stored terrain: +${g.edgeAscent[e]} -${g.edgeDescent[e]}")
+        val pieces = (0 until g.edgeCount).filter { g.brunnel(it) == WayAttrs.TUNNEL }
+        assertEquals(3, pieces.size)
+        assertTrue(pieces.sumOf { (g.edgeAscent[it] + g.edgeDescent[it]).toDouble() } > 1600.0, "the stored terrain over the tunnel")
+        assertTrue(pieces.maxOf { maxOf(g.nodeEle[g.edgeFrom[it]], g.nodeEle[g.edgeTo[it]]) } > 700f, "an inner node on the terrain")
         val model = CostModel(TravelMode.DRIVE, metric = DriveMetric.FUEL)
-        val rise = (g.nodeEle[g.edgeTo[e]] - g.nodeEle[g.edgeFrom[e]]).toDouble()
+        val total = pieces.sumOf { g.edgeLength[it].toDouble() }
+        for (p in pieces) {
+            val r = model.straightRise(g, p)
+            val east = g.nodeLon[g.edgeTo[p]] > g.nodeLon[g.edgeFrom[p]]
+            assertEquals((if (east) 200.0 else -200.0) * g.edgeLength[p] / total, r, 1.0, "edge $p: its share of the portals' rise")
+        }
+        val e = pieces.maxBy { g.edgeLength[it] }
+        val rise = model.straightRise(g, e)
         val up = rise > 0
         assertEquals(kotlin.math.abs(rise) / 2, model.climbM(g, e, if (up) 0.25 else 0.75, if (up) 0.75 else 0.25), 1e-6)
         assertEquals(0.0, model.climbM(g, e, if (up) 0.75 else 0.25, if (up) 0.25 else 0.75))

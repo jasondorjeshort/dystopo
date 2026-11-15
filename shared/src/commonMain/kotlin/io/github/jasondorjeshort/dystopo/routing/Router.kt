@@ -242,17 +242,59 @@ class CostModel(
     }
 
     /**
-     * T286: the end-to-end rise of edge [e] of [g] (its `to` node's height less its `from` node's) when a drive reads it
-     * on the straight grade: a drive on a bridge or a tunnel ([RoutingGraph.brunnel]), both ends' heights known. NaN
-     * otherwise, where the stored [RoutingGraph.edgeAscent] and [RoutingGraph.edgeDescent] (the terrain sampled along the
-     * line at build) apply. The stored figures of a tunnel climb the ground above it and those of a bridge descend into
-     * the valley it spans; a road on a bridge or in a tunnel does neither. A marked edge cut at a tile border
-     * ([GraphTiler]) keeps the rule per piece, the cut point's height being the terrain's there: a known coarseness
-     * (a tunnel cut under a ridge reads the ridge's height at the cut). Hike and bike keep the stored figures.
+     * T286: the rise of edge [e] of [g] from its `from` node to its `to` node when a drive reads it on the straight grade:
+     * a drive on a bridge or a tunnel ([RoutingGraph.brunnel]). NaN otherwise (or when a height is unknown), where the
+     * stored [RoutingGraph.edgeAscent] and [RoutingGraph.edgeDescent] (the terrain sampled along the line at build) apply.
+     * The stored figures of a tunnel climb the ground above it and those of a bridge descend into the valley it spans; a
+     * road on a bridge or in a tunnel does neither. Hike and bike keep the stored figures.
+     *
+     * The straight grade runs between the marked line's two ends, its portals: a marked line is cut into several edges
+     * wherever it crosses a z14 tile border of the pack (T89: a node of [RoutingGraph.nodeLevel] bridge or tunnel) or its
+     * way is split, and every such inner node's height is the terrain's above it (the Mont Blanc tunnel is ten edges, its
+     * inner nodes up to 3,517 m). So [portal] walks the marked chain from each end of [e] to the first node that an
+     * unmarked edge touches, and [e] takes its length's share of the rise between those two heights. The walk stays in
+     * [g] (one graph tile, or the whole graph): a chain cut at the tile's own border, or branching inside the bridge or
+     * tunnel, ends there at the terrain's height, a known coarseness (rare: a z11 graph tile is about 13 km across here).
      */
     fun straightRise(g: RoutingGraph, e: Int): Double {
         if (mode != TravelMode.DRIVE || g.brunnel(e) == 0 || g.nodeEle.isEmpty()) return Double.NaN
-        return (g.nodeEle[g.edgeTo[e]] - g.nodeEle[g.edgeFrom[e]]).toDouble()
+        val back = portal(g, e, g.edgeFrom[e])
+        val ahead = portal(g, e, g.edgeTo[e])
+        val len = g.edgeLength[e].toDouble()
+        val chain = back.second + len + ahead.second
+        return if (chain > 0) (ahead.first - back.first) * len / chain else 0.0
+    }
+
+    /**
+     * T286: walking the marked chain from node [v] away from edge [e] of [g]: the first node an unmarked edge touches (a
+     * portal), else where the chain ends or branches; its height and the metres walked to it. Edges of no length (a
+     * level's join at a cut) are passed over.
+     */
+    private fun portal(g: RoutingGraph, e: Int, v: Int): Pair<Double, Double> {
+        val adjStart = g.adjStart
+        val adjEdge = g.adjEdge
+        var node = v
+        var prev = e
+        var walked = 0.0
+        var steps = 0
+        while (steps++ < MAX_PORTAL_STEPS) {
+            var next = -1
+            var nextCount = 0
+            var open = false
+            for (i in adjStart[node] until adjStart[node + 1]) {
+                val e2 = adjEdge[i] shr 1
+                if (e2 == prev || g.edgeLength[e2] <= 0f) continue
+                if (g.brunnel(e2) == 0) { open = true; break }
+                next = e2
+                nextCount++
+            }
+            if (open || nextCount != 1) break
+            walked += g.edgeLength[next]
+            node = if (g.edgeFrom[next] == node) g.edgeTo[next] else g.edgeFrom[next]
+            prev = next
+            if (node == v) break
+        }
+        return g.nodeEle[node].toDouble() to walked
     }
 
     /**
@@ -347,6 +389,9 @@ class CostModel(
 
         /** The average speed a drive route's summary assumes on legs the router did not plan (straight or imported; T89). */
         const val DRIVE_SUMMARY_KMH = 45.0
+
+        /** T286: the most edges [straightRise]'s walk to a bridge's or tunnel's portal takes (the Mont Blanc tunnel: ten). */
+        const val MAX_PORTAL_STEPS = 64
 
         /** T73: the speed drive mode assumes on an untagged line of class [c], km/h; 0 when cars may not use it. */
         fun driveSpeedKmh(c: WayClass): Double = when (c) {

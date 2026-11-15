@@ -655,8 +655,9 @@ until a restart.
   routed legs' fuel in the model's joules, whatever the metric, for comparing routes only, never litres; null when no
   leg was routed); each drive `searches` entry adds `metric`, `cost` and `fuelIndex`. Fuel has overlay cells of its
   own (the metric is part of the cell key; one LRU) and its own cell file, `<vector archive>-overlay-fuel.idx`
-  (`DYSF` version 1, the metric's id and a hash of the model's parameters in its header; a file of another metric,
-  id or hash is refused and rebuilt). Fuel cells are built only on demand: the first fuel request queues one
+  (`DYSF` version 2 since T286, the metric's id and a hash of the model's parameters in its header; a file of another
+  version, metric, id or hash is refused and rebuilt). T286: a drive on a bridge or in a tunnel climbs only the
+  straight grade between its portals, in its fuel, `fuelIndex` and reported ascent (docs/PLANNING.md › Routing). Fuel cells are built only on demand: the first fuel request queues one
   background fuel warm-up per offline map it uses (level 1, level 2, the file; or reads the file when it matches), and
   until it ends a long fuel drive builds the level-1 cells it reaches, as the phone always does. The time file and
   cells are never touched by it. `driveOverlay.warm` has one entry per metric (`metric`), `cellFiles` marks a fuel
