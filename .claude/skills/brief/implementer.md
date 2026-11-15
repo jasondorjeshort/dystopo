@@ -26,7 +26,9 @@ it; where it shows users or apps split, build a setting with the researched defa
 help text, debug route) and say why it is one.
 
 Done when: <the Done-when line>, plus `./gradlew check` green and the docs your change touches
-updated on the same branch (`CLAUDE.md`, Debug before you push).
+updated on the same branch (`CLAUDE.md`, Debug before you push). A task that adds a screen, a
+Settings row or a card line also names the sweep step that opens it (`tools/android-ui.py`
+`features`, the a11y screens), new or existing, and shows its frame: <the step, or "nothing a user sees">.
 
 Process: temporary files go in a folder of your own under the session scratchpad (`<scratchpad>\Tnn\`;
 every agent of the session shares the scratchpad root, and files written there have been overwritten

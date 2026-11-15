@@ -38,7 +38,10 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
 1. Write the wave in `docs/TASKS.md`: per task a Goal, an **Owns:** line, a **Done when:** line
    and, where two tasks share a mechanism behind disjoint Owns lines (a hook, a cache, a format, an
    index, a join), an **Interacts with:** line on each naming the other task and the mechanism
-   (ADR 0048). Make the Owns lines disjoint; two tasks that must touch one file go in different
+   (ADR 0048). A task that adds a screen, a Settings row or a card line names in its Done when the
+   sweep step that opens it, new or existing (`tools/android-ui.py` `features`, the a11y screens):
+   wave 33's row, help and card line were in no sheet, and the sweep's `-First` matched nothing
+   without saying so. Make the Owns lines disjoint; two tasks that must touch one file go in different
    waves, or one task owns the file and the other records a follow-up. A file several tasks append to in
    one wave (a settings registry, a dispatch block, a speech file) takes each task's block at the end
    under a comment naming the task, closed by the task's own sentinel line (`// end Tnn`) after its
@@ -54,7 +57,7 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    owner, 2026-10-16: standard for every wave). Its brief names the wave section, the previous wave's
    record (`docs/tasks/wave-NN.md`, its Status lines) and the board's Later, the ideas and ADRs the
    plan draws on, and asks for numbered objections with severity and evidence on: disjoint Owns lines over files that exist, task size, every Done-when a command or
-   observable, premises checked against the code, major choices that need a proposal, follow-ups
+   observable, a sweep step named for every new screen, row or card line, premises checked against the code, major choices that need a proposal, follow-ups
    dropped silently, cross-task sequencing, behaviour shared across tasks that no Interacts with
    line names, choices left to an implementer's taste without research,
 and settings added or missing against ADR 0044. Answer every objection by editing the plan or by writing
