@@ -76,6 +76,8 @@
 # T259: with -Prev <previous sweep folder>, then tools/sweep-diff.py: changes.png (the changed screenshots before and
 # after, with the differing pixels in red; -First <screen names> puts the owner's first) and changes.json, and the
 # count in summary.json's `changes`. -SummaryOnly -Out <existing sweep folder> -Prev <folder> redoes just those steps.
+# T288: the diff is the step `diff` in steps.tsv; a -First name that matches no frame of either sweep turns the sweep red
+# (changes.firstMissing, `diff` failed in summary.json, exit 1) until the name is corrected or a step opens that screen.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1                     # everything
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDevice           # no emulator on this machine
@@ -264,20 +266,38 @@ if ([IO.Path]::IsPathRooted($Out)) { throw "-Out must be relative to the checkou
 $Out = [IO.Path]::GetFullPath((Join-Path $repo $Out))
 if (-not $Out.StartsWith($repo.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "-Out must stay inside the checkout ($repo), not '$Out'" }
 # T259: the summary (sweep-summary.py), then with -Prev the before-and-after sheet (sweep-diff.py, which adds `changes`
-# to summary.json); the sweep's exit code is the summary's, never the diff's.
+# to summary.json). T288: the diff is a step of its own: its line ('diff', its exit code, seconds and note) is appended to
+# steps.tsv after it runs (a 'diff' line left by an earlier run is dropped first, so a -SummaryOnly rerun with corrected
+# -First names clears it), and its exit code joins the sweep's: 1 when a -First name matched no frame (sweep-diff.py has
+# then written changes.firstMissing and a failed result into summary.json itself), 2 on an error.
 $First = @($First | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if ($Prev) {
     $Prev = if ([IO.Path]::IsPathRooted($Prev)) { [IO.Path]::GetFullPath($Prev) } else { [IO.Path]::GetFullPath((Join-Path $repo $Prev)) }
     if (-not (Test-Path -LiteralPath $Prev -PathType Container)) { throw "-Prev is not a folder: '$Prev'" }
 }
 function Write-Summary {
+    $stepsFile = Join-Path $Out 'steps.tsv'
+    if ($Prev -and (Test-Path -LiteralPath $stepsFile)) {
+        $kept = @([IO.File]::ReadAllLines($stepsFile) | Where-Object { ($_ -split "`t", 2)[0] -ne 'diff' })
+        [IO.File]::WriteAllText($stepsFile, (@($kept | ForEach-Object { "$_`r`n" }) -join ''), (New-Object Text.UTF8Encoding $false))
+    }
     & python -I (Join-Path $repo 'tools\sweep-summary.py') $Out --channel $Channel | Out-Host
     $code = $LASTEXITCODE
     if ($Prev) {
         $diffArgs = @('-I', (Join-Path $repo 'tools\sweep-diff.py'), $Prev, $Out, '--channel', $Channel)
         if ($First.Count) { $diffArgs += @('--first', ($First -join ',')) }
+        $d0 = Get-Date
         & python @diffArgs | Out-Host
-        if ($LASTEXITCODE -ne 0) { Write-Host "[sweep] sweep-diff.py failed (exit $LASTEXITCODE); no changes.png" }
+        $diffCode = $LASTEXITCODE
+        $diffNote = ''
+        if ($diffCode -ne 0) {
+            try { $diffNote = "$(((Get-Content -Raw -LiteralPath (Join-Path $Out 'summary.json') | ConvertFrom-Json).parts.diff).note)" } catch { }
+            if (-not $diffNote) { $diffNote = "sweep-diff.py exit $diffCode" }
+            Write-Host "[sweep] sweep-diff.py failed (exit $diffCode): $diffNote"
+        }
+        $line = "diff`t$diffCode`t$([math]::Round(((Get-Date) - $d0).TotalSeconds, 1))`t$($diffNote -replace '[\t\r\n]', ' ')`r`n"
+        [IO.File]::AppendAllText($stepsFile, $line, (New-Object Text.UTF8Encoding $false))
+        if ($diffCode -ne 0 -and "$code" -eq '0') { $code = $diffCode }
     }
     $code
 }
