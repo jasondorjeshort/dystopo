@@ -1,7 +1,7 @@
 ---
 date: 2026-11-14
 kind: feature
-related: [2026-11-14-drive-routes-pay-for-turns.md, 2026-11-14-drive-stops-and-signals-cost-time.md]
+related: [2026-11-14-drive-stops-and-signals-cost-time.md]
 ---
 
 # Drive speed drops on winding roads, from the road's own geometry

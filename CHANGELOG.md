@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-15
+
+- T282: Turns cost time: the values, the planned time, the cells rebuilt (after T281)
+
 ### 2026-11-14
 
 - T281: The drive search on directed-edge states, at zero turn cost (first)

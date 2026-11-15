@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-15 00:10 UTC, at the commit after merge 1049d14b, by main session (wave 33 open: T281 merged, T282 launched)
+Updated: 2026-11-15 01:30 UTC, at the commit after merge 6c5b7e5a, by main session (wave 33 open: T281 and T282 merged, T283 launched)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (wave 33: T281, T282, T283,
 strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
@@ -21,8 +21,8 @@ strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
 1. **Wave 33, drive routes pay for turns** (the owner, 2026-11-14: the next pass): on the board, its three
    surveys in `out/wave33-research/`, both critics answered in the wave paragraph, the decisions in ADR 0062 and
-   0063. T281 (the directed-edge drive search at zero turn cost) is merged (1049d14b); T282 is launched; then,
-   each after the last one's merge: T282 (the turn values, the drive choice), T283 (the driving side), T284 (least
+   0063. T281 (the directed-edge drive search at zero turn cost, 1049d14b) and T282 (the turn values, the drive choice, 6c5b7e5a) are merged; T283 is launched; then,
+   each after the last one's merge: T283 (the driving side), T284 (least
    fuel, the metric), T285 (least fuel on the phone; may move to the next wave); then the sweep and an alpha.
 2. After it: the other drive ideas (curvature, stops and signals, shortest) need research; the
    pressure-unit and Send diagnostics ideas are untriaged; then the board's Later and the ideas' Plans (the

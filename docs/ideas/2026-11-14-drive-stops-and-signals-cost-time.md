@@ -1,7 +1,7 @@
 ---
 date: 2026-11-14
 kind: feature
-related: [2026-11-14-drive-routes-pay-for-turns.md]
+related: []
 ---
 
 # Stop signs and traffic signals cost a drive time

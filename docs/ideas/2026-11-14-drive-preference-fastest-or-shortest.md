@@ -1,7 +1,7 @@
 ---
 date: 2026-11-14
 kind: question
-related: [2026-11-14-drive-routes-pay-for-turns.md, 2026-11-14-drive-speed-falls-on-winding-roads.md]
+related: [2026-11-14-drive-speed-falls-on-winding-roads.md]
 ---
 
 # A drive preference: fastest, balanced or shortest
