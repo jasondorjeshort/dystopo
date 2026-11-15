@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-15 07:10 UTC, at the commit after merge 72833bc7, by main session (wave 33: all six tasks merged, the post-wave sweep launched)
+Updated: 2026-11-15 06:25 UTC, at the commit after c8afdf87, by main session (wave 33: all six tasks merged, the sweep green, v0.1.30-alpha being published)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.md` (wave 33: T281, T282, T283,
 strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
@@ -21,7 +21,7 @@ strictly in order), ADR 0062, `docs/tasks/wave-32.md` for the closed wave.
 
 1. **Wave 33, drive routes pay for turns** (the owner, 2026-11-14: the next pass): on the board, its three
    surveys in `out/wave33-research/`, both critics answered in the wave paragraph, the decisions in ADR 0062 and
-   0063. T281 (the directed-edge drive search at zero turn cost, 1049d14b) and T282 (the turn values, the drive choice, 6c5b7e5a), T283 (the driving side, 2905835a) and T284 (least fuel, the metric, 6dba2a2f) and T286 (a tunnel priced on its portals' grade, 4835a526) and T285 (least fuel on the phone, 72833bc7) are merged, all six; the post-wave sweep is launched (`-Prev outsweep-20261114-0027`);
+   0063. T281 (the directed-edge drive search at zero turn cost, 1049d14b) and T282 (the turn values, the drive choice, 6c5b7e5a), T283 (the driving side, 2905835a) and T284 (least fuel, the metric, 6dba2a2f) and T286 (a tunnel priced on its portals' grade, 4835a526) and T285 (least fuel on the phone, 72833bc7) are merged, all six; the post-wave sweep is green (`out/sweep-20261114-2352` on c8afdf87, no rerun; the next release's `-Prev`);
    on green the alpha (v0.1.30-alpha), then the wave's close (record, meter, README). Next wave: the graph builder interpolating tunnel and bridge heights (T286's Status).
 2. After it: the other drive ideas (curvature, stops and signals, shortest) need research; the
    pressure-unit and Send diagnostics ideas are untriaged; then the board's Later and the ideas' Plans (the

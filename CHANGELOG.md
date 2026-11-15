@@ -4,17 +4,19 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.30-alpha (2026-11-15)
+
 ### 2026-11-15
 
-- T285: Least fuel on the phone: the third value, the comparison, the card's line (after T286; may move to the next wave)
-- T286: Least fuel does not climb the mountain a tunnel passes under (after T284, before T285; small)
-- T284: Least fuel, the metric: the model, the search, the overlay's second cell file (after T283; ADR 0063)
-- T283: The driving side: left-hand-traffic regions turn the two sides around (after T282; small)
-- T282: Turns cost time: the values, the planned time, the cells rebuilt (after T281)
+- T285: Drives can be planned for least fuel on the phone: Plan drives for has three values (Least time, Least fuel, Quicker planning), and the card of a least-fuel route says about how much fuel it saves against the least-time route and the minutes it adds
+- T286: A least-fuel drive through a tunnel or over a bridge is priced on the straight grade between its two ends, not on the mountain above it or the valley below
+- T284: Least fuel as a way to plan a drive (devtool `route --prefer fuel`, the server's `prefer=fuel`): a model of an average car that favours steady roads and fewer climbs and turns; every drive reports a fuel index for comparing routes
+- T283: Turn costs know the driving side: where traffic keeps left, the turn across traffic is the right one
+- T282: Drive routes pay for turns: a side road of the same speed reached by two left turns no longer beats the main road for being a few yards shorter; a drive's planned time counts the seconds its turns cost; a new setting, Plan drives for (Least time, Quicker planning)
 
 ### 2026-11-14
 
-- T281: The drive search on directed-edge states, at zero turn cost (first)
+- T281: The drive search works on directed road segments, the base the turn costs stand on; no route changed
 
 ## v0.1.29-alpha (2026-11-14)
 
