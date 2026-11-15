@@ -47,6 +47,31 @@ class RemoteRouterTest {
     }
 
     @Test
+    fun aDriveSaysWhichMetricTheServerUsed() {
+        // T285 (ADR 0063 Decision 7): prefer=fuel goes out; the reply's metric and fuelIndex come back on the plan. A server
+        // before T284 names no metric: it planned for least time, and the plan says so.
+        val urls = ArrayList<String>()
+        val fuelReply = reply.replace("\"ms\":42}", "\"ms\":42,\"prefer\":\"fuel\",\"metric\":\"fuel\",\"fuelIndex\":208815457}")
+        val planned = RemoteRouter("http://s", { u -> urls += u; 200 to fuelReply }, drivePreference = { DrivePreference.FUEL })
+            .route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.DRIVE)
+        val p = assertIs<RouteResult.Found>(planned).plan
+        assertTrue(urls.single().endsWith("&prefer=fuel"), urls.single())
+        assertEquals(DriveMetric.FUEL, p.metric)
+        assertEquals(208815457.0, p.fuelIndex)
+        assertEquals("fuel", p.memory["remotePrefer"])
+        assertEquals("fuel", p.memory["remoteMetric"])
+        val older = RemoteRouter("http://s", { 200 to reply }, drivePreference = { DrivePreference.FUEL })
+            .route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.DRIVE)
+        val o = assertIs<RouteResult.Found>(older).plan
+        assertEquals(DriveMetric.TIME, o.metric, "no echo: least time")
+        assertNull(o.fuelIndex)
+        assertNull(o.memory["remoteMetric"])
+        val hike = assertIs<RouteResult.Found>(RemoteRouter("http://s", { 200 to fuelReply }).route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.HIKE)).plan
+        assertNull(hike.metric)
+        assertNull(hike.fuelIndex)
+    }
+
+    @Test
     fun straightLegsAndErrorsAreFailures() {
         val off = RemoteRouter("http://s", { 200 to straight }).route(46.7, -121.7, 46.6, -120.5, TravelMode.DRIVE)
         assertIs<RouteResult.Failed>(off)

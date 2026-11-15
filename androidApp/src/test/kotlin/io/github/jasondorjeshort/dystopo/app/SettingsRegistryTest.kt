@@ -151,7 +151,8 @@ class SettingsRegistryTest {
 
     /**
      * T282: "Plan drives for" (ADR 0063 Decision 1): least time by default, synced, the Navigation page's last row; a stored value
-     * this build does not know (a later `fuel`) reads as least time and is not written back; a synced one is not taken.
+     * this build does not know (a later `shortest`) reads as least time and is not written back; a synced one is not taken.
+     * T285: `fuel` (Least fuel) is the third value: stored, synced and posted like the other two.
      */
     @Test
     fun drivePreferenceReadsAnUnknownValueAsLeastTime() {
@@ -160,18 +161,38 @@ class SettingsRegistryTest {
         assertEquals("time", AppSettings.json()["drivePreference"])
         assertEquals("time", SettingsSync.current()["app.drivePreference"])
         assertTrue(AppSettings.DRIVE_PREFERENCE.synced)
-        val later = FakePrefs(mapOf("server" to "", "drivePreference" to "fuel"))
+        val later = FakePrefs(mapOf("server" to "", "drivePreference" to "shortest"))
         AppSettings.load(later)
         assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.TIME, AppSettings.drivePreference)
         assertTrue(later.writes.none { it.first == "drivePreference" }, "not written back: ${later.writes}")
-        assertEquals("fuel", later.values["drivePreference"])
+        assertEquals("shortest", later.values["drivePreference"])
         val plan = SettingsSync.plan(mapOf("app.drivePreference" to "quick"), emptyMap(), SettingsRoutes.KEYS)
         assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.QUICK, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[AppSettings.DRIVE_PREFERENCE])
-        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("drivePreference" to "fuel")))
+        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("drivePreference" to "shortest")))
         val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
         assertEquals(rows.last(), io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE, "the page's last row")
         assertEquals("Plan drives for", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE.label)
-        assertEquals(listOf("Least time", "Quicker planning"), io.github.jasondorjeshort.dystopo.app.settings.DRIVE_PREFERENCE_CHOICES.map { it.second })
+        assertEquals(listOf("Least time", "Least fuel", "Quicker planning"), io.github.jasondorjeshort.dystopo.app.settings.DRIVE_PREFERENCE_CHOICES.map { it.second })
+    }
+
+    /** T285: Least fuel is stored, read back, synced and posted (the guard of T284 is gone). */
+    @Test
+    fun leastFuelIsTheThirdValue() {
+        val stored = FakePrefs(mapOf("server" to "", "drivePreference" to "fuel"))
+        AppSettings.load(stored)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.FUEL, AppSettings.drivePreference)
+        assertEquals("fuel", AppSettings.json()["drivePreference"])
+        assertEquals("fuel", SettingsSync.current()["app.drivePreference"])
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("drivePreference" to "fuel")))
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.FUEL, posted[AppSettings.DRIVE_PREFERENCE])
+        val synced = SettingsSync.plan(mapOf("app.drivePreference" to "fuel"), emptyMap(), SettingsRoutes.KEYS)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.FUEL, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))[AppSettings.DRIVE_PREFERENCE])
+        val p = FakePrefs(mapOf("server" to ""))
+        AppSettings.load(p)
+        AppSettings.set(AppSettings.DRIVE_PREFERENCE, io.github.jasondorjeshort.dystopo.routing.DrivePreference.FUEL)
+        assertEquals("fuel", p.values["drivePreference"])
+        val line = io.github.jasondorjeshort.dystopo.app.settings.DRIVE_PREFERENCE_CHOICES.first { it.first == io.github.jasondorjeshort.dystopo.routing.DrivePreference.FUEL }.third
+        assertEquals("Favours steady roads and fewer climbs and turns. An estimate for an average car; it can take longer.", line)
     }
 
     @Test

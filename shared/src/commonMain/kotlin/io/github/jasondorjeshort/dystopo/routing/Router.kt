@@ -593,7 +593,7 @@ interface Router {
  * devtool `route --prefer` and the server's `prefer=`, each stored or sent as [key]. [TIME] (the default) is the drive
  * search with its turn seconds ([DriveSearch], [TurnTable.DRIVE]); [QUICK] the node search, blind to turns
  * ([TileRouter.driveTurns] off; T281's `--no-turns` and `turns=0` are its aliases). A key this build does not know
- * reads as [DEFAULT] ([read]). T284: [FUEL], least fuel ([metric]); the phone reads keys through [onPhone] until T285.
+ * reads as [DEFAULT] ([read]). T284: [FUEL], least fuel ([metric]); T285: the phone's third value.
  */
 enum class DrivePreference(val key: String, val turns: Boolean, val metric: DriveMetric = DriveMetric.TIME) {
     TIME("time", true),
@@ -603,12 +603,6 @@ enum class DrivePreference(val key: String, val turns: Boolean, val metric: Driv
 
     companion object {
         val DEFAULT = TIME
-
-        /**
-         * T284: the values the phone offers until T285 builds its third ("Least fuel"): [of] without [FUEL], so a stored,
-         * synced or posted `fuel` on the phone still reads as least time (T282's behaviour). T285 removes this.
-         */
-        fun onPhone(key: String?): DrivePreference? = of(key)?.takeIf { it != FUEL }
 
         /** The preference named [key] (any case, trimmed), or null for one this build does not know. */
         fun of(key: String?): DrivePreference? = key?.trim()?.lowercase()?.let { k -> entries.firstOrNull { it.key == k } }

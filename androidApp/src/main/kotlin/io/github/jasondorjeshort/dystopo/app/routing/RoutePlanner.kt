@@ -18,6 +18,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.Compression
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.routing.DemElevation
 import io.github.jasondorjeshort.dystopo.routing.DriveOverlay
+import io.github.jasondorjeshort.dystopo.routing.DrivePreference
 import io.github.jasondorjeshort.dystopo.routing.FallbackRouter
 import io.github.jasondorjeshort.dystopo.routing.RemoteRouter
 import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
@@ -377,12 +378,37 @@ object RoutePlanner {
             if (server != null) return Measured(FallbackRouter(null, server) { _, _ -> false })
             throw NotReady(wanted.firstOrNull { it.status != "error" } ?: wanted.firstOrNull() ?: primary)
         }
-        // T102: descriptions and messages in the units preference.
-        // T282: Plan drives for (least time on the drive search; quicker planning on the node search).
-        val local = TileRouter(TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units, minDistanceM = overlayMinM, driveTurns = AppSettings.drivePreference.turns)
+        val local = localRouter(ready, AppSettings.drivePreference)
         if (server == null) return Measured(local)
         val boxes = states.values.map { it.bounds }
         return Measured(FallbackRouter(local, server) { lat, lon -> boxes.any { b -> lon in b[0]..b[2] && lat in b[1]..b[3] } })
+    }
+
+    /**
+     * The packs' own router. T102: descriptions and messages in the units preference. T282: Plan drives for (least time on
+     * the drive search; quicker planning on the node search). T285: least fuel on the drive search with the fuel metric.
+     */
+    private fun localRouter(ready: List<State>, preference: DrivePreference): TileRouter =
+        TileRouter(
+            TiledGraph(ready.mapNotNull { it.archive }, tileCache), driveOverlay, maxSettled = MAX_SETTLED, units = AppSettings.units,
+            minDistanceM = overlayMinM, driveTurns = preference.turns, metric = preference.metric,
+        )
+
+    /**
+     * T285 (ADR 0063 Decision 7): the least-time drive between the ends of a least-fuel plan, on the packs on the device only
+     * (never the server), for the card's comparison: the same ends and snap as the first plan, the graphs it used already
+     * loaded (waits at most [waitMs]). Not counted as the last route (`lastRoute` stays the shown one's).
+     */
+    fun planLeastTime(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double, waitMs: Long = 2_000, snapM: Double = AppSettings.routeSnapM.toDouble()): RouteResult {
+        val wanted = states.values.filter { it.near(listOf(fromLat to fromLon, toLat to toLon), NEAR_M) }
+        val deadline = SystemClock.elapsedRealtime() + waitMs
+        for (s in wanted) {
+            val left = deadline - SystemClock.elapsedRealtime()
+            if (s.archive == null && left > 0) s.finished.await(left, TimeUnit.MILLISECONDS)
+        }
+        val ready = wanted.filter { it.archive != null }
+        if (ready.isEmpty()) throw NotReady(wanted.firstOrNull())
+        return localRouter(ready, DrivePreference.TIME).route(fromLat, fromLon, toLat, toLon, TravelMode.DRIVE, maxSnapM = snapM, name = "Least time")
     }
 
     /**

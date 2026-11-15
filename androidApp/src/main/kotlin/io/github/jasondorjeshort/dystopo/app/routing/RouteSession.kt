@@ -79,6 +79,13 @@ object RouteSession {
     var plan by mutableStateOf<PlannedRoute?>(null)
         private set
 
+    /**
+     * T285 (ADR 0063 Decision 7): the drive's fuel against its least-time route, for the plan [SessionFuel.planId]; null off
+     * drives and while nothing is planned. Written on the main thread ([ui]); the second plan runs on [compareWorker].
+     */
+    var fuel by mutableStateOf<SessionFuel?>(null)
+        private set
+
     /** T276: the route's kind; null on foot while nothing is planned or a route is planning (no foot chip is lit). */
     var tripKind by mutableStateOf<TripKind?>(null)
         private set
@@ -162,6 +169,27 @@ object RouteSession {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-route-plan").apply { isDaemon = true } }
 
+    /**
+     * T285: the least-time plan after a least-fuel one runs here, apart from [worker], so the card and the next plan never
+     * wait for it. Bumping [compareToken] (a new plan, a failure, Clear) cancels it: a queued one never starts, a running
+     * search (the router has no stop) finishes and its answer is dropped.
+     */
+    private val compareWorker = Executors.newSingleThreadExecutor { r ->
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "dystopo-route-compare").apply { isDaemon = true }
+    }
+    private val compareToken = java.util.concurrent.atomic.AtomicLong()
+    private val compareLock = Any()
+
+    /** T285: drops the second plan's answer (under [compareLock], so its check and its session-file write are one step). */
+    private fun dropCompare() = synchronized(compareLock) { compareToken.incrementAndGet() }
+
+    /** T285: the last second plan (`GET /route` `ui.fuelCompare`): its ms, search bytes and whether it was dropped. */
+    @Volatile var lastCompare: Map<String, Any?>? = null
+        private set
+
+    /** T285: the kind persisted with the plan, so the comparison's answer rewrites the session file with it. */
+    @Volatile private var persistedKind: KindChoice? = null
+
     /** T119: the Compose fields are written on the main thread; a plan's result is published before [plan] returns. */
     private val uiq = UiPublish({ Looper.myLooper() == Looper.getMainLooper() }, { main.post(it) })
 
@@ -188,21 +216,24 @@ object RouteSession {
             val c = r.kind?.let { KindChoice(it, r.kindReason ?: KindReason.UNKNOWN) } ?: TripKinds.choose(r.plan.mode, emptyMap())
             tappedKind = if (c.reason == KindReason.TAP) c.kind else null
             kindFor(r.plan, c)
-            ui { if (plan == null && phase == "idle") { phase = "route"; mode = r.plan.mode; plan = r.plan; tripKind = c.kind; kindReason = c.reason; message = null } }
+            persistedKind = c
+            val restoredFuel = r.fuel?.let { SessionFuel(r.plan.route.id, it) } // T285: the line survives a restart
+            ui { if (plan == null && phase == "idle") { phase = "route"; mode = r.plan.mode; plan = r.plan; tripKind = c.kind; kindReason = c.reason; message = null; fuel = restoredFuel } }
             overlay.show(r.plan.route.points, null, null)
             Log.i(RoutePlanner.TAG, "restored the unsaved route ${r.plan.route.id} (${r.plan.route.points.size} points)")
         }
     }
 
     /** T108: writes [p] as the unsaved route ([SessionRoute]); null deletes it. */
-    private fun persist(p: PlannedRoute?, kind: KindChoice? = null) {
+    private fun persist(p: PlannedRoute?, kind: KindChoice? = null, fuelNow: FuelComparison? = null) {
         val s = fromEnd
         val e = toEnd
+        persistedKind = kind
         runCatching {
             val f = sessionFile()
             if (p == null || s == null || e == null) { f.delete(); return@runCatching }
             val tmp = File(f.path + ".tmp")
-            tmp.writeText(SessionRoute.encode(p, s.lat to s.lon, e.lat to e.lon, System.currentTimeMillis(), s, e, kind?.kind, kind?.reason), Charsets.UTF_8)
+            tmp.writeText(SessionRoute.encode(p, s.lat to s.lon, e.lat to e.lon, System.currentTimeMillis(), s, e, kind?.kind, kind?.reason, fuelNow), Charsets.UTF_8)
             if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
         }.onFailure { Log.w(RoutePlanner.TAG, "could not save the unsaved route", it) }
     }
@@ -394,7 +425,8 @@ object RouteSession {
         everydayPoints = null
         val byMode = TripKinds.byMode(travel)
         // T276: no foot chip is lit while a route on foot is planning; the other modes' kind is their own.
-        ui { phase = "planning"; mode = travel; plan = null; tripKind = byMode; kindReason = byMode?.let { KindReason.MODE }; message = "Planning..."; fromOpen = false }
+        dropCompare() // T285: the comparison of the route before is dropped
+        ui { phase = "planning"; mode = travel; plan = null; fuel = null; tripKind = byMode; kindReason = byMode?.let { KindReason.MODE }; message = "Planning..."; fromOpen = false }
         overlay.show(null, start, end)
         val result = try {
             RoutePlanner.plan(fromLat, fromLon, toLat, toLon, travel, name, waitMs).let { r ->
@@ -429,8 +461,12 @@ object RouteSession {
                 failure = null
                 val kind = TripKinds.of(result.plan, tappedKind) // T276: the mode's, the tapped chip's, or the guess
                 kindFor(result.plan, kind)
-                persist(result.plan, kind) // T108: outlives the process
-                uiq.publish(PUBLISH_MS) { phase = "route"; plan = result.plan; tripKind = kind.kind; kindReason = kind.reason; message = null } // T119: before the caller answers
+                // T285: what the drive was asked for, and the comparison to come (least fuel on the phone's packs).
+                val compare = FuelComparison.of(result.plan, AppSettings.drivePreference)
+                val sessionFuel = compare?.let { SessionFuel(result.plan.route.id, it) }
+                persist(result.plan, kind, compare) // T108: outlives the process
+                uiq.publish(PUBLISH_MS) { phase = "route"; plan = result.plan; fuel = sessionFuel; tripKind = kind.kind; kindReason = kind.reason; message = null } // T119: before the caller answers
+                if (compare?.wantsLeastTime == true) compareLater(result.plan, compare, fromLat, fromLon, toLat, toLon)
                 overlay.show(result.plan.route.points, null, null)
                 // T49: show the whole route. T114: once the finished card has been measured (it grows by the numbers, the
                 // trails and the actions after planning, and the fit used to leave the start, the phone's position, under it).
@@ -445,15 +481,40 @@ object RouteSession {
         return result
     }
 
+    /**
+     * T285 (ADR 0063 Decision 7): after least fuel is shown, the least-time route of the same ends on [compareWorker]; its
+     * fuel and time complete [first]'s comparison, published and persisted unless the route changed meanwhile.
+     */
+    private fun compareLater(p: PlannedRoute, first: FuelComparison, fromLat: Double, fromLon: Double, toLat: Double, toLon: Double) {
+        val token = compareToken.get()
+        compareWorker.execute {
+            if (token != compareToken.get()) { lastCompare = linkedMapOf("routeId" to p.route.id, "dropped" to "queued"); return@execute }
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val r = runCatching { RoutePlanner.planLeastTime(fromLat, fromLon, toLat, toLon) }
+            val ms = android.os.SystemClock.elapsedRealtime() - t0
+            val found = (r.getOrNull() as? RouteResult.Found)?.plan
+            val bytes = (found?.memory?.get("searchBytes") as? Number)?.toLong()
+            val done = if (found != null) first.copy(leastTimeFuelIndex = found.fuelIndex, leastTimeS = found.timeS, state = LineState.READY, ms = ms, searchBytes = bytes)
+            else first.copy(state = LineState.NONE, ms = ms, error = r.exceptionOrNull()?.message ?: (r.getOrNull() as? RouteResult.Failed)?.message)
+            // A Clear or a new plan after the check waits for this write and then deletes or replaces the file.
+            val dropped = synchronized(compareLock) { (token != compareToken.get()).also { d -> if (!d) persist(p, persistedKind, done) } }
+            lastCompare = linkedMapOf("routeId" to p.route.id, "ms" to ms, "searchBytes" to bytes, "expanded" to found?.expanded, "dropped" to if (dropped) "running" else null, "comparison" to done.json())
+            Log.i(RoutePlanner.TAG, "least-time comparison of ${p.route.id}: ${done.percent} %, ${done.minutes} min, $ms ms, $bytes search bytes" + if (dropped) " (dropped)" else "")
+            if (dropped) return@execute
+            ui { if (plan === p && token == compareToken.get()) fuel = SessionFuel(p.route.id, done) }
+        }
+    }
+
     /** The failure made the session's: no plan, the message, the ends on the map. */
     private fun failed(result: RouteResult.Failed): RouteResult.Failed {
         failure = result
+        dropCompare() // T285
         persist(null)
         // T276: a failed route on foot lights the tapped chip, else Hike (no share to guess from).
         val c = TripKinds.choose(mode, emptyMap(), tapped = tappedKind)
         everydayPoints = null
         townShare = null
-        uiq.publish(PUBLISH_MS) { phase = "failed"; plan = null; tripKind = c.kind; kindReason = c.reason; message = result.message }
+        uiq.publish(PUBLISH_MS) { phase = "failed"; plan = null; fuel = null; tripKind = c.kind; kindReason = c.reason; message = result.message }
         overlay.show(null, start, end)
         return result
     }
@@ -545,6 +606,7 @@ object RouteSession {
 
     fun clear() {
         waitToken.incrementAndGet() // T114: a route to here stops waiting
+        dropCompare() // T285: the second plan's answer is dropped (before Clear deletes the session file)
         waitingFor = -1
         setEnds(null, null)
         failure = null
@@ -552,7 +614,7 @@ object RouteSession {
         tappedKind = null // T276: a tapped chip holds until Clear
         everydayPoints = null
         townShare = null
-        ui { phase = "idle"; plan = null; tripKind = null; kindReason = null; message = null; directionsOpen = false; fromOpen = false; moreOpen = false }
+        ui { phase = "idle"; plan = null; fuel = null; tripKind = null; kindReason = null; message = null; directionsOpen = false; fromOpen = false; moreOpen = false }
         overlay.show(null, null, null)
     }
 
@@ -622,12 +684,15 @@ object RouteSession {
         val p = plan
         val units = AppSettings.units
         // T276: an everyday route has none of the four lines, and nothing is computed for them.
-        if (p != null && isEveryday(p.route.points)) return linkedMapOf(
+        // T285: the drive's metric and its comparison with least time (both numbers whether or not the line shows).
+        val f = fuel?.takeIf { p != null && it.planId == p.route.id }?.comparison
+        val fuelJson = linkedMapOf<String, Any?>("metric" to p?.metric?.key, "fuel" to f?.json())
+        if (p != null && isEveryday(p.route.points)) return linkedMapOf<String, Any?>(
             "headline" to PaceSettings.headline(p), "drawnHeadline" to BottomPanels.routeCardHeadline,
             "basis" to PaceSettings.secondLine(p),
             "actions" to CardActions.of(phase, canTryCrow()).map { it.json() }, "moreOpen" to moreOpen,
             "lines" to linkedMapOf("water" to EVERYDAY_JSON, "exposure" to EVERYDAY_JSON, "bestStart" to EVERYDAY_JSON, "pastEffort" to EVERYDAY_JSON),
-        )
+        ) + fuelJson
         return linkedMapOf(
             "headline" to p?.let { PaceSettings.headline(it) }, "drawnHeadline" to BottomPanels.routeCardHeadline,
             "basis" to p?.let { PaceSettings.secondLine(it) },
@@ -638,7 +703,7 @@ object RouteSession {
                 "bestStart" to LineState.of(p?.let { RouteBestStart.start(it) }, ShadeText.BEST_START_WORKING) { it.line },
                 "pastEffort" to LineState.of(p?.let { PaceSettings.pastEffortStarted(it.route.points, it.mode) }, null) { PaceSettings.pastEffortLine(it) },
             ),
-        )
+        ) + fuelJson
     }
 
     /** T114: no path between the two ends, and the card offers the straight line. */
@@ -661,6 +726,7 @@ object RouteSession {
         "directions" to plan?.let { shownDirections(it).size }, "directionsOpen" to directionsOpen, // T102
         "lastFit" to lastFit, "layout" to BottomPanels.json(), // T49
         "restored" to restored, // T108: the unsaved route read back after the process restarted
+        "fuelCompare" to lastCompare, // T285: the last least-time plan after least fuel (ms, search bytes)
         // T114: the two ends as the card names them, the From choices, the location state, the last route to here.
         "from" to fromEnd?.json(), "to" to toEnd?.json(), "fromOpen" to fromOpen, "fromChoices" to fromChoices(),
         "ends" to EndNames.json(fromEnd, toEnd), // T192: the From and To lines as drawn, the feature that named each
@@ -743,3 +809,6 @@ internal const val GRAPH_DOWNLOADING = "Downloading the trail network"
 
 /** T189: the route status card's line when the trail network came with the map and nothing was built on the phone. */
 internal const val GRAPH_SHIPPED = "Trail network downloaded with the map"
+
+/** T285: [comparison] belongs to the plan whose route id is [planId] (a later plan never shows an earlier one's line). */
+class SessionFuel(val planId: String, val comparison: FuelComparison)

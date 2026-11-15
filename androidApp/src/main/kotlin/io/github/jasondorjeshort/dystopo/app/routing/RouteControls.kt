@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.routing
 
 import androidx.compose.foundation.background
+import kotlin.math.roundToInt
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -545,6 +546,9 @@ fun RouteControls() {
                     // T164: whose pace the time is ("Based on your last 5 hikes", or a typical pace); a refit when the tracks changed.
                     // T184: with a range, the range first ("4:10 to 4:50, based on your last 5 hikes").
                     PaceSettings.secondLine(plan)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
+                    // T285: least fuel against least time ("about 33 % less fuel than the least-time route, 1 min longer"), or a
+                    // server's least-time plan said so; nothing while the second plan runs (the card never waits for it).
+                    RouteSession.fuel?.takeIf { it.planId == plan.route.id }?.comparison?.line?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 12.sp)) }
                     LaunchedEffect(plan) { PaceSettings.refitSoon(app, "route") }
                 }
                 Ends(phase) // T114: From and To
@@ -910,6 +914,92 @@ internal object LineState {
     /** How long a line waits for its answer (one worker per kind, possibly busy with an earlier route) before showing nothing. */
     const val WAIT_MS = 300_000L
 }
+
+// T285: least fuel's line on the route card (ADR 0063 Decision 7; ADR 0031: the owner's to adjust).
+/**
+ * T285 (pure, `FuelComparisonTest`): what the route card knows of a drive's fuel. [prefer] is what the drive was asked
+ * for (Plan drives for), [metric] what its plan was optimised for (a server's echo for a server-planned route, [remote]);
+ * [fuelIndex] and [timeS] are the shown plan's, [leastTimeFuelIndex] and [leastTimeS] the least-time plan of the same ends,
+ * planned after it on the phone ([state] `working` until then, `ready`, `failed`, or `none` when no comparison is made: not
+ * least fuel, or a server's plan). [ms] and [searchBytes] are the second plan's cost.
+ *
+ * [percent] is `100 x (1 - fuel(fuel route) / fuel(time route))` rounded to a whole percent, [minutes] the difference of
+ * the planned times rounded to a minute (ADR 0063 Decision 7), never below 0 (a least-time route is never the slower one;
+ * a rounding of the two searches could read a few seconds the other way). The line shows when [percent] is
+ * [MIN_PERCENT] or more ("hidden under 3 percent", read on the whole percent the line would show; under 30 s longer
+ * reads "under a minute longer", not longer at all "no longer", from 1 minute "M min longer"), the minutes always
+ * with it, never for a server's plan; a server that did not plan for least fuel when it was asked gets [SERVER_TIME].
+ */
+data class FuelComparison(
+    val prefer: io.github.jasondorjeshort.dystopo.routing.DrivePreference?,
+    val metric: io.github.jasondorjeshort.dystopo.routing.DriveMetric?,
+    val remote: Boolean,
+    val fuelIndex: Double?,
+    val timeS: Double?,
+    val leastTimeFuelIndex: Double? = null,
+    val leastTimeS: Double? = null,
+    val state: String = LineState.NONE,
+    val ms: Long? = null,
+    val searchBytes: Long? = null,
+    val error: String? = null,
+) {
+    val percent: Int?
+        get() {
+            val f = fuelIndex ?: return null
+            val t = leastTimeFuelIndex?.takeIf { it > 0 } ?: return null
+            return (100 * (1 - f / t)).roundToInt()
+        }
+
+    val minutes: Int?
+        get() {
+            val a = timeS ?: return null
+            val b = leastTimeS ?: return null
+            return ((a - b) / 60.0).roundToInt().coerceAtLeast(0)
+        }
+
+    /** The line the card shows, or null. */
+    val line: String?
+        get() {
+            if (remote) return SERVER_TIME.takeIf { prefer == io.github.jasondorjeshort.dystopo.routing.DrivePreference.FUEL && metric != io.github.jasondorjeshort.dystopo.routing.DriveMetric.FUEL }
+            if (state != LineState.READY) return null
+            val n = percent ?: return null
+            val m = minutes ?: return null
+            if (n < MIN_PERCENT) return null
+            // The coordinator's wording for the two cases M = 0 (ADR 0031: the owner's to adjust).
+            val longer = when {
+                m >= 1 -> "$m min longer"
+                (timeS ?: 0.0) - (leastTimeS ?: 0.0) > 0 -> "under a minute longer"
+                else -> "no longer"
+            }
+            return "about $n % less fuel than the least-time route, $longer"
+        }
+
+    /** `card.fuel` in `GET /route`: the metric and both numbers whether or not the line shows. */
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "prefer" to prefer?.key, "metric" to metric?.key, "remote" to remote, "state" to state,
+        "percent" to percent, "minutes" to minutes, "shown" to (line != null), "text" to line,
+        "fuelIndex" to fuelIndex?.let { Math.round(it) }, "timeS" to timeS?.let { Math.round(it) },
+        "leastTimeFuelIndex" to leastTimeFuelIndex?.let { Math.round(it) }, "leastTimeS" to leastTimeS?.let { Math.round(it) },
+        "ms" to ms, "searchBytes" to searchBytes, "error" to error,
+    )
+
+    /** Whether the phone plans the least-time route after this one (a least-fuel plan of its own packs). */
+    val wantsLeastTime: Boolean
+        get() = !remote && metric == io.github.jasondorjeshort.dystopo.routing.DriveMetric.FUEL && fuelIndex != null
+
+    companion object {
+        const val MIN_PERCENT = 3
+        const val SERVER_TIME = "Planned for least time: the server does not plan for least fuel."
+
+        /** The comparison of a fresh [p] asked for as [prefer]: `working` when the least-time plan is to follow, else `none`. */
+        fun of(p: io.github.jasondorjeshort.dystopo.routing.PlannedRoute, prefer: io.github.jasondorjeshort.dystopo.routing.DrivePreference): FuelComparison? {
+            if (p.mode != TravelMode.DRIVE) return null
+            val c = FuelComparison(prefer, p.metric, p.memory["remote"] != null, p.fuelIndex, p.timeS)
+            return if (c.wantsLeastTime) c.copy(state = LineState.WORKING) else c
+        }
+    }
+}
+// end T285
 
 /**
  * T114: the From and To lines. From is "Your location" (with the fix's age when it was stale), a placed point's
