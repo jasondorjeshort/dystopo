@@ -22,7 +22,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, `docs/TASKS.m
    heights between portals (T286's follow-up: it ends the tile-border remainder and corrects the profile, hike
    and bike); a drive in the sweep (Later's first line: no part opens Plan drives for or a drive's card);
    whether the `montblanc` pack lacks road names or the data does (T282).
-2. The other drive ideas (curvature, stops and signals, shortest) need research; the pressure-unit and Send diagnostics ideas are untriaged (`triage` skill).
+2. The other drive ideas (curvature, stops and signals, shortest) need research; the pressure-unit and Send diagnostics ideas and the eleven of 2026-11-15 (the owner's yes to each, from wave 33) are untriaged (`triage` skill).
 3. Then the board's Later, the ideas' Plans and the two ADR 0012 hits (0061, 0053).
 
 ## Waiting on user
