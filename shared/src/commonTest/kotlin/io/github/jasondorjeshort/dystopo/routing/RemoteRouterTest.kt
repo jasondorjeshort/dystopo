@@ -23,7 +23,7 @@ class RemoteRouterTest {
         val r = RemoteRouter("http://10.0.2.2:9181/", { u -> urls += u; 200 to reply })
             .route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.DRIVE, 300.0, "To Yakima")
         assertIs<RouteResult.Found>(r)
-        assertEquals("http://10.0.2.2:9181/route?from=46.7864,-121.7366&to=46.6021,-120.5059&mode=drive&snap=300", urls.single())
+        assertEquals("http://10.0.2.2:9181/route?from=46.7864,-121.7366&to=46.6021,-120.5059&mode=drive&snap=300&prefer=time", urls.single())
         val p = r.plan
         assertEquals(3, p.route.points.size)
         assertEquals(1645.0, p.route.points.first().ele)
@@ -31,6 +31,19 @@ class RemoteRouterTest {
         assertEquals(210.0, p.ascentM)
         assertTrue(p.route.description!!.contains("planned by the Dystopo server at 10.0.2.2:9181"), p.route.description)
         assertEquals("http://10.0.2.2:9181/", p.memory["remote"])
+    }
+
+    @Test
+    fun aDriveCarriesThePreferenceAndOtherModesDoNot() {
+        // T282: the phone's Plan drives for, read per route, goes as prefer= on a drive only.
+        val urls = ArrayList<String>()
+        var pref = DrivePreference.QUICK
+        val r = RemoteRouter("http://s", { u -> urls += u; 200 to reply }, drivePreference = { pref })
+        r.route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.DRIVE)
+        pref = DrivePreference.TIME
+        r.route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.DRIVE)
+        r.route(46.7864, -121.7366, 46.6021, -120.5059, TravelMode.HIKE)
+        assertEquals(listOf("&prefer=quick", "&prefer=time", "&snap=300"), urls.map { it.substring(it.lastIndexOf('&')) })
     }
 
     @Test

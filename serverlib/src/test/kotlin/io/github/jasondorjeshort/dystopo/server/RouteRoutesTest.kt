@@ -168,7 +168,17 @@ class RouteRoutesTest {
         assertTrue((search(r)["searchStates"] as Int) > 0, "${search(r)}")
         val fast = RoutePlanner(dir, flat).plan(listOf(at(420, 2400), at(3580, 2400)), "drive", turns = false)
         assertEquals(null, search(fast)["searchStates"])
-        assertEquals(r["path"], fast["path"], "the same route at zero turn cost")
+        assertEquals(r["path"], fast["path"], "the same route: a straight road has no turn")
+        // T282: the drive search's entry has its turns and their seconds (none on a straight road); the node search's has neither.
+        assertEquals(0, search(r)["turns"], "${search(r)}")
+        assertEquals(0.0, search(r)["turnCostS"])
+        assertTrue("turnCostS" !in search(fast), "${search(fast)}")
+        // T282: prefer=time|quick, turns=0 the alias of quick, an unknown value read as time.
+        assertTrue(RouteRoutes.driveTurnsOf(emptyMap()))
+        assertTrue(RouteRoutes.driveTurnsOf(mapOf("prefer" to "time")))
+        assertTrue(!RouteRoutes.driveTurnsOf(mapOf("prefer" to "quick")))
+        assertTrue(!RouteRoutes.driveTurnsOf(mapOf("turns" to "0")))
+        assertTrue(RouteRoutes.driveTurnsOf(mapOf("prefer" to "fuel")), "a value this build does not know reads as least time")
         // A tap on the trail snaps onto the road for a car.
         val tap = RoutePlanner(dir, flat).plan(listOf(at(420, 2048), at(3580, 2048)), "drive")
         @Suppress("UNCHECKED_CAST")
@@ -235,6 +245,15 @@ class RouteRoutesTest {
         assertEquals("done", built["state"], built.toString())
         assertEquals(2, built["cells"], built.toString())
         assertTrue(cellFile.isFile)
+
+        // T282: a cell file of an older version (cells priced before turns cost anything) is refused and rebuilt.
+        val bytes = cellFile.readBytes()
+        cellFile.writeBytes(bytes.copyOf().also { it[4] = 1 })
+        val older = RoutePlanner(dir, flat)
+        drive(older)
+        val rebuiltOld = settled(older)
+        assertEquals("done", rebuiltOld["state"], rebuiltOld.toString())
+        assertEquals(OverlayCellFile.VERSION, cellFile.readBytes()[4].toInt(), "written again at the current version")
 
         // A restarted server reads the cell file.
         val p = RoutePlanner(dir, flat)

@@ -32,6 +32,9 @@ import io.github.jasondorjeshort.dystopo.model.UuidGenerator
  * keys are F + p(head) and B - p(head) with [TileRouter]'s average potentials; turn costs only add, so the potentials
  * stay consistent and the stop rule (the two smallest keys reach the best meeting) keeps the route optimal.
  *
+ * **Time (T282).** The route's planned time adds the seconds of the turns it paid for, and the plan reports their count
+ * and seconds ([turnsAlong]; `turns` and `turnCostS` in [PlannedRoute.json]).
+ *
  * **Budget.** [maxStates] settled states, then [RouteFailure.SEARCH_LIMIT] with the message the node search gives at
  * [maxSettled] junctions (`TileRouter.DRIVE_STATES_PER_JUNCTION` converts one to the other).
  */
@@ -474,6 +477,7 @@ internal class DriveSearch(
             )
         }
         val steps = ArrayList<TileRouter.Step>()
+        val chain = ArrayList<Int>() // T282: the route's states in travel order, the goal root last
         if (direct) {
             steps += TileRouter.Step(s.piece, s.snap.edge, s.snap.fraction, t.snap.fraction)
         } else {
@@ -481,19 +485,23 @@ internal class DriveSearch(
             while (v != START) {
                 val prev = parent[0][v]
                 forwardStep(prev, v)?.let { steps += it }
+                chain += v
                 v = prev
             }
             steps.reverse()
+            chain.reverse()
             v = meet
             var root: Int
             while (true) {
                 val next = parent[1][v]
+                chain += next
                 if (next == GOAL_FROM || next == GOAL_TO) { root = next; break }
                 backwardStep(v, next)?.let { steps += it }
                 v = next
             }
             steps += TileRouter.Step(t.piece, t.snap.edge, if (root == GOAL_FROM) 0.0 else 1.0, t.snap.fraction)
         }
+        val (turnCount, turnS) = turnsAlong(chain)
         val memory = linkedMapOf<String, Any?>(
             "tiles" to pieces.size, "graphBytes" to pieces.sumOf { it.graph.approxBytes() },
             "searchBytes" to cap.toLong() * SEARCH_BYTES_PER_STATE + nodeCap.toLong() * SEARCH_BYTES_PER_NODE,
@@ -509,7 +517,47 @@ internal class DriveSearch(
             if (o == null) expandedSteps += st
             else for ((p, e, fwd) in o.expand(st.e)) expandedSteps += if (fwd) TileRouter.Step(p, e, 0.0, 1.0) else TileRouter.Step(p, e, 1.0, 0.0)
         }
-        return RouteResult.Found(router.plan(model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory))
+        return RouteResult.Found(router.plan(model, expandedSteps.filter { it.f0 != it.f1 }, mu, s, t, expanded, name, ids, memory, turnS, turnCount))
+    }
+
+    /**
+     * T282 (ADR 0062 Decision 7): the turns the route paid for and their seconds, asked again of [turns] along [chain]
+     * (its states in travel order, the goal root last) exactly where the search priced them: at every step from one base
+     * state to the next or onto the goal edge, and inside each shortcut ([DriveOverlay.Overlay.turnsAlong]); a border
+     * crossing pays none. Turns of zero seconds are not counted.
+     */
+    private fun turnsAlong(chain: List<Int>): Pair<Int, Double> {
+        if (turns.free) return 0 to 0.0
+        var count = 0
+        var total = 0.0
+        fun add(sec: Double) { if (sec > 0) { count++; total += sec } }
+        for (i in 0 until chain.size - 1) {
+            val a = chain[i]
+            val b = chain[i + 1]
+            val pa = pieces[pieceIndex(a)]
+            val la = a - stateBase[pieceIndex(a)]
+            if (pa.overlay != null) {
+                // An in label to an out label of one piece is a shortcut: the turns inside its cell.
+                shortcut(a, b)?.let { st -> val (n, sec) = pa.overlay.turnsAlong(st.e); count += n; total += sec }
+                continue
+            }
+            val ea = la shr 1
+            val fa = la and 1 == 0
+            val outPiece: GraphPiece
+            val outEdge: Int
+            val outFwd: Boolean
+            if (b == GOAL_FROM || b == GOAL_TO) {
+                outPiece = t.piece; outEdge = t.snap.edge; outFwd = b == GOAL_FROM
+            } else {
+                val pb = pieces[pieceIndex(b)]
+                if (pb.overlay != null) continue // into a cell across its border: not priced
+                val lb = b - stateBase[pieceIndex(b)]
+                outPiece = pb; outEdge = lb shr 1; outFwd = lb and 1 == 0
+            }
+            junction(pa, if (fa) pa.graph.edgeTo[ea] else pa.graph.edgeFrom[ea])
+            add(turns.seconds(pa, ea, fa, junctionView(), outPiece, outEdge, outFwd))
+        }
+        return count to total
     }
 
     /** The step that took the forward search from [prev] to [v], in travel order; null for a border crossing. */

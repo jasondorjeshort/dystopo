@@ -12,7 +12,7 @@ import kotlin.math.abs
  * distinct drivable roads at the junction across every piece that has a node there (twins included, parallel copies of
  * one road where packs overlap counted once: [Junction.roads]), whether the outgoing way is the incoming one taken back
  * (a reversal, read from geometry, never from edge ids) and whether the turn crosses oncoming traffic for the
- * [DrivingSide]. What a turn costs is the [TurnTable]'s: all zero until T282 fills [TurnTable.DRIVE].
+ * [DrivingSide]. What a turn costs is the [TurnTable]'s: [TurnTable.DRIVE] since T282 ([DriveTurns], ADR 0062 Decision 4).
  */
 enum class DrivingSide {
     /** Traffic keeps right: a left turn crosses it. The default where the side is not known. */
@@ -32,12 +32,19 @@ class JunctionRoad(val piece: GraphPiece, val edge: Int, val atFrom: Boolean) {
     val surface: Surface get() = g.surface(edge)
     val level: Int get() = g.nodeLevel[if (atFrom) g.edgeFrom[edge] else g.edgeTo[edge]].toInt()
 
+    /** T282: whether a car may leave the junction along it (a one-way pointing in may not). */
+    val canLeave: Boolean get() = DRIVE.allows(g, edge, atFrom)
+
     /**
      * Whether [other] is this same road: the same class, name and level leaving within [TurnCost.SAME_ROAD_DEG] of the
      * same bearing (a copy of the way in an overlapping pack, or the way itself).
      */
     fun sameRoad(other: JunctionRoad): Boolean =
         wayClass == other.wayClass && name == other.name && level == other.level && TurnCost.angleBetween(bearingDeg, other.bearingDeg) <= TurnCost.SAME_ROAD_DEG
+
+    private companion object {
+        val DRIVE = CostModel(TravelMode.DRIVE)
+    }
 }
 
 /**
@@ -93,6 +100,21 @@ class Turn(
 
     /** The distinct drivable roads at the junction ([Junction.roads]). */
     val roads: Int get() = junction.roads.size
+
+    /**
+     * T282 (ADR 0062 Decision 4): whether [outRoad] is the through exit: the one road a car may leave on, other than the
+     * way back, that has [inRoad]'s name and class (its class when both are unnamed), when exactly one road does. A road
+     * that bends where a spur or a lot goes straight on stays the road (T108's hairpin lot).
+     */
+    val throughExit: Boolean get() {
+        var match: JunctionRoad? = null
+        for (r in junction.roads) {
+            if (r.sameRoad(inRoad) || !r.canLeave || r.wayClass != inRoad.wayClass || r.name != inRoad.name) continue
+            if (match != null) return false
+            match = r
+        }
+        return match != null && match.sameRoad(outRoad)
+    }
 }
 
 /**
@@ -106,9 +128,64 @@ fun interface TurnTable {
         /** Every turn free: the drive search then costs what the node search costs. */
         val ZERO = TurnTable { 0.0 }
 
-        /** The table drives use. T281: all zero (no behaviour change); T282 fills it. */
-        val DRIVE: TurnTable = ZERO
+        /** The table drives use: [DriveTurns] (T282, ADR 0062 Decision 4). */
+        val DRIVE: TurnTable = DriveTurns
     }
+}
+
+/**
+ * T282 (ADR 0062 Decision 4): the seconds a car loses at a turn, the first values from the survey of 2026-11-14
+ * (one open router's angle curve and its U-turn charge). In order:
+ * - a reversal (the way arrived by taken back, [Turn.reversal]): [REVERSAL_S], never refused, also at a dead end;
+ * - a node of two or fewer distinct drivable roads (a bend, a tile cut): nothing;
+ * - the through exit ([Turn.throughExit]): nothing, however sharp the bend;
+ * - under [FREE_DEG] of turn: nothing;
+ * - else by the angle, rising linearly from nothing at [FREE_DEG]: kerb-side to [KERB_90_S] at 90 degrees and
+ *   [KERB_150_S] at 150 and over, across traffic ([Turn.acrossTraffic]) to [ACROSS_90_S] and [ACROSS_150_S]; and on
+ *   such a priced turn [CLASS_STEP_S] per class step down ([WayClass] order, at most [CLASS_STEPS_MAX] steps) plus
+ *   [ROUGH_S] onto `service`, `track` or an unpaved road from a paved road of another kind.
+ * Joining a higher class costs nothing extra (no survey supports it). Roundabouts and links are not marked in the graph
+ * and are priced by their angles alone. The numbers here are the record after T282's tuning (its report).
+ */
+object DriveTurns : TurnTable {
+    const val REVERSAL_S = 25.0
+    const val FREE_DEG = 30.0
+    const val KERB_90_S = 3.0
+    const val KERB_150_S = 6.0
+    const val ACROSS_90_S = 7.0
+    const val ACROSS_150_S = 9.0
+    const val CLASS_STEP_S = 1.0
+    const val CLASS_STEPS_MAX = 3
+    const val ROUGH_S = 2.0
+
+    override fun seconds(turn: Turn): Double {
+        if (turn.reversal) return REVERSAL_S
+        if (turn.roads <= 2 || turn.throughExit) return 0.0
+        val a = abs(turn.angleDeg)
+        if (a < FREE_DEG) return 0.0
+        return angleSeconds(a, turn.acrossTraffic) + classSeconds(turn.inRoad, turn.outRoad)
+    }
+
+    /** The angle's part: nothing at [FREE_DEG], linear to the 90 degree value, then to the 150 degree value, flat after. */
+    fun angleSeconds(angleDeg: Double, across: Boolean): Double {
+        val at90 = if (across) ACROSS_90_S else KERB_90_S
+        val at150 = if (across) ACROSS_150_S else KERB_150_S
+        return when {
+            angleDeg < FREE_DEG -> 0.0
+            angleDeg <= 90.0 -> at90 * (angleDeg - FREE_DEG) / (90.0 - FREE_DEG)
+            angleDeg < 150.0 -> at90 + (at150 - at90) * (angleDeg - 90.0) / 60.0
+            else -> at150
+        }
+    }
+
+    /** The class part of a priced turn from [from] onto [to]: steps down, and onto a rough road from a paved one. */
+    fun classSeconds(from: JunctionRoad, to: JunctionRoad): Double {
+        val steps = (from.wayClass.code - to.wayClass.code).coerceIn(0, CLASS_STEPS_MAX)
+        return steps * CLASS_STEP_S + if (rough(to) && !rough(from)) ROUGH_S else 0.0
+    }
+
+    /** `service`, `track` or unpaved (a road of unknown surface counts as paved, as its drive time does). */
+    private fun rough(r: JunctionRoad): Boolean = r.wayClass == WayClass.SERVICE || r.wayClass == WayClass.TRACK || r.surface == Surface.UNPAVED
 }
 
 /**

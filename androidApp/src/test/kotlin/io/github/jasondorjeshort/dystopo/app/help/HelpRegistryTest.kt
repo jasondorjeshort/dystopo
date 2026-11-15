@@ -172,6 +172,9 @@ class HelpRegistryTest {
             // T263: the activity chip's picker and the ask setting.
             "activity.chip", "settings.recordAskActivity",
             // end T263
+            // T282: Plan drives for.
+            "settings.drivePreference",
+            // end T282
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

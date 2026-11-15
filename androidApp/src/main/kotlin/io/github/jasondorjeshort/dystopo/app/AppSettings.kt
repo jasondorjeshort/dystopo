@@ -249,6 +249,11 @@ object AppSettings {
 
     /** `off`, `hot` (on hot days, the default: 25 C at the walker's height, routing/HotDay) or `always`. */
     val shadeSpoken: io.github.jasondorjeshort.dystopo.routing.ShadeSpoken get() = SHADE_SPOKEN.value
+
+    // T282: how a drive is planned ("Plan drives for", ADR 0063 Decision 1): the phone's router and a remote plan read it.
+    const val KEY_DRIVE_PREFERENCE = "drivePreference"
+    val drivePreference: io.github.jasondorjeshort.dystopo.routing.DrivePreference get() = DRIVE_PREFERENCE.value
+    // end T282
     // end T194
 
     // ---- T203: a position from the terrain while the GPS is poor or gone (tracking/TerrainSource); synced ----
@@ -607,6 +612,13 @@ object AppSettings {
     // starts with the current activity at once (off; tracking/ActivityPicker.kt). Synced.
     val RECORD_ASK_ACTIVITY = flag(KEY_RECORD_ASK_ACTIVITY, true, synced = true)
     // end T263
+    // T282: "Plan drives for" (ADR 0063 Decision 1): `time` (Least time, the default) or `quick` (Quicker planning); a
+    // stored value this build does not know (a later `fuel`) reads as the default and is not written back. Synced.
+    val DRIVE_PREFERENCE = add(Setting(KEY_DRIVE_PREFERENCE, io.github.jasondorjeshort.dystopo.routing.DrivePreference.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.routing.DrivePreference.of(it) }),
+        { io.github.jasondorjeshort.dystopo.routing.DrivePreference.of(it.toString()) },
+        { "$KEY_DRIVE_PREFERENCE must be one of ${io.github.jasondorjeshort.dystopo.routing.DrivePreference.entries.joinToString(", ") { p -> p.key }} (got $it)" }))
+    // end T282
 }
 
 /**

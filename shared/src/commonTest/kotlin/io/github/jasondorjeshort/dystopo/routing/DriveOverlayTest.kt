@@ -47,10 +47,16 @@ class DriveOverlayTest {
         return RoutingGraphBuilder().build(lines, source)
     }
 
+    /**
+     * T282: an overlay whose cells are priced at zero turn cost, for the tests that compare both drive searches
+     * ([BothSearches], at zero cost); the production table's own tests use [DriveOverlay]'s default.
+     */
+    private fun zeroOverlay() = DriveOverlay(turns = TurnCost(TurnTable.ZERO))
+
     /** The full search and the overlay, each on both drive searches (T281: [BothSearches]). */
     private fun routers(g: RoutingGraph): Pair<Router, Router> {
         val tg = TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(g))))
-        return bothSearches(tg) to bothSearches(tg, DriveOverlay())
+        return bothSearches(tg) to bothSearches(tg, zeroOverlay())
     }
 
     @Test
@@ -146,19 +152,35 @@ class DriveOverlayTest {
         val overlay = DriveOverlay()
         val e = archive.entries.first { tg.pieces(it.x, it.y).isNotEmpty() && overlay.piece(it.x, it.y, tg.pieces(it.x, it.y)) != null }
         val piece = overlay.piece(e.x, e.y, tg.pieces(e.x, e.y))!!
-        val built = overlay.json()["built"]
         val hits = overlay.json()["hits"] as Long
         val o = piece.overlay!!
-        // Every shortcut expands into base edges whose drive cost adds up to the shortcut's.
+        // Every shortcut expands into base edges whose drive cost and turn seconds (T282: the production table, the
+        // turns inside the cell asked again along the unpacked edges) add up to the shortcut's.
         val model = CostModel(TravelMode.DRIVE)
+        var turned = 0
         for (s in 0 until piece.graph.edgeCount) {
             val steps = o.unpack(s)
-            val c = steps.sumOf { (edge, _) -> o.base.graph.edgeLength[edge] * model.weight(o.base.graph, edge) }
+            val (turns, turnS) = o.turnsAlong(s)
+            if (turns > 0) turned++
+            val c = steps.sumOf { (edge, _) -> o.base.graph.edgeLength[edge] * model.weight(o.base.graph, edge) } + model.secondsCost(turnS)
             assertEquals(o.cost(s), c, 1e-3 * maxOf(1.0, c))
         }
+        // Every other cell of the grid too: some shortcut turns inside its cell.
+        for (en in archive.entries) {
+            val q = overlay.piece(en.x, en.y, tg.pieces(en.x, en.y)) ?: continue
+            for (s in 0 until q.graph.edgeCount) {
+                val (turns, turnS) = q.overlay!!.turnsAlong(s)
+                if (turns > 0) turned++
+                val c = q.overlay.unpack(s).sumOf { (edge, _) -> q.overlay.base.graph.edgeLength[edge] * model.weight(q.overlay.base.graph, edge) } + model.secondsCost(turnS)
+                assertEquals(q.overlay.cost(s), c, 1e-3 * maxOf(1.0, c))
+            }
+        }
+        assertTrue(turned > 0, "some shortcut turns inside its cell")
+        assertTrue(overlay.json()["borderJunctions"] as Long > 0, "${overlay.json()}")
+        val builtAll = overlay.json()["built"]
         overlay.piece(e.x, e.y, tg.pieces(e.x, e.y))
-        assertEquals(built, overlay.json()["built"])
-        assertEquals(hits + 1, overlay.json()["hits"])
+        assertEquals(builtAll, overlay.json()["built"])
+        assertTrue(overlay.json()["hits"] as Long > hits)
     }
 
     // ---- T89: the second level (z8 cells over the z11 cells) and cell files ----
@@ -193,9 +215,9 @@ class DriveOverlayTest {
         val from = 0.2 to 0.1
         val to = 1.4 to 4.3
         val full = found(bothSearches(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
-        val one = found(bothSearches(tg, DriveOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val one = found(bothSearches(tg, zeroOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertEquals(0, one.memory["level2Tiles"], "level 2 is never built inside a search: ${one.memory}")
-        val overlay = DriveOverlay()
+        val overlay = zeroOverlay()
         val cells2 = warm(overlay, archive, tg)
         assertTrue(cells2 >= 6, "level-2 cells $cells2")
         val two = found(bothSearches(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
@@ -211,7 +233,7 @@ class DriveOverlayTest {
         val (c1, c2) = overlay.cellsOf(archive.source)
         val file = OverlayCellFile.open(OverlayCellFile.encode(archive.source, overlay.tileZoom, overlay.level2Zoom, c1, c2))
         assertEquals(c1.size + c2.size, file.cellCount)
-        val fresh = DriveOverlay()
+        val fresh = zeroOverlay()
         fresh.register(file)
         val again = found(bothSearches(tg, fresh).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
         assertEquals(two.cost, again.cost, 1e-6)
@@ -231,5 +253,39 @@ class DriveOverlayTest {
         // Another graph's file is not used for this one, and a damaged file is refused.
         assertNull(file.cell1(-1, -1))
         kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(OverlayCellFile.encode(archive.source, 11, 8, c1, c2).copyOf(30)) }
+        // T282: a file of version 1 (cells priced before turns cost anything) is refused, so the server rebuilds it.
+        val old = OverlayCellFile.encode(archive.source, 11, 8, c1, c2).also { it[4] = 1 }
+        val refused = kotlin.test.assertFailsWith<IllegalArgumentException> { OverlayCellFile.open(old) }
+        assertTrue(refused.message!!.contains("version 1, expected 2"), refused.message)
+    }
+
+    @Test
+    fun withTheTurnTableTheOverlayCostsWhatTheFullSearchCosts() {
+        // T282: the production table in the cells and in the search: both levels give the full search's cost, time and
+        // turn seconds on the wide grid (no road lies on a cell border there, so no border junction is passed).
+        val g = wideGrid()
+        val archive = GraphTileFile.open(GraphTileFile.encode(g))
+        val tg = TiledGraph(listOf(archive))
+        val from = 0.2 to 0.1
+        val to = 1.4 to 4.3
+        val full = found(TileRouter(tg).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val one = found(TileRouter(tg, DriveOverlay()).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val overlay = DriveOverlay()
+        warm(overlay, archive, tg)
+        val two = found(TileRouter(tg, overlay).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertTrue(two.memory["level2Tiles"] as Int > 0, "${two.memory}")
+        assertTrue(full.turns!! >= 1 && full.turnCostS!! > 0, "the drive turns: ${full.turns} ${full.turnCostS}")
+        for ((label, r) in listOf("level 1" to one, "level 2" to two)) {
+            assertEquals(full.cost, r.cost, full.cost * 1e-9, label)
+            assertEquals(full.timeS, r.timeS, 0.01, label)
+            assertEquals(full.turns, r.turns, label)
+            assertEquals(full.turnCostS!!, r.turnCostS!!, 0.01, label)
+        }
+        // Quicker planning through the same cells pays the turns inside the far cells only: between the node search in
+        // full and the drive search in full (T282, accepted; docs/SERVER.md).
+        val quickFull = found(TileRouter(tg, driveTurns = false).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        val quickOver = found(TileRouter(tg, DriveOverlay(), driveTurns = false).route(from.first, from.second, to.first, to.second, TravelMode.DRIVE))
+        assertTrue(quickFull.cost <= quickOver.cost + 1e-6 && quickOver.cost <= full.cost + 1e-6, "quick ${quickFull.cost}, quick through the cells ${quickOver.cost}, full ${full.cost}")
+        assertEquals(null, quickOver.turnCostS)
     }
 }

@@ -61,6 +61,7 @@ class SettingsRegistryTest {
         "shadeSpoken" to "always", "estimatePosition" to false, "showDivergence" to false,
         "tripDetailsOpen" to true, // T278
         "recordAskActivity" to false, // T263
+        "drivePreference" to "quick", // T282
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -90,8 +91,10 @@ class SettingsRegistryTest {
 
     // T278 (ADR 0033: one key added, per device): `tripDetailsOpen` in `GET /settings` is taken out too, checked on its own.
     // T263 (ADR 0033: one key added, synced): `recordAskActivity` and `app.recordAskActivity` too.
+    // T282 (ADR 0033: one key added, synced): `drivePreference` and `app.drivePreference` too.
+    private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference")
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
-        m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k != "tripDetailsOpen" && k != "recordAskActivity" && k != "app.recordAskActivity" }
+        m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
 
     private fun t257Synced(): Map<String, Any?> = SettingsSync.current().filterKeys { it !in beforeT257(SettingsSync.current()) }
@@ -100,9 +103,10 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one")
-        assertEquals(18 + 1, t257Synced().size)
-        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one")
+        assertEquals(18 + 1 + 1, t257Synced().size)
+        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals("quick", SettingsSync.current()["app.drivePreference"], "T282: the seeded quick syncs as quick")
         assertEquals("off", SettingsSync.current()["app.recordAskActivity"], "T263: the seeded off syncs as off")
         assertEquals(SEEDED_JSON, canon(beforeT257(AppSettings.json())))
     }
@@ -143,6 +147,31 @@ class SettingsRegistryTest {
         val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
         assertEquals(rows.indexOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.TRACK_ACTIVITY) + 1, rows.indexOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.RECORD_ASK_ACTIVITY))
         assertEquals("Ask which activity when a recording starts", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.RECORD_ASK_ACTIVITY.label)
+    }
+
+    /**
+     * T282: "Plan drives for" (ADR 0063 Decision 1): least time by default, synced, the Navigation page's last row; a stored value
+     * this build does not know (a later `fuel`) reads as least time and is not written back; a synced one is not taken.
+     */
+    @Test
+    fun drivePreferenceReadsAnUnknownValueAsLeastTime() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.TIME, AppSettings.drivePreference)
+        assertEquals("time", AppSettings.json()["drivePreference"])
+        assertEquals("time", SettingsSync.current()["app.drivePreference"])
+        assertTrue(AppSettings.DRIVE_PREFERENCE.synced)
+        val later = FakePrefs(mapOf("server" to "", "drivePreference" to "fuel"))
+        AppSettings.load(later)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.TIME, AppSettings.drivePreference)
+        assertTrue(later.writes.none { it.first == "drivePreference" }, "not written back: ${later.writes}")
+        assertEquals("fuel", later.values["drivePreference"])
+        val plan = SettingsSync.plan(mapOf("app.drivePreference" to "quick"), emptyMap(), SettingsRoutes.KEYS)
+        assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.QUICK, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[AppSettings.DRIVE_PREFERENCE])
+        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("drivePreference" to "fuel")))
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
+        assertEquals(rows.last(), io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE, "the page's last row")
+        assertEquals("Plan drives for", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE.label)
+        assertEquals(listOf("Least time", "Quicker planning"), io.github.jasondorjeshort.dystopo.app.settings.DRIVE_PREFERENCE_CHOICES.map { it.second })
     }
 
     @Test
