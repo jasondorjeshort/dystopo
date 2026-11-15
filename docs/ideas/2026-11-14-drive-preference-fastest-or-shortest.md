@@ -23,3 +23,14 @@ a synthetic graph. Built after the turn cost, which changes what "fastest" means
 - The owner, 2026-11-14, at wave 33's launch: the drive choice starts as "most efficient algorithm", "least gas" and
   "least time". Wave 33 built that list (T282, T284, T285; ADR 0063): Least time, Least fuel, Quicker planning.
   Shortest is not in it and still waits: a third metric of the same form, when someone asks for it.
+
+Question: is a Shortest drive wanted now, or does it stay at rest until someone asks? Recommended: at rest. The
+survey of 2026-11-15 (routers' docs) found every default is time; one mainstream app offers a shorter-distance
+route only as an extra, with a warning that it may take dirt roads and be slower; the two routers that expose it as
+a dial blend distance with time and never use pure distance. Built, it would be that blend (distance plus a share
+of time, turn costs and access kept, help text "may use smaller roads and take longer"), and it is not "a third
+metric of the same form": `routing/DriveOverlay.kt` treats every metric that is not time as fuel (the cell file's
+name, magic and turn table), so the overlay is generalised first. The idea that puts both routes on the card
+(`2026-11-15-the-card-offers-the-other-route.md`) is the better home for a third row if it is ever wanted.
+
+Answer:
