@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-16
 
+- T288: The sweep opens a drive, and `--first` fails when it matches nothing (tools lane, after T287)
 - T291: A drive as a speed profile, pass one: a finished route priced, no search changed (routing lane, after T290)
 
 ### 2026-11-15
