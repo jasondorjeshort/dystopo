@@ -77,7 +77,7 @@ class DumpScanCommandTest {
             val dump = File(dir, "dump.txt").apply { writeText(text) }
             val report = File(dir, "issue.txt").apply {
                 writeText("Dystopo recent stats\nTime: 2026-11-16T00:00:00.000Z\n\nStart steps, the median of 4 recent cold starts, against the app's limits:\n" +
-                    "  first frame 3200 ms, limit 4909 ms\n  prepare 400 ms, limit 300 ms, over\n  package read 0.4 ms (1 of 4)\n\nThis phone now:\n  Offline areas: none\n")
+                    "  first frame 3200 ms, limit 4909 ms\n  prepare 400 ms, limit 300 ms, over\n  package read 0.4 ms (1 of 4)\n\nThis phone now:\n  Offline maps: none\n")
             }
             val (out, refusedAny) = DumpScanCommand.scan(listOf(dump, report), budget)
             assertFalse(refusedAny, out.toString())

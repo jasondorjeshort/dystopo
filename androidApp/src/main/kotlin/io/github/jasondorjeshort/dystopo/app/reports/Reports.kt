@@ -141,7 +141,7 @@ object Reports {
         val phone = ArrayList<String>()
         phone += RecentStats.tileLines(runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.json() }.getOrNull())
         phone += runCatching { RecentStats.areaLine(io.github.jasondorjeshort.dystopo.app.areas.Areas.all().map { it.state to it.bytes }) }
-            .getOrDefault("Offline areas: not read")
+            .getOrDefault("Offline maps: not read")
         phone += RecentStats.memoryLines(MemorySampler.lines(), Runtime.getRuntime().maxMemory())
         return Report(RecentStats.ID, RecentStats.dump(System.currentTimeMillis(), system(), history, budget, phone))
     }

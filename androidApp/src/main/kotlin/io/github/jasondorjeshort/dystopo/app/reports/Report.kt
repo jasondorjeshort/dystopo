@@ -579,10 +579,10 @@ object RecentStats {
         fun long(m: Map<*, *>?, k: String) = (m?.get(k) as? Number)?.toLong()
         val pinned = long(cache, "pinnedBytes")
         out += "Map tiles stored: ${long(cache, "entries") ?: 0L} files, ${mb(long(cache, "bytes") ?: 0L)} of ${mb(long(cache, "maxBytes") ?: 0L)} allowed" +
-            (pinned?.takeIf { it > 0 }?.let { ", ${mb(it)} of them kept for offline areas" } ?: "")
+            (pinned?.takeIf { it > 0 }?.let { ", ${mb(it)} of them in offline maps" } ?: "")
         val dropped = long(cache, "emptyDropped") ?: 0L
         val droppedKept = long(cache, "emptyDroppedKept") ?: 0L
-        out += "Tiles dropped as empty since this start: $dropped" + if (droppedKept > 0) " ($droppedKept of them in offline areas)" else ""
+        out += "Tiles dropped as empty since this start: $dropped" + if (droppedKept > 0) " ($droppedKept of them in offline maps)" else ""
         val state = cache["moveState"] as? String
         val move = cache["move"] as? Map<*, *>
         out += if (state == null) "Tile store move: none on record" else buildString {
@@ -605,9 +605,9 @@ object RecentStats {
 
     /** The offline areas by state, `(state, bytes)` each, without their names. */
     fun areaLine(areas: List<Pair<String, Long>>): String {
-        if (areas.isEmpty()) return "Offline areas: none"
+        if (areas.isEmpty()) return "Offline maps: none"
         val byState = areas.groupBy { it.first }.entries.sortedByDescending { it.value.size }.joinToString(", ") { "${it.value.size} ${it.key}" }
-        return "Offline areas: ${areas.size} ($byState), ${mb(areas.sumOf { it.second })}"
+        return "Offline maps: ${areas.size} ($byState), ${mb(areas.sumOf { it.second })}"
     }
 
     /** The memory sampler's ring (`MemorySampler.lines`): the newest sample's heap figures and the ring's highest. */

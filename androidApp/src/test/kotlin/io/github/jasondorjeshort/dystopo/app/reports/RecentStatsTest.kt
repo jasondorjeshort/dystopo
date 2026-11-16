@@ -68,7 +68,7 @@ class RecentStatsTest {
             "first frame 3200 ms, limit 4909 ms", "prepare 200 ms, limit 300 ms", "maplibre 400 ms, limit 302 ms, over",
             "custom 7 ms (1 of 3)", "open-files table 12.5 ms (1 of 3)", "package read 0.4 ms (1 of 3)",
         ), lines)
-        val r = Report(RecentStats.ID, RecentStats.dump(1_763_300_000_000L, system, history, budget, listOf("Offline areas: none")))
+        val r = Report(RecentStats.ID, RecentStats.dump(1_763_300_000_000L, system, history, budget, listOf("Offline maps: none")))
         assertEquals("Recent stats", r.kindLabel)
         assertEquals("Recent stats (0.1.32-alpha)", r.title())
         assertEquals("4 starts", r.headline)
@@ -88,9 +88,9 @@ class RecentStatsTest {
         for (re in leaks) assertNull(re.find(shown), "shown text leaks ${re.pattern}: $shown")
         assertTrue("<file>" in shown, shown)
         for (k in budget.ceilings.keys) assertTrue("\n  ${RecentStats.name(k)} " in shown, "$k missing: $shown")
-        assertTrue("Tiles dropped as empty since this start: 7 (2 of them in offline areas)" in shown, shown)
+        assertTrue("Tiles dropped as empty since this start: 7 (2 of them in offline maps)" in shown, shown)
         assertTrue("Tile store move: done, by copy in 41200 ms, 18000 files, 762.9 MB, on 2025-11-15" in shown, shown)
-        assertTrue("Offline areas: 3 (2 done, 1 partial), 306.1 MB" in shown, shown)
+        assertTrue("Offline maps: 3 (2 done, 1 partial), 306.1 MB" in shown, shown)
         assertTrue("Memory, last sample: Java heap 50.8 MB of 256.0 MB, native 30.3 MB, PSS 185.5 MB, 82 threads, 210 open files" in shown, shown)
         assertTrue("Memory, highest of the last 2 samples: Java heap 50.8 MB, native 30.3 MB, PSS 185.5 MB" in shown, shown)
         assertEquals(20, shown.lines().count { it.startsWith("  0.1.32-alpha cold, first frame") }, "every start's words")

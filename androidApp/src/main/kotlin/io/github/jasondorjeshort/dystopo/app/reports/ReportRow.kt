@@ -222,7 +222,7 @@ const val NOTICE_STARTUP = "A startup report also lists how long each step of th
 const val RECENT_STATS = "Report recent stats"
 const val NOTICE_STATS = "This report will be posted publicly on GitHub under your account. It contains the app version, your phone model " +
     "and Android version, how long each step of the recent starts took beside the limits the app is tested against, how many map tiles " +
-    "are stored and their size, how the tile store last moved, how many offline areas you have and their state, and the app's memory use. " +
+    "are stored and their size, how the tile store last moved, how many offline maps you have and their state, and the app's memory use. " +
     "It does not contain your maps' or areas' names, your tracks, searches or locations. Read it before you submit; nothing is sent until you do."
 const val AFTER_OPEN_STATS = "The rest of the report is on your clipboard; paste it below."
 const val OPEN_ISSUE = "Open GitHub issue"
