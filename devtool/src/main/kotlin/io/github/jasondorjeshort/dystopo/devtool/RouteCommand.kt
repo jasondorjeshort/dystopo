@@ -68,6 +68,8 @@ import io.github.jasondorjeshort.dystopo.routing.RoutingGraphBuilder
 import io.github.jasondorjeshort.dystopo.routing.LinePrice
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.routing.RoutePrice
+import io.github.jasondorjeshort.dystopo.routing.ProfileLimits
+import io.github.jasondorjeshort.dystopo.routing.SpeedProfile
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import kotlinx.serialization.json.Json
@@ -115,6 +117,10 @@ import kotlin.math.cos
  *   time|fuel|quick` also plans that preference's route and prices each route under both (`against`). `--price <gpx>`
  *   plans nothing: it prices the GPX's line (its first route, else its first track), which must lie on the graph's own
  *   geometry as `--gpx` writes it ([TileRouter.priceLine]); any other line is refused (exit 1) at its first point off it.
+ *   T291: `--profile` (drives) adds `profile`, the route's speed profile ([io.github.jasondorjeshort.dystopo.routing.SpeedProfile]:
+ *   time and fuel from a forward and backward pass under `--profile-limits low|first|high`) beside `table`, the table
+ *   model's time and fuel; under a preference other than time also `againstTime`, the least-time route's figures and the
+ *   saving in percent by each model. Without `--profile` nothing changes.
  * - `route build --pack ... [--dem ...]`: (re)builds the graph and reports size, timings and counters; T281:
  *   `driveStates`, the drive search's states per junction on this graph.
  *
@@ -152,10 +158,15 @@ class RouteCommand : CliktCommand(name = "route") {
     private val breakdown by option("--breakdown", help = "Drives: add the route's cost table under its --prefer, edge by edge and turn by turn, as the search sums it (T290)").flag()
     private val against by option("--against", help = "With --breakdown: also plan the drive under this preference and price each route under both (T290)").choice(*DrivePreference.entries.map { it.key }.toTypedArray())
     private val priceGpx by option("--price", help = "Instead of planning, price the drive along this GPX's line under --prefer: a line route --gpx wrote from this graph; any other is refused (T290)").file(mustExist = true, canBeDir = false)
+    private val profile by option("--profile", help = "Drives: add the route's speed profile (time and fuel from a forward and backward pass under acceleration, braking, bend and turn limits) beside the table model's figures; under a preference other than time also the least-time route's (T291)").flag()
+    private val profileLimits by option("--profile-limits", help = "With --profile: the limits' set, the low end, the first values or the high end of each range (T291)").choice("low", "first", "high").default("first")
+
+    /** T290, T291: a plan keeps its steps when a table or a profile is asked for. */
+    private val keepTrace: Boolean get() = breakdown || profile
 
     override fun run() {
         if (currentContext.invokedSubcommand != null) return
-        if ((breakdown || priceGpx != null) && mode != "drive" && fixture == null) throw UsageError("--breakdown and --price price drives: add --mode drive")
+        if ((breakdown || priceGpx != null || profile) && mode != "drive" && fixture == null) throw UsageError("--breakdown, --price and --profile price drives: add --mode drive")
         if (against != null && !breakdown) throw UsageError("--against needs --breakdown")
         fixture?.let { return runFixture(it) }
         val crow = mode == "crow"
@@ -188,16 +199,16 @@ class RouteCommand : CliktCommand(name = "route") {
                 tiled = TiledGraph(listOf(archive))
                 if (overlayWarm) warmed = timings.time("overlayWarm") { warm(overlay, archive, tiled, preference.metric, graphFile, packFile) }
             }
-            fun router(p: DrivePreference): TileRouter = if (tiled == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = p.turns, metric = p.metric, keepTrace = breakdown)
-                else TileRouter(tiled, overlay, driveTurns = p.turns, minDistanceM = minKm * 1000, metric = p.metric, keepTrace = breakdown)
+            fun router(p: DrivePreference): TileRouter = if (tiled == null || minKm == null) TileRouter(WholeGraph(graph), driveTurns = p.turns, metric = p.metric, keepTrace = keepTrace)
+                else TileRouter(tiled, overlay, driveTurns = p.turns, minDistanceM = minKm * 1000, metric = p.metric, keepTrace = keepTrace)
             val router = router(preference)
             timings.time("derive") { graph.adjStart; graph.component; graph.nearest(fromLat, fromLon, 1.0) }
             report["graph"] = info + ("summary" to graph.json())
             val r = timings.time("route") { router.route(fromLat, fromLon, toLat, toLon, TravelMode.of(mode)!!, snap, name) }
             report["search"] = searchJson(preference, mode, fromLat, fromLon, minKm, overlay, warmed)
-            if (r is RouteResult.Found && breakdown) breakdownInto(report, router, r.plan, timings) { p ->
-                router(p).route(fromLat, fromLon, toLat, toLon, TravelMode.DRIVE, snap, name)
-            }
+            val planOther = { p: DrivePreference -> router(p).route(fromLat, fromLon, toLat, toLon, TravelMode.DRIVE, snap, name) }
+            if (r is RouteResult.Found && breakdown) breakdownInto(report, router, r.plan, timings, planOther)
+            if (r is RouteResult.Found && profile) profileInto(report, router, r.plan, timings, planOther)
             r
         }
         when (result) {
@@ -277,13 +288,15 @@ class RouteCommand : CliktCommand(name = "route") {
         val minKm = overlayMinKm
         val overlay = minKm?.let { DriveOverlay(clock = { System.nanoTime() / 1_000_000 }) }
         val tiled = if (overlay == null || minKm == null) null else TiledGraph(listOf(GraphTileFile.open(GraphTileFile.encode(fx.graph))))
-        fun router(p: DrivePreference): TileRouter = if (tiled == null || minKm == null) TileRouter(WholeGraph(fx.graph), driveTurns = p.turns, metric = p.metric, keepTrace = breakdown)
-            else TileRouter(tiled, overlay, driveTurns = p.turns, minDistanceM = minKm * 1000, metric = p.metric, keepTrace = breakdown)
+        fun router(p: DrivePreference): TileRouter = if (tiled == null || minKm == null) TileRouter(WholeGraph(fx.graph), driveTurns = p.turns, metric = p.metric, keepTrace = keepTrace)
+            else TileRouter(tiled, overlay, driveTurns = p.turns, minDistanceM = minKm * 1000, metric = p.metric, keepTrace = keepTrace)
         val router = router(preference)
         val r = timings.time("route") { router.route(a.first, a.second, b.first, b.second, TravelMode.DRIVE, snap, label) }
         val report = linkedMapOf<String, Any?>("fixture" to file.path, "drive" to label, "graph" to fx.graph.json())
         report["search"] = searchJson(preference, "drive", a.first, a.second, minKm, overlay, null)
-        if (r is RouteResult.Found && breakdown) breakdownInto(report, router, r.plan, timings) { p -> router(p).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE, snap, label) }
+        val planOther = { p: DrivePreference -> router(p).route(a.first, a.second, b.first, b.second, TravelMode.DRIVE, snap, label) }
+        if (r is RouteResult.Found && breakdown) breakdownInto(report, router, r.plan, timings, planOther)
+        if (r is RouteResult.Found && profile) profileInto(report, router, r.plan, timings, planOther)
         when (r) {
             is RouteResult.Failed -> {
                 report["route"] = null; report["failure"] = r.json(); report["timingsMs"] = timings.ms
@@ -334,6 +347,64 @@ class RouteCommand : CliktCommand(name = "route") {
             "differences" to linkedMapOf(own.preference.key to RoutePrice.difference(own, otherUnderThis), other.key to RoutePrice.difference(thisUnderOther, otherOwn)),
             "thisUnderOther" to thisUnderOther.json(), "other" to otherOwn.json(), "otherUnderThis" to otherUnderThis.json(),
         )
+    }
+
+    /**
+     * T291: `profile`, [plan]'s speed profile ([SpeedProfile]) under `--profile-limits`, beside the table model's time and
+     * fuel (`table`: the plan's `timeS` and its fuel under the fuel model, edges and paid turns, as a least-fuel plan sums
+     * it). The profile reads the route's table priced under least time, so its turns are priced whatever `--prefer` is.
+     * Under a preference other than time, `againstTime`: the least-time route ([planOther] plans it), its table figures and
+     * profile, and this route's fuel saving against it in percent by each model (negative when it uses more).
+     */
+    private fun profileInto(report: MutableMap<String, Any?>, router: TileRouter, plan: PlannedRoute, timings: Timings, planOther: (DrivePreference) -> RouteResult) {
+        val limits = ProfileLimits.of(profileLimits)!!
+        class Both(val tableTimeS: Double, val tableFuel: RoutePrice, val profile: SpeedProfile.Result)
+        fun both(r: TileRouter, p: PlannedRoute): Both {
+            val turns = r.price(p, DrivePreference.TIME)
+            val pts = p.route.points
+            val prof = SpeedProfile.of(turns, DoubleArray(pts.size) { pts[it].lat }, DoubleArray(pts.size) { pts[it].lon }, limits)
+            return Both(p.timeS, r.price(p, DrivePreference.FUEL), prof)
+        }
+        fun tableJson(b: Both): Map<String, Any?> = linkedMapOf(
+            "timeS" to PlannedRoute.r1(b.tableTimeS), "fuelJ" to Math.round(b.tableFuel.fuelJ),
+            "edgeFuelJ" to Math.round(b.tableFuel.fuelJ - b.tableFuel.turnFuelJ), "turnFuelJ" to Math.round(b.tableFuel.turnFuelJ),
+        )
+        val own = timings.time("profile") { both(router, plan) }
+        val out = linkedMapOf<String, Any?>("prefer" to plan.trace!!.preference.key, "table" to tableJson(own))
+        out += own.profile.json()
+        if (plan.trace!!.preference != DrivePreference.TIME) {
+            val r = timings.time("profileAgainst") { planOther(DrivePreference.TIME) }
+            if (r !is RouteResult.Found) {
+                out["againstTime"] = linkedMapOf("failure" to (r as RouteResult.Failed).json())
+            } else {
+                val o = r.plan
+                val other = timings.time("profileAgainst") { both(o.trace!!.router, o) }
+                fun saved(mine: Double, theirs: Double): Double? = if (theirs > 0) Math.round(10000 * (1 - mine / theirs)) / 100.0 else null
+                fun added(mine: Double, theirs: Double): Double? = if (theirs > 0) Math.round(10000 * (mine / theirs - 1)) / 100.0 else null
+                val p = own.profile
+                val q = other.profile
+                out["againstTime"] = linkedMapOf(
+                    "route" to linkedMapOf(
+                        "distanceM" to PlannedRoute.r1(o.distanceM), "timeS" to Math.round(o.timeS), "turns" to o.turns,
+                        "points" to o.route.points.size, "sameLine" to (o.route.points == plan.route.points),
+                    ),
+                    "table" to tableJson(other),
+                    "profile" to q.json(),
+                    // This route's fuel saving against the least-time route, percent, by each model.
+                    "fuelSavedPercent" to linkedMapOf(
+                        "table" to saved(own.tableFuel.fuelJ, other.tableFuel.fuelJ),
+                        "tableEdgesOnly" to saved(own.tableFuel.fuelJ - own.tableFuel.turnFuelJ, other.tableFuel.fuelJ - other.tableFuel.turnFuelJ),
+                        "profile" to saved(p.fuelJ, q.fuelJ), "profileClassKept" to saved(p.fuelKeptJ, q.fuelKeptJ),
+                        "profileNetGrade" to saved(p.fuelNetGradeJ, q.fuelNetGradeJ),
+                    ),
+                    // The time it adds, percent.
+                    "timeAddedPercent" to linkedMapOf(
+                        "table" to added(own.tableTimeS, other.tableTimeS), "profile" to added(p.timeS, q.timeS), "profileNoWait" to added(p.integralS, q.integralS),
+                    ),
+                )
+            }
+        }
+        report["profile"] = out
     }
 
     /** T290: `--price <gpx>`: the drive along the GPX's line under `--prefer` ([TileRouter.priceLine]); exit 1 when refused. */
