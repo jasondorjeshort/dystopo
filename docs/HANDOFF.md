@@ -11,7 +11,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 - **Wave 35 is open** (`docs/TASKS.md`, T292 to T298, the build-process cleanup; planned and past a critic 2026-11-16, commit 2165eb32). Running since about 16:20 UTC: implementers T292 (tools lane, emulator `dystopo35-T292` port 5560), T294 (capture lane, `dystopo35-T294` port 5564), T296, T297, T298 (process lane, no emulator, no Gradle). Waiting: T293 after T292's merge; T295 after T294's and T292's. T298 merges last; its live hook check is the coordinator's after the merge. Merge sequence: the `wave` skill.
 - **The review of every pending idea** (2026-11-16): research in `docs/findings/2026-11-16-research-for-pending-ideas.md`; five ideas triaged that day. No idea was found already built.
 - v0.1.31-alpha is published (tag on bfd6121d); its sweep `out/sweep-20261115-2123` is the next close's `-Prev`. The owner: this wave "might not even lead to a release".
-- The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; an out-of-memory Kotlin compile clears with `"-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\?\` delete.
+- The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; an out-of-memory Kotlin compile clears with `"-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
 
 ## Next
 
