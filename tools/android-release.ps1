@@ -146,6 +146,28 @@ public static class DystopoShot {
 }
 '@
 
+# T295: each saved capture gets a sidecar <name>.place.json naming the areas.json area that holds the view's deep-link
+# centre, or outside, with basis fix (the place this script set, not read back from the app: a release build has no
+# /camera); a name, never a coordinate (tools/android-check.py, write_place, is the same format).
+$publicAreas = $null
+function Write-Place([string]$png, [double]$lat, [double]$lon) {
+    if ($null -eq $script:publicAreas) {
+        $script:publicAreas = @()
+        try {
+            $a = (Get-Content -Raw -Encoding UTF8 (Join-Path $repoRoot 'areas.json') | ConvertFrom-Json).areas
+            foreach ($p in $a.PSObject.Properties) { if (@($p.Value.bbox).Count -eq 4) { $script:publicAreas += , @($p.Name, @($p.Value.bbox)) } }
+        } catch { Write-Warning "areas.json: $($_.Exception.Message)" }
+    }
+    $area = 'outside'
+    foreach ($e in $script:publicAreas) {
+        $w, $s, $east, $n = $e[1]
+        $inLon = if ($w -le $east) { $lon -ge $w -and $lon -le $east } else { $lon -ge $w -or $lon -le $east }
+        if ($lat -ge $s -and $lat -le $n -and $inLon) { $area = $e[0]; break }
+    }
+    $side = [IO.Path]::ChangeExtension($png, $null).TrimEnd('.') + '.place.json'
+    [IO.File]::WriteAllText($side, (@{ area = $area; basis = 'fix' } | ConvertTo-Json -Compress))
+}
+
 function Start-Am([string[]]$amArgs) {
     $psi = New-Object Diagnostics.ProcessStartInfo $adb, ("-s $Serial shell am start " + ($amArgs -join ' '))
     $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
@@ -224,7 +246,7 @@ function Open-View([string]$view, [bool]$cold, [string]$name) {
     $total = if ($amOut -match 'TotalTime: (\d+)') { [int]$Matches[1] } else { $null }
     $waitT = if ($amOut -match 'WaitTime: (\d+)') { [int]$Matches[1] } else { $null }
     $png = Join-Path $outDir "$name.png"
-    if ($prev) { [DystopoShot]::Save($prev, $png) }
+    if ($prev) { [DystopoShot]::Save($prev, $png); Write-Place $png ([double]$lat) ([double]$lon) }
     $viewPid = (Adb shell pidof $package | Select-Object -First 1)
     if ($viewPid) { $script:pids[$viewPid.Trim()] = $true }
     [ordered]@{

@@ -1033,6 +1033,7 @@ def direct_view(server, exe, serial, view, bound_share, wait_ms, restart=False, 
             with open(shot, "wb") as f:
                 f.write(png)
             rep["screenshot"] = shot
+            place_server(shot, server)  # T295
         health = server.json("/health")
         rep["idle"] = health.get("map", {}).get("lastScreenshotIdle") is True
         time.sleep(2)  # renders that finish just after idle (out-of-view synthesis edges) count in the peak too
@@ -1205,6 +1206,7 @@ def world_views(server, wait_ms, shot):
             with open(path, "wb") as f:
                 f.write(png)
             v["screenshot"] = path
+            place_server(path, server)  # T295
             feats = server.json("/features", timeout=60).get("layers") or {}
             v["layers"] = {k: feats.get(k, 0) for k in layers}
             total = request_log_total(server)
@@ -1290,6 +1292,7 @@ def offline_attempt(server, exe, serial, step, first_wait_ms, wait_ms, shot):
         with open(shot, "wb") as f:
             f.write(png)
         rep["screenshot"] = shot
+        place_server(shot, server)  # T295
         feats = server.json("/features", timeout=60).get("layers") or {}
         rep["roadFeatures"] = sum(v for k, v in feats.items() if k in ROAD_LAYERS)
         total = request_log_total(server)
@@ -1525,8 +1528,145 @@ def screencap(exe, serial, path):
     if r.returncode == 0 and r.stdout.startswith(b"\x89PNG"):
         with open(path, "wb") as f:
             f.write(r.stdout)
+        write_place(path, *device_place(exe, serial))
         return path
     return None
+
+
+# T295: the place a device frame shows, as a sidecar beside it: <frame>.place.json next to <frame>.png, holding
+# {"area": <the areas.json area holding the viewed centre> | "outside" | "unknown", "basis": "camera" | "fix" | "none"}.
+# Only the name is written, never a coordinate: the sidecar exists to keep a private place off the before-and-after
+# sheet (tools/sweep-diff.py), so it must not name one itself. Containment is the area's bbox as areas.json gives it, no
+# margin. basis camera: the app's own GET /camera (a debug build); fix: the last GPS fix the part sent through `adb emu
+# geo fix` (Device.adb in android-firstrun.py), else the phone's last GPS location (`dumpsys location`), for a release
+# build with no debug routes. A fix says where the phone is, not where the map looks: a frame of a map moved away from
+# the fix (a deep link, a search, a pan) reads the fix's area. none: neither answered, and the area reads unknown.
+PLACE_SUFFIX = ".place.json"
+_PUBLIC_AREAS = None
+
+
+def public_areas():
+    """{name: (west, south, east, north)} from the repository's areas.json (cached)."""
+    global _PUBLIC_AREAS
+    if _PUBLIC_AREAS is None:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "areas.json"), encoding="utf-8") as f:
+                areas = json.load(f).get("areas") or {}
+            _PUBLIC_AREAS = {n: tuple(a["bbox"]) for n, a in areas.items()
+                             if isinstance(a, dict) and isinstance(a.get("bbox"), list) and len(a["bbox"]) == 4}
+        except (OSError, ValueError):
+            _PUBLIC_AREAS = {}
+    return _PUBLIC_AREAS
+
+
+def area_of(lat, lon):
+    """The name of the first areas.json area whose bbox holds (lat, lon), "outside" when none does, "unknown" without a
+    number. A bbox whose west is east of its east crosses the antimeridian."""
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (lat, lon)):
+        return "unknown"
+    for name, (w, s, e, n) in public_areas().items():
+        if s <= lat <= n and ((w <= lon <= e) if w <= e else (lon >= w or lon <= e)):
+            return name
+    return "outside"
+
+
+def place_path(png):
+    return os.path.splitext(png)[0] + PLACE_SUFFIX
+
+
+def write_place(png, area, basis):
+    """The sidecar of a frame. `area` must be a name (an areas.json area, outside or unknown), never a position."""
+    if area not in public_areas() and area not in ("outside", "unknown"):
+        area = "unknown"
+    try:
+        with open(place_path(png), "w", encoding="utf-8") as f:
+            json.dump({"area": area, "basis": basis}, f)
+    except OSError as e:
+        print(f"[place] no sidecar for {os.path.basename(png)}: {e}", file=sys.stderr)
+
+
+def camera_area(server):
+    """(area, "camera") from the app's GET /camera through a debug Server, or None when it does not answer."""
+    try:
+        cam = server.json("/camera", timeout=15)
+    except Exception:  # a frame is never lost to its sidecar
+        return None
+    return area_of(cam.get("lat"), cam.get("lon")), "camera"
+
+
+def place_server(png, server):
+    """The sidecar of a frame taken through a debug Server (android-check's own /screenshot frames)."""
+    write_place(png, *(camera_area(server) or ("unknown", "none")))
+
+
+_LAST_GPS = None
+
+
+def last_gps(exe, serial):
+    """(lat, lon) of the phone's last GPS location from `dumpsys location`, or None (an emulator reports none until an app
+    has asked for locations). Read for the area only; never kept or printed."""
+    global _LAST_GPS
+    if _LAST_GPS is None:
+        import re
+        _LAST_GPS = re.compile(r"Location\[gps\s+(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)")
+    code, out = android_debug.adb(exe, serial, "shell", "dumpsys", "location", timeout=30)
+    m = _LAST_GPS.search(out) if code == 0 else None
+    return (float(m.group(1)), float(m.group(2))) if m else None
+
+
+def device_place(exe, serial, fix=None, endpoints=None):
+    """(area, basis) of what the phone shows now, for a frame taken with adb (no Server at hand): GET /camera when the app
+    is a debug build (its logcat line gives the port and token; the host port is one already forwarded to it, else a
+    fresh `adb forward tcp:0`, removed after), else the fix: `fix`, the last (lat, lon) the part sent, else the phone's
+    last GPS location. `endpoints` caches {pid: (device port, token) or None} between the frames of one Device."""
+    try:
+        cam = debug_camera(exe, serial, endpoints if endpoints is not None else {})
+        if cam is not None:
+            return area_of(cam.get("lat"), cam.get("lon")), "camera"
+        fix = fix or last_gps(exe, serial)
+    except Exception as e:  # a frame is never lost to its sidecar
+        print(f"[place] {serial}: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
+    if fix:
+        return area_of(*fix), "fix"
+    return "unknown", "none"
+
+
+def debug_camera(exe, serial, endpoints):
+    """GET /camera of a debug build over adb, or None (no app running, a release build, no answer)."""
+    pid = android_debug.app_pid(exe, serial)
+    if not pid:
+        return None
+    if pid not in endpoints:
+        try:
+            endpoints[pid] = android_debug.endpoint(exe, serial, timeout=0)
+        except Exception:
+            endpoints[pid] = None  # a release build: no debug server line for this process
+    ep = endpoints[pid]
+    if not ep:
+        return None
+    dport, token = ep
+    _, listing = android_debug.adb(exe, None, "forward", "--list", timeout=30)
+    host, made = None, False
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] == serial and parts[2] == f"tcp:{dport}" and parts[1].startswith("tcp:"):
+            host = parts[1][4:]
+            break
+    if host is None:
+        code, out = android_debug.adb(exe, serial, "forward", "tcp:0", f"tcp:{dport}", timeout=30)
+        host = out.strip().splitlines()[-1].strip() if code == 0 and out.strip() else None
+        if not (host and host.isdigit()):
+            return None
+        made = True
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{host}/camera", headers={"X-Dystopo-Token": token})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+    finally:
+        if made:
+            android_debug.adb(exe, serial, "forward", "--remove", f"tcp:{host}", timeout=30)
 
 
 def ui_descriptions(exe, serial):
@@ -2058,6 +2198,7 @@ def main():
         with open(shot, "wb") as f:
             f.write(png)
         rep["screenshot"] = shot
+        place_server(shot, server)  # T295
         try:
             ras = decode_png(png)
             rep["image"] = image_stats(ras)
@@ -2076,6 +2217,7 @@ def main():
             with open(shot2, "wb") as f:
                 f.write(png2)
             rep["settledScreenshot"] = shot2
+            place_server(shot2, server)  # T295
         rep["settleChange"] = settle_share
 
         try:  # T154: the view's box, for the expectation per source from the viewport's own tiles

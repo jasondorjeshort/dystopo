@@ -1,7 +1,7 @@
 """The before-and-after sheet (T259): every screenshot of a sweep against the previous sweep's, by name.
 
     python -I tools/sweep-diff.py <previous sweep folder> <this sweep folder> [--first <screen names>]
-        [--channel chrome|""] [--frac 0.004] [--pixel 40] [--width 270]
+        [--leave-out <names>] [--leave-unknown] [--channel chrome|""] [--frac 0.004] [--pixel 40] [--width 270]
 
 Pairs each PNG of the two folders by its path relative to the folder (the device tour's views, the ui/<part>/ sets of
 the release parts, first-run and its direct run, the release smoke views, the world tour's renders, the demo and live
@@ -21,17 +21,40 @@ over 4 by 4 pixels) and blurred by one pixel; a pixel differs when a colour chan
   tools before the map settles, on purpose; it is compared and listed, but as `timing`, never counted as changed.
 Pairs of different sizes are changed (fraction 1). Shots in only one folder are listed as added or removed.
 
+T295, the place a device frame shows (DEVICE_PREFIXES: device/, ui/, first-run/, release/, a11y/; the renders, demo and
+live frames are of public areas by construction and are not checked). Each device capture writes a sidecar beside
+it, <frame>.place.json: {"area": <the areas.json area whose bbox holds the viewed centre> | "outside" | "unknown",
+"basis": "camera" | "fix" | "none"} (tools/android-check.py's write_place, used by android-check.py itself and by
+Device.screencap and Device.save in android-firstrun.py, so by android-ui.py and android-a11y.py too; android-release.ps1
+has its own Write-Place). Only a name is written, never a coordinate. camera: the debug build's GET /camera. fix: a
+place the part set and did not read back (the last `adb emu geo fix` it sent, else the phone's last GPS location;
+android-release.ps1's deep link): a fix says where the phone is, not where the map looks, so a release frame of a map
+moved off the fix (the drive step's other pack, a search, a pan) reads the fix's area and proves nothing about the map.
+none: neither answered (the area reads unknown).
+Each side of a device pair reads public (an area's name), outside, or unknown (no sidecar, as in a sweep from before
+T295, or a sidecar reading unknown). A pair, or an added or removed shot, is left out (neither compared nor shown, nor
+listed among the changed, timing, added or removed) when:
+- a side reads outside (always; what is printed is "outside the public areas", never a place);
+- --leave-out names it (comma-separated, matched against either side's path as --first is);
+- --leave-unknown is given and a side reads unknown.
+A device pair with an unknown side that is kept is shown and listed under `unknown`. Before changes.png is written,
+every frame on it is read again: an outside frame there (which the rules above leave out) refuses the sheet (exit 2,
+no changes.png). tools/sweep.ps1 passes the flags through -DiffArgs ('--leave-unknown --leave-out a,b').
+
 Writes into <this sweep folder>:
 - changes.png: the changed pairs side by side (before, after, and the after with the differing pixels in red),
   then the added shots, and nothing else; the pairs named by --first (screen names the merge bodies flag for the
   owner, matched case-insensitively against the path, `-` and space alike) come first and are marked, and so do the
   added shots a name matches, first among the added (T288: a wave's own new step has no namesake before);
 - changes.json: the count, the thresholds, every changed pair with its fraction, the timing pairs, the added and
-  removed shots, every pair's fraction (`fractions`), and T288's --first outcome, each name matched against every
+  removed shots, every pair's fraction (`fractions`), T295's `leftOut` (each: path, `was` when renumbered, why:
+  outside, named or unknown, the `sides` that read so, the `names` that matched) and `unknown` (the kept pairs with a
+  side unknown, and those `sides`), `leaveOutMissing` (a --leave-out name that matched no frame) and `places` (this
+  sweep's device frames counted by area and by basis), and T288's --first outcome, each name matched against every
   frame of both folders: `firstMissing` (matches no frame at all), `firstUnchanged` (matches frames, none changed or
   new), `firstAdded` (the new shots a name matches);
 and, when summary.json is there, its `changes` entry (sweep-summary.py's `changes()` reads the same file, so a
-rerun of the summary keeps it; the three --first lists are added to it here) and the diff's own part `diff` there.
+rerun of the summary keeps it, `leftOut` and `unknown` among its lists; the three --first lists are added to it here) and the diff's own part `diff` there.
 T288, the red: a --first name that matches no frame is printed and, after changes.json and the sheet are written,
 the exit is 1; summary.json then lists `diff` under `failed` with `ok` false (tools/sweep.ps1 appends the diff's line
 to steps.tsv and takes its exit code into its own). A rerun with corrected names clears both: the summary's entry,
@@ -57,7 +80,8 @@ ORIGIN = "http://sweep-diff.invalid"
 # the sweep's 1080 x 2400 phone (2.6%); landscape is 63 of 1080 (5.8%), so the mask is the larger of the two shares
 # applied per orientation.
 STATUS_BAR = {"portrait": 0.03, "landscape": 0.06}
-DEVICE_PREFIXES = ("device/", "ui/", "first-run/", "release/")
+DEVICE_PREFIXES = ("device/", "ui/", "first-run/", "release/", "a11y/")
+PLACE_SUFFIX = ".place.json"  # T295: tools/android-check.py's sidecar beside a device frame
 SKIP = ("sheet.png", "changes.png", "changes-*.png", "*-sheet.png", "tour/contact-sheet.png", "route-changes*.png")
 # T111's capture limit: Chrome's full-page capture is at most 16,384 px tall.
 SHEET_MAX_PX = 16000
@@ -94,6 +118,85 @@ def natural(s):
 
 def is_device(rel):
     return rel.startswith(DEVICE_PREFIXES)
+
+
+def read_place(folder, rel):
+    """T295: what a frame's sidecar says, (area, basis): area an areas.json name, "outside" or "unknown" (also for no
+    sidecar or one that cannot be read)."""
+    try:
+        with open(os.path.join(folder, os.path.splitext(rel)[0] + PLACE_SUFFIX), encoding="utf-8") as f:
+            p = json.load(f)
+    except (OSError, ValueError):
+        return "unknown", None
+    if not isinstance(p, dict):
+        return "unknown", None
+    area = p.get("area")
+    return (area if isinstance(area, str) and area else "unknown"), p.get("basis")
+
+
+def side_kind(area):
+    return area if area in ("outside", "unknown") else "public"
+
+
+def place_filter(prev, this, paired, added, removed, leave_out=(), leave_unknown=False):
+    """T295: ((pairs, added, removed) kept for the sheet, leftOut, unknown, the --leave-out names that matched nothing).
+    Each device side reads its sidecar; a frame outside DEVICE_PREFIXES is not read (left out only by name)."""
+    def sides(was, rel):
+        out = {}
+        if was is not None and is_device(was):
+            out["before"] = side_kind(read_place(prev, was)[0])
+        if rel is not None and is_device(rel):
+            out["after"] = side_kind(read_place(this, rel)[0])
+        return out
+
+    left, unknown, kept = [], [], ([], [], [])
+    seen = set()
+    items = [(a, b) for a, b in paired] + [(None, r) for r in added] + [(r, None) for r in removed]
+    for was, rel in items:
+        path = rel if rel is not None else was
+        s = sides(was, rel)
+        named = set(matches_first(path, leave_out))
+        if was is not None and was != path:
+            named.update(matches_first(was, leave_out))
+        seen |= named
+        why, which = None, []
+        if any(v == "outside" for v in s.values()):
+            why, which = "outside", [k for k, v in s.items() if v == "outside"]
+        elif named:
+            why = "named"
+        elif leave_unknown and any(v == "unknown" for v in s.values()):
+            why, which = "unknown", [k for k, v in s.items() if v == "unknown"]
+        renamed = {"was": was} if was is not None and rel is not None and was != rel else {}
+        if why:
+            left.append({"path": path, **renamed, "why": why, **({"sides": which} if which else {}),
+                         **({"names": sorted(named)} if named else {})})
+            continue
+        unk = [k for k, v in s.items() if v == "unknown"]
+        if unk:
+            unknown.append({"path": path, **renamed, "sides": unk})
+        if was is not None and rel is not None:
+            kept[0].append((was, rel))
+        elif rel is not None:
+            kept[1].append(rel)
+        else:
+            kept[2].append(was)
+    return kept, left, unknown, [n for n in leave_out if n not in seen]
+
+
+def place_counts(this, b_shots):
+    """T295: this sweep's device frames counted by the area their sidecars name (outside is a count, never a place) and
+    by basis (`none` also for a frame with no sidecar)."""
+    areas, basis = {}, {}
+    for r in b_shots:
+        if is_device(r):
+            area, b = read_place(this, r)
+            areas[area] = areas.get(area, 0) + 1
+            basis[b or "none"] = basis.get(b or "none", 0) + 1
+    return {"areas": dict(sorted(areas.items())), "basis": dict(sorted(basis.items()))}
+
+
+class OutsideOnSheet(RuntimeError):
+    pass
 
 
 def in_flight(rel):
@@ -247,11 +350,19 @@ def sheet_html(prev_name, this_name, changed, added, heats, per_row, first_added
             f"</style><body style='--per:{per_row}'>{head}<div class='grid'>{''.join(cards)}</div>")
 
 
-def run(prev, this, first, width, pixel, frac, channel):
+def run(prev, this, first, width, pixel, frac, channel, leave_out=(), leave_unknown=False):
     from playwright.sync_api import sync_playwright
 
-    a_shots, b_shots = shots(prev), shots(this)
-    paired, added, removed = pair_up(a_shots, b_shots)
+    a_all, b_all = shots(prev), shots(this)
+    paired, added, removed = pair_up(a_all, b_all)
+    # T295: the pairs left out (a side outside the public areas, a --leave-out name, an unknown side with --leave-unknown)
+    # are in none of the lists below and not on the sheet; --first is matched against what is left.
+    (paired, added, removed), left_out, unknown, leave_missing = place_filter(prev, this, paired, added, removed,
+                                                                               leave_out, leave_unknown)
+    gone_a = {e.get("was", e["path"]) for e in left_out}
+    gone_b = {e["path"] for e in left_out}
+    a_shots = [r for r in a_all if r not in gone_a]
+    b_shots = [r for r in b_all if r not in gone_b]
     pages = {"/index.html": "<!doctype html><title>diff</title>"}
 
     def serve(route):
@@ -308,6 +419,13 @@ def run(prev, this, first, width, pixel, frac, channel):
             added = sorted(added, key=lambda r: key(matches_first(r, first)))
             outcome = first_outcome(first, a_shots, b_shots, changed, added)
             png = os.path.join(this, "changes.png")
+            # T295: the last word before the sheet: no frame on it may read outside the public areas.
+            on_sheet = ([(prev, c.get("was", c["path"])) for c in changed] + [(this, c["path"]) for c in changed]
+                        + [(this, r) for r in added])
+            if any(is_device(r) and read_place(d, r)[0] == "outside" for d, r in on_sheet):
+                if os.path.exists(png):
+                    os.remove(png)
+                raise OutsideOnSheet("a frame on the sheet is outside the public areas: no changes.png written")
             if changed or added:
                 sheet = render_sheet(new_ctx, pages, os.path.basename(os.path.normpath(prev)), os.path.basename(os.path.normpath(this)),
                                      changed, added, heats, png, outcome)
@@ -319,7 +437,9 @@ def run(prev, this, first, width, pixel, frac, channel):
                                                         "statusBar": STATUS_BAR, "timingByName": "-first"},
             "paired": len(paired), "renumbered": [{"was": a, "now": b} for a, b in paired if a != b], "count": len(changed), "changed": changed, "timing": timing,
             "added": added, "removed": removed, "first": first, "firstMissing": outcome["missing"],
-            "firstUnchanged": outcome["unchanged"], "firstAdded": outcome["added"], "sheet": sheet, "fractions": fractions}
+            "firstUnchanged": outcome["unchanged"], "firstAdded": outcome["added"], "sheet": sheet, "fractions": fractions,
+            "leftOut": left_out, "unknown": unknown, "leaveOut": list(leave_out), "leaveUnknown": leave_unknown,
+            "leaveOutMissing": leave_missing, "places": place_counts(this, b_all)}
 
 
 def render_sheet(new_ctx, pages, prev_name, this_name, changed, added, heats, png, outcome=None):
@@ -367,6 +487,10 @@ def main():
     ap.add_argument("prev", help="the previous sweep folder")
     ap.add_argument("this", help="this sweep folder (changes.png and changes.json are written here)")
     ap.add_argument("--first", default="", help="screen names the merge bodies flag for the owner, comma-separated")
+    ap.add_argument("--leave-out", default="", help="T295: frames to leave off the sheet, comma-separated names matched "
+                    "against the path as --first is")
+    ap.add_argument("--leave-unknown", action="store_true", help="T295: leave out a device pair with a side that has no "
+                    "place sidecar (a sweep from before T295)")
     ap.add_argument("--channel", default="chrome", help="playwright browser channel; '' for bundled chromium")
     ap.add_argument("--width", type=int, default=DEFAULTS["width"], help="the width both images are compared at")
     ap.add_argument("--pixel", type=int, default=DEFAULTS["pixel"], help="a channel difference (of 255) that counts")
@@ -378,9 +502,10 @@ def main():
             print(json.dumps({"error": f"not a folder: {d}"}))
             return 2
     first = [n.strip() for n in a.first.split(",") if n.strip()]
+    leave_out = [n.strip() for n in a.leave_out.split(",") if n.strip()]
     t0 = time.time()
     try:
-        report = run(prev, this, first, a.width, a.pixel, a.frac, a.channel)
+        report = run(prev, this, first, a.width, a.pixel, a.frac, a.channel, leave_out, a.leave_unknown)
     except Exception as e:
         note = f"error: {str(e)[:300]}"
         fold_into_summary(this, 2, time.time() - t0, note, changes=False)
@@ -390,11 +515,24 @@ def main():
         json.dump(report, f, indent=2)
     missing = report["firstMissing"]
     code = 1 if missing else 0
+    # T295: what was left out, said without a place.
+    why = {}
+    for e in report["leftOut"]:
+        why[e["why"]] = why.get(e["why"], 0) + 1
+    words = {"outside": "a side outside the public areas", "named": "named by --leave-out",
+             "unknown": "a side unknown (--leave-unknown)"}
+    for k, n in why.items():
+        print(f"[sweep-diff] {n} left out: {words[k]}", file=sys.stderr)
+    if report["unknown"]:
+        print(f"[sweep-diff] {len(report['unknown'])} kept with a side unknown (no place sidecar)", file=sys.stderr)
+    if report["leaveOutMissing"]:
+        print(f"[sweep-diff] --leave-out matched no frame: {', '.join(report['leaveOutMissing'])}", file=sys.stderr)
     note = f"--first matched no frame: {', '.join(missing)}" if missing else ""
     if missing:
         print(f"[sweep-diff] {note}", file=sys.stderr)
     entry = fold_into_summary(this, code, time.time() - t0, note)
-    print(json.dumps(entry or {k: report[k] for k in ("paired", "count", "added", "removed", "firstMissing", "firstUnchanged")}, indent=2))
+    print(json.dumps(entry or {k: report[k] for k in ("paired", "count", "added", "removed", "firstMissing", "firstUnchanged",
+                                                      "leftOut", "unknown")}, indent=2))
     return code
 
 

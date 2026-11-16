@@ -140,8 +140,15 @@ class Device:
         self.raw_frames = True  # False once the device's raw format turned out to be one raw_raster cannot read
         self.capture_retries = 0
         self.captured_at = None  # time.time() when the last good capture was started
+        self.fix = None  # T295: the last (lat, lon) sent with `adb emu geo fix`, for a frame's sidecar; never written
+        self.endpoints = {}  # T295: {app pid: (debug port, token) or None}, for a frame's GET /camera
 
     def adb(self, *args, timeout=120, check_ok=True):
+        if args[:3] == ("emu", "geo", "fix") and len(args) >= 5:  # T295: geo fix <lon> <lat> [alt]
+            try:
+                self.fix = (float(args[4]), float(args[3]))
+            except ValueError:
+                pass
         code, text = debug.adb(self.exe, self.serial, *args, timeout=timeout)
         if check_ok and code != 0:
             raise RuntimeError(f"adb {' '.join(args)}: {text.strip()[:300]}")
@@ -191,7 +198,13 @@ class Device:
         path = os.path.join(self.out, f"{self.shots:02d}-{name}.png")
         with open(path, "wb") as f:
             f.write(raw)
+        self.place(path)
         return path, raw
+
+    def place(self, path):
+        """T295: the frame's sidecar (android-check.py's write_place): the area the debug build's camera shows, or the
+        area of the fix the part set; a name, never a coordinate."""
+        check.write_place(path, *check.device_place(self.exe, self.serial, self.fix, self.endpoints))
 
     def frame(self):
         """T105 (T88's follow-up): (time grabbed, Raster) from a raw `screencap` (no -p): no PNG encoding on the device
@@ -212,6 +225,7 @@ class Device:
         self.shots += 1
         path = os.path.join(self.out, f"{self.shots:02d}-{name}.png")
         check.encode_png(raster, path)
+        self.place(path)  # T295
         return path
 
     def nodes(self):
