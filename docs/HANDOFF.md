@@ -1,22 +1,22 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-15 23:26 UTC, at the commit after 69c5c587, by main session (wave 34 open; T287 merged, T288 and T290 out)
+Updated: 2026-11-16 00:25 UTC, at the commit after ebe8687b, by main session (wave 34 open; T287 and T290 merged, T288 and T291 out)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the "Wave 34" section of `docs/TASKS.md`,
 `docs/tasks/wave-33.md`, and `out/wave34-research/` (the critic's report and the speed-profile survey).
 
 ## Now
 
 - **Wave 34 is open** (planned and pushed 2026-11-15; critic answered, twenty-four objections): two lanes, one agent per lane. Tools: T287, then T288, then T289 (each merge gates the next launch; all three edit `tools/sweep.ps1`). Routing: T290, then T291.
-- **T287 is merged** (fa9c3e3e, logged; its cleanup chore was out when this was written: check `git branch -r --list 'origin/task/*'` and the `dystopo-wt` folder). **In flight:** T288's implementer (`task/T288`, not pushed yet) and T290's implementer on its last item, the phone check (`task/T290` pushed at 9096bde3, everything else done and reported; its verifier is not launched yet). One emulator slot each.
-- From T290's report: the 33 % and 47 % are about four fifths turn fuel, every paid turn there at a junction of unnamed roads (the `montblanc` pack has no road names); on the edges alone the saving is 11 % and 15 %.
+- **T287 and T290 are merged and logged** (fa9c3e3e, 6728b6cf; T287 cleaned up; T290's cleanup chore was out when this was written: check `git branch -r --list 'origin/task/*'` and the `dystopo-wt` folder). **In flight:** the implementers of T288 (`task/T288`, emulators) and T291 (`task/T291`, no emulator), neither pushed yet.
+- From T290: the 33 % and 47 % are about four fifths turn fuel, every paid turn there at a junction of unnamed roads (the `montblanc` pack has no road names); on the edges alone the saving is 11 % and 15 %.
 - The 7-day meter read 8 at planning and 16 at the first launch (the critic and the survey); the 5-hour meter had just reset. The owner, 2026-11-15: wait out a 5-hour stall.
 - v0.1.30-alpha is the published release; its sweep is `out/sweep-20261114-2352` (the close's `-Prev`). The live viewer is up and wanted (`out/coordinator-pids.txt`). Rules: no force push; an out-of-memory Kotlin compile clears with `"-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
 
 ## Next
 
 1. As each implementer reports: a Sonnet verifier (`brief` skill, `verifier.md`; a sweep's `-EmuPort` is even and at most 5682). Merge by the `wave` skill's sequence, then the cleanup chore.
-2. After T288's merge: T289. After T290's merge: T291 (its constants are in the task text).
+2. After T288's merge: T289 (Opus; the last task to launch).
 3. Whichever of T289, T290 and T291 merges last: its verifier runs the `route-sheet` part on the merged `main` (the Interacts line).
 4. Close: README status, the sweep with `-Prev` and `-First "settings,drive"`, v0.1.31-alpha after green (ADR 0024; its notes say the phone behaves as before), the allowance reading, the wave's move to `docs/tasks/`.
 5. After T291's finding: re-plan the speed-profile idea, amend ADR 0063 if the finding shows the turn fuel wrong, then Tier 2 (the card offers the other route; your own hike numbers; the winding-roads cap if earned).
