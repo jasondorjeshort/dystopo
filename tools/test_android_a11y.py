@@ -154,4 +154,20 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
+# T288: an open help pop-up is a screen (Plan drives for's, over its settings page), opened through /help/open by its key.
+calls = []
+
+
+class FakeSrv:
+    def ok(self, method, path, **kw):
+        calls.append((method, path))
+        return {}
+
+
+help_screens = [s for s in a11y.SCREENS if s[0] == "help-drive"]
+assert len(help_screens) == 1 and help_screens[0][3] == "screen", help_screens
+help_screens[0][1](type("C", (), {"srv": FakeSrv()})())
+assert calls == [("POST", "/help/open?key=settings.drivePreference")], calls
+assert len({s[0] for s in a11y.SCREENS}) == len(a11y.SCREENS), "screen names are unique (the baseline keys on them)"
+
 print("test_android_a11y: ok")

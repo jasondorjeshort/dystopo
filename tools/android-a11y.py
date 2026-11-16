@@ -668,6 +668,12 @@ def settings_page(group):
     return fn
 
 
+def scr_help_drive(c):
+    """T288: an open help pop-up (the list had none): Plan drives for's, over its settings page (`POST /help/open` brings the
+    page up; close_all's `/help/close` closes both)."""
+    c.srv.ok("POST", "/help/open?key=settings.drivePreference")
+
+
 def scr_share(c):
     c.srv.ok("POST", "/share/start")
 
@@ -735,6 +741,7 @@ SCREENS = [
     ("offline-maps", scr_packs, None, "screen"),
     ("settings", settings_page("list"), None, "screen"),
 ] + [(f"settings-{g}", settings_page(g), None, "screen") for g in ("data", "map", "display", "navigation", "sync", "about")] + [
+    ("help-drive", scr_help_drive, None, "screen"),
     ("share", scr_share, end_share, "screen"),
     ("first-run", scr_first_run, end_first_run, "map"),
 ]

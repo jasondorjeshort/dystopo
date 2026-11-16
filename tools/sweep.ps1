@@ -45,7 +45,8 @@
 #   apk-strings  (no device) every string in the release APK through PrivacyCheck: no private term or local pair
 #   features     search, a route kept as a trip (T105: the route card with its line and the kept trip's line in
 #                screenshots), the Routes list, a recorded track, GPX export, sync with the sweep's server, the sync
-#                sheet, the Share screen, Settings; no crash
+#                sheet, the Share screen, Settings; T288: Plan drives for and its help, then a drive under each of its
+#                values on the montblanc pair (this checkout's out\, else -DataDir's by path; rainier without it); no crash
 #   recenter     T105 (T93's follow-up): pan away from the fix, one tap on Recenter, the puck back where it was
 #   diagnostics  T154 (T143's follow-up): Settings > About and advanced > Diagnostics on the sweep's release build (the
 #                release key where tools\release.properties exists): every line, the max heap equal to dalvik.vm.heapsize,
@@ -90,7 +91,7 @@
 #
 # Time limits (T191, finding 2026-10-31: one stuck child once held the sweep 9.5 h). Every part has a ceiling,
 # -PartTimeout (900 s) unless the table $ceilings below (device-tour 1200 s a run, device-boot 1500, update 1500, check
-# 2400, matrix 2400) or -PartTimeouts says otherwise (the release build has 1800 s of its own, not the part's); the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
+# 2400, matrix 2400, a11y 1200, features 1500) or -PartTimeouts says otherwise (the release build has 1800 s of its own, not the part's); the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
 # at the deadline the running program's process tree is killed by its PID (taskkill /PID <pid> /T /F), the part's
 # steps.tsv line reads "timeout" with what was killed, and the sweep goes on with the next part. Cleanup after a part
 # (stopping its own emulator) has 300 s of its own. Before device-boot (and the bothunits boot) the sweep waits up to
@@ -227,6 +228,10 @@ $releaseBuildS = 1800
 # card's two restarts about 25 s); 1200 s leaves room for a loaded emulator and the routing graph's first build (about 125 s).
 $ceilings['a11y'] = 1200
 # end T270
+# T288: features took 322 to 421 s before its drive step; the step (Plan drives for, its help and three drives on the
+# montblanc pack, with the pack's push, a cold start and the phone's first routing graph) took 283 to 328 s alone on the
+# implementer's emulator, so about 750 s for the part: 1500 s, twice that, for a loaded emulator and a slow graph build.
+$ceilings['features'] = 1500
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
         throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
@@ -1140,8 +1145,12 @@ try {
         try {
             $null = Part 'features' {
                 if (-not $uiServer) { throw 'the sweep server for the UI parts did not start' }
+                # T288: the drive step's montblanc pair, this checkout's out\ first, else read by path from -DataDir (never
+                # copied or linked here); with neither the step drives on rainier and reports no fuel line.
+                $driveDir = if (Test-Path (Join-Path $localOut 'montblanc-outdoors.pmtiles')) { $localOut } else { $DataDir }
+                $driveArgs = @('--drive-osm', (Join-Path $driveDir 'montblanc-outdoors.pmtiles'), '--drive-dem', (Join-Path $driveDir 'montblanc-dem.pmtiles'))
                 Run $py (@('-I', 'tools/android-ui.py', 'features', '--serial', $serial, '--apk', (Release-Apk $serial), '--server', $uiServer,
-                        '--dem', $dem, '--osm', $osm, '--out', (Join-Path $ui 'features')) + $knownArgs) (Join-Path $Out 'features.json') (Join-Path $Out 'features.err.log')
+                        '--dem', $dem, '--osm', $osm, '--out', (Join-Path $ui 'features')) + $driveArgs + $knownArgs) (Join-Path $Out 'features.json') (Join-Path $Out 'features.err.log')
             }
             # T105 (T93's follow-up): the recentre button by taps on the release build.
             $null = Part 'recenter' {

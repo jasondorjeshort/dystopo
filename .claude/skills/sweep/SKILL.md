@@ -40,7 +40,10 @@ imports the Rainier pair through the file picker; per-step ok and the screenshot
 `summary.json` and on the sheet; T105: the `--direct` run's steps, timings per place and screenshots too,
 under `first-run.direct` and its own section of the sheet), then T81's release realism parts through `tools/android-ui.py`
 (`docs/reference/release-realism.md`; T105: every one installs the sweep's own copies of the release
-APKs in `apk\`): `features`, `recenter` (T105), `diagnostics` (T154: the Diagnostics row by taps,
+APKs in `apk\`): `features` (T288: its last step `drive` opens Settings > Navigation and tracking at Plan drives for and
+its help, then plans one drive under each value on the `montblanc` pack, Les Houches to Chamonix, where the card's fuel
+line shows; the pair is the checkout's `out\montblanc-*.pmtiles`, else `-DataDir`'s read by path; without it the step
+drives on `rainier` and reports `fuelLine: absent`), `recenter` (T105), `diagnostics` (T154: the Diagnostics row by taps,
 T143's checks), `permissions`, `upgrade` (from `-PrevRelease`,
 default the latest published release, its APK for the emulator's ABI downloaded with `gh`),
 `background`, `network` and `update` (T83: the in-app update by taps against a mock releases API on
@@ -96,7 +99,7 @@ be missing: then view each part's own sheets and screenshots and say so in the l
 `sheetError` instead means no sheet was made), plus each part's log; exit 1 on any failure. `steps.tsv` gets one line
 per part as it ends; since T99 it is written with read sharing and retried, so watching it
 (`tail -F`, `Get-Content -Wait`) no longer stops the sweep. A sweep agent waits for `steps.tsv` with bounded foreground calls (a loop of a few minutes at most, then look again) and never ends its turn while the sweep or its emulator runs: the stop hook leaves an emulator alone only while the agent has background work registered (finding `docs/findings/2026-11-01-stop-hook-kills-the-emulator-of-an-agent-that-yields-its-turn.md`), and an agent killed after yielding leaves its emulator until the cap refusal names it. The `update` part also keeps the app's
-update log, `ui\update\updater-log.txt`. T259: before a release pass `-Prev <the last release's sweep folder>` (and `-First <screen names>` from the merge bodies' "for the owner" lines): `changes.png` and `changes.json` land beside `summary.json`, whose `changes` has the count; view `changes.png`; `-SummaryOnly -Out <folder> -Prev <folder>` redoes only the summary and the diff (`docs/reference/release-realism.md`, The before-and-after sheet). `bash tools/sweep.sh` runs the same parts without the device, and
+update log, `ui\update\updater-log.txt`. T259: before a release pass `-Prev <the last release's sweep folder>` (and `-First <screen names>` from the merge bodies' "for the owner" lines): `changes.png` and `changes.json` land beside `summary.json`, whose `changes` has the count; view `changes.png`; `-SummaryOnly -Out <folder> -Prev <folder>` redoes only the summary and the diff (`docs/reference/release-realism.md`, The before-and-after sheet). T288: a `-First` name that matches no frame of either sweep turns the sweep red (the step `diff` in `steps.tsv`, `changes.firstMissing` and `diff` under `failed` in `summary.json`, exit 1) and so holds a release: correct the name, or add the step that opens the screen, and rerun with `-SummaryOnly`; a name that matches only unchanged frames is listed as `changes.firstUnchanged`, and new frames a name matches come first among the added. `bash tools/sweep.sh` runs the same parts without the device, and
 `.github/workflows/nightly.yml` runs it every night on main (artifact `sweep-nightly`).
 
 ## After it

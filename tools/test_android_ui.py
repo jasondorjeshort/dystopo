@@ -483,3 +483,30 @@ assert ui.route_row_words(["Chamonix streets", "Walk route · Nov 13 · 2.3 km �
 assert ui.route_rows(["Chamonix streets", "Walk route · Nov 13 · 2.3 km · 0:33"]) == (["2.3 km · 0:33"], ["Chamonix streets"])
 assert re.match(ui.TRIP_DETAILS, "▸ Trip details") and re.match(ui.TRIP_DETAILS, "▾ Trip details") and not re.match(ui.TRIP_DETAILS, "Trip details") and re.match(ui.TRIP_DETAILS, "▸ Trip details  2 water places")
 # end T278
+
+# T288: the features part's drive step. The zoom that fits both ends; the pack it drives on; a filled choice; the row's
+# values and lines as the app draws them (SettingsPages.kt) and the card's fuel line (RouteControls.kt).
+for key, d in ui.DRIVES.items():
+    z = ui.fit_zoom(d["from"], d["to"], 1080, 2400, 2.625)
+    pts = [ui.to_screen(*p, (d["from"][0] + d["to"][0]) / 2, (d["from"][1] + d["to"][1]) / 2, z, 1080, 2400, 2.625) for p in (d["from"], d["to"])]
+    assert 9 <= z <= 14 and all(0 < x < 1080 and 600 < y < 1800 for x, y in pts), (key, z, pts)
+assert ui.fit_zoom((45.8905, 6.8), (45.8905, 6.8), 1080, 2400, 2.625) == 14.0
+class _A:
+    drive_osm, drive_dem = os.path.join(here, "no-such-pack.pmtiles"), ""
+assert ui.drive_pack(_A()) == ("rainier", None, None)
+_A.drive_osm = os.path.abspath(__file__)
+assert ui.drive_pack(_A())[0] == "montblanc"
+_r = fr.check.Raster(40, 10, bytearray([240] * 40 * 10 * 3))
+for y in range(10):
+    for x in range(20):
+        _r.data[(y * 40 + x) * 3:(y * 40 + x) * 3 + 3] = bytes([110, 60, 30])  # the chips' brown
+assert ui.filled(_r, {"bounds": [0, 0, 20, 10]}) and not ui.filled(_r, {"bounds": [20, 0, 40, 10]})
+pages = open(os.path.join(os.path.dirname(here), "androidApp", "src", "main", "kotlin", "io", "github", "jasondorjeshort", "dystopo", "app",
+                          "settings", "SettingsPages.kt"), encoding="utf-8").read()
+for key, label, line in ui.DRIVE_PREFS:
+    assert re.search(r'DrivePreference\.%s, "%s", "%s' % (key.upper(), re.escape(label), re.escape(line)), pages), (key, label)
+assert re.search(ui.FUEL_LINE, "about 33 % less fuel than the least-time route, under a minute longer")
+assert re.search(ui.FUEL_LINE, "Planned for least time: the server does not plan for least fuel.")
+assert not re.search(ui.FUEL_LINE, "Based on typical driving speeds")
+assert re.match(ui.CARD, "4.8 mi · up 365 ft, down 347 ft · 0:08")
+print("test_android_ui (T288): ok")
