@@ -1537,7 +1537,7 @@ def screencap(exe, serial, path):
 # {"area": <the areas.json area holding the viewed centre> | "outside" | "unknown", "basis": "camera" | "fix" | "none"}.
 # Only the name is written, never a coordinate: the sidecar exists to keep a private place off the before-and-after
 # sheet (tools/sweep-diff.py), so it must not name one itself. Containment is the area's bbox as areas.json gives it, no
-# margin. basis camera: the app's own GET /camera (a debug build); fix: the last GPS fix the part sent through `adb emu
+# margin (OVERVIEW_ZOOM's views aside). basis camera: the app's own GET /camera (a debug build); fix: the last GPS fix the part sent through `adb emu
 # geo fix` (Device.adb in android-firstrun.py), else the phone's last GPS location (`dumpsys location`), for a release
 # build with no debug routes. A fix says where the phone is, not where the map looks: a frame of a map moved away from
 # the fix (a deep link, a search, a pan) reads the fix's area. none: neither answered, and the area reads unknown.
@@ -1559,14 +1559,33 @@ def public_areas():
     return _PUBLIC_AREAS
 
 
-def area_of(lat, lon):
+# A view at this zoom or below spans hundreds of kilometres on a phone and cannot single out a place: it reads as the
+# area it shows (the world overview's views, z3 over the Pacific and z5 over the Alps, in the device tour).
+OVERVIEW_ZOOM = 6
+# Half a phone's width in dp, on the small side (a 1080 px screen at 2.625 is 411 dp), for that span.
+OVERVIEW_HALF_DP = 200
+
+
+def area_of(lat, lon, zoom=None):
     """The name of the first areas.json area whose bbox holds (lat, lon), "outside" when none does, "unknown" without a
-    number. A bbox whose west is east of its east crosses the antimeridian."""
+    number. A bbox whose west is east of its east crosses the antimeridian. At `zoom` OVERVIEW_ZOOM or below, the first
+    area within OVERVIEW_HALF_DP of the centre (on MapLibre's 512 dp tiles) counts: that area is on the frame."""
     if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (lat, lon)):
         return "unknown"
+
+    def lon_in(x, w, e):
+        return (w <= x <= e) if w <= e else (x >= w or x <= e)
+
     for name, (w, s, e, n) in public_areas().items():
-        if s <= lat <= n and ((w <= lon <= e) if w <= e else (lon >= w or lon <= e)):
+        if s <= lat <= n and lon_in(lon, w, e):
             return name
+    if isinstance(zoom, (int, float)) and math.isfinite(zoom) and zoom <= OVERVIEW_ZOOM:
+        half_lon = 360.0 * OVERVIEW_HALF_DP / (512.0 * 2 ** zoom)
+        half_lat = half_lon * math.cos(math.radians(max(-85.0, min(85.0, lat))))
+        for name, (w, s, e, n) in public_areas().items():
+            near_lon = lon_in(lon, w, e) or any(abs((lon - x + 180) % 360 - 180) <= half_lon for x in (w, e))
+            if near_lon and s - half_lat <= lat <= n + half_lat:
+                return name
     return "outside"
 
 
@@ -1591,7 +1610,7 @@ def camera_area(server):
         cam = server.json("/camera", timeout=15)
     except Exception:  # a frame is never lost to its sidecar
         return None
-    return area_of(cam.get("lat"), cam.get("lon")), "camera"
+    return area_of(cam.get("lat"), cam.get("lon"), cam.get("zoom")), "camera"
 
 
 def place_server(png, server):
@@ -1622,7 +1641,7 @@ def device_place(exe, serial, fix=None, endpoints=None):
     try:
         cam = debug_camera(exe, serial, endpoints if endpoints is not None else {})
         if cam is not None:
-            return area_of(cam.get("lat"), cam.get("lon")), "camera"
+            return area_of(cam.get("lat"), cam.get("lon"), cam.get("zoom")), "camera"
         fix = fix or last_gps(exe, serial)
     except Exception as e:  # a frame is never lost to its sidecar
         print(f"[place] {serial}: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)

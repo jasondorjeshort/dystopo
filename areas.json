@@ -197,6 +197,16 @@
       "description": "Open ocean in the central Pacific, 10N 140W. No elevation files at all: the whole grid should be NaN.",
       "expectedElevation": [-5, 5],
       "tags": ["world", "expectOcean"]
+    },
+    "rainier-park": {
+      "bbox": [-121.92, 46.74, -121.45, 47.00],
+      "description": "Mount Rainier National Park, WA, USA, around the rainier box: Carbon River, Mowich Lake, Sunrise, Reflection Lakes. The device tour's views and cards (tools/android-tour.txt) reach past the rainier box; a sweep frame's place sidecar (T295) names this area for them. No expectedElevation, so the world tour leaves it out.",
+      "tags": ["sweep-view"]
+    },
+    "glacier-park": {
+      "bbox": [-114.05, 48.45, -113.75, 48.92],
+      "description": "Glacier National Park, MT, USA, south of the glacier-waterton box: the device tour's offline step views it (tools/android-tour.txt, @offline). For the place sidecars of sweep frames (T295); no expectedElevation, so the world tour leaves it out.",
+      "tags": ["sweep-view"]
     }
   }
 }

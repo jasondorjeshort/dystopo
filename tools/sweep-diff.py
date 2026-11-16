@@ -24,7 +24,8 @@ Pairs of different sizes are changed (fraction 1). Shots in only one folder are 
 T295, the place a device frame shows (DEVICE_PREFIXES: device/, ui/, first-run/, release/, a11y/; the renders, demo and
 live frames are of public areas by construction and are not checked). Each device capture writes a sidecar beside
 it, <frame>.place.json: {"area": <the areas.json area whose bbox holds the viewed centre> | "outside" | "unknown",
-"basis": "camera" | "fix" | "none"} (tools/android-check.py's write_place, used by android-check.py itself and by
+"basis": "camera" | "fix" | "none"}; a camera at zoom 6 or below names the first area within half a phone's width of
+its centre, since such a frame spans hundreds of kilometres (tools/android-check.py's area_of and write_place, used by android-check.py itself and by
 Device.screencap and Device.save in android-firstrun.py, so by android-ui.py and android-a11y.py too; android-release.ps1
 has its own Write-Place). Only a name is written, never a coordinate. camera: the debug build's GET /camera. fix: a
 place the part set and did not read back (the last `adb emu geo fix` it sent, else the phone's last GPS location;

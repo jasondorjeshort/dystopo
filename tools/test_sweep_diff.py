@@ -346,6 +346,9 @@ class SweepDiff(unittest.TestCase):
         self.assertEqual(acheck.area_of(45.89, 6.80), "mont-blanc")
         self.assertEqual(acheck.area_of(-16.8, 179.95), "taveuni")  # its bbox crosses the antimeridian
         self.assertEqual(acheck.area_of(0.0, -150.0), "outside")
+        self.assertEqual(acheck.area_of(0.0, -150.0, 3), "pacific")  # an overview's frame holds a public area
+        self.assertEqual(acheck.area_of(0.0, -150.0, 7), "outside")  # past OVERVIEW_ZOOM the centre decides
+        self.assertEqual(acheck.area_of(46.97, -121.90, 13), "rainier-park")  # the tour's Carbon River view
         self.assertEqual(acheck.area_of(None, 1.0), "unknown")
         frame = os.path.join(self.d, "f/01-map.png")
         png(frame, W, H)
