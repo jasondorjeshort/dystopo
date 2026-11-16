@@ -136,6 +136,9 @@
 # out\ itself; in a worktree they are copied (never linked) from -DataDir, default the main checkout's out\.
 # Only those files are copied, so packs of other places in the main out\ never reach a worktree.
 # DYSTOPO_CACHE defaults to the main checkout's cache\ and JAVA_HOME to the JDK 21 named in docs/reference/machines.md.
+# T292 (the coordinator's ask): an unknown parameter is refused before anything runs (exit 1, no sweep folder made); before,
+# it fell into $args and a real sweep started. No positional arguments either (a stray word bound to -Date).
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$Date = (Get-Date -Format 'yyyyMMdd-HHmm'),
     # Relative to the checkout only (T154); default out\sweep-<Date>.
