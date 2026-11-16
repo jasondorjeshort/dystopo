@@ -1,23 +1,23 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-16 16:25 UTC, at the commit after 2165eb32, by main session (wave 35 launched)
+Updated: 2026-11-16 22:40 UTC, at the commit after 350a35dc, by main session (wave 35: seven merged, the 5-hour gate holding)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-34.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 35 is open** (`docs/TASKS.md`, T292 to T298, the build-process cleanup; planned and past a critic 2026-11-16, commit 2165eb32). Running since about 16:20 UTC: implementers T292 (tools lane, emulator `dystopo35-T292` port 5560), T294 (capture lane, `dystopo35-T294` port 5564), T296, T297, T298 (process lane, no emulator, no Gradle). Waiting: T293 after T292's merge; T295 after T294's and T292's. T298 merges last; its live hook check is the coordinator's after the merge. Merge sequence: the `wave` skill.
-- **The review of every pending idea** (2026-11-16): research in `docs/findings/2026-11-16-research-for-pending-ideas.md`; five ideas triaged that day. No idea was found already built.
-- v0.1.31-alpha is published (tag on bfd6121d); its sweep `out/sweep-20261115-2123` is the next close's `-Prev`. The owner: this wave "might not even lead to a release".
-- The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; an out-of-memory Kotlin compile clears with `"-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
+- **Wave 35 is open** (`docs/TASKS.md`, T292 to T302, the development-process cleanup and four simple debugging tasks the owner added). **Merged (7 of 11):** T292, T294, T296, T297, T298, T301, T302 (log entries and Status lines written). **Running:** T295's implementer (capture lane, emulator `dystopo35-T295` on 5560). **Not launched:** T293 and T299 (tools lane, in that order), T300 (capture lane, after T295). **The 5-hour gate holds** (52 % at 22:39 UTC; resets 23:30 UTC, 18:30 Eastern): no agent launch, verifiers and chores included, until then or the owner's grant.
+- Owed by the coordinator: a cleanup chore for T292, T301, T302 (branches, worktrees) and the folders left by long paths (`dystopo-wt/T294`, `T301-verify`, `T302-verify`: the `\\?\` delete); the wave paragraph's coordinator edits still open: the release skill's lines T293 reports, the `release-realism.md` lines T295 reports, a line for `tools/release-notes.py` in `release-realism.md` (T297's follow-up), the Later lines T299 and T300 strike.
+- New flakes to watch at the close's sweep: `features`' Settings > Sources test failing to reach a LAN server in a `-Only features` run (T292's verifier); the device tour's offline world view at z3 not drawn once (T302's verifier).
+- **The review of every pending idea** (2026-11-16): `docs/findings/2026-11-16-research-for-pending-ideas.md`. v0.1.31-alpha is the last release; its sweep `out/sweep-20261115-2123` is the next close's `-Prev`. The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; long-path folders go by the `\\?\` delete.
 
 ## Next
 
-1. Verify and merge wave 35 as each implementer reports; launch T293 and T295 when their gates merge; then the coordinator's own edits the wave paragraph lists, the close, a sweep if anything Gradle builds changed.
+1. After the reset: the cleanup chore; T293 (tools lane) on a free emulator slot; T295's verifier when it reports; then T299 after T293 and T300 after T295. The close: a sweep (the app changed: T301, T302), and a release if it is green (the owner: this wave "might not even lead to a release"; T301 and T302 are user-visible, so one is likely).
 2. Then the routing work, in the order of the research finding's Drive routing section: ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes).
-3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, Report recent stats (it reads ADR 0060's due move prediction), Send diagnostics, the pressure unit.
+3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
 
 ## Waiting on user
 
