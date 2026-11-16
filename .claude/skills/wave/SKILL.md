@@ -153,8 +153,12 @@ and the caches are regenerable; the only files on the machine that are not are t
 2. Launch the post-wave sweep (`sweep` skill). Its findings become the next wave's sweep task.
 3. When the sweep is green, publish an alpha (`release` skill); the owner need not be asked again
    (ADR 0024).
-4. Rewrite the handoff (`handoff` skill) and commit it. Add the meter at the close to the wave
-   paragraph's allowance sentence; when it is more than five points off the figure in either direction,
+4. Rewrite the handoff (`handoff` skill) and commit it. Read each task's cost with
+   `python -I tools/agent-cost.py <Tnn>` (`docs/reference/agent-cost.md`; agent descriptions must name
+   the task id) and put its line in the wave record, and the fresh tokens of all the wave's agents in
+   the allowance sentence beside the meter reading; revise the per-task figure from the token sums,
+   not from the difference of readings, which other work on the account also moves (T298). Add the
+   meter at the close to the wave paragraph's allowance sentence; when it is more than five points off the figure in either direction,
    revise the per-task figure in step 3 of Plan and launch in the same commit and say so in the handoff
    (finding 2026-11-02: three closes went unrevised while this said "over" and named no owner step).
 5. A Haiku chore moves the closed wave to `docs/tasks/wave-NN.md` by the recipe in that README and
