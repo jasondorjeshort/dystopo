@@ -4,16 +4,18 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.31-alpha (2026-11-16)
+
 ### 2026-11-16
 
-- T289: A route sheet: the same public routes drawn before and after, every sweep (tools lane, after T288)
-- T288: The sweep opens a drive, and `--first` fails when it matches nothing (tools lane, after T287)
-- T291: A drive as a speed profile, pass one: a finished route priced, no search changed (routing lane, after T290)
+- T289: Tooling: every release sweep plans the same 24 public routes and draws them before and after, so a route that moved between two releases shows on one sheet
+- T288: Tooling: the release sweep opens the Plan drives for row, its help and a drive's route card under each of its three values; a screen name asked for first that matches no screenshot fails the sweep
+- T291: devtool `route --profile` prices a finished drive as a speed profile (slowing for bends, turns and junctions, then regaining speed); no route changed. It showed the card's fuel saving on town drives to be overstated
 
 ### 2026-11-15
 
-- T290: A route's cost, edge by edge and turn by turn (routing lane, first)
-- T287: Every emulator boots with a fix on a public area (tools lane, first; chore-sized)
+- T290: devtool `route --breakdown` explains a drive's cost edge by edge and turn by turn, against another way of planning if asked, and `--price` prices a GPX line the same way; no route changed
+- T287: Tooling: every test emulator boots with a position on a public area, so no screenshot of the sweep shows a map elsewhere
 
 ## v0.1.30-alpha (2026-11-15)
 
