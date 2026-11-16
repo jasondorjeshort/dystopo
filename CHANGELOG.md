@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-16
 
+- T298: The usage meter and tokens per agent, recorded by hooks (process lane, merged last)
 - T297: Release notes: the mechanical sections written by a script (process lane)
 
 ## v0.1.31-alpha (2026-11-16)
