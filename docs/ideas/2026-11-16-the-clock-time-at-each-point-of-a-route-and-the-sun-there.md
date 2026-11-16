@@ -23,3 +23,15 @@ on the route card and the map's light.
   `docs/findings/2026-11-15-a-drive-as-a-speed-profile.md`).
 - What the sun is for on a drive: shade and ice on a winter road, low sun ahead, the daylight left at the far end.
   A survey first (ADR 0039) of what drivers and planners use.
+
+Question: build it for hikes now and add drives when the speed profile reaches the phone, or wait and build both
+together? Found 2026-11-16 (triage): the map already relights the terrain for any instant (T188's sun-and-shade
+control, `app/options/SunShade.kt` `SunClock`, shadow tiles by the minute) and `routing/ShadeAlong.kt` gives a
+hike's time at every point (`timeAt`, used by `nav/NavShade.kt`), so the first Open point is answered; missing are
+a control on the route card (no route elevation panel exists; the track's profile panel in
+`tracking/TrackControls.kt` is the model) and a drive's per-point time on the phone (`routing/SpeedProfile.kt` is
+devtool only). Recommended: hikes now, one pass: a slider on the card sets `SunClock` to the start time plus the time
+to that point, with a marker on the line; drives follow the profile's port to the phone, since table times would put
+a mountain drive's points minutes early.
+
+Answer:
