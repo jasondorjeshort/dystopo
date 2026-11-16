@@ -73,6 +73,12 @@
             "command": "node",
             "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/emulator-stop.js"],
             "timeout": 120
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/agent-meter.js"],
+            "timeout": 10
           }
         ]
       }
