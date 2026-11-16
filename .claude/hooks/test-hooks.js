@@ -16,7 +16,7 @@
 //       print exit code, stdout, stderr. Use this to reproduce a bug: write the hook input JSON
 //       to a file with the Write tool (a command line containing e.g. a force push would itself
 //       trip git-guard).
-//   ... --input <file> <usage-gate|statusline> --home <dir> [--config-dir <cdir>]
+//   ... --input <file> <usage-gate|statusline|agent-meter> --home <dir> [--config-dir <cdir>]
 //       the same, with HOME and USERPROFILE set to <dir> and CLAUDE_CONFIG_DIR removed (or set
 //       to <cdir>), so the script uses <dir>/.claude/usage-state/<session_id>.json, the grants
 //       in <dir>/.claude/usage-gate-overrides/, and the account label from <dir>/.claude.json
@@ -46,7 +46,8 @@
 // scratch copy of the hooks whose queue-list.js throws (Q13); group PV covers privacy-scan.js, rule
 // 20 and the pre-push hook (ADR 0018) on scratch repositories with bare remotes, every guard run
 // with HOME at an empty scratch dir (or the case's own, for the never and allow files); the line
-// above the totals lists the groups that ran. Exit codes: 0 all pass (a
+// above the totals lists the groups that ran. Group AM (Dystopo T298) covers the launch line usage-gate.js appends and
+// agent-meter.js at SubagentStop, under a scratch HOME. Exit codes: 0 all pass (a
 // SKIP is not a failure), 1 any failure, 2 usage error.
 'use strict';
 const fs = require('fs');
@@ -80,7 +81,7 @@ function run(hook, stdin, env) {
 }
 
 if (opt.input) {
-  if (!['git-guard', 'post-edit', 'usage-gate', 'statusline'].includes(opt.hook)) {
+  if (!['git-guard', 'post-edit', 'usage-gate', 'statusline', 'agent-meter'].includes(opt.hook)) {
     process.stderr.write(`test-hooks: unknown hook ${opt.hook}\n`);
     process.exit(2);
   }
@@ -3590,6 +3591,148 @@ if (['EL', 'ES'].some((g) => selected(g) || (opt.only && opt.only.startsWith(g))
     // Until each has exited: a running copy holds its exe, and the scratch tree is removed at the end.
     for (const pid of started) for (let i = 0; i < 100 && alive(pid); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     if (process.platform === 'win32') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+}
+
+// ---------- per-agent cost: usage-gate.js's launch line and agent-meter.js at SubagentStop (group AM; Dystopo T298) ----------
+// Every case runs under a scratch HOME, so the lines land in <scratch>/am-home/.claude/usage-state/<sid>.agents.tsv.
+// The transcripts are synthetic, with the keys a real subagent transcript carries (usage repeated per content block).
+if (selected('AM') || (opt.only && opt.only.startsWith('AM'))) {
+  const amHome = path.join(scratch, 'am-home');
+  const amState = path.join(amHome, '.claude', 'usage-state');
+  fs.mkdirSync(amState, { recursive: true });
+  const amEnv = (extra) => envWith(Object.assign({ HOME: amHome, USERPROFILE: amHome, CLAUDE_CONFIG_DIR: undefined, HOOK_POLICY_FILE: POLICIES.hatchery }, extra || {}));
+  const now = () => Math.floor(Date.now() / 1000);
+  const writeState = (sid, five, seven) => fs.writeFileSync(path.join(amState, `${sid}.json`), JSON.stringify({ updatedAt: now(), five_hour: { used_percentage: five }, seven_day: { used_percentage: seven } }));
+  const tsv = (sid) => {
+    const f = path.join(amState, `${sid}.agents.tsv`);
+    if (!fs.existsSync(f)) return null;
+    const [head, ...rows] = fs.readFileSync(f, 'utf8').replace(/\n$/, '').split('\n');
+    const cols = head.split('\t');
+    return rows.map((r) => Object.fromEntries(r.split('\t').map((v, i) => [cols[i], v])));
+  };
+  const launch = (sid, extra) => JSON.stringify(Object.assign({ hook_event_name: 'PreToolUse', tool_name: 'Agent', session_id: sid, tool_use_id: 'toolu_AM1',
+    tool_input: { description: 'T9 implement: the thing', subagent_type: 'general-purpose', model: 'opus', prompt: 'x' } }, extra));
+  const asst = (id, usage, content) => JSON.stringify({ type: 'assistant', agentId: 'aAM', requestId: `req_${id}`, message: { model: 'claude-opus-test', id, type: 'message', role: 'assistant', content: [content], usage } });
+  const U = (i, cw, cr, o) => ({ input_tokens: i, cache_creation_input_tokens: cw, cache_read_input_tokens: cr, output_tokens: o, cache_creation: { ephemeral_5m_input_tokens: cw }, iterations: [] });
+  const transcriptDir = path.join(scratch, 'am-proj', 'sess', 'subagents');
+  fs.mkdirSync(transcriptDir, { recursive: true });
+  const writeTranscript = (agentId, lines, metaObj) => {
+    const f = path.join(transcriptDir, `agent-${agentId}.jsonl`);
+    fs.writeFileSync(f, lines.join('\n') + '\n');
+    if (metaObj) fs.writeFileSync(path.join(transcriptDir, `agent-${agentId}.meta.json`), JSON.stringify(metaObj));
+    return f;
+  };
+  const stop = (sid, o) => JSON.stringify(Object.assign({ hook_event_name: 'SubagentStop', session_id: sid, cwd: scratch, stop_hook_active: false, agent_type: 'general-purpose' }, o));
+  const timed = (hook, stdin, env) => { const t = Date.now(); const r = run(hook, stdin, env); r.ms = Date.now() - t; return r; };
+
+  if (selected('AM01')) {
+    writeState('am01', 20, 30);
+    const r = run('usage-gate', launch('am01'), amEnv());
+    const rows = tsv('am01') || [];
+    const l = rows[0] || {};
+    report('AM01', 'an allowed Agent launch appends a launch line: time, tool_use_id, subagent_type, model, description, both readings; the gate\'s stdout stays empty',
+      r.code === 0 && r.stdout === '' && rows.length === 1 && l.event === 'launch' && l.tool_use_id === 'toolu_AM1' && l.agent_type === 'general-purpose' &&
+      l.model === 'opus' && l.description === 'T9 implement: the thing' && l.five_hour === '20' && l.seven_day === '30' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(l.time),
+      `exit ${r.code}, rows ${JSON.stringify(rows)}`, r.stdout);
+  }
+  if (selected('AM02')) {
+    writeState('am02', 55, 10);
+    const r = run('usage-gate', launch('am02'), amEnv());
+    const d = parseDecision(r.stdout);
+    report('AM02', 'a launch the gate holds writes no line, and the deny is the U01 text unchanged',
+      r.code === 0 && !!d && d.decision === 'deny' && d.reason === HOLD_MSG && tsv('am02') === null, `exit ${r.code}, reason ${d && d.reason}`, r.stdout);
+  }
+  if (selected('AM03')) {
+    const r = run('usage-gate', launch('am03'), amEnv());
+    const rows = tsv('am03') || [];
+    report('AM03', 'no state file: the launch is allowed (the gate\'s note) and its line has empty readings',
+      r.code === 0 && r.stdout === '' && /no usage data/.test(r.stderr) && rows.length === 1 && rows[0].five_hour === '' && rows[0].seven_day === '',
+      `exit ${r.code}, rows ${JSON.stringify(rows)}`, r.stdout);
+  }
+  if (selected('AM04')) {
+    const r1 = run('usage-gate', launch('am04', { tool_name: 'Workflow', tool_input: { description: 'T9' } }), amEnv());
+    const r2 = run('usage-gate', 'not json', amEnv());
+    report('AM04', 'a Workflow call and unparseable stdin write no line', r1.code === 0 && r2.code === 0 && tsv('am04') === null,
+      `exit ${r1.code} ${r2.code}`, r1.stdout + r2.stdout);
+  }
+  if (selected('AM05')) {
+    writeState('am05', 21, 31);
+    const f = writeTranscript('aAM05', [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'brief' } }),
+      asst('msg_1', U(2, 1000, 0, 50), { type: 'thinking', thinking: '' }),
+      asst('msg_1', U(2, 1000, 0, 50), { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: '"usage" in a tool result is not counted' }] } }),
+      asst('msg_2', U(3, 200, 1000, 70), { type: 'text', text: 'done' }),
+    ], { agentType: 'general-purpose', description: 'T9 implement: the thing', toolUseId: 'toolu_AM1', model: 'opus' });
+    const r = timed('agent-meter', stop('am05', { agent_id: 'aAM05', agent_transcript_path: f, background_tasks: [] }), amEnv());
+    const l = (tsv('am05') || [])[0] || {};
+    report('AM05', 'the stop line: agent_id, the launch\'s tool_use_id and description from meta.json, the readings, tokens summed once per message id, last_context the last request\'s total',
+      r.code === 0 && r.stdout === '' && l.event === 'stop' && l.agent_id === 'aAM05' && l.tool_use_id === 'toolu_AM1' && l.description === 'T9 implement: the thing' &&
+      l.model === 'claude-opus-test' && l.five_hour === '21' && l.seven_day === '31' && l.requests === '2' && l.input === '5' && l.cache_write === '1200' &&
+      l.cache_read === '1000' && l.output === '120' && l.last_context === '1273' && l.note === '',
+      `exit ${r.code}, ${r.ms} ms, line ${JSON.stringify(l)}`, r.stdout);
+  }
+  if (selected('AM06')) {
+    const r = run('agent-meter', stop('am06', { agent_id: 'aAM06', agent_transcript_path: path.join(transcriptDir, 'agent-none.jsonl') }), amEnv());
+    const l = (tsv('am06') || [])[0] || {};
+    report('AM06', 'no state file and no transcript: exit 0, nothing on stdout, a line with empty readings and the note "transcript unreadable (ENOENT)"',
+      r.code === 0 && r.stdout === '' && l.five_hour === '' && l.note === 'transcript unreadable (ENOENT)' && l.requests === '0', `exit ${r.code}, line ${JSON.stringify(l)}`, r.stdout);
+  }
+  if (selected('AM07')) {
+    const r = run('agent-meter', stop('am07', { agent_id: 'aAM07', agent_transcript_path: transcriptDir }), amEnv());
+    const l = (tsv('am07') || [])[0] || {};
+    report('AM07', 'a transcript path that is a folder (unreadable): exit 0, nothing on stdout, the note says unreadable',
+      r.code === 0 && r.stdout === '' && /^transcript unreadable \(E[A-Z]+\)$/.test(l.note || ''), `exit ${r.code}, line ${JSON.stringify(l)}`, r.stdout);
+  }
+  if (selected('AM08')) {
+    // About 300 MB: one request, a 70 MB line with no break (over the line cap), filler lines, then a second request.
+    const f = path.join(transcriptDir, 'agent-aAM08.jsonl');
+    const fd = fs.openSync(f, 'w');
+    fs.writeSync(fd, asst('msg_a', U(1, 10, 0, 1), { type: 'text', text: 'a' }) + '\n');
+    const mb = Buffer.alloc(1 << 20, 0x78);
+    for (let i = 0; i < 70; i++) fs.writeSync(fd, mb);
+    fs.writeSync(fd, '\n');
+    const filler = Buffer.from((JSON.stringify({ type: 'user', message: { content: 'y'.repeat(1000) } }) + '\n').repeat(1000));
+    while (fs.fstatSync(fd).size < 300 * 1048576) fs.writeSync(fd, filler);
+    fs.writeSync(fd, asst('msg_b', U(1, 10, 5, 1), { type: 'text', text: 'b' }) + '\n');
+    fs.closeSync(fd);
+    const r = timed('agent-meter', stop('am08', { agent_id: 'aAM08', agent_transcript_path: f }), amEnv());
+    const l = (tsv('am08') || [])[0] || {};
+    fs.rmSync(f, { force: true });
+    report('AM08', `a 300 MB transcript with a 70 MB line: exit 0 in under a second (${r.ms} ms, node start included), the line written with what was read and a note`,
+      r.code === 0 && r.stdout === '' && r.ms < 1000 && Number(l.requests) >= 1 && /partial|skipped/.test(l.note || ''), `exit ${r.code}, ${r.ms} ms, line ${JSON.stringify(l)}`, r.stdout);
+  }
+  if (selected('AM09')) {
+    const f = writeTranscript('aAM09', [asst('msg_1', U(1, 1, 1, 1), { type: 'text', text: 'x' })]);
+    const r = run('agent-meter', stop('am09', { agent_id: 'aAM09', agent_transcript_path: f, background_tasks: [{ id: 'bg', status: 'running' }] }), amEnv());
+    const l = (tsv('am09') || [])[0] || {};
+    report('AM09', 'background_tasks non-empty (the agent yields): the line is written with the note "yield"; no meta.json leaves tool_use_id empty',
+      r.code === 0 && r.stdout === '' && l.note === 'yield' && l.tool_use_id === '' && l.requests === '1', `line ${JSON.stringify(l)}`, r.stdout);
+  }
+  if (selected('AM10')) {
+    const bad = ['', 'not json', JSON.stringify({ hook_event_name: 'SubagentStop', agent_id: 'x' }), JSON.stringify({ session_id: '../evil', agent_id: 'x' })];
+    const rs = bad.map((s) => run('agent-meter', s, amEnv()));
+    const files = fs.readdirSync(amState).filter((n) => /evil|undefined|null/.test(n));
+    report('AM10', 'empty, unparseable, no session_id or an unsafe one: exit 0, nothing on stdout, no file', rs.every((r) => r.code === 0 && r.stdout === '') && files.length === 0,
+      `exits ${rs.map((r) => r.code).join(',')}, files ${files.join(',')}`);
+  }
+  if (selected('AM12')) {
+    // The deadline seam at 1 ms: the read stops at once and the line says how far it came.
+    const f = path.join(transcriptDir, 'agent-aAM05.jsonl');
+    const r = run('agent-meter', stop('am12', { agent_id: 'aAM12', agent_transcript_path: f }), amEnv({ AGENT_METER_DEADLINE_MS: '1' }));
+    const l = (tsv('am12') || [])[0] || {};
+    report('AM12', 'past the deadline (AGENT_METER_DEADLINE_MS=1): the line is written with the note "partial: N of M MB read"',
+      r.code === 0 && r.stdout === '' && /^partial: \d+ of \d+ MB read$/.test(l.note || ''), `line ${JSON.stringify(l)}`, r.stdout);
+  }
+  if (selected('AM11')) {
+    let s = null;
+    try { s = JSON.parse(fs.readFileSync(path.join(HOOKS, '..', 'settings.json'), 'utf8')); } catch (_) { /* reported */ }
+    const stops = s && s.hooks && Array.isArray(s.hooks.SubagentStop) ? s.hooks.SubagentStop.flatMap((g) => g.hooks || []) : [];
+    const named = (n) => stops.find((h) => (h.args || []).some((a) => a.endsWith(`.claude/hooks/${n}`)));
+    const m = named('agent-meter.js');
+    report('AM11', 'settings.json runs agent-meter.js at SubagentStop with a timeout, beside emulator-stop.js', !!named('emulator-stop.js') && !!m && typeof m.timeout === 'number' && m.timeout <= 30,
+      JSON.stringify(stops));
   }
 }
 

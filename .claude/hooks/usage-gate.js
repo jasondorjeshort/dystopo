@@ -213,5 +213,8 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => (raw += c));
 process.stdin.on('end', () => {
   main(raw);
+  // Dystopo T298: an allowed Agent call gets its launch line in the session's agents.tsv (agent-meter.js).
+  // A deny has already exited inside main. A fault here never touches the verdict.
+  try { require('./agent-meter.js').appendLaunch(raw); } catch (_) { /* the line is lost, the launch goes on */ }
   process.exit(0);
 });
