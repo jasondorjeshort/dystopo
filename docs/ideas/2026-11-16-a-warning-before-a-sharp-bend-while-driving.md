@@ -24,3 +24,13 @@ bend in the planned time, and from the spoken route ahead, which describes groun
   a setting if they split (ADR 0044).
 - Only on a planned route, or also when driving with no route (the road ahead guessed from the heading).
 - The phone does not use the profile yet (T291 was devtool only).
+
+Question: build the bend warning after the bend's lateral limit is measured from your drives
+(`2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md`) and the speed profile runs on the phone, or sooner
+as a warning by angle alone (hairpins) without the profile? Recommended: the first, as one pass on planned drives
+only, no advised speed, help text naming the map's line as the source so silence never reads as "no bend". A
+warning by angle alone would miss long tight bends and fire on mapping kinks. The survey (curve-warning practice,
+what "sharp" means on signs) was run 2026-11-16; its result is in
+`docs/findings/2026-11-16-research-for-pending-ideas.md`.
+
+Answer:
