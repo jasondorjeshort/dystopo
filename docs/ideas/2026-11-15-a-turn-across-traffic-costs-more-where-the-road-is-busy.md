@@ -43,3 +43,14 @@ time the wait.
   main roads only, online only. (4) Your own drives: the seconds stopped at turns by the class crossed
   (`2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md`, the drive half). (5) Users' drives pooled: a new
   data flow, flagged, the owner's decision and not proposed here.
+
+Plan: the research pass ran on 2026-11-16 (`docs/findings/2026-11-16-research-for-pending-ideas.md`, Drive
+routing: OSRM charges 2 s extra for a turn across oncoming traffic and does not scale by the road crossed; the US
+federal highway performance data and the UK's road traffic counts publish daily traffic per section under open
+terms; no global open estimate; the carrier's figures are a company claim from delivery rounds). The build is one
+pass after ADR 0063's amendment and the pack and graph revision that places signals: `routing/TurnCost.kt` scales
+the across-traffic seconds by the class of the road crossed (a table by class, starting near 3 s across a
+residential road and 10 to 15 s across a primary, unsignalised; a mapped signal replaces the gap wait by its own
+delay), the driving side from the pack, unit cases in `shared` for each class and both sides, `route --profile`
+on the two `montblanc` town drives before and after in the report. Traffic counts stay out of this pass: a source
+joined to OSM ways is its own proposal with a `sources.json` entry. Out of scope: live feeds, pooled drives.
