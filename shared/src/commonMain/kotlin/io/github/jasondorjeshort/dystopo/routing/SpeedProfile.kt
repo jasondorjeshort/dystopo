@@ -185,19 +185,26 @@ class ProfileLimits(
 enum class Hold(val key: String) { NONE("none"), EDGE("edge"), BEND("bend"), TURN("turn"), STOP("stop") }
 
 /**
- * One step of the grid: [lengthM] driven on a road whose drive speed is [roadMps], with [riseM] of net climb, a rolling
- * factor [surface] ([FuelModel.surfaceFactor]) and the class's unsteadiness [unsteadiness] ([FuelModel.unsteadiness]; only
- * the "kept" fuel reads it). [capMps] is the most the car may reach inside the step: the road's speed, or a bend's that
- * holds both its ends.
+ * One step of the grid: [lengthM] driven on a road whose drive speed is [roadMps], with [climbM] of climb and [dropM] of
+ * descent in it (both 0 or more; the climbing share of the step is `climb / (climb + drop)` of its length, the rest
+ * descends, at one grade), a rolling factor [surface] ([FuelModel.surfaceFactor]) and the class's unsteadiness
+ * [unsteadiness] ([FuelModel.unsteadiness]; only the "kept" fuel reads it). [capMps] is the most the car may reach inside
+ * the step: the road's speed, or a bend's that holds both its ends.
  */
 class ProfileStep(
     val lengthM: Double,
     val roadMps: Double,
-    val riseM: Double = 0.0,
+    val climbM: Double = 0.0,
+    val dropM: Double = 0.0,
     val surface: Double = 1.0,
     val unsteadiness: Double = 1.0,
     val capMps: Double = roadMps,
-)
+) {
+    fun capped(cap: Double) = ProfileStep(lengthM, roadMps, climbM, dropM, surface, unsteadiness, cap)
+
+    /** The same step with its climb and descent netted into one grade (the reading of T291's text, kept for the finding). */
+    fun netted() = ProfileStep(lengthM, roadMps, max(0.0, climbM - dropM), max(0.0, dropM - climbM), surface, unsteadiness, capMps)
+}
 
 /** A solved profile: the speed at every grid node, the time and the fuel (with the class unsteadiness at 1 and kept). */
 class ProfileRun(
@@ -224,8 +231,11 @@ class ProfileRun(
  * times the surface factor, plus [FuelModel.airNPerMps2] `v^2`), the kinetic term and the grade together, floored at zero.
  * A descent lowers what the engine gives down to nothing and never below; braking and coasting earn nothing back (a
  * combustion car: the survey's VT-CPFM and BRouter readings). This replaces the table model's capped descent credit and
- * its per-turn regain charge inside the profile. The grade is each edge row's rise (`ascentM - descentM`, so T286's portal
- * rule holds) spread over its length: ups and downs inside one edge row net out. The class unsteadiness factor stands in
+ * its per-turn regain charge inside the profile. The grade is each edge row's climb and descent ([PricePart.ascentM] and
+ * [PricePart.descentM], so T286's portal rule holds) spread over its length: every step climbs its share of the row's
+ * climb over part of its length and descends its share of the descent over the rest, each part floored on its own, so
+ * a row that rises and falls is not read as level (netting the two read the committed fuel-pass fixture's pass road, one
+ * row over the hill, as flat; [Result.fuelNetGradeJ] keeps that reading beside). The class unsteadiness factor stands in
  * for stops the model cannot see; the profile models the unsteadiness it can see, so its own figure ([Result.fuelJ]) sets
  * it to 1 and [Result.fuelKeptJ] keeps it, so the gap is on the page.
  */
@@ -244,6 +254,8 @@ object SpeedProfile {
         /** The run with the edges' speeds and the stops only, then with the bends added (the turns' and bends' shares). */
         val edgesOnly: ProfileRun,
         val withBends: ProfileRun,
+        /** The run with each step's climb and descent netted into one grade (the reading this file does not take). */
+        val netGrade: ProfileRun,
         val turns: List<TurnAt>,
         val waitS: Double,
         /** The table's free-flow edge seconds ([RoutePrice.edgeS]). */
@@ -255,6 +267,7 @@ object SpeedProfile {
         val timeS: Double get() = run.timeS + waitS
         val fuelJ: Double get() = run.fuelJ + fuel.idleW * waitS
         val fuelKeptJ: Double get() = run.fuelKeptJ + fuel.idleW * waitS
+        val fuelNetGradeJ: Double get() = netGrade.fuelJ + fuel.idleW * waitS
 
         /** The runs of neighbouring nodes held at their limit, counted by what holds them ([Hold.NONE] left out). */
         fun holdCounts(): Map<Hold, Int> {
@@ -276,7 +289,7 @@ object SpeedProfile {
                 "limits" to limits.key, "lengthM" to RoutePrice.r1(lengthM), "nodes" to stations.size,
                 "timeS" to RoutePrice.r2(timeS), "timeNoWaitS" to RoutePrice.r2(integralS), "waitS" to RoutePrice.r2(waitS),
                 "freeFlowS" to RoutePrice.r2(run.freeFlowS), "tableEdgeS" to RoutePrice.r2(tableEdgeS),
-                "fuelJ" to fuelJ.roundToLong(), "fuelClassKeptJ" to fuelKeptJ.roundToLong(),
+                "fuelJ" to fuelJ.roundToLong(), "fuelClassKeptJ" to fuelKeptJ.roundToLong(), "fuelNetGradeJ" to fuelNetGradeJ.roundToLong(),
                 "maxKmh" to RoutePrice.r1((run.speeds.maxOrNull() ?: 0.0) * 3.6),
                 "meanKmh" to if (timeS > 0) RoutePrice.r1(lengthM / timeS * 3.6) else null,
                 // The stretches where the profile runs at its limit, by what sets that limit.
@@ -330,11 +343,10 @@ object SpeedProfile {
                 val road = roadMps(part, drive)
                 val surface = if (part.unpaved) fuel.unpavedFactor else 1.0
                 val u = if (part.wayClass != null) fuel.unsteadiness(part.wayClass) else 1.0
-                val rise = (part.ascentM - part.descentM) / n
                 val a0 = line.arcAt(part.firstPoint)
                 val a1 = line.arcAt(part.lastPoint)
                 for (i in 1..n) {
-                    steps += ProfileStep(len / n, road, rise, surface, u)
+                    steps += ProfileStep(len / n, road, part.ascentM / n, part.descentM / n, surface, u)
                     stations += station + len * i / n
                     arcs += a0 + (a1 - a0) * i / n
                 }
@@ -352,9 +364,7 @@ object SpeedProfile {
         }
         val bendCap = DoubleArray(nodes) { k -> limits.bendMps(line.radiusAt(radii, arcs[k])) }
         // A step is held under a bend's speed only when both its ends are (an arc); a turn is a point.
-        val bentSteps = steps.mapIndexed { k, st ->
-            ProfileStep(st.lengthM, st.roadMps, st.riseM, st.surface, st.unsteadiness, min(st.roadMps, max(bendCap[k], bendCap[k + 1])))
-        }
+        val bentSteps = steps.mapIndexed { k, st -> st.capped(min(st.roadMps, max(bendCap[k], bendCap[k + 1]))) }
 
         val turnCap = DoubleArray(nodes) { Double.POSITIVE_INFINITY }
         val turns = ArrayList<TurnAt>()
@@ -390,7 +400,8 @@ object SpeedProfile {
         val edgesOnly = solve(steps, capEdges, limits, fuel)
         val withBends = solve(bentSteps, capBends, limits, fuel)
         val run = solve(bentSteps, caps, limits, fuel)
-        return Result(limits, station, stations.toDoubleArray(), caps, holds, run, edgesOnly, withBends, turns, wait, price.edgeS, fuel)
+        val netGrade = solve(bentSteps.map { it.netted() }, caps, limits, fuel)
+        return Result(limits, station, stations.toDoubleArray(), caps, holds, run, edgesOnly, withBends, netGrade, turns, wait, price.edgeS, fuel)
     }
 
     /** A row's drive speed, m/s: [CostModel.driveMps]'s arithmetic on its speed and surface; a shortcut's mean speed. */
@@ -446,12 +457,8 @@ object SpeedProfile {
             val d3 = ((vp * vp - vb * vb) / (2 * b)).coerceIn(0.0, ds - d1)
             val d2 = ds - d1 - d3
             time += (if (d1 > 0) (vp - va) / a else 0.0) + (if (d3 > 0) (vp - vb) / b else 0.0) + (if (d2 > 0) d2 / vp else 0.0)
-            val grade = st.riseM / ds
             for ((u, isKept) in listOf(1.0 to false, st.unsteadiness to true)) {
-                var w = 0.0
-                w += max(0.0, phaseWork(va, vp, d1, grade, st.surface, u, fuel))
-                w += max(0.0, phaseWork(vp, vp, d2, grade, st.surface, u, fuel))
-                w += max(0.0, phaseWork(vp, vb, d3, grade, st.surface, u, fuel))
+                val w = phaseWork(va, vp, d1, st, u, fuel) + phaseWork(vp, vp, d2, st, u, fuel) + phaseWork(vp, vb, d3, st, u, fuel)
                 if (isKept) tractionKept += w else traction += w
             }
         }
@@ -460,13 +467,23 @@ object SpeedProfile {
     }
 
     /**
-     * The work at the wheels over [d] metres from [v1] to [v2] (constant acceleration, so `v^2` is linear in distance
-     * and the mean of `v^2` is the mean of its ends): resistance times [u], the kinetic change and the grade, joules.
+     * The positive work at the wheels over [d] metres of [step] from [v1] to [v2] (constant acceleration, so `v^2` is
+     * linear in distance and the mean of `v^2` is the mean of its ends): resistance times [u], the kinetic change and the
+     * grade, joules. The phase climbs over the step's climbing share of [d] and descends over the rest, with the
+     * resistance and the kinetic change shared by length; each part is floored at zero on its own.
      */
-    private fun phaseWork(v1: Double, v2: Double, d: Double, grade: Double, surface: Double, u: Double, fuel: FuelModel): Double {
+    private fun phaseWork(v1: Double, v2: Double, d: Double, step: ProfileStep, u: Double, fuel: FuelModel): Double {
         if (d <= 0) return 0.0
-        val resistance = (fuel.rollingN * surface + fuel.airNPerMps2 * (v1 * v1 + v2 * v2) / 2) * u * d
-        return resistance + fuel.massKg * (v2 * v2 - v1 * v1) / 2 + fuel.massKg * fuel.gravity * grade * d
+        val resistance = (fuel.rollingN * step.surface + fuel.airNPerMps2 * (v1 * v1 + v2 * v2) / 2) * u * d
+        val kinetic = fuel.massKg * (v2 * v2 - v1 * v1) / 2
+        val share = d / step.lengthM
+        val up = max(0.0, step.climbM)
+        val down = max(0.0, step.dropM)
+        val upShare = if (up + down > 0) up / (up + down) else 1.0
+        val mg = fuel.massKg * fuel.gravity
+        val climbing = (resistance + kinetic) * upShare + mg * up * share
+        val descending = (resistance + kinetic) * (1 - upShare) - mg * down * share
+        return max(0.0, climbing) + max(0.0, descending)
     }
 
     /** The route's line in local metres (an equirectangular projection at its mean latitude), with its arc length. */

@@ -24,7 +24,7 @@ class SpeedProfileTest {
 
     private fun steps(lengthM: Double, roadMps: Double, riseM: Double = 0.0): List<ProfileStep> {
         val n = (lengthM / 10).toInt()
-        return List(n) { ProfileStep(lengthM / n, roadMps, riseM / n) }
+        return List(n) { ProfileStep(lengthM / n, roadMps, maxOf(0.0, riseM) / n, maxOf(0.0, -riseM) / n) }
     }
 
     private fun open(n: Int) = DoubleArray(n) { Double.POSITIVE_INFINITY }
@@ -125,6 +125,21 @@ class SpeedProfileTest {
         val run = SpeedProfile.solve(steps(1000.0, 20.0, riseM = -100.0), open(101), flat, fuel)
         close(fuel.idleW * run.timeS, run.fuelJ, 1e-6, "idle fuel only")
         close(fuel.idleW * run.timeS, run.fuelKeptJ, 1e-6, "idle fuel only, class kept")
+    }
+
+    @Test
+    fun aRowThatRisesAndFallsIsNotReadAsLevel() {
+        // 1 km at 20 m/s with 60 m of climb and 60 m of descent in it: the climb is paid; the descent (6 % over its half,
+        // steeper than the resistance) earns at most the resistance back, never more. Netted, the row reads as level.
+        val hump = List(100) { ProfileStep(10.0, 20.0, climbM = 0.6, dropM = 0.6) }
+        val run = SpeedProfile.solve(hump, open(101), flat, fuel)
+        val level = SpeedProfile.solve(steps(1000.0, 20.0), open(101), flat, fuel)
+        val netted = SpeedProfile.solve(hump.map { it.netted() }, open(101), flat, fuel)
+        close(level.fuelJ, netted.fuelJ, 1e-6, "netted reads level")
+        // Climbing half: resistance over 500 m plus m g 60; descending half: floored at zero.
+        val resistance = (fuel.rollingN + fuel.airNPerMps2 * 400.0) * 500.0
+        close(fuel.idleW * 50.0 + (resistance + fuel.massKg * fuel.gravity * 60.0) / fuel.efficiency, run.fuelJ, 1e-3, "hump fuel")
+        assertTrue(run.fuelJ > level.fuelJ)
     }
 
     @Test
