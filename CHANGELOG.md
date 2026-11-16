@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-16
 
+- T302: "Report recent stats" in place of "Report the last start" (app lane, after T301)
 - T292: The sweep retries a part once on a machine failure, and counts every rerun (tools lane, first)
 - T301: Send diagnostics ends in a share (app lane, first)
 - T294: The a11y baseline keys a size the same in kB and MB (capture lane, first; chore-sized)
