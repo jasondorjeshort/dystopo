@@ -230,6 +230,21 @@ class SweepDiff(unittest.TestCase):
         self.assertTrue(s["ok"])
         self.assertEqual(s["changes"]["firstAdded"], ["ui/upgrade/08-new-screen.png"])
 
+    def test_route_sheet_pictures_are_left_out(self):
+        # T289: the route sheet's pictures and its own sheet, in the new sweep only, have their own comparison.
+        png(os.path.join(self.b, "route-sheet/x.png"), W, H, [BUTTON])
+        png(os.path.join(self.b, "route-changes.png"), W, H, [BUTTON])
+        png(os.path.join(self.b, "route-changes-2.png"), W, H, [BUTTON])
+        self.assertFalse([n for n in diff.shots(self.b) if "route-sheet" in n or "route-changes" in n])
+        r = run_diff(self.a, self.b, "route")
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        rep = self.changes()
+        self.assertEqual(rep["added"], ["ui/upgrade/08-new-screen.png"])
+        self.assertEqual(rep["firstAdded"], [])
+        r = run_diff(self.a, self.b, "route-sheet")
+        self.assertEqual(r.returncode, 1, (r.stdout, r.stderr))
+        self.assertEqual(self.changes()["firstMissing"], ["route-sheet"])
+
     def test_first_outcome_alone(self):
         changed = [{"path": "ui/x/02-moved.png"}]
         out = diff.first_outcome(["moved", "same", "new", "none"], ["ui/x/01-same.png", "ui/x/02-moved.png"],
