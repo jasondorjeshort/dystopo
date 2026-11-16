@@ -45,7 +45,8 @@
 #   apk-strings  (no device) every string in the release APK through PrivacyCheck: no private term or local pair
 #   features     search, a route kept as a trip (T105: the route card with its line and the kept trip's line in
 #                screenshots), the Routes list, a recorded track, GPX export, sync with the sweep's server, the sync
-#                sheet, the Share screen, Settings; no crash
+#                sheet, the Share screen, Settings; T288: Plan drives for and its help, then a drive under each of its
+#                values on the montblanc pair (this checkout's out\, else -DataDir's by path; rainier without it); no crash
 #   recenter     T105 (T93's follow-up): pan away from the fix, one tap on Recenter, the puck back where it was
 #   diagnostics  T154 (T143's follow-up): Settings > About and advanced > Diagnostics on the sweep's release build (the
 #                release key where tools\release.properties exists): every line, the max heap equal to dalvik.vm.heapsize,
@@ -76,6 +77,8 @@
 # T259: with -Prev <previous sweep folder>, then tools/sweep-diff.py: changes.png (the changed screenshots before and
 # after, with the differing pixels in red; -First <screen names> puts the owner's first) and changes.json, and the
 # count in summary.json's `changes`. -SummaryOnly -Out <existing sweep folder> -Prev <folder> redoes just those steps.
+# T288: the diff is the step `diff` in steps.tsv; a -First name that matches no frame of either sweep turns the sweep red
+# (changes.firstMissing, `diff` failed in summary.json, exit 1) until the name is corrected or a step opens that screen.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1                     # everything
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDevice           # no emulator on this machine
@@ -88,7 +91,7 @@
 #
 # Time limits (T191, finding 2026-10-31: one stuck child once held the sweep 9.5 h). Every part has a ceiling,
 # -PartTimeout (900 s) unless the table $ceilings below (device-tour 1200 s a run, device-boot 1500, update 1500, check
-# 2400, matrix 2400) or -PartTimeouts says otherwise (the release build has 1800 s of its own, not the part's); the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
+# 2400, matrix 2400, a11y 1200, features 1500) or -PartTimeouts says otherwise (the release build has 1800 s of its own, not the part's); the programs a part runs are waited on with WaitForExit(ms) up to its deadline, and
 # at the deadline the running program's process tree is killed by its PID (taskkill /PID <pid> /T /F), the part's
 # steps.tsv line reads "timeout" with what was killed, and the sweep goes on with the next part. Cleanup after a part
 # (stopping its own emulator) has 300 s of its own. Before device-boot (and the bothunits boot) the sweep waits up to
@@ -225,6 +228,10 @@ $releaseBuildS = 1800
 # card's two restarts about 25 s); 1200 s leaves room for a loaded emulator and the routing graph's first build (about 125 s).
 $ceilings['a11y'] = 1200
 # end T270
+# T288: features took 322 to 421 s before its drive step; the step (Plan drives for, its help and three drives on the
+# montblanc pack, with the pack's push, a cold start and the phone's first routing graph) took 283 to 328 s alone on the
+# implementer's emulator, so about 750 s for the part: 1500 s, twice that, for a loaded emulator and a slow graph build.
+$ceilings['features'] = 1500
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
         throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
@@ -264,20 +271,38 @@ if ([IO.Path]::IsPathRooted($Out)) { throw "-Out must be relative to the checkou
 $Out = [IO.Path]::GetFullPath((Join-Path $repo $Out))
 if (-not $Out.StartsWith($repo.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "-Out must stay inside the checkout ($repo), not '$Out'" }
 # T259: the summary (sweep-summary.py), then with -Prev the before-and-after sheet (sweep-diff.py, which adds `changes`
-# to summary.json); the sweep's exit code is the summary's, never the diff's.
+# to summary.json). T288: the diff is a step of its own: its line ('diff', its exit code, seconds and note) is appended to
+# steps.tsv after it runs (a 'diff' line left by an earlier run is dropped first, so a -SummaryOnly rerun with corrected
+# -First names clears it), and its exit code joins the sweep's: 1 when a -First name matched no frame (sweep-diff.py has
+# then written changes.firstMissing and a failed result into summary.json itself), 2 on an error.
 $First = @($First | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if ($Prev) {
     $Prev = if ([IO.Path]::IsPathRooted($Prev)) { [IO.Path]::GetFullPath($Prev) } else { [IO.Path]::GetFullPath((Join-Path $repo $Prev)) }
     if (-not (Test-Path -LiteralPath $Prev -PathType Container)) { throw "-Prev is not a folder: '$Prev'" }
 }
 function Write-Summary {
+    $stepsFile = Join-Path $Out 'steps.tsv'
+    if ($Prev -and (Test-Path -LiteralPath $stepsFile)) {
+        $kept = @([IO.File]::ReadAllLines($stepsFile) | Where-Object { ($_ -split "`t", 2)[0] -ne 'diff' })
+        [IO.File]::WriteAllText($stepsFile, (@($kept | ForEach-Object { "$_`r`n" }) -join ''), (New-Object Text.UTF8Encoding $false))
+    }
     & python -I (Join-Path $repo 'tools\sweep-summary.py') $Out --channel $Channel | Out-Host
     $code = $LASTEXITCODE
     if ($Prev) {
         $diffArgs = @('-I', (Join-Path $repo 'tools\sweep-diff.py'), $Prev, $Out, '--channel', $Channel)
         if ($First.Count) { $diffArgs += @('--first', ($First -join ',')) }
+        $d0 = Get-Date
         & python @diffArgs | Out-Host
-        if ($LASTEXITCODE -ne 0) { Write-Host "[sweep] sweep-diff.py failed (exit $LASTEXITCODE); no changes.png" }
+        $diffCode = $LASTEXITCODE
+        $diffNote = ''
+        if ($diffCode -ne 0) {
+            try { $diffNote = "$(((Get-Content -Raw -LiteralPath (Join-Path $Out 'summary.json') | ConvertFrom-Json).parts.diff).note)" } catch { }
+            if (-not $diffNote) { $diffNote = "sweep-diff.py exit $diffCode" }
+            Write-Host "[sweep] sweep-diff.py failed (exit $diffCode): $diffNote"
+        }
+        $line = "diff`t$diffCode`t$([math]::Round(((Get-Date) - $d0).TotalSeconds, 1))`t$($diffNote -replace '[\t\r\n]', ' ')`r`n"
+        [IO.File]::AppendAllText($stepsFile, $line, (New-Object Text.UTF8Encoding $false))
+        if ($diffCode -ne 0 -and "$code" -eq '0') { $code = $diffCode }
     }
     $code
 }
@@ -1120,8 +1145,12 @@ try {
         try {
             $null = Part 'features' {
                 if (-not $uiServer) { throw 'the sweep server for the UI parts did not start' }
+                # T288: the drive step's montblanc pair, this checkout's out\ first, else read by path from -DataDir (never
+                # copied or linked here); with neither the step drives on rainier and reports no fuel line.
+                $driveDir = if (Test-Path (Join-Path $localOut 'montblanc-outdoors.pmtiles')) { $localOut } else { $DataDir }
+                $driveArgs = @('--drive-osm', (Join-Path $driveDir 'montblanc-outdoors.pmtiles'), '--drive-dem', (Join-Path $driveDir 'montblanc-dem.pmtiles'))
                 Run $py (@('-I', 'tools/android-ui.py', 'features', '--serial', $serial, '--apk', (Release-Apk $serial), '--server', $uiServer,
-                        '--dem', $dem, '--osm', $osm, '--out', (Join-Path $ui 'features')) + $knownArgs) (Join-Path $Out 'features.json') (Join-Path $Out 'features.err.log')
+                        '--dem', $dem, '--osm', $osm, '--out', (Join-Path $ui 'features')) + $driveArgs + $knownArgs) (Join-Path $Out 'features.json') (Join-Path $Out 'features.err.log')
             }
             # T105 (T93's follow-up): the recentre button by taps on the release build.
             $null = Part 'recenter' {

@@ -19,7 +19,10 @@ Parts:
                system's save dialog, Save (Keep before T217) as a trip, the Routes list under the route's place names; T91: the long-press card's Route from here; T114: Route to here from the GPS fix, the card's
                "From: Your location"; T243: tapped at its node's centre, no other element's node inside the card), a waypoint with no recording (long-press, Waypoint here,
                the sheet), tracks (Record and the picker's On foot, fixes through `adb emu geo fix`, Pause then Finish (T253; Stop on an older build), the Tracks sheet, T219: a row's Export GPX through the save dialog, the file listed with `adb shell ls`; T272: the second recording ended through its notification, Pause then Resume and Finish read from `dumpsys notification`, and a row's Share GPX opening the system's share sheet), the sync sheet
-               (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; no crash.
+               (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; T288: the
+               `drive` step (drive_step): Settings > Navigation and tracking at Plan drives for and its help pop-up, then a
+               drive planned under each value with its card, on --drive-osm/--drive-dem (the montblanc pair, where the
+               least-fuel card's fuel line shows; rainier without it); no crash. --feature-steps runs only the steps named.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
                pack (no first-run card, contours drawn) and the setting survived. The new APK must carry a higher
@@ -1438,6 +1441,228 @@ def known(args, key):
     return key in (args.known or "").split(",")
 
 
+# --- features: a drive under each value of Plan drives for (T288) -------------------------------------------------
+
+# T282 and T285: the Settings row (Navigation and tracking, the last row), its values in the order the row shows them with
+# the line under the title each one sets (settings/SettingsPages.kt DRIVE_PREFERENCE_CHOICES), and the help pop-up's start.
+DRIVE_ROW = "^Plan drives for$"
+DRIVE_PREFS = [("time", "Least time", "The quickest drive, counting the seconds turns cost."),
+               ("fuel", "Least fuel", "Favours steady roads and fewer climbs and turns."),
+               ("quick", "Quicker planning", "Least time without counting turns.")]
+DRIVE_HELP = "^How the phone plans a drive"
+DRIVE_CARD_LINE = "^Based on typical driving speeds"  # routing/PaceSettings.kt: the second line of a drive's card
+# T285: the card's fuel line ("about 33 % less fuel than the least-time route, under a minute longer") or the server's case.
+FUEL_LINE = r"less fuel than the least-time route|^Planned for least time"
+FUEL_WAIT_S = 90  # the least-time plan behind the line runs in the background with no working line (T285)
+# Public drives (docs/reference/devtool-commands.md, the `route` line): on `montblanc` least fuel takes the valley road and the
+# card's fuel line shows (T285: 33 %); on `rainier` the three values take one road and the line stays hidden.
+DRIVES = {"montblanc": {"name": "Les Houches to Chamonix", "from": (45.8905, 6.8000), "to": (45.9180, 6.8650)},
+          "rainier": {"name": "Paradise to Longmire", "from": (46.7864, -121.7366), "to": (46.7500, -121.8120)}}
+EXTENDED_ROW = "^Extended readout$"
+
+
+def fit_zoom(a, b, w, h, density, share=0.7):
+    """The zoom (to a tenth) at which a and b, centred, lie inside `share` of the screen's width and of its upper half's
+    height (the route card covers the lower part), at most 14."""
+    def merc(la, lo):
+        s = math.sin(math.radians(la))
+        return (lo + 180) / 360, 0.5 - math.log((1 + s) / (1 - s)) / (4 * math.pi)
+    (x0, y0), (x1, y1) = merc(*a), merc(*b)
+    dx, dy = max(abs(x1 - x0), 1e-9), max(abs(y1 - y0), 1e-9)
+    z = min(math.log2(share * w / (dx * 512 * density)), math.log2(share * h / 2 / (dy * 512 * density)), 14.0)
+    return math.floor(z * 10) / 10
+
+
+def drive_pack(args):
+    """('montblanc', dem, osm) when the drive's vector pack exists, else ('rainier', None, None): the Rainier pack is the
+    one the part already pushed."""
+    osm = args.drive_osm
+    if osm and os.path.isfile(osm):
+        dem = args.drive_dem if args.drive_dem and os.path.isfile(args.drive_dem) else None
+        return "montblanc", dem, osm
+    return "rainier", None, None
+
+
+def push_packs_only(dev, name, dem, osm):
+    """The pair into the app's packs folder under `name` (glyphs and sprites are there from the part's own push)."""
+    for src, dst in ((dem, f"{name}-dem.pmtiles"), (osm, f"{name}-outdoors.pmtiles")):
+        if src:
+            dev.adb("push", src, f"{EXTERNAL}/packs/{dst}", timeout=600)
+    dev.shell(f"chmod a+rw {EXTERNAL}/packs/*", check_ok=False)
+
+
+def scroll_to(dev, pattern, below=None, swipes=30, full_px=0):
+    """Swipes the open settings page up until `pattern` and, when given, `below` (a choice under it) are wholly on screen:
+    a node the sheet's edge cuts is dumped with its bounds cut, so `below` must be as tall as the tallest help icon on
+    screen (a 48 dp target like the choices) or `full_px`."""
+    w, h, _d = screen(dev)
+    nodes = dev.nodes()
+    for _ in range(swipes):
+        n = dev.find(pattern, nodes)
+        last = dev.find(below, nodes) if below else n
+        icons = [x["bounds"][3] - x["bounds"][1] for x in nodes if x["bounds"] and (x["desc"] or "").startswith("Help: ")]
+        tall = full_px or max(icons, default=0)
+        if n and last and last["bounds"][3] - last["bounds"][1] >= tall - 4 and n["bounds"][1] >= h * 0.25:
+            return n, nodes
+        if n and n["bounds"][1] < h * 0.25:  # past it: one short swipe back
+            dev.shell("input", "swipe", str(w // 2), str(h * 6 // 10), str(w // 2), str(h * 8 // 10), "400")
+        else:
+            dev.shell("input", "swipe", str(w // 2), str(h * 5 // 6), str(w // 2), str(h * 5 // 12), "400")
+        time.sleep(0.8)
+        nodes = dev.nodes()
+    raise RuntimeError(f"{pattern} not reached on the settings page (texts: {dev.texts(nodes)[:25]})")
+
+
+def drive_row(dev):
+    """Settings > Navigation and tracking, scrolled to Plan drives for with its three values on screen."""
+    open_settings(dev, "Navigation and tracking", "^Route snap$|" + DRIVE_ROW)
+    return scroll_to(dev, DRIVE_ROW, "^" + DRIVE_PREFS[-1][1] + "$")
+
+
+def filled(raster, node):
+    """Whether a choice is drawn filled (the selected value: dark brown with light text; the others pale): the mean
+    luminance of a strip inside the node's left edge, clear of its text."""
+    x0, y0, x1, y1 = node["bounds"]
+    ys = range(y0 + (y1 - y0) // 3, y0 + 2 * (y1 - y0) // 3)
+    xs = range(x0 + 12, min(x1, x0 + 22))
+    lum = [0.3 * raster.data[(y * raster.w + x) * 3] + 0.59 * raster.data[(y * raster.w + x) * 3 + 1] + 0.11 * raster.data[(y * raster.w + x) * 3 + 2]
+           for y in ys for x in xs]
+    return bool(lum) and sum(lum) / len(lum) < 128
+
+
+def chosen(raster, nodes, labels):
+    """{label: filled} for the choices of one row."""
+    out = {}
+    for label in labels:
+        n = next((x for x in nodes if x["text"] == label and x["clickable"] and x["bounds"]), None)
+        out[label] = filled(raster, n) if n else None
+    return out
+
+
+def extended_row(dev, nodes):
+    """Wave 33's note: the Extended readout row's choices as drawn ({On, Off, Pressure: filled}) when it is on screen
+    above Plan drives for (the row just above it); "Off" and "Pressure" are two choices of one row that may show filled
+    together (the extended entries off, the pressure entry shown)."""
+    head = dev.find(EXTENDED_ROW, nodes)
+    if not head:
+        return None
+    _, r = dev.frame()
+    row = [n for n in nodes if n["clickable"] and n["bounds"] and n["text"] in ("On", "Off", "Pressure")
+           and head["bounds"][1] < n["bounds"][1] < head["bounds"][1] + 400]
+    return chosen(r, row, ("On", "Off", "Pressure"))
+
+
+def set_drive_pref(dev, key, label, line):
+    """Taps the value on the row, reads the line under the title it sets and saves the row; closes the sheet."""
+    n, nodes = drive_row(dev)
+    dev.tap(dev.find(f"^{label}$", nodes))
+    seen, nodes = dev.wait_for("^" + re.escape(line), 8)
+    # A longer line (Least fuel's wraps to two) pushes the values down under the sheet's edge, and the dump still gives
+    # their old bounds: one swipe up (the row is the page's last, so the page stops at its end), then read again.
+    w, h, _d = screen(dev)
+    dev.shell("input", "swipe", str(w // 2), str(h * 5 // 6), str(w // 2), str(h * 5 // 12), "400")
+    time.sleep(1.0)
+    nodes = dev.nodes()
+    _, r = dev.frame()
+    on = chosen(r, nodes, [p[1] for p in DRIVE_PREFS])
+    png = dev.save(f"drive-row-{key}", r)
+    close_sheet(dev)
+    return {"line": seen and seen["text"], "filled": on, "png": png,
+            **({} if seen and on.get(label) else {"error": f"{label}: the row's line {seen and seen['text']!r}, filled {on}"})}
+
+
+def clear_route(dev):
+    n = dev.find("^Clear$")
+    if n:
+        dev.tap(n)
+        time.sleep(1)
+
+
+def plan_drive(dev, key, a, b, first=False, fuel_wait=0):
+    """The two ends placed by long-presses (Route from here between them), then the Drive chip: the preference is read
+    when a plan starts (RoutePlanner), so every value gets a plan of its own. Returns the card's headline, its second
+    line, the fuel line (waited for up to `fuel_wait` s) and the frame with the route's line."""
+    clear_route(dev)
+    w, h, d = screen(dev)
+    z = fit_zoom(a, b, w, h, d)
+    c = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+    open_map(dev, *c, z, cold=first)  # the first plan after the push: a cold start loads the new pack
+    time.sleep(10 if first else 5)
+    t0 = time.time()
+    long_press(dev, *to_screen(*a, *c, z, w, h, d))
+    start, nodes = dev.wait_for("^Route from here$", 15)
+    if not start:
+        raise RuntimeError(f"no Route from here after the long-press (texts: {dev.texts(nodes)[:20]})")
+    dev.tap(start)
+    dev.wait_for("^Long-press the end point$", 10)
+    long_press(dev, *to_screen(*b, *c, z, w, h, d))
+    # The first plan on a new pack builds the phone's routing graph (1 to 2 minutes cold).
+    card, nodes = dev.wait_for(CARD + "|^No route$", 240)
+    if not card or card["text"] == "No route":
+        raise RuntimeError(f"no route card for the two ends (texts: {dev.texts(nodes)[:25]})")
+    t1 = time.time()
+    dev.tap_text("^Drive$", timeout=10)
+    line, nodes = dev.wait_for(DRIVE_CARD_LINE, 240)
+    if not line:
+        raise RuntimeError(f"no drive card after the Drive chip (texts: {dev.texts(nodes)[:25]})")
+    planned = round(time.time() - t1, 1)
+    fuel = dev.find(FUEL_LINE, nodes)
+    waited = 0.0
+    if not fuel and fuel_wait:
+        t2 = time.time()
+        fuel, nodes = dev.wait_for(FUEL_LINE, fuel_wait)
+        waited = round(time.time() - t2, 1)
+    head = dev.find(CARD, nodes)
+    png, px = line_frame(dev, f"drive-{key}", ROUTE_LINE)
+    return {"card": head and head["text"], "second": line["text"], "fuelLine": fuel["text"] if fuel else "absent",
+            "zoom": z, "endsS": round(t1 - t0, 1), "driveS": planned, **({"fuelWaitS": waited} if fuel_wait else {}),
+            "routeLinePx": px, "png": png}
+
+
+def drive_step(dev, args):
+    """T288: the sweep opens wave 33's row, help and card line by taps: Settings > Navigation and tracking, the row Plan
+    drives for (a frame that also holds the Extended readout row above it) and its help pop-up; then one drive planned
+    under each value with the route card captured each time, on the `montblanc` pack (Les Houches to Chamonix, where
+    least fuel takes another road and the card's fuel line shows) when --drive-osm exists, else the `rainier` drive
+    Paradise to Longmire with `fuelLine: absent` and no failure for that. A missing fuel line is reported, never failed:
+    a wave may mean to change the route (the route sheet's rule)."""
+    t0 = time.time()
+    pack, dem, osm = drive_pack(args)
+    drive = DRIVES[pack]
+    out = {"pack": pack, "drive": drive["name"], "frames": {}}
+    if osm:
+        push_packs_only(dev, pack, dem, osm)
+    clear_route(dev)
+    close_sheet(dev)
+    # The row as it stands (least time, the default), the Extended readout row above it, then the help pop-up.
+    _n, nodes = drive_row(dev)
+    out["extendedReadout"] = extended_row(dev, nodes)
+    out["frames"]["row"] = dev.screencap("drive-row")[0]
+    dev.tap(dev.find("^Help: Plan drives for$", nodes))
+    help_text, nodes = dev.wait_for(DRIVE_HELP, 10)
+    out["frames"]["help"] = dev.screencap("drive-help")[0]
+    out["help"] = help_text and help_text["text"]
+    ok_btn = dev.find("^OK$", nodes)
+    if ok_btn:
+        dev.tap(ok_btn)
+    close_sheet(dev)
+    errors = [] if help_text else ["no help pop-up for Plan drives for"]
+    out["values"] = {}
+    for i, (key, label, line) in enumerate(DRIVE_PREFS):
+        row = set_drive_pref(dev, key, label, line)
+        if row.get("error"):
+            errors.append(row["error"])
+        r = plan_drive(dev, key, drive["from"], drive["to"], first=(i == 0 and bool(osm)), fuel_wait=FUEL_WAIT_S if key == "fuel" else 0)
+        out["values"][key] = {"label": label, **r, "rowPng": row["png"], "rowFilled": row["filled"]}
+        out["frames"][f"card-{key}"] = r["png"]
+        if not r["card"] or r["routeLinePx"] < 150:
+            errors.append(f"{label}: card {r['card']!r}, route line {r['routeLinePx']} samples")
+    clear_route(dev)
+    out["fuelLine"] = out["values"]["fuel"]["fuelLine"]
+    out["seconds"] = round(time.time() - t0, 1)
+    return {"ok": not errors, **out, "png": out["values"]["fuel"]["png"], **({"error": "; ".join(errors)} if errors else {})}
+
+
 # --- features (a) -----------------------------------------------------------------------------------------------
 
 def part_features(args):
@@ -1608,7 +1833,9 @@ def part_features(args):
 
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
-                     ("settings", settings)):
+                     ("settings", settings), ("drive", lambda: drive_step(dev, args))):
+        if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
+            continue
         run.step(name, fn)
     run.step("alive", lambda: alive_and_clean(dev))
     return run.report(apk=os.path.basename(args.apk or default_apk(dev)))
@@ -3211,6 +3438,10 @@ def main():
     ap.add_argument("--mock-port", type=int, default=9171, help="update: port of the mock releases API on 127.0.0.1 (the emulator's 10.0.2.2)")
     ap.add_argument("--dem", default=os.path.join(REPO, "out", "rainier-dem.pmtiles"))
     ap.add_argument("--osm", default=os.path.join(REPO, "out", "rainier-outdoors.pmtiles"))
+    ap.add_argument("--drive-dem", default=os.path.join(REPO, "out", "montblanc-dem.pmtiles"), help="features: the drive step's DEM pack (T288)")
+    ap.add_argument("--drive-osm", default=os.path.join(REPO, "out", "montblanc-outdoors.pmtiles"),
+                    help="features: the drive step's vector pack; when it is missing the step drives on the rainier pack (T288)")
+    ap.add_argument("--feature-steps", default="", help="features: only these steps (comma-separated; install-map always runs), for a rerun of one")
     ap.add_argument("--server", default="", help="a Dystopo server URL the emulator reaches (the host's LAN address)")
     ap.add_argument("--server-cmd", default="", help="network: JSON list, the command that starts that server")
     ap.add_argument("--server-config", default="", help="network: config file of the standalone server (./gradlew :server:installDist) to start, kill and restart")
