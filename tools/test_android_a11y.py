@@ -124,7 +124,11 @@ assert a11y.dump_counts(dn, D) == {"clickable": 2, "under48ByDump": 1}
 
 # The baseline: keys with digits as #, matching within 6 dp, one to one; new and gone.
 assert a11y.key_label("Show 12 directions") == "Show # directions" and a11y.key_label("") == "-"
-assert a11y.key_label("Viewed earlier: 3.4 MB of 1 GB") == a11y.key_label("Viewed earlier: 30 MB of 1 GB") == "Viewed earlier: # MB of # GB"
+assert a11y.key_label("Viewed earlier: 3.4 MB of 1 GB") == a11y.key_label("Viewed earlier: 30 MB of 1 GB") == "Viewed earlier: # B of # B"
+# T294: a size keys alike whatever its unit (the wave-34 sweep read "kB" against the baseline's "MB").
+assert a11y.key_label("Viewed earlier: 840 kB of 2 GB") == a11y.key_label("Viewed earlier: 12 MB of 2 GB") ==     a11y.key_label("Viewed earlier: 1.2 GB of 2 TB") == a11y.key_label("Viewed earlier: 900 KB of 2GB") ==     a11y.key_label("Viewed earlier: 512 B of 2 GB") == "Viewed earlier: # B of # B"
+assert a11y.key_label("Offline maps ›") == "Offline maps ›" and a11y.key_label("Bake 2 Bagels") == "Bake # Bagels"
+assert a11y.key_label("Route B") == "Route B" and a11y.key_label("3 km") == "# km"
 f1 = a11y.finding("under48", node(40, [263, 263, 525, 341], text="Fit"), D)
 e1 = a11y.entry_of("route:1.0", f1)
 assert e1 == {"screen": "route:1.0", "kind": "under48", "label": "Fit", "boundsDp": [100, 100, 200, 130]}, e1
