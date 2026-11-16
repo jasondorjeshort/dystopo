@@ -23,3 +23,11 @@ The part rerun alone was green with nothing new (`out/sweep-20261115-2123-a11y`)
 - Fold the size unit in the key (`tools/android-a11y.py`, where "30 MB" and "3.4 MB" already key alike), or
   list the kB lines in the baseline with the reason in the log. The first needs no new baseline line.
 - The finding itself (the line's contrast on the online card) stays the baseline's.
+
+Plan: one small pass in `tools/android-a11y.py` and `tools/test_android_a11y.py`, no device needed. `key_label`
+also folds a byte unit after a folded number (`B`, `kB`, `KB`, `MB`, `GB`, `TB`) to one token, `# B`, so "Viewed
+earlier: # kB of # GB" and "# MB of # GB" key alike as "Viewed earlier: # B of # B"; the two `online-card` lines
+of `tools/a11y-baseline.json` are rewritten to that key in the same commit, the reason in the commit message.
+Tests: kB, MB and GB forms key alike; a label with no unit is unchanged; the existing digit cases still pass;
+`python -I tools/test_android_a11y.py` green. Verify: an `a11y` part run lists no new `online-card` finding (with
+under 1 MB viewed earlier if it can be arranged). Out of scope: the contrast finding itself, other folds.
