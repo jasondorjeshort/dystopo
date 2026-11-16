@@ -588,7 +588,8 @@ object RecentStats {
         out += if (state == null) "Tile store move: none on record" else buildString {
             append("Tile store move: ").append(state)
             val method = move?.get("method") as? String
-            if (method != null) {
+            if (method == "none") append(", nothing to move")
+            else if (method != null) {
                 append(", by ").append(method)
                 val t = if (method == "copy") long(move, "copyMs") else long(move, "renameMs")
                 if (t != null) append(" in ").append(t).append(" ms")

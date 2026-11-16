@@ -207,7 +207,13 @@ val bundleMapAssets by tasks.registering {
 }
 android.sourceSets.getByName("main").assets.srcDir(bundleMapAssets) // the task's output dir, with the task as its builder
 // T302: the launch budget's ceilings and the emulator's medians, for Report a problem › Report recent stats (assets/launch-budget.json).
-val bundleLaunchBudget by tasks.registering(Sync::class) { from(rootProject.file("tools/launch-budget.json")); into(layout.buildDirectory.dir("generated/launchBudget")) }
+val bundleLaunchBudget by tasks.registering {
+    val src = rootProject.file("tools/launch-budget.json")
+    val out = layout.buildDirectory.dir("generated/launchBudget")
+    inputs.file(src)
+    outputs.dir(out)
+    doLast { src.copyTo(File(out.get().asFile, "launch-budget.json"), overwrite = true) }
+}
 android.sourceSets.getByName("main").assets.srcDir(bundleLaunchBudget)
 // T216: the attestation test root (ADR 0051) goes into debug builds only, so two debug phones share it for
 // POST /identity/test-chain; release builds never hold it (ReleaseListsTest). The one committed copy is shared's test resource.
@@ -218,7 +224,7 @@ tasks.withType<Test>().configureEach {
 }
 // Lint reads the asset dirs too.
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") || it.name.startsWith("generate") && it.name.endsWith("Assets") || it.name.contains("lint", ignoreCase = true) }
-    .configureEach { dependsOn(bundleMapAssets) }
+    .configureEach { dependsOn(bundleMapAssets, bundleLaunchBudget) } // T302: the launch budget too
 
 kotlin {
     jvmToolchain(21)
