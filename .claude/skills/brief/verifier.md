@@ -15,7 +15,13 @@ mechanism, the crossing scenario, or "none">.
    (`<Out>\verify-summary.txt`, the JSON beside it for figures):
    `powershell -ExecutionPolicy Bypass -File <main>\tools\verify-task.ps1 -Task Tnn -WorktreeRoot <worktrees>
    -Avd <avd> -AvdHome <avd home> -EmuPort <n> -Port <p> -Out <scratchpad>\Tnn-verify -ReportFile <report.txt>
-   -JavaHome <jdk> -Cache <main>\cache [-Parts <parts>] [-KeepEmulator]` (no emulator: `-Skip boot,tour,stop,guard`).
+   -JavaHome <jdk> -Cache <main>\cache [-Parts <parts>] [-KeepEmulator] [-Checks <checks.json>] [-SweepThrough <part>]`
+   (no emulator: `-Skip boot,tour`; slot, stop and guard then read skipped, "no emulator wanted").
+   - **Checks:** the task's **Checks:** block, written to `<checks.json>` as `verifying-a-task.md` gives the shape:
+     each check is a step `chk-<name>`; a failed one is a finding like a red `check`.
+   - **A sweep part:** when the Owns line holds `tools/sweep.ps1` or a new part's script, verify with
+     `-SweepThrough <the new or changed part>` (the sweep from its first part through it, in sweep order, on one
+     emulator), never the part alone: `startup` and `a11y` were green alone and red at their first full sweep.
    It makes the detached worktree `<worktrees>\Tnn-verify`, scans the commit messages and the report, runs `check
    --no-daemon` with the test counts, boots the emulator from the branch, runs the device tour and the parts, stops
    the emulator and reads the guard's figures. It stops at the first failed step and names it.
@@ -50,6 +56,11 @@ anything that changes scope goes to the coordinator. Temporary files go in a fol
 the session scratchpad (`<scratchpad>\Tnn-verify\`): every agent of the session shares its root.
 The script stops its emulator and checks `adb devices`; after `-KeepEmulator`, stop it with `-Only stop,guard` and quote `adb devices` (an earlier verifier reported one stopped that still ran, holding 8 GB). Remove the verify worktree when done (`git worktree remove`; `docs/reference/windows-and-shells.md` for a folder that resists). Wait in the foreground (`until <check>; do sleep 5; done`), and if a command is moved to the background, poll it. Start no background sleep or monitor
 loop, and leave nothing of yours running when you report.
+
+**Haiku-class variant** (a task whose Done when is wholly in its Checks block: docs-only, test-only, a tool fix): run
+step 1 with `-Checks` and no emulator, then steps 6 and 7; skip 2 to 5 and say so. Report the summary's lines verbatim
+and MERGE when `RESULT: ok`, FIX naming the failed step otherwise; anything that needs judgement goes back to the
+coordinator for a Sonnet-class verifier.
 
 Report: MERGE, MERGE WITH NOTES, or FIX, with specifics (the summary's RESULT line and figures: tests, views
 ok, lowest free RAM and peak private bytes; commands run, what each PNG showed, each defect with a

@@ -1,6 +1,6 @@
 ---
-verified: 2026-11-09
-source: observed in T246 (tools/verify-task.ps1 run against its own branch on the second PC); idea 2026-11-08, cheaper verification
+verified: 2026-11-16
+source: observed in T246 (tools/verify-task.ps1 run against its own branch on the second PC) and T296 (a Checks file run on T289's merge commit); idea 2026-11-08, cheaper verification
 ---
 
 # Verifying a task with tools/verify-task.ps1
@@ -33,7 +33,13 @@ powershell -ExecutionPolicy Bypass -File tools\verify-task.ps1 -Task T247 -Workt
   (the release parts need `--apk`, `release-realism.md`).
 - `-ReportFile <file>`: the implementer's report as text, scanned with the commit messages.
 - `-Out`: where everything goes (default `<worktree>\out\verify`, deleted with the worktree; give the scratchpad).
-- `-DryRun` prints every command and runs nothing; `-Skip a,b` and `-Only a,b` choose steps; `-Continue` runs on past
+- `-SweepThrough <part>` (T296): the sweep from its first part through `<part>`, in sweep order (below, The sweep
+  through a part); `-SweepArgs "<args>"` adds `tools\sweep.ps1` arguments (one string, split on spaces: `-BasePort`,
+  `-DataDir`, `-Prev`), `-SweepCeilingMinutes` (300) is the whole sweep's ceiling.
+- `-Checks <file>` (T296): a Checks file, each check a step `chk-<name>` (below, A Checks file).
+- `-Commit <sha>` (T296): verify that commit instead of `origin/task/<Task>` (a merged task's merge commit, to try a
+  Checks file); `base` then only notes how far `main` has moved on, and `privacy` scans no commit messages.
+- `-DryRun` prints every command and runs nothing (exit 1 when a step cannot run as given); `-Skip a,b` and `-Only a,b` choose steps; `-Continue` runs on past
   a failure; `-AllowBehind` goes on when `origin/main` moved; `-KeepEmulator` leaves the emulator running.
 
 Exit 0 when every step that ran passed, 1 when one failed, 2 for bad arguments. A run takes as long as `check` (minutes
@@ -50,10 +56,12 @@ the foreground with a ceiling over 40 minutes.
 | `privacy` | `git log origin/main..origin/task/<Task> --format=%B` (and `-ReportFile`) through `PrivacyCheck.java scan` | any hit |
 | `data` | `local.properties` and the Rainier packs copied from the main checkout (never linked) | a source missing |
 | `check` | `gradlew check --no-daemon`; counts from every `TEST-*.xml` under `*/build/test-results`, per module | exit not 0 |
-| `slot` | the console port's shape and owner, then waits (adb every 10 s, `-SlotWaitMinutes` 60) for the cap | a port another AVD holds, or the wait ends |
+| `slot` | the console port's shape and owner, then waits (adb every 10 s, `-SlotWaitMinutes` 60) for a free slot (two for a sweep through `bothunits`); `skipped`, "no emulator wanted", with `stop` and `guard`, when neither `boot` nor a sweep with a device part runs | a port another AVD holds, or the wait ends |
 | `boot` | `android-emu.ps1 -Build` with the brief's AVD and ports, from the worktree | exit not 0 (its last lines named) |
 | `tour` | `android-check.py --views-file tools/android-tour.txt --server <Server>` into `tour\` | the tour's `ok` false (failed views listed) |
 | `ui-<part>` | each `-Parts` entry | the part's `ok` false |
+| `sweep` | `tools\sweep.ps1` through `-SweepThrough`'s part into the worktree's `outerify-sweep` (its `summary.json`, `steps.tsv`, sheet) | exit not 0 or the summary's `ok` false (failed parts named), a part not in `-ListParts`, a `sweep.ps1` without `-ListParts` |
+| `chk-<name>` | each check of `-Checks`, in the file's order | its exit code, test count or value not as expected |
 | `stop` | `android-emu.ps1 -Stop -Delete`, then `adb devices` must not list the serial | either |
 | `guard` | the guard log's lowest free RAM and peak private bytes since the boot; `stop.log` lines naming this emulator | a `stop.log` line |
 
@@ -66,6 +74,42 @@ refuses every force push (`--force-with-lease` included; T246 and two proposal a
 rewritten branch cannot be pushed. A verifier reruns the same command with `-AllowBehind` and reports "behind by N";
 the coordinator's `--no-ff` merge integrates `main`. Only when that merge would conflict does the implementer bring
 the branch up to date, by `git merge origin/main` in its own worktree and a plain push.
+
+**The sweep through a part** (T296; idea 2026-11-14: `startup` and `a11y` were green alone and red at their first
+full sweep, on state the earlier parts left and on the clock). The order comes from the branch's own
+`tools\sweep.ps1 -ListParts` (T292), never from this script: every part up to and including the named one runs, every
+later part is in `-Skip`, and so is the sweep's own `check` (the `check` step is that one). `-NoBothUnits` is passed
+unless the part is `bothunits`, so one verifier takes one emulator slot; `boot`, `tour` and `stop` are skipped (the
+sweep boots, tours and stops its own emulator on the brief's `-Avd`, `-EmuPort`, `-Port` and `-AvdHome`) and `guard`
+reads the guard log from the sweep's start. T292's retry can run a part twice inside it; the summary's `retried` is
+copied into the step. A dry run prints the parts it would run and skip. Assumed shape of `-ListParts` (until T292
+merged): a JSON list of names, or of objects with `name` and `device`, or an object with that list under `parts`;
+without `device` flags a range needs an emulator when it holds `device-boot`. A `sweep.ps1` without the switch is
+refused before it runs: it took `-ListParts` for nothing and began a sweep.
+
+**A Checks file** (T296) holds the Done-when items a script can judge, so the agent keeps only what needs an eye:
+```
+{"checks": [
+  {"name": "route-diff-tests", "run": ["python", "-I", "-m", "unittest", "discover", "-s", "tools", "-p", "test_route_diff.py"], "tests": 7},
+  {"name": "summary-script", "run": ["python", "-I", "tools/test_sweep_summary.py"], "exit": 0},
+  {"name": "list-lines", "run": ["python", "-I", "-c", "print('{\"lines\": 24}')"], "path": "lines", "equals": 24},
+  {"name": "sheet-none-failed", "file": "{main}/out/sweep-20261115-2123/summary.json", "path": "routeSheet.failed", "equals": 0}
+]}
+```
+(a bare list works too). Keys: `name` (lower-case, digits, dashes; the step is `chk-<name>`), `about` (a note copied
+into the step), `run` (a command as a list, run in the verify worktree; `timeout` seconds, 600), `exit` (expected
+exit code, default 0 whenever `run` is given), `tests` or `minTests` (the last `Ran N tests` in the output, unittest's
+line; `testsPattern` a regex with one group for another runner), `path` and `equals` (a dotted path into JSON, numbers
+indexing a list as in `views.0.ok`; read from `file`, or from the command's stdout without one). `{wt}`, `{main}` and
+`{out}` in `run` and `file` become the verify worktree, the main checkout and `-Out`. An unknown key, a missing
+`equals` or a duplicate name exits 2 before anything runs. A test count guards against a file that `unittest
+discover` reads as zero tests (a script that asserts at import, such as T289's `test_sweep_summary.py`, passes
+discover with "Ran 0 tests": give it as a script with `exit`). A task whose Done when is wholly in its Checks block
+gets a Haiku-class verifier that runs this script and reports the summary (the `wave` skill, Verify).
+T296's own run, on T289's merge commit with its Done-when's machine-readable items (the two test files run by
+discover, the summary test as a script, the list's 24 lines, the closing sweep's route counts) and `-Skip
+check,boot,tour,stop,guard`: `RESULT: ok (11 steps ok)` in about 25 s, `slot`, `stop` and `guard` skipped, "no
+emulator wanted".
 
 **The emulator for the scenario.** With `-KeepEmulator` the `stop` step is `kept` and its note gives the stop command;
 run the report's scenario on that emulator, then `-Only stop,guard` with the same arguments: the summary keeps the
@@ -93,7 +137,8 @@ was on `main`, which the summary names; the whole run took about 20 minutes on t
 `check` has `tests`, `failures`, `errors`, `skipped`, `testFiles`, `modules`; `base` `mainMovedBy`, `branchCommits`;
 `privacy` the scanner's hit counts and `localFile`; `slot` `others`, `cap`, `waitedSeconds`; `boot` `buildSeconds`;
 `tour` `viewsOk`, `viewsTotal`, `tourOk`, `glyphsOk`, `backgroundOk`, `directOk`, `cardsOk`, `failedViews`, `sheet`;
-`ui-<part>` `partOk`; `guard` `lowestFreeGB`, `peakPrivateGB`, `stops`, `log`. Every program's output is in
+`ui-<part>` `partOk`; `sweep` `through`, `run`, `skippedParts`, `emulators`, `sweepOk`, `failed`, `ran`, `summary`;
+`chk-<name>` `exitCode`, `tests`, `path`, `value`, `expected`; `guard` `lowestFreeGB`, `peakPrivateGB`, `stops`, `log`. Every program's output is in
 `<Out>\logs\<step>.out.log` and `.err.log`.
 
 The guard writes a line per new GB of private bytes, so the lowest free RAM is the lowest at those moments, not a
@@ -102,8 +147,13 @@ note): the agent reads the text itself (verifier step 7).
 
 ## Its test
 
-`python -I tools/test_verify_task.py` runs the script with `-Fixture <dir>`, which runs no program: exit codes come
+`python -I tools/test_verify_task.py` (or the discover line below) runs the script with `-Fixture <dir>`, which runs no program: exit codes come
 from `codes.json`, git and adb answers from `answers.json`, the worktree is `<dir>\wt` and the lock folder
 `<dir>\lock`. It checks the summary's shape for a clean run, a failed boot (the stop and the guard still run), the
 first failure kept under `-Continue`, `main` moved, a held and an odd console port, a `stop.log` line, a privacy hit,
-`-Skip`, a dry run on the real checkout and a bad argument.
+`-Skip`, a dry run on the real checkout and a bad argument; T296's: `-SweepThrough`'s command line from a `-ListParts`
+fixture (the later parts and the sweep's check skipped, `-NoBothUnits` unless `bothunits`, two slots for it, no slot
+for a range with no device part, a list of plain names, a part not listed, a red sweep, the dry run's part list, the
+real checkout's dry run), a Checks file's three kinds passing and failing by name, a bad Checks file, a task with no
+emulator reading `skipped`, and `-Commit`. It is a unittest module:
+`python -I -m unittest discover -s tools -p test_verify_task.py`.

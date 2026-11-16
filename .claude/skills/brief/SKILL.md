@@ -13,7 +13,8 @@ chore), and the critic brief is in the `proposal` skill.
 ## Steps
 
 1. Pick the kind of agent and set its model explicitly on the launch (`CLAUDE.md`, Coordinating a
-   wave): implementer Opus-class; verifier Sonnet-class; chore Haiku-class (escalate to Sonnet on a
+   wave): implementer Opus-class; verifier Sonnet-class, Haiku-class when the task's Done when is
+   wholly in its **Checks:** block (the `wave` skill, Verify); chore Haiku-class (escalate to Sonnet on a
    failure or when an image must be judged); benchmark Sonnet-class with web search (the most
    capable model when it must weigh competing designs rather than report them; ADR 0039, and its
    technical variant for a technical choice in doubt, ADR 0044); critic

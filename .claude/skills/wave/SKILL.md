@@ -38,7 +38,9 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
 1. Write the wave in `docs/TASKS.md`: per task a Goal, an **Owns:** line, a **Done when:** line
    and, where two tasks share a mechanism behind disjoint Owns lines (a hook, a cache, a format, an
    index, a join), an **Interacts with:** line on each naming the other task and the mechanism
-   (ADR 0048). A task that adds a screen, a Settings row or a card line names in its Done when the
+   (ADR 0048), and a **Checks:** block after Done when for the items a script can judge (a JSON path and
+   its value, an exit code, a test count; the shape in `docs/reference/verifying-a-task.md`, A Checks file),
+   written as the JSON the verifier passes to `tools/verify-task.ps1 -Checks`, or "none". A task that adds a screen, a Settings row or a card line names in its Done when the
    sweep step that opens it, new or existing (`tools/android-ui.py` `features`, the a11y screens):
    wave 33's row, help and card line were in no sheet, and the sweep's `-First` matched nothing
    without saying so. Make the Owns lines disjoint; two tasks that must touch one file go in different
@@ -90,7 +92,11 @@ and settings added or missing against ADR 0044. Answer every objection by editin
 ## Verify
 
 1. As each implementer reports, launch a verifier (Sonnet-class, `brief` skill, `verifier.md`) with
-   the report in its brief. It rebases onto `main` if `main` moved, runs `check`, repeats the report's
+   the report in its brief; Haiku-class when the task's Done when is wholly in its Checks block
+   (docs-only, test-only, a tool fix): it runs the script with `-Checks` and reports the summary
+   (`verifier.md`, its Haiku-class variant); Sonnet-class wherever a screenshot needs an eye. A task whose
+   Owns line holds `tools/sweep.ps1` or a new part's script is verified with `-SweepThrough <part>`, never
+   with the part alone (T296: the order comes from `sweep.ps1 -ListParts`). It rebases onto `main` if `main` moved, runs `check`, repeats the report's
    key runs, views the PNGs and returns
    MERGE, MERGE WITH NOTES or FIX with specifics. Its mechanical half is `tools/verify-task.ps1` (T246,
    `docs/reference/verifying-a-task.md`): the brief gives it the machine facts, the agent reads the summary.

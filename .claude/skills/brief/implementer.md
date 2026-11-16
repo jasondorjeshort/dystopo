@@ -29,6 +29,10 @@ Done when: <the Done-when line>, plus `./gradlew check` green and the docs your 
 updated on the same branch (`CLAUDE.md`, Debug before you push). A task that adds a screen, a
 Settings row or a card line also names the sweep step that opens it (`tools/android-ui.py`
 `features`, the a11y screens), new or existing, and shows its frame: <the step, or "nothing a user sees">.
+A task with a **Checks:** block runs it before handing over (`tools/verify-task.ps1 -Checks`, on the pushed branch)
+and quotes the summary. A task that adds or changes a sweep part (`tools/sweep.ps1` or a part's script in Owns) names
+in its report what in the part depends on the clock or on state an earlier part leaves, and how it is pinned, or says
+that nothing does; its verifier runs `-SweepThrough <part>`.
 
 Process: temporary files go in a folder of your own under the session scratchpad (`<scratchpad>\Tnn\`;
 every agent of the session shares the scratchpad root, and files written there have been overwritten

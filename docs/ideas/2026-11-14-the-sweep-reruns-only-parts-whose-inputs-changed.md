@@ -1,7 +1,7 @@
 ---
 date: 2026-11-14
 kind: chore
-related: [2026-11-14-a-new-sweep-part-runs-in-sweep-order-before-its-merge.md, 2026-11-10-the-sweep-retries-a-part-once-on-a-machine-failure.md]
+related: [2026-11-10-the-sweep-retries-a-part-once-on-a-machine-failure.md]
 ---
 
 # The sweep reruns only the parts whose inputs changed

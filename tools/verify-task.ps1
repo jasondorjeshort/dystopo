@@ -18,6 +18,12 @@
 #             (and -PrivateLimitGB when given), from the worktree, so the APK is the branch's
 #   tour      python -I tools/android-check.py --views-file tools/android-tour.txt --server <Server>: views ok, the sheet
 #   ui-<part> python -I tools/android-ui.py <part> for each of -Parts (with --serial, --port, --out and -UiArgs)
+#   sweep     (T296, -SweepThrough <part>) tools\sweep.ps1 from its first part through <part>, in the order the branch's
+#             sweep.ps1 -ListParts prints (never an order written here), -Skip for every later part and for the sweep's
+#             own check (this script's check step is that), -NoBothUnits unless <part> is bothunits, on the brief's AVD
+#             and ports: the part meets the state the earlier parts leave. boot, tour and stop are then skipped (the
+#             sweep boots, tours and stops its own emulator); slot waits for one slot (two for bothunits).
+#   chk-<n>   (T296, -Checks <file>) each check of a Checks file: a command's exit code, a test count, a JSON path's value
 #   stop      android-emu.ps1 -Stop -Delete of the same emulator (runs whenever boot ran, also after a failure;
 #             -KeepEmulator leaves it running for the agent's own scenario and prints the stop command)
 #   guard     the guard log's lowest free RAM and peak private bytes since the boot (out\emulator-guard-<Avd>.log in the
@@ -33,6 +39,9 @@
 #   ... -Parts routes,search          # debug-build parts of android-ui.py after the tour
 #   ... -KeepEmulator                 # leave the emulator for the report's scenario; stop it with the printed command
 #   ... -Only stop,guard              # later: stop it and read the guard; the other steps stay in the summary
+#   ... -SweepThrough a11y            # T296: the sweep through a new part, in sweep order (-SweepArgs "-BasePort 9100")
+#   ... -Checks <file>                # T296: the Done-when's machine-readable items (docs/reference/verifying-a-task.md)
+#   ... -Commit 944294c1              # T296: a past commit instead of origin/task/<Task> (base then only notes main's lead)
 #
 # Every Gradle run is --no-daemon (and GRADLE_OPTS gains -Dorg.gradle.daemon=false for the builds of the scripts it runs);
 # every program's wait has a ceiling, at which its process tree is killed by its PID (taskkill /PID /T, never by name),
@@ -67,6 +76,15 @@ param(
     [switch]$KeepEmulator,
     [switch]$AllowBehind,
     [int]$SlotWaitMinutes = 60,
+    # T296: run tools\sweep.ps1 through this part, in its -ListParts order; -SweepArgs adds arguments (one string, split
+    # on spaces: "-BasePort 9100 -DataDir C:\...\out"); the whole sweep's ceiling is -SweepCeilingMinutes.
+    [string]$SweepThrough = '',
+    [string[]]$SweepArgs = @(),
+    [int]$SweepCeilingMinutes = 300,
+    # T296: a Checks file (JSON; its shape in docs/reference/verifying-a-task.md), each check a step chk-<name>.
+    [string]$Checks = '',
+    # T296: this commit instead of origin/task/<Task> (a merged task's merge commit); base only notes main's later commits.
+    [string]$Commit = '',
     [string]$Fixture = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -77,12 +95,47 @@ function Put([string]$s) { [Console]::Out.WriteLine($s); [Console]::Out.Flush() 
 function Say([string]$s) { Put "[verify] $s" }
 function Csv([string[]]$a) { @($a | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 $Parts = Csv $Parts; $Skip = Csv $Skip; $Only = Csv $Only; $UiArgs = @($UiArgs | Where-Object { $_ -ne $null })
+$SweepArgs = @($SweepArgs | ForEach-Object { "$_" -split '\s+' } | Where-Object { $_ })
 
 if ($Task -notmatch '^T\d+[a-z]?$') { Write-Output "verify-task: -Task is a task id such as T246 (got '$Task')"; exit 2 }
 foreach ($p in $Parts) { if ($p -notmatch '^[a-z]+$') { Write-Output "verify-task: -Parts names android-ui.py parts (got '$p')"; exit 2 } }
-$stepNames = @('fetch', 'worktree', 'base', 'privacy', 'data', 'check', 'slot', 'boot', 'tour') + @($Parts | ForEach-Object { "ui-$_" }) + @('stop', 'guard')
+if ($SweepThrough) {
+    if ($SweepThrough -notmatch '^[a-z0-9-]+$') { Write-Output "verify-task: -SweepThrough names a part of tools\sweep.ps1 (got '$SweepThrough')"; exit 2 }
+    if ($Parts.Count) { Write-Output 'verify-task: -SweepThrough and -Parts together: the sweep runs its parts on its own emulator'; exit 2 }
+}
+# T296: the Checks file, read before the steps are named (each check is a step chk-<name>).
+$checkKeys = @('name', 'about', 'run', 'exit', 'timeout', 'tests', 'minTests', 'testsPattern', 'file', 'path', 'equals')
+$script:checkList = @()
+if ($Checks) {
+    if (-not (Test-Path -LiteralPath $Checks)) { Write-Output "verify-task: no Checks file $Checks"; exit 2 }
+    try { $cj = Get-Content -Raw -LiteralPath $Checks | ConvertFrom-Json } catch { Write-Output "verify-task: $Checks is not JSON: $($_.Exception.Message)"; exit 2 }
+    # A list, or an object with a checks list (a one-element list arrives as its element: ConvertFrom-Json unrolls it).
+    $items = @(if ($cj -isnot [array] -and $cj -and $cj.PSObject.Properties['checks']) { @($cj.checks) } else { @($cj | Where-Object { $null -ne $_ }) })
+    if (-not $items.Count) { Write-Output "verify-task: $Checks holds no checks (a list, or an object with a checks list)"; exit 2 }
+    $seen = @{}
+    foreach ($c in $items) {
+        $keys = @($c.PSObject.Properties | ForEach-Object { $_.Name })
+        $bad = @($keys | Where-Object { $checkKeys -notcontains $_ })
+        $why = if ($bad.Count) { "unknown key $($bad -join ', ') (keys: $($checkKeys -join ', '))" }
+            elseif ("$($c.name)" -notmatch '^[a-z0-9][a-z0-9-]*$') { 'name is lower-case letters, digits and dashes' }
+            elseif ($seen.ContainsKey("$($c.name)")) { 'name used twice' }
+            elseif (-not $c.run -and -not $c.file) { 'needs run (a command as a list) or file (a JSON file)' }
+            elseif (($keys -contains 'path') -ne ($keys -contains 'equals')) { 'path and equals go together' }
+            elseif ($c.file -and $keys -notcontains 'path') { 'file needs path and equals' }
+            elseif (($keys -contains 'tests' -or $keys -contains 'minTests') -and -not $c.run) { 'a test count needs run' }
+            else { '' }
+        if ($why) { Write-Output "verify-task: check '$($c.name)' in ${Checks}: $why"; exit 2 }
+        $seen["$($c.name)"] = $true
+        $script:checkList += $c
+    }
+}
+$stepNames = @('fetch', 'worktree', 'base', 'privacy', 'data', 'check', 'slot', 'boot', 'tour') + @($Parts | ForEach-Object { "ui-$_" }) +
+    @($(if ($SweepThrough) { 'sweep' })) + @($script:checkList | ForEach-Object { "chk-$($_.name)" }) + @('stop', 'guard')
 foreach ($s in $Skip + $Only) { if ($stepNames -notcontains $s) { Write-Output "verify-task: unknown step '$s' (steps: $($stepNames -join ', '))"; exit 2 } }
-$deviceSteps = @('boot', 'tour', 'stop') + @($Parts | ForEach-Object { "ui-$_" })
+# T296: under -SweepThrough the sweep boots, tours and stops its own emulator on the brief's AVD and ports.
+$autoSkipped = @{}
+if ($SweepThrough) { foreach ($n in @('boot', 'tour', 'stop')) { if ($Skip -notcontains $n) { $Skip += $n; $autoSkipped[$n] = '-SweepThrough: the sweep boots, tours and stops its own emulator' } } }
+$deviceSteps = @('boot', 'tour', 'stop') + @($Parts | ForEach-Object { "ui-$_" }) + @($(if ($SweepThrough) { 'sweep' }))
 function Selected([string]$name) { (-not $Only.Count -or $Only -contains $name) -and $Skip -notcontains $name }
 if (@($deviceSteps | Where-Object { Selected $_ }).Count -and -not $Fixture) {
     if (-not $EmuPort -or -not $Port -or -not $Avd) { Write-Output 'verify-task: the device steps need -Avd, -EmuPort and -Port from the brief (or -Skip boot,tour,stop,guard)'; exit 2 }
@@ -114,7 +167,7 @@ if ($Fixture) {
 }
 $Out = [IO.Path]::GetFullPath($Out)
 if (-not $Branch) { $Branch = "task/$Task" }
-$remoteRef = "origin/$Branch"
+$remoteRef = if ($Commit) { $Commit } else { "origin/$Branch" }
 if (-not $Owner) { $Owner = "$Task-verify" }
 $serial = "emulator-$EmuPort"
 $emuMax = if ($policy -and $policy.max) { [int]$policy.max } else { 2 }
@@ -186,26 +239,29 @@ function Query([string]$key, [string]$exe, [string[]]$argv) {
 }
 
 # --- the summary ---------------------------------------------------------------------------------------------------
+$script:prevSummary = $null
+if (($Only.Count -or $Skip.Count) -and (Test-Path (Join-Path $Out 'verify-summary.json'))) {
+    try { $script:prevSummary = Get-Content -Raw (Join-Path $Out 'verify-summary.json') | ConvertFrom-Json } catch { }
+}
 function Write-Summary {
     $file = Join-Path $Out 'verify-summary.json'
     $stepsOut = @($script:steps.Values)
-    # A rerun with -Only or -Skip keeps the earlier run's results for the steps it did not select.
-    if (($Only.Count -or $Skip.Count) -and (Test-Path $file)) {
-        try {
-            $prev = Get-Content -Raw $file | ConvertFrom-Json
-            if ($prev.task -eq $Task) {
-                if (-not $script:headSha) { $script:headSha = $prev.head }
-                $stepsOut = @(foreach ($s in $stepsOut) {
-                    $old = @($prev.steps | Where-Object { $_.name -eq $s.name })[0]
-                    if ($s.status -eq 'skipped' -and $old -and $old.status -ne 'skipped') { $o = $old; if (-not $o.from) { $o | Add-Member -Force NoteProperty from $prev.started }; $o } else { $s }
-                })
-            }
-        } catch { }
+    # A rerun with -Only or -Skip keeps the earlier run's results for the steps it did not select: the summary as it was
+    # before this run began (this run rewrites the file after every step). T296: a step this run skipped for a reason
+    # (its note: no emulator wanted, the sweep's own emulator) keeps that reason.
+    $prev = $script:prevSummary
+    if ($prev -and $prev.task -eq $Task) {
+        if (-not $script:headSha) { $script:headSha = $prev.head }
+        $stepsOut = @(foreach ($s in $stepsOut) {
+            $old = @($prev.steps | Where-Object { $_.name -eq $s.name })[0]
+            if ($s.status -eq 'skipped' -and -not $s.note -and $old -and $old.status -ne 'skipped') { $o = $old; if (-not $o.from) { $o | Add-Member -Force NoteProperty from $prev.started }; $o } else { $s }
+        })
     }
     $okAll = -not @($stepsOut | Where-Object { $_.status -eq 'failed' }).Count
     $failedStep = @($stepsOut | Where-Object { $_.status -eq 'failed' } | ForEach-Object { $_.name })[0]
     $sum = [ordered]@{
-        task = $Task; branch = $Branch; head = $script:headSha; worktree = $wt; out = $Out
+        task = $Task; branch = $(if ($Commit) { $null } else { $Branch }); commit = $(if ($Commit) { $Commit } else { $null })
+        head = $script:headSha; worktree = $wt; out = $Out
         started = $started.ToString('o'); seconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
         ok = $okAll; failedStep = $failedStep; dryRun = [bool]$DryRun
         steps = $stepsOut; screenshots = $script:screens.ToArray(); commands = $script:commands.ToArray()
@@ -215,9 +271,10 @@ function Write-Summary {
     $lines = @()
     $lines += "verify $Task at $(if ($script:headSha) { $script:headSha } else { '?' }) ($remoteRef), worktree $wt"
     $lines += if ($okAll) { "RESULT: ok ($(@($stepsOut | Where-Object { $_.status -eq 'ok' }).Count) steps ok)" } else { "RESULT: FAILED at step $failedStep" }
+    $nameW = [math]::Max(10, (@($stepsOut | ForEach-Object { "$($_.name)".Length }) | Measure-Object -Maximum).Maximum)
     foreach ($s in $stepsOut) {
         $detail = if ($s.error) { $s.error } elseif ($s.note) { $s.note } else { '' }
-        $lines += ("{0,-10} {1,-8} {2,7} s  {3}" -f $s.name, $s.status, $(if ($null -ne $s.seconds) { $s.seconds } else { '-' }), $detail)
+        $lines += (("{0,-" + $nameW + "} {1,-8} {2,7} s  {3}") -f $s.name, $s.status, $(if ($null -ne $s.seconds) { $s.seconds } else { '-' }), $detail)
     }
     if ($script:screens.Count) { $lines += "screenshots: $($script:screens.Count) (look at each; the sheet first): $(@($script:screens | Where-Object { $_ -like '*sheet*' }) -join ', ')" }
     $lines += "summary: $file"
@@ -228,6 +285,7 @@ function Write-Summary {
 # --- steps ---------------------------------------------------------------------------------------------------------
 $script:steps = [ordered]@{}
 foreach ($n in $stepNames) { $script:steps[$n] = [ordered]@{ name = $n; status = $(if (Selected $n) { 'not run' } else { 'skipped' }); ok = $null } }
+foreach ($n in $autoSkipped.Keys) { $script:steps[$n].note = $autoSkipped[$n] }
 $script:failed = ''
 $script:bootRan = $false
 $script:screens = New-Object System.Collections.Generic.List[string]
@@ -263,7 +321,7 @@ Run-Step 'fetch' {
     $c = Invoke-Program 'fetch' 'git' (GitArgs @('fetch', '--prune', 'origin')) $main 600
     if ($c -ne 0) { Fail "git fetch exit ${c}: $(Log-Tail 'fetch')" }
     $sha = Query 'head' 'git' (GitArgs @('rev-parse', '--verify', '--quiet', "$remoteRef^{commit}"))
-    if (-not $DryRun -and -not $sha) { Fail "no $remoteRef on the remote (pushed?)" }
+    if (-not $DryRun -and -not $sha) { Fail $(if ($Commit) { "no commit $Commit (fetched?)" } else { "no $remoteRef on the remote (pushed?)" }) }
     $script:headSha = $sha
     @{ head = $sha }
 }
@@ -295,8 +353,8 @@ Run-Step 'base' {
     if ($DryRun) { return @{} }
     $f = @{ mergeBase = $mb; mainHead = $mainSha; mainMovedBy = [int]$behind; branchCommits = [int]$ahead }
     if ([int]$behind -gt 0) {
-        $f.note = "origin/main moved $behind commits since the fork"
-        if (-not $AllowBehind) {
+        $f.note = if ($Commit) { "a past commit: origin/main has $behind commits after it" } else { "origin/main moved $behind commits since the fork" }
+        if (-not $AllowBehind -and -not $Commit) {
             foreach ($k in $f.Keys) { $script:steps['base'][$k] = $f[$k] }
             Fail "origin/main moved $behind commits since the fork ($($mb.Substring(0, [math]::Min(9, $mb.Length)))): report 'behind by $behind' and run this again with -AllowBehind (nobody rebases a pushed branch: the harness refuses every force push; the coordinator's --no-ff merge integrates main, and only a conflict sends the implementer a git merge origin/main and a plain push)"
         }
@@ -378,7 +436,83 @@ Run-Step 'check' {
     $f
 }
 
-Run-Step 'slot' {
+# T296: a program run to completion with its output read back, also in a dry run (only for read-only queries such as
+# sweep.ps1 -ListParts); at the ceiling its process tree is killed by its PID.
+function Read-Program([string]$exe, [string[]]$argv, [string]$cwd, [int]$timeoutS) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe; $psi.Arguments = (($argv | ForEach-Object { Quote $_ }) -join ' '); $psi.WorkingDirectory = $cwd
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $outTask = $p.StandardOutput.ReadToEndAsync(); $errTask = $p.StandardError.ReadToEndAsync()
+    if (-not $p.WaitForExit($timeoutS * 1000)) { $null = Stop-Tree $p.Id; return @{ code = -1; out = ''; err = "timed out at $timeoutS s" } }
+    $p.WaitForExit()
+    @{ code = $p.ExitCode; out = $outTask.Result; err = $errTask.Result }
+}
+
+# T296: the sweep's parts in their run order, from the branch's own tools\sweep.ps1 -ListParts (T292), never written here.
+# Accepted shapes: a list of names, a list of objects with name (or part) and optionally device, or an object with such a
+# list under parts. Cached; on failure .error says why.
+$script:sweepParts = $null
+function Get-SweepParts {
+    if ($script:sweepParts) { return $script:sweepParts }
+    $r = @{ parts = @(); error = ''; command = '' }
+    if ($Fixture) { $raw = "$($answers.listParts)"; $code = 0 }
+    else {
+        $root = if (Test-Path (Join-Path $wt 'tools\sweep.ps1')) { $wt } else { $main }
+        # A sweep.ps1 without the switch takes -ListParts for nothing and starts a sweep (T296's dry run on a main before
+        # T292: it made an out\sweep-<date> folder and stopped only at a port another sweep held).
+        if ((Get-Content -Raw (Join-Path $root 'tools\sweep.ps1')) -notmatch '\$ListParts\b') {
+            $r.error = "$(Join-Path $root 'tools\sweep.ps1') has no -ListParts switch (T292's): the sweep's order cannot be read"; $script:sweepParts = $r; return $r
+        }
+        $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'tools\sweep.ps1'), '-ListParts')
+        $r.command = "$root> powershell.exe " + (($argv | ForEach-Object { Quote $_ }) -join ' ')
+        $script:commands.Add([ordered]@{ step = $script:current; id = 'list-parts'; command = $r.command })
+        $o = Read-Program 'powershell.exe' $argv $root 120
+        $raw = $o.out; $code = $o.code
+        if ($code -ne 0) { $r.error = "sweep.ps1 -ListParts exit ${code} (has T292's -ListParts reached this branch?): $((("$($o.out) $($o.err)") -replace '\s+', ' ').Trim())"; $script:sweepParts = $r; return $r }
+    }
+    $at = $raw.IndexOfAny([char[]]'[{')
+    $j = $null
+    try { if ($at -ge 0) { $j = $raw.Substring($at) | ConvertFrom-Json } } catch { }
+    $items = if ($null -eq $j) { $null } elseif ($j -isnot [array] -and $j -isnot [string] -and $j.PSObject.Properties['parts']) { @($j.parts) }
+        elseif ($j -is [array] -or $j -is [string]) { @($j) } else { $null }
+    if ($null -eq $items) { $r.error = "sweep.ps1 -ListParts printed no list of parts: $(("$raw" -replace '\s+', ' ').Trim())"; $script:sweepParts = $r; return $r }
+    $r.parts = @(foreach ($i in $items) {
+        if ($i -is [string]) { [pscustomobject]@{ name = $i; device = $null } }
+        else { [pscustomobject]@{ name = $(if ($i.name) { "$($i.name)" } else { "$($i.part)" }); device = $i.device } }
+    })
+    $script:sweepParts = $r
+    $r
+}
+# What -SweepThrough runs: every part up to and including the named one, the sweep's check left out (this script's check
+# step is that one); everything after it skipped. Emulators: one when a part in the range is a device part (the list's
+# device flag, or device-boot in the range when the list has no flags), two when the part is bothunits.
+function Get-SweepPlan {
+    $l = Get-SweepParts
+    if ($l.error) { return @{ error = $l.error } }
+    $names = @($l.parts | ForEach-Object { $_.name })
+    $i = [array]::IndexOf($names, $SweepThrough)
+    if ($i -lt 0) { return @{ error = "'$SweepThrough' is not a part of sweep.ps1 -ListParts ($($names -join ', '))" } }
+    $range = @($l.parts | Select-Object -First ($i + 1))
+    $run = @($range | Where-Object { $_.name -ne 'check' -or $SweepThrough -eq 'check' })
+    $skip = @($names | Where-Object { $run.name -notcontains $_ })
+    $flagged = @($l.parts | Where-Object { $null -ne $_.device }).Count -gt 0
+    $device = if ($flagged) { @($run | Where-Object { $_.device -eq $true }).Count -gt 0 } else { @($run.name) -contains 'device-boot' }
+    @{ error = ''; run = @($run | ForEach-Object { $_.name }); skip = $skip; emulators = $(if (-not $device) { 0 } elseif ($SweepThrough -eq 'bothunits') { 2 } else { 1 }) }
+}
+
+# T296: the slot is wanted only for an emulator: the boot, or a sweep whose range holds a device part. A run without one
+# reads slot as skipped, never as failed (T268's and T291's verifiers met "FAILED at step slot" on tasks with no device).
+$script:slotNeed = 0
+if (Selected 'boot') { $script:slotNeed = 1 }
+if ($SweepThrough -and (Selected 'sweep')) { $script:current = 'sweep'; $plan = Get-SweepPlan; if (-not $plan.error) { $script:slotNeed = [math]::Max($script:slotNeed, $plan.emulators) } }
+if (-not $script:slotNeed) {
+    foreach ($n in @('slot', 'stop', 'guard')) {
+        if ((Selected $n) -and $Only -notcontains $n -and $script:steps[$n].status -eq 'not run') { $script:steps[$n].status = 'skipped'; $script:steps[$n].note = 'no emulator wanted' }
+    }
+}
+
+if ($script:slotNeed) { Run-Step 'slot' {
     # A wrong console port fails here, before the build: android-emu.ps1's own shape rule, and a serial that runs another AVD.
     if ($EmuPort % 2 -ne 0 -or $EmuPort -lt 5554 -or $EmuPort -gt 5682) { Fail "-EmuPort must be even, 5554-5682 (got $EmuPort)" }
     $deadline = (Get-Date).AddMinutes($SlotWaitMinutes)
@@ -392,12 +526,12 @@ Run-Step 'slot' {
             if ($name -ne $Avd) { Fail "console port $EmuPort is taken: $serial runs $(if ($name) { "AVD $name" } else { 'an AVD that does not answer' }), not $Avd (the brief's port?)" }
         }
         $others = @($all | Where-Object { $_ -ne $serial })
-        if ($others.Count -lt $emuMax) { return @{ others = $others; cap = $emuMax; waitedSeconds = $waited; note = "$($others.Count) of $emuMax slots taken by others$(if ($waited) { "; waited $waited s" })" } }
+        if ($emuMax - $others.Count -ge $script:slotNeed) { return @{ others = $others; cap = $emuMax; need = $script:slotNeed; waitedSeconds = $waited; note = "$($others.Count) of $emuMax slots taken by others$(if ($waited) { "; waited $waited s" })" } }
         if ((Get-Date) -ge $deadline -or $Fixture) { Fail "emulator cap $emuMax still taken after $waited s: $($others -join ', ')" }
         if ($waited % 60 -eq 0) { Say "slot: $($others.Count) of $emuMax taken ($($others -join ', ')); waiting" }
         Start-Sleep -Seconds 10; $waited += 10
     }
-}
+} }
 
 function EmuArgs([string[]]$extra) {
     $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $wt 'tools\android-emu.ps1'), '-Avd', $Avd, '-EmuPort', "$EmuPort", '-Port', "$Port")
@@ -461,7 +595,121 @@ foreach ($part in $Parts) {
     }
 }
 
-$stopCommand = 'powershell -ExecutionPolicy Bypass -File ' + ((EmuArgs @('-Stop', '-Delete') | Select-Object -Skip 4 | ForEach-Object { Quote $_ }) -join ' ')
+# T296: the sweep through one part, in the sweep's own order (Get-SweepPlan), into the worktree's out\verify-sweep (the
+# sweep takes -Out relative to its checkout only).
+$script:sweepRan = $false
+if ($SweepThrough) {
+    Run-Step 'sweep' {
+        $plan = Get-SweepPlan
+        if ($plan.error) { Fail $plan.error }
+        $rel = 'out\verify-sweep'
+        $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $wt 'tools\sweep.ps1'), '-Out', $rel, '-NoDaemon')
+        if ($plan.skip.Count) { $argv += @('-Skip', ($plan.skip -join ',')) }
+        if ($SweepThrough -ne 'bothunits') { $argv += '-NoBothUnits' }
+        if ($Avd) { $argv += @('-Avd', $Avd) }
+        if ($EmuPort) { $argv += @('-EmuPort', "$EmuPort") }
+        if ($Port) { $argv += @('-Port', "$Port") }
+        if ($AvdHome) { $argv += @('-AvdHome', $AvdHome) }
+        $argv += $SweepArgs
+        $f = [ordered]@{ through = $SweepThrough; run = $plan.run; skippedParts = $plan.skip; emulators = $plan.emulators }
+        if ($DryRun) { Put "  sweep through ${SweepThrough}: runs $($plan.run -join ', '); skips $(if ($plan.skip.Count) { $plan.skip -join ', ' } else { 'nothing' }); $($plan.emulators) emulator(s)" }
+        if ($plan.emulators) { $script:sweepRan = -not $DryRun; $script:bootStarted = (Get-Date).ToUniversalTime() }
+        $c = Invoke-Program 'sweep' 'powershell.exe' $argv $wt ($SweepCeilingMinutes * 60)
+        if ($DryRun) { return $f }
+        $sumFile = Join-Path $wt "$rel\summary.json"
+        $j = $null
+        try { $j = Get-Content -Raw -LiteralPath $sumFile | ConvertFrom-Json } catch { }
+        $f.summary = $sumFile
+        if ($j) {
+            $f.sweepOk = [bool]$j.ok; $f.failed = @($j.failed)
+            $f.ran = @($j.parts.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($null -ne $j.retried) { $f.retried = $j.retried } # T292's reruns, when its summary carries them
+            if ($j.sheet) { $f.sheet = $j.sheet; $sheetPath = Join-Path $wt $j.sheet; if (Test-Path -LiteralPath $sheetPath) { $script:screens.Add($sheetPath) } }
+        }
+        $f.note = if ($j) { "$($f.ran.Count) parts ran through $SweepThrough; failed: $(if ($f.failed.Count) { $f.failed -join ', ' } else { 'none' })" } else { "no summary.json in $rel" }
+        if ($c -ne 0 -or -not $j -or -not $j.ok) {
+            foreach ($k in @($f.Keys)) { $script:steps['sweep'][$k] = $f[$k] }
+            Fail "sweep.ps1 through $SweepThrough exit ${c}: $($f.note) (steps.tsv in $rel)"
+        }
+        $f
+    }
+}
+
+# T296: the Checks file's checks, one step each. {wt}, {main} and {out} in a check's run and file become the verify
+# worktree, the main checkout and -Out.
+function Expand([string]$s) { $s.Replace('{wt}', $wt).Replace('{main}', $main).Replace('{out}', $Out) }
+function Same($a, $b) {
+    if ($null -eq $a -or $null -eq $b) { return ($null -eq $a) -and ($null -eq $b) }
+    $num = { param($x) $x -is [int] -or $x -is [long] -or $x -is [double] -or $x -is [decimal] }
+    if ((& $num $a) -and (& $num $b)) { return [double]$a -eq [double]$b }
+    (ConvertTo-Json -InputObject $a -Compress -Depth 20) -ceq (ConvertTo-Json -InputObject $b -Compress -Depth 20)
+}
+# A dotted path into parsed JSON (numbers index a list: views.0.ok); @{ found; value }.
+function Walk($o, [string]$path) {
+    foreach ($seg in ($path -split '\.')) {
+        if ($null -eq $o) { return @{ found = $false } }
+        if ($o -is [array] -and $seg -match '^\d+$') { if ([int]$seg -ge $o.Count) { return @{ found = $false } }; $o = $o[[int]$seg]; continue }
+        $p = $o.PSObject.Properties[$seg]
+        if (-not $p -or $o -is [string] -or $o -is [ValueType]) { return @{ found = $false } }
+        $o = $p.Value
+    }
+    @{ found = $true; value = $o }
+}
+function Short($v) { $t = ConvertTo-Json -InputObject $v -Compress -Depth 5; if ($t.Length -gt 120) { $t.Substring(0, 117) + '...' } else { $t } }
+foreach ($chk in $script:checkList) {
+    Run-Step "chk-$($chk.name)" {
+        $id = "chk-$($chk.name)"
+        $keys = @($chk.PSObject.Properties | ForEach-Object { $_.Name })
+        $f = [ordered]@{}
+        if ($chk.about) { $f.about = "$($chk.about)" }
+        $said = @()
+        function Keep { foreach ($k in @($f.Keys)) { $script:steps[$id][$k] = $f[$k] } }
+        if ($chk.run) {
+            $argv = @($chk.run | ForEach-Object { Expand "$_" })
+            $timeout = if ($chk.timeout) { [int]$chk.timeout } else { 600 }
+            $code = Invoke-Program $id $argv[0] @($argv | Select-Object -Skip 1) $wt $timeout
+            if (-not $DryRun) {
+                $want = if ($keys -contains 'exit') { [int]$chk.exit } else { 0 }
+                $f.exitCode = $code; $f.expectedExit = $want
+                if ($code -ne $want) { Keep; Fail "exit $code, expected ${want}: $(Log-Tail $id)" }
+                $said += "exit $code"
+            }
+        }
+        if ($keys -contains 'tests' -or $keys -contains 'minTests') {
+            if ($DryRun) { Put "  count the tests in its output$(if ($keys -contains 'tests') { ": $($chk.tests)" } else { ": at least $($chk.minTests)" })" }
+            else {
+                $text = (Log-Text $id 'out') + "`n" + (Log-Text $id 'err')
+                $pattern = if ($chk.testsPattern) { "$($chk.testsPattern)" } else { 'Ran (\d+) tests?\b' } # unittest's line
+                $ms = [regex]::Matches($text, $pattern)
+                if (-not $ms.Count) { Keep; Fail "no test count in its output (pattern $pattern)" }
+                $n = [int]$ms[$ms.Count - 1].Groups[1].Value
+                $f.tests = $n
+                if ($keys -contains 'tests') { $f.expectedTests = [int]$chk.tests; if ($n -ne [int]$chk.tests) { Keep; Fail "$n tests, expected $($chk.tests)" } }
+                if ($keys -contains 'minTests') { $f.minTests = [int]$chk.minTests; if ($n -lt [int]$chk.minTests) { Keep; Fail "$n tests, expected at least $($chk.minTests)" } }
+                $said += "$n tests"
+            }
+        }
+        if ($keys -contains 'path') {
+            $src = if ($chk.file) { Expand "$($chk.file)" } else { 'its output' }
+            $f.path = "$($chk.path)"; $f.expected = $chk.equals
+            if ($chk.file) { $f.file = $src }
+            if ($DryRun) { Put "  read $src at $($chk.path), expect $(Short $chk.equals)"; return @{} }
+            $j = $null
+            try { $raw = if ($chk.file) { Get-Content -Raw -LiteralPath $src } else { Log-Text $id 'out' }; $j = $raw | ConvertFrom-Json } catch { }
+            if ($null -eq $j) { Keep; Fail "no JSON in $src" }
+            $w = Walk $j "$($chk.path)"
+            if (-not $w.found) { Keep; Fail "no $($chk.path) in $src" }
+            $f.value = $w.value
+            if (-not (Same $w.value $chk.equals)) { Keep; Fail "$($chk.path) is $(Short $w.value), expected $(Short $chk.equals) ($src)" }
+            $said += "$($chk.path) = $(Short $w.value)"
+        }
+        if ($DryRun) { return @{} }
+        $f.note = $said -join '; '
+        $f
+    }
+}
+
+$stopCommand ='powershell -ExecutionPolicy Bypass -File ' + ((EmuArgs @('-Stop', '-Delete') | Select-Object -Skip 4 | ForEach-Object { Quote $_ }) -join ' ')
 if ($KeepEmulator -and (Selected 'stop')) {
     $script:steps['stop'].status = 'kept'
     $script:steps['stop'].note = "-KeepEmulator: stop it yourself with $stopCommand, then read the guard with -Only stop,guard"
@@ -513,7 +761,7 @@ function Read-Guard([datetime]$since) {
     $g
 }
 
-if ($script:bootRan -or $DryRun -or $Only -contains 'guard') {
+if ($script:bootRan -or $script:sweepRan -or $DryRun -or $Only -contains 'guard') {
     Run-Step 'guard' {
         if ($DryRun) { Put "  read $(Join-Path $wt "out\emulator-guard-$Avd.log") and $(Join-Path $lockDir 'stop.log')"; return @{} }
         $since = if ($Fixture) { [datetime]::MinValue } elseif ($script:bootStarted) { $script:bootStarted } else { $started.ToUniversalTime() }
@@ -528,7 +776,8 @@ if ($script:bootRan -or $DryRun -or $Only -contains 'guard') {
 
 
 if ($DryRun) {
-    Say "dry run: $($script:commands.Count) commands listed, nothing run"
+    Say "dry run: $($script:commands.Count) commands listed, nothing run$(if ($script:failed) { "; step $($script:failed) cannot run as given" })"
+    if ($script:failed) { exit 1 }
     exit 0
 }
 Write-Summary
