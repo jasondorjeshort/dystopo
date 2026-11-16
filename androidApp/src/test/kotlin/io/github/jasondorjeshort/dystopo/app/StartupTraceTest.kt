@@ -478,8 +478,8 @@ class StartupTraceTest {
         val ok = coldTo(window(), frameAt = 2_400)
         ok.fullyLoaded(2_500)
         val rok = report(ok, 2_600)
-        assertEquals("Last start: first frame 1.4 s (0.1.21-alpha)", rok.title())
-        assertEquals("Last start", rok.kindLabel)
+        assertEquals("Start trace: first frame 1.4 s (0.1.21-alpha)", rok.title())
+        assertEquals("Start trace", rok.kindLabel)
         assertTrue("Passed the thresholds" in rok.shown(), rok.shown())
     }
 
@@ -633,6 +633,14 @@ class StartupTraceTest {
         val w = coldTo(window(), frameAt = 2_000)
         val line = StartupText.historyLine(w.record(2_100, StartupWindow.FINISHED), "0.1.21-alpha")
         assertEquals("0.1.21-alpha cold, first frame 1.00 s, longest stall 0.00 s, finished", line)
+        // T302: a cold start's figures follow the words; reports show the words only.
+        val withStats = StartupText.historyLine(w.record(2_100, StartupWindow.FINISHED), "0.1.21-alpha", linkedMapOf("firstFrameMs" to "1000", "fdTableMs" to "1.5", "odd" to "a b=c"))
+        assertEquals("$line | firstFrameMs=1000 fdTableMs=1.5 odd=a_b_c", withStats)
+        assertEquals(line, StartupText.historyWords(withStats))
+        assertEquals(mapOf("firstFrameMs" to "1000", "fdTableMs" to "1.5", "odd" to "a_b_c"), StartupText.historyStats(withStats))
+        assertEquals(emptyMap(), StartupText.historyStats(line))
+        val r = MainWatchdog.Dump.parse(StartupText.format(w.record(2_100, StartupWindow.FINISHED), emptyMap(), system, listOf(withStats)))
+        assertEquals(listOf(line), r.sections.last().second, "the report's history has the words alone")
     }
 
     @Test

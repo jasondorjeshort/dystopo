@@ -53,8 +53,9 @@ import kotlin.concurrent.thread
  * ([Report.shown], scrubbed), with the privacy notice above **Open GitHub issue**, which puts that text on the
  * clipboard and then opens the prefilled issue page ([IssueLink]) in the browser, and **Delete**. Nothing is sent by the
  * app: the tester reads the page, signs in and submits. No email option (the crash-report survey: it needs a mailbox and
- * sends unseen through a third-party mail app). T228: **Report the last start** shows the newest start's trace the same way,
- * for a start that felt slow but passed the thresholds; it has no Delete. T258: below them, **Send diagnostics** ([DiagnosticDump])
+ * sends unseen through a third-party mail app). T302: **Report recent stats** shows the phone's recent figures ([RecentStats]:
+ * the recent cold starts' step times beside the app's limits, the tile store, the offline areas, memory) the same way, made
+ * when it is opened; it has no Delete (it replaced T228's Report the last start). T258: below them, **Send diagnostics** ([DiagnosticDump])
  * saves the diagnostic dump through the system's save dialog, with the line under it saying what the file holds. T301:
  * after the save the line names the file and its folder, and **Share** and **Open GitHub issue** take it on ([DiagnosticDump.share],
  * [DiagnosticDump.openIssue]).
@@ -68,7 +69,6 @@ fun ReportRow() {
         val loaded = withContext(Dispatchers.IO) { ReportUi.load(selected) }
         ReportUi.items = loaded.items
         ReportUi.open = loaded.open
-        ReportUi.lastStart = loaded.lastStart
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         BasicText("Report a problem", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
@@ -84,12 +84,10 @@ fun ReportRow() {
                 }
             }
         }
-        ReportUi.lastStart?.let { last ->
-            FlowRow(Modifier.padding(top = 2.dp)) {
-                Option(LAST_START, last == selected) {
-                    ReportUi.message = null
-                    ReportUi.selected = if (last == selected) null else last
-                }
+        FlowRow(Modifier.padding(top = 2.dp)) {
+            Option(RECENT_STATS, selected == RecentStats.ID) {
+                ReportUi.message = null
+                ReportUi.selected = if (selected == RecentStats.ID) null else RecentStats.ID
             }
         }
         val open = ReportUi.open?.takeIf { it.id == selected }
@@ -101,10 +99,10 @@ fun ReportRow() {
             ) {
                 BasicText(open.text, style = TextStyle(color = Ink, fontSize = 11.sp, fontFamily = FontFamily.Monospace))
             }
-            BasicText(if (open.startup) "$NOTICE $NOTICE_STARTUP" else NOTICE, Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 12.sp))
+            BasicText(if (open.stats) NOTICE_STATS else if (open.startup) "$NOTICE $NOTICE_STARTUP" else NOTICE, Modifier.padding(top = 6.dp), style = TextStyle(color = Ink, fontSize = 12.sp))
             FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Option(OPEN_ISSUE, false) { ReportUi.message = openIssue(context, open) }
-                if (open.id != ReportUi.lastStart) Option(DELETE, false) {
+                if (!open.stats) Option(DELETE, false) {
                     val id = open.id
                     ReportUi.selected = null
                     ReportUi.message = null
@@ -146,6 +144,7 @@ fun openIssue(context: Context, open: ReportUi.Open): String {
         when {
             open.link.titleOnly -> AFTER_OPEN_TITLE_ONLY
             clip == null -> AFTER_OPEN_COMPLETE
+            open.stats -> AFTER_OPEN_STATS
             else -> AFTER_OPEN
         }
     } catch (_: ActivityNotFoundException) {
@@ -158,18 +157,17 @@ object ReportUi {
     /** One report in the list: its id, the chip's label and the line the route reports. */
     data class Item(val id: String, val label: String, val kind: String, val atMs: Long, val headline: String?)
 
-    /** The report on show: its scrubbed text and the link made from it. */
-    data class Open(val id: String, val text: String, val link: IssueLink.Link, val startup: Boolean)
+    /** The report on show: its scrubbed text and the link made from it; [stats]: T302's Report recent stats. */
+    data class Open(val id: String, val text: String, val link: IssueLink.Link, val startup: Boolean, val stats: Boolean = false)
 
-    /** What the row reads on a worker: the list, the report on show and the newest start's trace (T228). */
-    data class Loaded(val items: List<Item>, val open: Open?, val lastStart: String?)
+    /** What the row reads on a worker: the list and the report on show. */
+    data class Loaded(val items: List<Item>, val open: Open?)
 
     var selected by mutableStateOf<String?>(null)
     var revision by mutableStateOf(0)
     var items by mutableStateOf<List<Item>?>(null)
     var open by mutableStateOf<Open?>(null)
     var message by mutableStateOf<String?>(null)
-    var lastStart by mutableStateOf<String?>(null)
     /** T258: the line under Send diagnostics. */
     var dumpMessage by mutableStateOf<String?>(null)
 
@@ -202,12 +200,12 @@ object ReportUi {
         val reports = Reports.all()
         val items = reports.map { Item(it.id, label(it), it.kind, it.atMs, it.headline) }
         val open = selected?.let { id -> reports.firstOrNull { it.id == id } ?: Reports.get(id) }?.let { prepare(it) }
-        return Loaded(items, open, Reports.lastStart()?.id)
+        return Loaded(items, open)
     }
 
     fun prepare(r: Report): Open {
         val known = Reports.known()
-        return Open(r.id, r.shown(known), IssueLink.build(r, known), r.isStartup)
+        return Open(r.id, r.shown(known), IssueLink.build(r, known), r.isStartup, r.isStats)
     }
 
     fun label(r: Report): String = r.kindLabel + ", " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(r.atMs))
@@ -220,7 +218,13 @@ const val NOTICE = "This report will be posted publicly on GitHub under your acc
     "your maps, tracks or searches. Read it before you submit; nothing is sent until you do."
 const val NOTICE_STARTUP = "A startup report also lists how long each step of the start took, where the app was waiting, the recent starts' times, " +
     "the phone's free memory, temperature state and battery saver, and how many offline maps you have and their total size, without their names."
-const val LAST_START = "Report the last start"
+/** T302: the row's button for [RecentStats] (the owner's words, 2026-11-14) and its notice, in place of the newest start's. */
+const val RECENT_STATS = "Report recent stats"
+const val NOTICE_STATS = "This report will be posted publicly on GitHub under your account. It contains the app version, your phone model " +
+    "and Android version, how long each step of the recent starts took beside the limits the app is tested against, how many map tiles " +
+    "are stored and their size, how the tile store last moved, how many offline areas you have and their state, and the app's memory use. " +
+    "It does not contain your maps' or areas' names, your tracks, searches or locations. Read it before you submit; nothing is sent until you do."
+const val AFTER_OPEN_STATS = "The rest of the report is on your clipboard; paste it below."
 const val OPEN_ISSUE = "Open GitHub issue"
 const val DELETE = "Delete"
 const val CLIP_LABEL = "Dystopo problem report"

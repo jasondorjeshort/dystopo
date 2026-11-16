@@ -206,6 +206,9 @@ val bundleMapAssets by tasks.registering {
     }
 }
 android.sourceSets.getByName("main").assets.srcDir(bundleMapAssets) // the task's output dir, with the task as its builder
+// T302: the launch budget's ceilings and the emulator's medians, for Report a problem › Report recent stats (assets/launch-budget.json).
+val bundleLaunchBudget by tasks.registering(Sync::class) { from(rootProject.file("tools/launch-budget.json")); into(layout.buildDirectory.dir("generated/launchBudget")) }
+android.sourceSets.getByName("main").assets.srcDir(bundleLaunchBudget)
 // T216: the attestation test root (ADR 0051) goes into debug builds only, so two debug phones share it for
 // POST /identity/test-chain; release builds never hold it (ReleaseListsTest). The one committed copy is shared's test resource.
 android.sourceSets.getByName("debug").assets.srcDir(rootProject.file("shared/src/jvmTest/resources/identity"))
