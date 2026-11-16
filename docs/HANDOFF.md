@@ -1,26 +1,24 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-16 01:44 UTC, at the commit after 0ec006aa, by main session (wave 34 open; four of five merged, T289 out)
+Updated: 2026-11-16 02:23 UTC, at the commit after 7a0b69f3, by main session (wave 34: all five merged; the sweep is running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the "Wave 34" section of `docs/TASKS.md`,
-`docs/tasks/wave-33.md`, and `out/wave34-research/` (the critic's report and the speed-profile survey).
+the `sweep` and `release` skills, and the finding named under Now.
 
 ## Now
 
-- **Wave 34 is open** (planned and pushed 2026-11-15; critic answered, twenty-four objections): two lanes, one agent per lane. Tools: T287, then T288, then T289 (each merge gates the next launch; all three edit `tools/sweep.ps1`). Routing: T290, then T291.
-- **T287, T288, T290 and T291 are merged and logged** (fa9c3e3e, b64ac9ec, 6728b6cf, 657d0632). **In flight:** T289's implementer, the last task (`task/T289`, no emulator, not pushed yet). Cleanup owed at the close: the folder `dystopo-wt/T290` and the local branch `task/T290` (a process held a file; no agent hunts it while others build), and T288's if its chore reported the same.
+- **Wave 34: all five tasks are merged and logged** (T287 fa9c3e3e, T288 b64ac9ec, T289 944294c1, T290 6728b6cf, T291 657d0632; the README's status says so). **In flight when this was written:** the post-wave sweep from the main checkout (a Sonnet agent; the folder is the newest `out/sweep-20261116-*`) and a cleanup chore for T289's branch and T290's leftover folder and local branch (`git branch --list 'task/*'` and the `dystopo-wt` folder show what is left).
 - **The finding** (`docs/findings/2026-11-15-a-drive-as-a-speed-profile.md`, open): the card's 33 % and 47 % are 19 % and 28 % by the speed profile; ADR 0063's full regain per priced turn is the error (T290: about four fifths of the saving was turn fuel, every paid turn at a junction of unnamed roads); least fuel is about as quick; bends add 4 to 10 % to drive times.
-- The 7-day meter read 8 at planning and 16 at the first launch (the critic and the survey); the 5-hour meter had just reset. The owner, 2026-11-15: wait out a 5-hour stall.
-- v0.1.30-alpha is the published release; its sweep is `out/sweep-20261114-2352` (the close's `-Prev`). The live viewer is up and wanted (`out/coordinator-pids.txt`). Rules: no force push; an out-of-memory Kotlin compile clears with `"-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\\?\` delete.
+- v0.1.30-alpha is the published release; its sweep is `out/sweep-20261114-2352` (this close's `-Prev`). The live viewer is up and wanted (`out/coordinator-pids.txt`). The owner, 2026-11-15: wait out a 5-hour stall. Rules: no force push; an out-of-memory Kotlin compile clears with `"-Pkotlin.daemon.jvmargs=-Xmx4g"`; a worktree folder with long paths goes by the `\?\` delete.
 
 ## Next
 
-1. As each implementer reports: a Sonnet verifier (`brief` skill, `verifier.md`; a sweep's `-EmuPort` is even and at most 5682). Merge by the `wave` skill's sequence, then the cleanup chore.
-2. T289's verifier runs the `route-sheet` part on the merged `main` (the Interacts line; it is the last of the three to merge).
-3. From T288: its drive step leaves "Quicker planning" set and the `montblanc` pack pushed; the close's sweep shows whether a later part minds.
-4. Close: README status, the sweep with `-Prev` and `-First "settings,drive"`, v0.1.31-alpha after green (ADR 0024; its notes say the phone behaves as before), the allowance reading, the wave's move to `docs/tasks/`.
-5. Next wave, from the finding: re-plan the speed-profile idea (triage); amend ADR 0063 (the per-turn regain goes: idle only or a capped regain, chosen against the profile; a cost change, so the fuel cell file's version and the card's figures move) and quote the card's line from the two routes' profiles; then Tier 2 (the card offers the other route; your own hike numbers; the winding-roads cap, whose measurement is met).
-6. Later tiers as agreed 2026-11-15: one pack and graph revision (a proposal, on the owner's yes); bike turns across big roads; the ADR chores (0062, 0063, 0061, 0053); the pressure-unit and Send diagnostics ideas.
+1. Read the sweep agent's report. A flake (the `release` part's adb "device offline", the tour's cold direct-mode step) is rerun alone; a defect becomes a finding and the next wave's task. T288's drive step leaves "Quicker planning" set and the `montblanc` pack pushed: see whether a later part minded.
+2. Green: v0.1.31-alpha by the `release` skill (ADR 0024), its notes saying the phone behaves as before; `-Prev` for the sheet is `out/sweep-20261114-2352`.
+3. Close the wave: the meter's reading into the allowance sentence, the Haiku chore that moves wave 34 to `docs/tasks/wave-34.md` and lifts its follow-ups into Later, this file.
+4. Next wave, from the finding: re-plan the speed-profile idea (triage); amend ADR 0063 (the per-turn regain goes: idle only or a capped regain, chosen against the profile; a cost change, so the fuel cell file's version and the card's figures move) and quote the card's line from the two routes' profiles; then Tier 2 (the card offers the other route; your own hike numbers; the winding-roads cap, whose measurement is met).
+5. Two bug ideas of 2026-11-15 and 16 to triage: a first launch with no map ignores a fix after about four seconds; and the owner's idea on turns across busy roads (research first).
+6. Later tiers as agreed 2026-11-15: one pack and graph revision (a proposal, on the owner's yes; it also gives `montblanc` its road names); bike turns across big roads; the ADR chores (0062, 0063, 0061, 0053); the pressure-unit and Send diagnostics ideas.
 
 ## Waiting on user
 
