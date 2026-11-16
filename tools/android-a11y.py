@@ -127,9 +127,12 @@ def label_of(n):
 
 
 def key_label(text):
-    """The label a baseline keys by: a number (digits, a decimal point) read as #, white space folded, at most 60
-    characters ("30 MB" and "3.4 MB" key alike)."""
-    return re.sub(r"\s+", " ", re.sub(r"\d+(?:[.,]\d+)*", "#", text or "")).strip()[:60] or "-"
+    """The label a baseline keys by: a number (digits, a decimal point) read as #, a byte unit after it (B, kB, KB,
+    MB, GB, TB) read as B, white space folded, at most 60 characters ("30 MB", "3.4 MB" and "840 kB" key alike as
+    "# B", so a size that crosses a unit keeps its baseline line)."""
+    folded = re.sub(r"\d+(?:[.,]\d+)*", "#", text or "")
+    folded = re.sub(r"#\s*(?:B|kB|KB|MB|GB|TB)(?![A-Za-z])", "# B", folded)
+    return re.sub(r"\s+", " ", folded).strip()[:60] or "-"
 
 
 def visible(n, screen):
