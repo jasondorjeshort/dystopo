@@ -37,6 +37,10 @@ as the ride; the research question below has to answer that first, and this idea
 a flying activity, then on a disagreement with GNSS); its follow-ups name a flying detector and the pressure-rate
 tripwire, which are the cheaper paths to the same end.
 
+2026-11-16: a second user of the activity answer: a driving model fitted to the owner's own drives
+(`2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md`, the drive half, wanted) has to know which recorded
+tracks are drives.
+
 Question: Should a read-only research pass (ADR 0044, technical variant) settle whether a phone's accelerometer can
 tell the vehicle from the carrier's handling, before anything else, or is this idea dropped after your second
 thought? Recommended: the research pass only, one no-Gradle agent writing a finding; build nothing unless it shows a

@@ -31,6 +31,11 @@ then an eye on the screenshots. The first five are scripts whose output is JSON;
 `.claude/skills/brief/verifier.md`, `docs/reference/verifying-a-task.md`). Left: the machine-readable Done-when,
 the Haiku-class verifier, and the measurement (wave 31's close reads T246's saving).
 
+2026-11-16, wave 34: `tools/verify-task.ps1` still reads "FAILED at step slot" when a task has no emulator (T268's
+note; T291's verifier met it again), and two of the wave's five tasks had no device part (T289's route sheet,
+T291's profile in `shared` and devtool): the cases this Plan's Checks file and Haiku-class verifier are for. Not
+built.
+
 Plan: one no-Gradle pass after wave 31's close has read the per-task figure. `tools/verify-task.ps1` gains
 `-Checks <file>`: a small JSON list of commands with the expected value (a JSON path and its value, an exit code, a
 test count), run after the tour, each a step in the summary; `tools/test_verify_task.py` covers it from a fixture.

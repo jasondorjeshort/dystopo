@@ -31,3 +31,15 @@ time the wait.
   setting (users split on it) or one behaviour.
 - It comes after the speed profile's finding, which decides what a turn costs at all, and beside the stops and
   signals idea, which needs the same pack and graph revision to know where a signal is.
+- 2026-11-16, the owner: "Sure" to the class of the road crossed as the first stand-in for how busy it is (with a
+  mapped signal and the driving side), and asked whether traffic data could be found anywhere, given access.
+  Candidates for the research pass, from the coordinator's memory and unverified (sources, coverage and licences
+  are the pass's work; a source that is used needs its line in `sources.json`): (1) counts, not live traffic: road
+  agencies publish the average daily traffic per road section (in the United States the federal highway
+  performance data and the states' count maps; national count programmes elsewhere). Static, so it fits a pack, and
+  it is the quantity a wait for a gap depends on; the work is joining the sections to the graph's roads. (2) Live or
+  typical speeds from the commercial map services: a paid key, and terms that as a rule forbid keeping the data, so
+  not offline. (3) Public live feeds (the states' traveller-information feeds, Europe's national access points):
+  main roads only, online only. (4) Your own drives: the seconds stopped at turns by the class crossed
+  (`2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md`, the drive half). (5) Users' drives pooled: a new
+  data flow, flagged, the owner's decision and not proposed here.

@@ -24,6 +24,11 @@ verification; that is the price of not paying two at the close.
 
 - A cheaper form for a late part: only the device parts before it.
 
+2026-11-16, wave 34: T288 added a step (`drive`, in `features`) and T289 a part (`route-sheet`); both were green at
+their first closing sweep. The `drive` step leaves a setting changed and a pack pushed behind it, which no later
+part minded this time: the state-left-behind half of this idea, seen without a failure (the board's Later, T288's
+line). `-SweepThrough` is not built.
+
 Plan: one no-Gradle pass, soon (the owner's word). `tools/verify-task.ps1` gains `-SweepThrough <part>`: it runs
 `tools/sweep.ps1` from its first part through the named one on one emulator (`-Skip` for what follows), so the new
 part meets the state the earlier parts leave. The `wave` skill's Verify and `.claude/skills/brief/verifier.md` say

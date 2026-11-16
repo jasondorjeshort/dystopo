@@ -24,6 +24,11 @@ a synthetic graph. Built after the turn cost, which changes what "fastest" means
   "least time". Wave 33 built that list (T282, T284, T285; ADR 0063): Least time, Least fuel, Quicker planning.
   Shortest is not in it and still waits: a third metric of the same form, when someone asks for it.
 
+2026-11-16, the owner, on Plan drives for: "Rather than have this option it'd be better to give the user several
+options for the route choice itself. This path: +1% gas -1% time, or something. So probably this setting could go
+away once that's done." It bears on the Question below (no new value in a setting that is to go; a shorter route
+would be a row on the card), but it was not said about Shortest, so the Answer is left blank.
+
 Question: is a Shortest drive wanted now, or does it stay at rest until someone asks? Recommended: at rest. The
 survey of 2026-11-15 (routers' docs) found every default is time; one mainstream app offers a shorter-distance
 route only as an extra, with a warning that it may take dirt roads and be slower; the two routers that expose it as

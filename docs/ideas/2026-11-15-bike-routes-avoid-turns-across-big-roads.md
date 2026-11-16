@@ -16,6 +16,11 @@ The owner, 2026-11-15: yes please.
 - A setting or always on (ADR 0044: research how the cycling routers do it and whether riders split).
 - The cost of moving the bike search to edge states (the drive's was about twice the states).
 
+2026-11-16: the owner said "Sure" to the class of the road crossed as the drive's stand-in for how busy it is
+(`2026-11-15-a-turn-across-traffic-costs-more-where-the-road-is-busy.md`), the measure pass 2 below uses; one
+reading of "the class crossed" in `routing/TurnCost.kt` can serve both tables. That file also lists where traffic
+counts might be had.
+
 Plan: two passes, as the drive's were (T281, T282). Always on, no setting: the survey of 2026-11-15 found no
 cycling app or router that exposes it as one; the routers charge a flat or angle-based cost per turn and a signal
 cost, one cycling planner downrates turns across busy roads, and the route-choice study of 164 riders' GPS tracks

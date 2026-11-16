@@ -23,6 +23,11 @@ drive through a lit town prices its lights in the route JSON.
 - Whether a signal costs a fixed average (about 15 s) or less on a through road than on a turn.
 - The extra size of the graph tiles (measure it).
 
+2026-11-16: T291's profile left stops and signals out of its pass one; in `routing/SpeedProfile.kt` a stop is a
+point whose speed is capped at zero, with a wait, so the cost needs no table of its own once the graph knows where
+the stops are. The owner, the same day, on bends: "It's only actual turns that require a stop and change of
+direction", which puts stops ahead of bends as what a drive's time is missing (the coordinator's reading).
+
 Plan: pass one is the count and nothing else; the build waits for the pack and graph revision of
 `2026-11-15-pack-facts-written-by-the-map-build.md` (one format change, not two). Found 2026-11-15: the graph is
 built from the pack's `transportation` lines only (`RoutingGraphBuilder.build`), no layer carries these points and

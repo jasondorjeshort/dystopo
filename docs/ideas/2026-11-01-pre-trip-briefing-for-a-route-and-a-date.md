@@ -1,7 +1,7 @@
 ---
 date: 2026-11-01
 kind: feature
-related: [2026-10-30-safe-return-planner.md]
+related: [2026-10-30-safe-return-planner.md, 2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md]
 ---
 
 # A pre-trip briefing: one page for a route and a date

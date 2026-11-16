@@ -25,6 +25,11 @@ verifiers 103 to 212 thousand; the `wave` skill's figure went from 2.5 to 1.0 a 
 Each agent's completion notice already carries its token count, tool uses and duration, so the hook at stop has
 the per-agent figure without a meter read. The owner, on keeping the figure by script: "Sure."
 
+2026-11-16, the close of wave 34: the meter read 30 against a figure of 18.5 (8 at planning) while the account ran
+other work beside the wave (the owner, 2026-11-15), so the difference of readings says nothing about the wave, and
+the `wave` skill's per-task figure was left unrevised. On a shared meter the token counts at stop are the only
+figure a close can use; until this is built the allowance sentence is checked against nothing.
+
 ## Open
 
 - Overlapping agents share the meter, so a difference of readings attributes a lane's cost, not an agent's; the

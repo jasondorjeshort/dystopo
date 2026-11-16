@@ -1,7 +1,7 @@
 ---
 date: 2026-11-15
 kind: feature
-related: [2026-11-14-drive-speed-falls-on-winding-roads.md, 2026-11-14-drive-stops-and-signals-cost-time.md]
+related: [2026-11-14-drive-speed-falls-on-winding-roads.md, 2026-11-14-drive-stops-and-signals-cost-time.md, 2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md]
 ---
 
 # A drive is a speed profile: one pass gives time and fuel, and turns, bends and stops are its inputs
@@ -20,6 +20,15 @@ related ideas (winding roads, stops and signals) become inputs instead of separa
 - The search cannot carry speed as state cheaply: the profile may price a finished route exactly while the search
   keeps per-edge and per-turn costs derived from it. How far the two may differ.
 - Research first (ADR 0044): how published routers model it.
+
+2026-11-16: pass one is built (T291: `routing/SpeedProfile.kt`, devtool `route --profile`; finding
+`docs/findings/2026-11-15-a-drive-as-a-speed-profile.md`), so the Plan below is spent and this file wants a new
+block. What follows it: the amendment of ADR 0063 and the card's line from the two routes' profiles (the board's
+Later, T291's line), after the build-process wave the owner picked for next. Two ideas of this date stand on the
+profile: `2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md` and
+`2026-11-16-a-warning-before-a-sharp-bend-while-driving.md`; the owner's answer on bends is in the winding-roads
+idea, and how the profile's limits could be fitted to a driver is in
+`2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md`.
 
 Plan: pass one prices a finished route and changes no search; it is also the check on T284's 33 % and 47 %. Sanity
 check, survey of 2026-11-15: no published router carries a speed profile in its search (it couples neighbouring

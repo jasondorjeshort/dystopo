@@ -1,0 +1,25 @@
+---
+date: 2026-11-16
+kind: feature
+related: [2026-11-01-pre-trip-briefing-for-a-route-and-a-date.md, 2026-11-15-a-drive-is-a-speed-profile.md]
+---
+
+# The clock time at each point of a route, and the sun there: for a drive as well as a hike
+
+`routing/SpeedProfile.kt` (T291) gives a drive a time at every point of its line, not only a total, and
+`routing/ShadeAlong.kt` takes a start instant and gives a route's shade stretches. Wanted: slide along the route
+(its elevation profile, or the line on the map) and see the clock time you would be there, with the terrain lit
+for that hour, so a planner sees which part of a mountain road or of a descent is in shadow, in low sun or after
+dark, and what leaving an hour earlier changes. The owner, 2026-11-16: "Sounds cool, especially for mountain
+drives." It differs from the related briefing idea, a page of figures for a route and a date: this is one control
+on the route card and the map's light.
+
+## Open
+
+- A moonshot, recorded from conversation and not read against the phone's code: whether the map's hillshade can be
+  relit for an hour on the phone, or only the route's own shade stretches drawn along its line (the cheap half).
+- The phone does not use the profile yet (T291 was devtool only, `route --profile`), and a drive's time per point is
+  only as good as the profile's limits: no real driving time has been read against it (finding
+  `docs/findings/2026-11-15-a-drive-as-a-speed-profile.md`).
+- What the sun is for on a drive: shade and ice on a winter road, low sun ahead, the daylight left at the far end.
+  A survey first (ADR 0039) of what drivers and planners use.

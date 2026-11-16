@@ -1,7 +1,7 @@
 ---
 date: 2026-11-14
 kind: feature
-related: [2026-10-31-ask-the-map-by-voice.md, 2026-10-13-spoken-directions-and-detail-levels.md]
+related: [2026-10-31-ask-the-map-by-voice.md, 2026-10-13-spoken-directions-and-detail-levels.md, 2026-11-16-a-warning-before-a-sharp-bend-while-driving.md]
 ---
 
 # The route ahead, spoken: the map for a screen reader and for a phone in the pocket

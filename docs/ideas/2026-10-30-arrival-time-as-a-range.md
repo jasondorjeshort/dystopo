@@ -15,6 +15,8 @@ vague (the benchmark pass, ADR 0039); matching a route to a past track needs the
 
 2026-10-31 (T184, implementer's note, placed above the Question so the queue still lists it as open): the first pass is built: the route card's "about 4:30" over "4:10 to 4:50" from a whole-track statistic, "you did this trail in", and the setting Route times: Show as (Range or One number). The turn-back clock is unchanged; the Question below still waits for your answer.
 
+2026-11-16, for drives (the coordinator, not asked of the owner): `routing/SpeedProfile.kt` (T291) prices a drive under a low, a first and a high set of limits (`ProfileLimits`), and the public mountain drives' times move by 2 to 18 % of the table's time across them (finding `docs/findings/2026-11-15-a-drive-as-a-speed-profile.md`). That is a range for a drive's time with no tracks at all, and one a fit to the driver's own drives would narrow (`2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md`, the drive half).
+
 Question: should the turn-around clock (`nav/TurnAround.kt`) take the slow end of the range, giving an earlier turn-back than
 today? That is a safety behaviour you sign off. Recommendation: split the work. First pass: the route card's range and the
 "you did this trail in" line, with the clock unchanged; its margin (`turnMarginMin`, default 30) already plays the pessimistic part.

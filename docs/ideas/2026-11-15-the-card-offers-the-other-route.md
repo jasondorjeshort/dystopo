@@ -22,6 +22,15 @@ default the card opens on. The owner, 2026-11-15: do it, definitely.
   built): when the routes differ, each row may say why in the words of the cost table, such as "2 turns fewer, 300 m
   longer". The table is `TileRouter.price` (devtool `route --breakdown --against`, the phone's `GET
   /route?breakdown=1`); the survey of 2026-11-15 found no app that says in words why a route was chosen.
+- 2026-11-16, the owner, on whether Plan drives for is a setting at all: "Rather than have this option it'd be better
+  to give the user several options for the route choice itself. This path: +1% gas -1% time, or something. So
+  probably this setting could go away once that's done." And yes to a tap on the fuel line that shows where the
+  saving comes from (the bullet above). Read against the Plan below (the coordinator): its two rows, each with its
+  trade against the other, are the first step and stand. Removing the setting and offering more than two routes come
+  after it and are not in the Plan: where a third route comes from when there are two metrics is research (ADR
+  0044). The percentages must be the profile's first (finding
+  `docs/findings/2026-11-15-a-drive-as-a-speed-profile.md`: by the profile least fuel adds about -3 to 3 % of time
+  on the two town drives, so many trades will read as next to nothing).
 
 Plan: one implementer, phone only, after the speed-profile pass has settled what the fuel percentages are (a card
 that offers "47 % less fuel" must be right first). The survey of 2026-11-15 found this shape in the mainstream

@@ -13,6 +13,12 @@ second plan is slower than the first when cold", which reads as the second predi
 the count of differing drives is in T284's merge body and has not been set against the first. The label
 prediction (by 2027-01-15) is not due.
 
+2026-11-16: T291's finding (`docs/findings/2026-11-15-a-drive-as-a-speed-profile.md`) has the first prediction's
+figure on wave 34's packs: two of the six public drives take another route under least fuel (the two Mont Blanc
+valley town drives) and four the same one, so fewer than half. The same finding makes the ADR's turn fuel the
+error, and its amendment is the first routing work after the build-process wave; the two Outcome lines are best
+written in the commit that amends it.
+
 Plan: the coordinator, as the architect here, reads the merge bodies of T284 and T285, writes the Outcome on each
 of the two lines (held, held in part, or failed), files a finding by the `finding` skill if the second plan's
 time failed it (the measured cold and warm times, and what it means for the idea

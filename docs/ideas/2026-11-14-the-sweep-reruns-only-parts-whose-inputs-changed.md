@@ -18,6 +18,10 @@ and little would have been carried over that day; the saving is real only when a
 part's data. The cheaper answer to the same loss is the related idea of this date (a new part proves itself before
 its merge). Worth building if a closing sweep is run again twice in one wave for a part's own script.
 
+2026-11-16, the close of wave 34: the trigger was not met (one part, `a11y`, rerun alone once, for a line of its
+baseline and not for its script). The release went out on the first sweep's red summary and the part's green rerun
+in a second folder, by the coordinator's ruling, so the release's record is two folders.
+
 Waits: the coordinator, 2026-11-14, by the owner's leave ("The other decisions I leave to you, or get an
 independent review to confirm"; a critic confirmed). Trigger: a closing sweep run again twice in one wave for a
 part's own script. On the day (T280) the APK had changed, so only the parts that use no device (the tests, the

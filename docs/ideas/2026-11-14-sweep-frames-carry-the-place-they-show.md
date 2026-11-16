@@ -27,8 +27,15 @@ question, pictures that users share, is the related idea.
 two things): yes, but the cause is found before it is fixed, and the sidecar names an area, never a centre. The
 cause of the four frames is not known (the log's entry on v0.1.29-alpha): a missing fix is one suspect, a fresh
 debug install's default server on 8765 the other (the board's Later line). And `out/` is not wholly private:
-`.github/workflows/nightly.yml` uploads `out/sweep-nightly/` whole as a workflow artifact, which the paragraph
+`.github/workflows/nightly.yml` uploads `out/sweep-nightly/` [no-check: the nightly job's folder] whole as a workflow artifact, which the paragraph
 above does not say.
+
+2026-11-16, the close of wave 34 (the owner, the same day, on a machine check for private frames: "Yes"): no frame
+of the new sweep was outside `areas.json` (T287's fix held), but the sheet compares against the last release's
+sweep, whose old sides were not all public. Six pairs were left out by copying both trees and deleting frames by
+hand, and the coordinator viewed the rebuilt sheet in nine strips. So the check also needs `tools/sweep-diff.py` to
+leave a pair out, by name or because one side reads `outside`, and not only to refuse. An older sweep has no
+sidecar: a side without one is unknown, not public.
 
 Plan: one pass, a tidy-up and not first (the owner on the published sheets, 2026-11-14: "Don't care"). The cause
 was found and guarded by T287 (the emulator's own default fix recentred the map; `tools/android-emu.ps1` now sets a

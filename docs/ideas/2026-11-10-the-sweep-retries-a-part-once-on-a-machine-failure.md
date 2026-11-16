@@ -21,6 +21,12 @@ in `tools/sweep.ps1`). The owner, 2026-11-10: "I guess?"
 
 - T273's storage wait after a reboot may remove the first cause; the retry still covers the second.
 
+2026-11-16, the close of wave 34: the sweep's one red part, `a11y`, was a flake of another kind, and this retry
+would rightly not have taken it: a finding the baseline lists, read with its size in kB where the baseline has MB
+(`2026-11-16-the-a11y-baseline-misses-a-line-when-its-size-reads-in-kb.md`). It cost what a machine flake costs (a
+coordinator read, an agent, the part rerun into a second folder, a ruling). A count of reruns per part in
+`summary.json`, whatever the cause, would show both kinds.
+
 Plan: one small pass in `tools/sweep.ps1` and `tools/sweep-summary.py` with its test. A part that fails with a line
 from a short, listed set of device-class errors (device offline, device not found, `adb` permission denied, the
 emulator's console gone) is run once more after the guard's reboot; any other failure (a golden, a test, an

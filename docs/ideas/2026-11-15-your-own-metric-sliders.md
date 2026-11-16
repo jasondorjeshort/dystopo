@@ -1,7 +1,7 @@
 ---
 date: 2026-11-15
 kind: feature
-related: [2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md, 2026-11-14-drive-preference-fastest-balanced-or-shortest.md]
+related: [2026-11-15-drive-and-hike-pace-learn-from-your-own-tracks.md, 2026-11-14-drive-preference-fastest-or-shortest.md]
 ---
 
 # Your own metric: a few sliders re-price the route, hike first
