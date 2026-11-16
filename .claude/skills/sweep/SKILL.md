@@ -94,9 +94,11 @@ is green and is a flake to name in the log entry. A `-Only` rerun into a second 
 folder>` so its `reruns` counts it. `-ListParts` prints the parts in run order as JSON (the shape is in the script's
 header); `-DiffArgs '<words>'` passes extra arguments to `sweep-diff.py`.
 
-From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) need the key: copy
-`tools\release.keystore` and `tools\release.properties` from the main checkout into the worktree's
-`tools\` (gitignored; confirm with `git status --ignored`) and never commit them (`release-realism.md`).
+From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) run as they do in the main
+checkout with nothing copied (T293): the worktree builds without the key, and the sweep re-signs its APK copies
+(and the `update` part's second build) through `tools\sign-release.ps1`, which reads the main checkout's key
+where it lives and prints only the certificate's SHA-256 (`apk\apks.json` `signedBy`). Never copy the key's
+files into a worktree (`release-realism.md`).
 
 ## Output
 
