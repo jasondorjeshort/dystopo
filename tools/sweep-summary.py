@@ -20,6 +20,15 @@ skipped by name and failed, and from route-changes.json (tools/route-diff.py dif
 skipped, removed, unchanged and failed, what moved per changed route and the sheet's pages); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
+T292, the retry: sweep.ps1 runs a device part once more when its first run failed for the machine's sake (the Part
+function's outcome codes `emulator-gone` and `guard-stop`, or a device-class line: device offline, device not found, an
+adb or /sdcard "Permission denied", the guest's storage not ready; DEVICE_LINES below), asking this script
+(`--retry-check`, which copies the first run's text files to retry/<part>/ and appends retries.json). Such a part has
+two steps.tsv lines: the last decides `ok`, the first is under `earlier`, `passedOnRetry` marks a pass on the retry (amber
+on the sheet). `retried` lists each retry (part, reason, the line that showed it and its file, the first run's exit and
+seconds); `reruns` counts per part the runs after the first whatever the cause, including a -Only rerun into a second
+folder that names the first (sweep.ps1 -RerunOf, `rerunOf` in meta.json, followed back through that folder's own).
+
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
 the device tour's pack list and logcat lines are left out; the live views carry the labels from the sweep's
 own view list. Nothing here reads devtool.local.json.
@@ -503,9 +512,21 @@ def write_sheet(d, summary, channel, render):
         parts.append(f"<figure><img src='{html.escape(rel.replace(os.sep, '/'))}'><figcaption>{html.escape(label)}</figcaption></figure>")
     parts.append("</div>")
     ok = summary["ok"]
+    # T292: a part that passed on its retry is marked (amber) in the head and in its row, with the retry's reason.
+    reasons = {r["part"]: r.get("reason") for r in summary.get("retried") or []}
+    flaky = [k for k, v in summary["parts"].items() if v.get("passedOnRetry")]
     head = (f"<h1>Dystopo sweep {html.escape(summary['sweep'])}: "
-            f"<span style='color:{'#1a7f37' if ok else '#c62828'}'>{'all green' if ok else 'FAILED: ' + html.escape(', '.join(summary['failed']))}</span></h1>")
-    rows = "".join(f"<tr><td>{html.escape(k)}</td><td>{'ok' if v['ok'] else 'FAIL'}</td><td>{v['seconds']}</td></tr>"
+            f"<span style='color:{'#1a7f37' if ok else '#c62828'}'>{'all green' if ok else 'FAILED: ' + html.escape(', '.join(summary['failed']))}</span>"
+            + (f" <span style='color:#b26a00'>(passed on retry: {html.escape(', '.join(flaky))})</span>" if flaky else "") + "</h1>")
+
+    def state(k, v):
+        if v.get("passedOnRetry"):
+            why = f": {reasons[k]}" if reasons.get(k) else ""
+            return f"<td style='color:#b26a00'>ok on retry{html.escape(why)}</td>"
+        runs = f" ({v['runs']} runs)" if v.get("runs") else ""
+        return f"<td>{'ok' if v['ok'] else 'FAIL'}{runs}</td>"
+
+    rows = "".join(f"<tr><td>{html.escape(k)}</td>{state(k, v)}<td>{v['seconds']}</td></tr>"
                    for k, v in summary["parts"].items())
     doc = ("<!doctype html><meta charset='utf-8'><title>Sweep sheet</title><style>"
            "body{font:13px system-ui,sans-serif;margin:16px;background:#fff;color:#222;width:1568px}"
@@ -605,14 +626,23 @@ def changes(d):
         return (os.path.relpath(p, REPO) if same else p).replace(os.sep, "/")
 
     # T289 (T288's report): the three --first lists are kept too, so a rerun of the summary does not drop them.
-    return {"count": r["count"], "paired": r.get("paired"), "timing": len(r.get("timing") or []),
-            "added": len(r.get("added") or []), "removed": len(r.get("removed") or []),
-            "prev": os.path.basename(os.path.normpath(r.get("prev") or "")),
-            "changed": [c.get("path") for c in r.get("changed") or []][:40],
-            "first": [c.get("path") for c in r.get("changed") or [] if c.get("first")],
-            "firstMissing": r.get("firstMissing") or [], "firstUnchanged": r.get("firstUnchanged") or [],
-            "firstAdded": r.get("firstAdded") or [],
-            "png": rel("changes.png"), "json": rel("changes.json")}
+    out = {"count": r["count"], "paired": r.get("paired"), "timing": len(r.get("timing") or []),
+           "added": len(r.get("added") or []), "removed": len(r.get("removed") or []),
+           "prev": os.path.basename(os.path.normpath(r.get("prev") or "")),
+           "changed": [c.get("path") for c in r.get("changed") or []][:40],
+           "first": [c.get("path") for c in r.get("changed") or [] if c.get("first")],
+           "firstMissing": r.get("firstMissing") or [], "firstUnchanged": r.get("firstUnchanged") or [],
+           "firstAdded": r.get("firstAdded") or [],
+           "png": rel("changes.png"), "json": rel("changes.json")}
+    # T292 (T289's rerun bug, for T295's left-out and unknown lists): every other list in changes.json is kept as it is.
+    for k, v in r.items():
+        if k not in out and k not in CHANGES_COUNTED and isinstance(v, list):
+            out[k] = v
+    return out
+
+
+# changes.json lists the summary counts or rewrites above instead of copying.
+CHANGES_COUNTED = ("timing", "added", "removed", "changed", "pages", "renumbered")
 
 
 def rel_path(p):
@@ -652,13 +682,169 @@ def route_changes(d):
             "json": rel_path(os.path.join(d, "route-changes.json"))}
 
 
+# T292: a device part is run once more when its first run failed for the machine's sake, never for the build's. The outcome
+# codes sweep.ps1's Part function gives a part that lost its emulator, and the device-class lines looked for in the note and
+# in what the part wrote (each log's last LOG_TAIL lines, a JSON report's error strings). A golden, test, assertion or budget
+# failure matches none of them; a timeout, a skip and a refused boot are never retried (the ceiling already spent).
+RETRY_CODES = ("emulator-gone", "guard-stop")
+NEVER_RETRIED = ("0", "skip", "timeout", "cap-refused")
+DEVICE_LINES = (
+    ("device-offline", re.compile(r"\bdevice offline\b", re.I)),
+    ("device-not-found", re.compile(r"\bdevice (?:'[^']*' |\"[^\"]*\" )?not found\b|\bno devices/emulators found\b", re.I)),
+    # wave 31's features flake: "mkdir /sdcard/Android: Permission denied" right after a guard reboot
+    ("adb-permission-denied", re.compile(r"(?:/sdcard|/storage/emulated|\badb\b)[^\r\n]*\bPermission denied\b", re.I)),
+    # tools/android-emu.ps1's storage wait (T273) giving up after a boot; its success line ("guest storage ready") is not this
+    ("storage-not-ready", re.compile(r"\bguest's storage was not ready\b", re.I)),
+)
+LOG_TAIL = 100
+# Written by the sweep for every part, or by this script: never one part's output.
+RETRY_SKIP_FILES = {"steps.tsv", "summary.json", "meta.json", "retries.json", "changes.json", "route-changes.json",
+                    "emu-reboots.log", "emu-private.tsv"}
+
+
+def retry_reason(code, note, texts):
+    """Why a part's failed first run is run again, or None. `texts` are (file name, text) pairs. Returns the reason (an
+    outcome code, or the name of the device-class line), the line that showed it and where it was."""
+    code = str(code)
+    if code in RETRY_CODES:
+        return {"reason": code, "line": (note or code).split("; ")[0][:300], "file": "steps.tsv"}
+    if code in NEVER_RETRIED:
+        return None
+    for name, text in [("note", note or "")] + list(texts):
+        for line in text.splitlines():
+            for reason, rx in DEVICE_LINES:
+                if rx.search(line):
+                    return {"reason": reason, "line": line.strip()[:300], "file": name}
+    return None
+
+
+def json_errors(v, out):
+    """Every string under an `error` key of a report, at any depth (a failed step's, the report's own)."""
+    if isinstance(v, dict):
+        for k, x in v.items():
+            if k == "error" and isinstance(x, str):
+                out.append(x)
+            else:
+                json_errors(x, out)
+    elif isinstance(v, list):
+        for x in v:
+            json_errors(x, out)
+    return out
+
+
+def part_files(d, since):
+    """(path relative to d, with /) of the text files a part wrote since `since` (epoch seconds), PNGs and earlier runs'
+    copies left out."""
+    out = []
+    for root, dirs, files in os.walk(d):
+        rel_root = os.path.relpath(root, d).replace(os.sep, "/")
+        if rel_root == "retry" or rel_root.startswith("retry/"):
+            continue
+        for f in files:
+            if f in RETRY_SKIP_FILES or not f.lower().endswith((".log", ".json", ".txt")):
+                continue
+            p = os.path.join(root, f)
+            try:
+                if os.path.getmtime(p) < since:
+                    continue
+            except OSError:
+                continue
+            out.append(f if rel_root == "." else rel_root + "/" + f)
+    return sorted(out)
+
+
+def part_texts(d, rels):
+    """(file, text) per file: a JSON report's error strings, else the log's last LOG_TAIL lines."""
+    texts = []
+    for rel in rels:
+        p = os.path.join(d, rel)
+        if rel.lower().endswith(".json"):
+            r = load_last_json(p)
+            if r is not None:
+                texts.append((rel, "\n".join(json_errors(r, []))))
+                continue
+        try:
+            with open(p, encoding="utf-8-sig", errors="replace") as f:
+                texts.append((rel, "".join(f.readlines()[-LOG_TAIL:])))
+        except OSError:
+            pass
+    return texts
+
+
+def retry_check(d, part, code, since, seconds, note):
+    """sweep.ps1's question after a device part's failed first run: retry it? When yes, the files the run wrote are copied
+    to retry/<part>/ (the retry overwrites them; PNGs are not copied, so no sheet or diff sees them) and the decision is
+    appended to retries.json, which the summary reads. Returns {"retry": bool, ...the reason, line and file}."""
+    rels = part_files(d, since)
+    why = retry_reason(code, note, part_texts(d, rels))
+    if not why:
+        return {"retry": False}
+    import shutil
+    keep = os.path.join(d, "retry", part)
+    for rel in rels:
+        dst = os.path.join(keep, *rel.split("/"))
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(os.path.join(d, *rel.split("/")), dst)
+        except OSError:
+            pass  # a file a server still holds; the rest are kept
+    entry = {"part": part, **why, "code": str(code), "seconds": seconds, "logs": "retry/" + part}
+    path = os.path.join(d, "retries.json")
+    done = load(path)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump((done if isinstance(done, list) else []) + [entry], f, indent=2)
+    return {"retry": True, **why}
+
+
+def ran_parts(d):
+    """part -> the number of lines it has in a sweep folder's steps.tsv that are not skips."""
+    n = {}
+    for name, code, _, _ in read_steps(d):
+        if code != "skip" and name != "diff":
+            n[name] = n.get(name, 0) + 1
+    return n
+
+
+def reruns(d, depth=0):
+    """part -> how many times it was run again: the extra lines of this folder's steps.tsv (the sweep's own retry), plus,
+    when meta.json names the folder this sweep reruns (`rerunOf`, sweep.ps1 -RerunOf), one for each part that also ran there
+    and that folder's own count, followed back up to 10 folders."""
+    ran = ran_parts(d)
+    out = {k: v - 1 for k, v in ran.items() if v > 1}
+    meta = load(os.path.join(d, "meta.json"))
+    prev = meta.get("rerunOf") if isinstance(meta, dict) else None
+    if prev and depth < 10 and os.path.isdir(prev):
+        before, earlier = ran_parts(prev), reruns(prev, depth + 1)
+        for k in ran:
+            if k in before:
+                out[k] = out.get(k, 0) + 1 + earlier.get(k, 0)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dir")
     ap.add_argument("--channel", default="chrome", help="playwright browser channel for the sheet; '' for bundled chromium")
     ap.add_argument("--no-sheet", action="store_true", help="write sheet.html only, no PNG")
+    # T292: sweep.ps1's retry question (no summary is written): the part, its outcome code, when its run started (epoch s),
+    # its seconds and a file holding its steps.tsv note. Prints {"retry": true|false, "reason", "line", "file"}.
+    ap.add_argument("--retry-check", metavar="PART", help=argparse.SUPPRESS)
+    ap.add_argument("--code", default="", help=argparse.SUPPRESS)
+    ap.add_argument("--since", type=float, default=0.0, help=argparse.SUPPRESS)
+    ap.add_argument("--seconds", type=float, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--note-file", default="", help=argparse.SUPPRESS)
     a = ap.parse_args()
     d = os.path.abspath(a.dir)
+    if a.retry_check:
+        note = ""
+        if a.note_file:
+            try:
+                with open(a.note_file, encoding="utf-8-sig", errors="replace") as f:
+                    note = f.read()
+            except OSError:
+                pass
+        print(json.dumps(retry_check(d, a.retry_check, a.code, a.since, a.seconds, note)))
+        return 0
     steps = read_steps(d)
     summary = {"sweep": os.path.basename(os.path.normpath(d)).removeprefix("sweep-"), "ok": True, "failed": [],
                "skipped": [], "parts": {}}
@@ -666,6 +852,8 @@ def main():
     if isinstance(meta, dict):
         summary.update({k: meta[k] for k in ("host", "commit", "noDevice", "startedAt") if k in meta})
     total = 0.0
+    # T292: a part retried by the sweep has two lines; the last one decides, the earlier ones are kept under `earlier`.
+    runs = {}
     for name, code, secs, note in steps:
         if code == "skip":
             summary["skipped"].append(name + (f" ({note})" if note else ""))
@@ -675,6 +863,9 @@ def main():
         except ValueError:
             seconds = None
         total += seconds or 0
+        runs.setdefault(name, []).append((code, seconds, note))
+    for name, lines in runs.items():
+        code, seconds, note = lines[-1]
         ok = code == "0"
         entry = {"ok": ok, "seconds": seconds}
         if not ok:
@@ -682,6 +873,11 @@ def main():
             summary["failed"].append(name)
         if note:
             entry["note"] = note
+        if len(lines) > 1:
+            entry["runs"] = len(lines)
+            entry["earlier"] = [{"exit": c, "seconds": s, "note": n} for c, s, n in lines[:-1]]
+            if ok and any(c != "0" for c, _, _ in lines[:-1]):
+                entry["passedOnRetry"] = True  # flaky: the sheet marks it
         fn = PARTS.get(name)
         if fn:
             try:
@@ -694,6 +890,18 @@ def main():
         summary["failed"].append("no steps.tsv")
     summary["ok"] = not summary["failed"]
     summary["totalSeconds"] = round(total, 1)
+    # T292: each retry the sweep made (retries.json) with its first run, and the reruns per part whatever the cause.
+    retried = []
+    for r in load(os.path.join(d, "retries.json")) or []:
+        if isinstance(r, dict) and r.get("part"):
+            p = summary["parts"].get(r["part"]) or {}
+            retried.append({"part": r["part"], "reason": r.get("reason"), "line": r.get("line"), "file": r.get("file"),
+                            "firstRun": {"exit": r.get("code"), "seconds": r.get("seconds")}, "logs": r.get("logs"),
+                            "passedOnRetry": bool(p.get("passedOnRetry"))})
+    summary["retried"] = retried
+    summary["reruns"] = reruns(d)
+    if isinstance(meta, dict) and meta.get("rerunOf"):
+        summary["rerunOf"] = os.path.basename(os.path.normpath(meta["rerunOf"]))
     sheet = write_sheet(d, summary, a.channel, not a.no_sheet)
     if sheet:
         rel = os.path.relpath(sheet, REPO) if os.path.splitdrive(sheet)[0].lower() == os.path.splitdrive(REPO)[0].lower() else sheet
