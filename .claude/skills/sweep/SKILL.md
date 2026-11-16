@@ -83,6 +83,17 @@ T273: a reboot's line in `device\emu-reboots.log` ends with `android-emu.ps1`'s 
 
 T270: `a11y` (debug build, after `startup`) runs `tools/android-a11y.py` at font scales 1.0 and 2.0 over about 21 screens (the map with each card up, the pickers, the recording panel, Tracks and routes, Offline maps, Settings and its pages, share, the first-run card) and lists each screen's clickable nodes under 48 dp of touch area (Compose's own, from `GET /semantics`), unlabelled, duplicate or overlapping, text outside its bounds, contrast under 4.5:1 and the map's controls left under a screen; red only on a finding `tools/a11y-baseline.json` does not list (`parts.a11y.new`); view `a11y/a11y-sheet.png` (on the sheet too). A fix strikes its baseline line; a new line needs its reason in the log. <!-- end T270 -->
 
+T292, the retry: a device part whose first run failed for the machine's sake (the `emulator-gone` or `guard-stop`
+outcome, or a device-class line: device offline, device not found, an adb or `/sdcard` "Permission denied", the guest's
+storage not ready; the list is `DEVICE_LINES` in `tools/sweep-summary.py`) is run once more after a reboot, with a fresh
+ceiling; a golden, test, assertion, budget or timeout failure never is. Both runs are in `steps.tsv`, the first run's text
+files in `retry\<part>\`; `summary.json` has `retried` (part, reason, the line and its file, the first run's exit) and
+`reruns` (per part, whatever the cause), and the sheet marks a part that passed on its retry `ok on retry` in amber.
+**Reading a red part:** a part retried and still red is red like any other (read its two lines); one that passed on retry
+is green and is a flake to name in the log entry. A `-Only` rerun into a second folder passes `-RerunOf <the first
+folder>` so its `reruns` counts it. `-ListParts` prints the parts in run order as JSON (the shape is in the script's
+header); `-DiffArgs '<words>'` passes extra arguments to `sweep-diff.py`.
+
 From a task worktree the release-key parts (`diagnostics`, `upgrade`, `update`) need the key: copy
 `tools\release.keystore` and `tools\release.properties` from the main checkout into the worktree's
 `tools\` (gitignored; confirm with `git status --ignored`) and never commit them (`release-realism.md`).
