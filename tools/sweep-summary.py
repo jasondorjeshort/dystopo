@@ -707,7 +707,10 @@ def retry_reason(code, note, texts):
     outcome code, or the name of the device-class line), the line that showed it and where it was."""
     code = str(code)
     if code in RETRY_CODES:
-        return {"reason": code, "line": (note or code).split("; ")[0][:300], "file": "steps.tsv"}
+        # The note's clause that says how the emulator went (sweep.ps1's Describe-EmuLost), else its first clause.
+        clauses = (note or code).split("; ")
+        lost = [c for c in clauses if re.search(r"while the part ran|guard stopped", c)]
+        return {"reason": code, "line": (lost or clauses)[0][:300], "file": "steps.tsv"}
     if code in NEVER_RETRIED:
         return None
     for name, text in [("note", note or "")] + list(texts):

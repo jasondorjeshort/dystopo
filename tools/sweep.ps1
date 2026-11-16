@@ -636,7 +636,7 @@ function Get-GuardStops([int]$skip) {
 function Test-EmuLost {
     if (-not $script:emuWatch -or $script:emuLost) { return $false }
     $b = Read-EmuPrivate
-    if (-not $script:emuSeen -or $script:emuWatch -eq 'boot') { return $false } # device-boot: android-emu.ps1 reports its own
+    if (-not $script:emuSeen -or "$($script:emuWatch)" -eq 'boot') { return $false } # device-boot: android-emu.ps1 reports its own. T292: as a string; $true -eq 'boot' is True in PowerShell, so a lost emulator was never seen mid-part, only after the body ended
     if ($null -ne $b) { $script:emuGoneSince = $null; return $false }
     if (-not $script:emuGoneSince) { $script:emuGoneSince = Get-Date; return $false }
     if (((Get-Date) - $script:emuGoneSince).TotalSeconds -lt 20) { return $false }

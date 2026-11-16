@@ -195,7 +195,9 @@ try:
         assert got and got["reason"] == reason and got["file"] == rel, (reason, got)
     # The outcome codes of sweep.ps1's Part: retried on the code alone, the line is the note's first clause.
     for code in ("emulator-gone", "guard-stop"):
-        got = summary.retry_reason(code, "emulator-5560 stopped while the part ran, not by its guard; the part's own result: 1", [])
+        # The order sweep.ps1 writes (T292's sweep): the memory clause and retry counts first, then how the emulator went.
+        got = summary.retry_reason(code, "emulator private 4.7 GB at the start, peak 5.1 GB, none at the end; captureRetries 52; "
+                                         "emulator-5560 stopped while the part ran, not by its guard; the part's own result: 1", [])
         assert got == {"reason": code, "line": "emulator-5560 stopped while the part ran, not by its guard", "file": "steps.tsv"}, got
     # A device-class line in the note (a body that threw) is enough too.
     assert summary.retry_reason("error", "adb -s emulator-5560 shell getprop failed: error: device offline", [])["reason"] == "device-offline"
