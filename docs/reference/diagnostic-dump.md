@@ -8,7 +8,7 @@ source: observed (T258, on an API 35 emulator); the code in `shared/.../reports/
 Settings › About and advanced › Report a problem › **Send diagnostics** (T258) saves one text file that a tester sends
 with a report: the app's memory over the last day, the last starts' times, the Technical details figures and the app's
 own log, with no place in it. A tap only, never automatic; the app sends nothing. The file goes through the system's
-save dialog (`SaveFile.bytes`, the dialog Export GPX uses); a share sheet would need a FileProvider and is a follow-up.
+save dialog (`SaveFile.bytes`, the dialog Export GPX uses); after the save, Share and Open GitHub issue take it on (T301, `android-app.md` › Problem reports).
 On this side `devtool dump-scan` reads one dump or a folder of them.
 
 ## On the phone
