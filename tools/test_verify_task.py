@@ -362,6 +362,24 @@ class T296SweepThrough(Base):
         self.assertIn("sweep through a11y: runs " + ", ".join(ORDER[1:ORDER.index("a11y") + 1]) + "; skips " +
                       ", ".join(["check"] + ORDER[ORDER.index("a11y") + 1:]) + "; 1 emulator(s)", p.stdout)
 
+    def test_real_dry_run_reads_the_real_list_or_says_it_is_missing(self):
+        # On this checkout's own sweep.ps1: before T292's -ListParts the step fails by name (a sweep.ps1 without the switch
+        # would start a sweep), after it the dry run names the parts; either way no sweep folder is made.
+        out_dir = os.path.join(os.path.dirname(here), "out")
+        before = set(os.listdir(out_dir)) if os.path.isdir(out_dir) else set()
+        wt_root = self.tmp("verify-task-dry-")
+        p = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-Task", "T999", "-WorktreeRoot", wt_root,
+                            "-Avd", AVD, "-EmuPort", "5570", "-Port", "8694", "-SweepThrough", "a11y", "-DryRun"],
+                           capture_output=True, text=True, timeout=180)
+        if "has no -ListParts switch" in p.stdout:
+            self.assertEqual(p.returncode, 1)
+        else:
+            self.assertEqual(p.returncode, 0, p.stdout[-1500:])
+            self.assertIn("sweep through a11y: runs ", p.stdout)
+            self.assertIn("-NoBothUnits", p.stdout)
+        after = set(os.listdir(out_dir)) if os.path.isdir(out_dir) else set()
+        self.assertEqual({n for n in after - before if n.startswith("sweep-")}, set())
+
     def test_with_parts_is_refused(self):
         root = self.tmp()
         fixture(root)

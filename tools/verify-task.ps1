@@ -271,9 +271,10 @@ function Write-Summary {
     $lines = @()
     $lines += "verify $Task at $(if ($script:headSha) { $script:headSha } else { '?' }) ($remoteRef), worktree $wt"
     $lines += if ($okAll) { "RESULT: ok ($(@($stepsOut | Where-Object { $_.status -eq 'ok' }).Count) steps ok)" } else { "RESULT: FAILED at step $failedStep" }
+    $nameW = [math]::Max(10, (@($stepsOut | ForEach-Object { "$($_.name)".Length }) | Measure-Object -Maximum).Maximum)
     foreach ($s in $stepsOut) {
         $detail = if ($s.error) { $s.error } elseif ($s.note) { $s.note } else { '' }
-        $lines += ("{0,-10} {1,-8} {2,7} s  {3}" -f $s.name, $s.status, $(if ($null -ne $s.seconds) { $s.seconds } else { '-' }), $detail)
+        $lines += (("{0,-" + $nameW + "} {1,-8} {2,7} s  {3}") -f $s.name, $s.status, $(if ($null -ne $s.seconds) { $s.seconds } else { '-' }), $detail)
     }
     if ($script:screens.Count) { $lines += "screenshots: $($script:screens.Count) (look at each; the sheet first): $(@($script:screens | Where-Object { $_ -like '*sheet*' }) -join ', ')" }
     $lines += "summary: $file"
@@ -458,6 +459,11 @@ function Get-SweepParts {
     if ($Fixture) { $raw = "$($answers.listParts)"; $code = 0 }
     else {
         $root = if (Test-Path (Join-Path $wt 'tools\sweep.ps1')) { $wt } else { $main }
+        # A sweep.ps1 without the switch takes -ListParts for nothing and starts a sweep (T296's dry run on a main before
+        # T292: it made an out\sweep-<date> folder and stopped only at a port another sweep held).
+        if ((Get-Content -Raw (Join-Path $root 'tools\sweep.ps1')) -notmatch '\$ListParts\b') {
+            $r.error = "$(Join-Path $root 'tools\sweep.ps1') has no -ListParts switch (T292's): the sweep's order cannot be read"; $script:sweepParts = $r; return $r
+        }
         $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'tools\sweep.ps1'), '-ListParts')
         $r.command = "$root> powershell.exe " + (($argv | ForEach-Object { Quote $_ }) -join ' ')
         $script:commands.Add([ordered]@{ step = $script:current; id = 'list-parts'; command = $r.command })
@@ -770,7 +776,8 @@ if ($script:bootRan -or $script:sweepRan -or $DryRun -or $Only -contains 'guard'
 
 
 if ($DryRun) {
-    Say "dry run: $($script:commands.Count) commands listed, nothing run"
+    Say "dry run: $($script:commands.Count) commands listed, nothing run$(if ($script:failed) { "; step $($script:failed) cannot run as given" })"
+    if ($script:failed) { exit 1 }
     exit 0
 }
 Write-Summary
