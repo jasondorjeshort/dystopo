@@ -57,6 +57,7 @@ logLines: 369                   log lines read; logError the reason when logcat 
 s t=1794293551166 up=17 pid=3979 heapKb=70784 nativeKb=31567 pssKb=166374 threads=362 fds=242 demServed=5 ...
 
 == starts                       `0.1.25-alpha cold, first frame 1.20 s, longest stall 0.40 s, finished`
+                                (T302: a cold start adds ` | firstFrameMs=1200 prepare=196 ...`, `dump-scan --recent-stats`)
 == diagnostics                  the Technical details lines
 == logcat                       logcat -v threadtime lines
 ```
