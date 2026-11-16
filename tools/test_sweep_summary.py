@@ -122,6 +122,42 @@ try:
     os.makedirs(os.path.join(d, "a11y"))
     open(os.path.join(d, "a11y", "a11y-sheet.png"), "wb").close()
     assert ("Accessibility, offending nodes outlined", "a11y sheet", os.path.join("a11y", "a11y-sheet.png")) in summary.sheet_images(d)
+
+    # T289 (T288's report): `changes` keeps the diff's three --first lists when the summary is written again.
+    write("changes.json", json.dumps({"count": 1, "paired": 3, "changed": [{"path": "ui/features/drive-fuel.png", "first": ["drive"]}],
+                                      "added": [], "removed": [], "prev": "x/sweep-1", "firstMissing": ["nosuchscreen"],
+                                      "firstUnchanged": ["settings"], "firstAdded": ["ui/features/drive-row.png"]}))
+    ch = summary.changes(d)
+    assert ch["firstMissing"] == ["nosuchscreen"] and ch["firstUnchanged"] == ["settings"], ch
+    assert ch["firstAdded"] == ["ui/features/drive-row.png"] and ch["first"] == ["ui/features/drive-fuel.png"], ch
+    write("changes.json", json.dumps({"count": 0, "changed": []}))
+    assert summary.changes(d)["firstMissing"] == [] and summary.changes(d)["firstAdded"] == []
+    # ... through main(): a rerun over a folder whose changes.json carries the lists writes them into summary.json.
+    write("changes.json", json.dumps({"count": 0, "changed": [], "firstMissing": ["nosuchscreen"], "firstUnchanged": [], "firstAdded": []}))
+    write("steps.tsv", "sync-sim\t0\t1.0\t\nroute-sheet\t0\t104.0\t\n")
+
+    # T289: the route-sheet part's entry and summary.json's routeSheet counts.
+    write("route-sheet.json", "[route-sheet] a: 1 m\n" + json.dumps(
+        {"routes": 4, "planned": 3, "pictures": 2, "skipped": [{"name": "grand-canyon-hike", "why": "no out/grand-canyon-outdoors.pmtiles"}],
+         "noPicture": [{"name": "b", "why": "no DEM pack"}], "failed": [], "seconds": 12.5}))
+    got = summary.PARTS["route-sheet"](d, "route-sheet")
+    assert got == {"routes": 4, "planned": 3, "pictures": 2, "skipped": ["grand-canyon-hike"], "noPicture": ["b"],
+                   "failed": [], "routeSeconds": 12.5}, got
+    assert summary.route_changes(d) is None, "no route-changes.json, no entry"
+    write("route-changes.json", json.dumps({"prev": "C:/x/sweep-1", "count": 1, "changed": [{"name": "a", "why": ["timeS", "line"]}],
+                                            "new": ["c"], "removed": [], "unchanged": ["b"], "skipped": ["grand-canyon-hike"],
+                                            "failed": [], "pages": [{"png": os.path.join(d, "route-changes.png")}]}))
+    rc = summary.route_changes(d)
+    assert (rc["changed"], rc["new"], rc["skipped"], rc["removed"], rc["unchanged"], rc["failed"]) == (1, 1, 1, 0, 1, 0), rc
+    assert rc["routes"] == {"a": ["timeS", "line"]} and rc["prev"] == "sweep-1" and rc["png"][0].endswith("route-changes.png"), rc
+    import subprocess, sys
+    subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), d, "--no-sheet"], check=False, capture_output=True)
+    with open(os.path.join(d, "summary.json"), encoding="utf-8") as f:
+        s = json.load(f)
+    assert s["changes"]["firstMissing"] == ["nosuchscreen"], s.get("changes")
+    assert s["routeSheet"]["changed"] == 1 and s["parts"]["route-sheet"]["planned"] == 3, s
+    write("route-changes.json", json.dumps({"error": "boom"}))
+    assert summary.route_changes(d)["error"] == "boom"
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
