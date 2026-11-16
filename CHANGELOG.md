@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-16
 
+- T301: Send diagnostics ends in a share (app lane, first)
 - T294: The a11y baseline keys a size the same in kB and MB (capture lane, first; chore-sized)
 - T296: Verification by script: a run in sweep order, a Checks file, and a Haiku-class verifier where it suffices (process lane)
 - T298: The usage meter and tokens per agent, recorded by hooks (process lane, merged last)
