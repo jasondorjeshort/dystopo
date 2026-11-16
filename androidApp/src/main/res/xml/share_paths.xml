@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- T272: what the app's FileProvider (the manifest's ${applicationId}.gpxshare) may offer: the GPX files Share GPX writes
-     to cacheDir/share/ (app/SaveFile.kt, ShareGpx), nothing else. -->
+     to cacheDir/share/ (app/SaveFile.kt, ShareGpx), and T301's diagnostic dump copy in cacheDir/share/diagnostics/
+     (reports/DiagnosticDump.kt, Send diagnostics' Share), nothing else. -->
 <paths>
     <cache-path name="share" path="share/" />
 </paths>

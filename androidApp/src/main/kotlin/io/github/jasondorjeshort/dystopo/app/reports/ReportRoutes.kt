@@ -40,6 +40,12 @@ import java.io.File
  * - `POST /debug/dump/sample`: one sample now, written to the ring (`line`), so a tour need not wait a minute a line.
  * - `POST /debug/dump/save`: what the Send diagnostics tap does (the dump made, then the save dialog opened; drive the
  *   dialog with taps); 503 while the app is in the background.
+ * - T301, `GET /debug/dump/issue`: the newest saved dump's Open GitHub issue link ([DiagnosticDump.issueLink]): `name` (as
+ *   the folder named it), `folder` (null where the uri names none), `message` (the line under the button), `title`, `url`,
+ *   `urlLength`, `encodedBodyLength` (at most 4,000), `titleOnly`, `body`; 404 before a save.
+ * - T301, `POST /debug/dump/share`: what the Share tap does (the chooser opened on the share copy through T272's
+ *   FileProvider): `opened`, `message` (a failure's line, else null), `shares`, `last` (`file`, `bytes`, `uri`, `mime`,
+ *   `action`, `subject`); 404 before a save, 503 in the background. `GET /debug/dump/sampler` `saved` and `share` carry the same.
  */
 object ReportRoutes {
     private val ONE = Regex("^/reports/([A-Za-z0-9._-]+)$")
@@ -63,6 +69,8 @@ object ReportRoutes {
             "GET" to "/debug/dump/sampler" -> Response.json(sampler())
             "POST" to "/debug/dump/sample" -> Response.json(mapOf("line" to MemorySampler.sampleNow(app), "sampler" to MemorySampler.json()))
             "POST" to "/debug/dump/save" -> saveDump(app)
+            "GET" to "/debug/dump/issue" -> issue()
+            "POST" to "/debug/dump/share" -> shareDump(app)
             else -> null
         }
     }
@@ -147,12 +155,33 @@ object ReportRoutes {
         },
         "message" to ReportUi.dumpMessage,
         "saveFile" to io.github.jasondorjeshort.dystopo.app.SaveFile.json(),
+        "saved" to DiagnosticDump.saved?.let { linkedMapOf("name" to it.name, "folder" to it.folder, "copy" to it.copy?.path, "copyBytes" to it.copy?.length(), "urlLength" to it.link.url.length) },
+        "share" to linkedMapOf("shares" to DiagnosticDump.shares, "last" to DiagnosticDump.lastShare, "action" to ReportUi.dumpAction),
     )
 
     private fun saveDump(app: DystopoApp): Response {
         app.map.backgroundReason()?.let { return Response.json(mapOf("error" to "the app is in the background", "reason" to it), 503) }
-        app.map.onMain { DiagnosticDump.save(ReportUi::sayDump) }
+        app.map.onMain { ReportUi.dumpAction = null; DiagnosticDump.save(ReportUi::sayDump, ReportUi::dumpReady) }
         return Response.json(mapOf("started" to true))
+    }
+
+    /** T301: the saved dump's issue link. */
+    private fun issue(): Response {
+        val s = DiagnosticDump.saved ?: return Response.json(mapOf("error" to "no dump saved yet"), 404)
+        return Response.json(linkedMapOf("name" to s.name, "folder" to s.folder, "message" to ReportUi.dumpMessage) + linkedMapOf(
+            "title" to s.link.title, "url" to s.link.url, "urlLength" to s.link.url.length, "encodedBodyLength" to s.link.encodedBodyLength,
+            "titleOnly" to s.link.titleOnly, "body" to s.link.body,
+        ))
+    }
+
+    /** T301: what the Share tap does. */
+    private fun shareDump(app: DystopoApp): Response {
+        app.map.backgroundReason()?.let { return Response.json(mapOf("error" to "the app is in the background", "reason" to it), 503) }
+        val s = DiagnosticDump.saved ?: return Response.json(mapOf("error" to "no dump saved yet"), 404)
+        val line = app.map.onMain {
+            DiagnosticDump.share(app.map.activity ?: app, s).also { ReportUi.dumpAction = it }
+        }
+        return Response.json(linkedMapOf("opened" to (line == null), "message" to line, "shares" to DiagnosticDump.shares, "last" to DiagnosticDump.lastShare))
     }
 
     /** The exception `POST /debug/crash` throws. */
