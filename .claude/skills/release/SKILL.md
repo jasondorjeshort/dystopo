@@ -30,13 +30,23 @@ main is green, without asking again.
    APK, owner's policy 2026-10-11; per-ABI files return at beta or once a server picks the ABI) and
    checks the certificate (`apksigner verify --print-certs`: "CN=Dystopo release", fingerprint
    `47:31:38:10...`), the version (`aapt dump badging`) and `SHA256SUMS.txt`.
-4. Write the notes by hand from the CHANGELOG section (install steps for a phone, what works, known
-   limits, checksums and licences); scan them with `PrivacyCheck`. T259: the sweep run with `-Prev <the last
-   release's sweep folder>` wrote `changes.png` (every screen that changed, before and after); view it, copy it as
-   `dystopo-<tag>-changes.png`, attach it to the draft (`gh release upload <tag> <that file>`), and start the notes'
-   "What changed" with a line linking it
-   (`https://github.com/jasondorjeshort/dystopo/releases/download/<tag>/dystopo-<tag>-changes.png`) and the count
-   from `summary.json` `changes`. No sheet (no `-Prev`, or `count` 0 with nothing new): say so on that line.
+4. The notes: a script writes the mechanical sections, the coordinator the two blocks (T297). T259: the sweep
+   run with `-Prev <the last release's sweep folder>` wrote `changes.png` (every screen that changed, before and
+   after); view it, copy it as `dystopo-<tag>-changes.png` and attach it to the draft first (`gh release upload
+   <tag> <that file>`), so the Files list names it. Then:
+   - Run `python -I tools/release-notes.py <tag> --sweep <the release sweep's folder> [--changes <a rebuilt
+     changes.json>] --out <notes.md>` (`JAVA_HOME` set). It reads the draft's assets and `SHA256SUMS.txt` through
+     `gh` (a checksum that disagrees with an asset's digest exits 3), the sheet's counts from `summary.json`
+     `changes` or `--changes` (a sheet rebuilt without some pairs), the CHANGELOG section and the previous
+     release's notes, and writes the opening's fixed sentences, Install on a phone, Files, Checksums and licences
+     and the certificate line whole. It runs `PrivacyCheck` on its output and exits 1 on a hit.
+   - Write the two marked blocks: `what-changed` (the opening's last sentences, then "What changed": keep the
+     sheet's line with its link and counts, or the no-sheet line, add what the sheet shows, rewrite the CHANGELOG
+     items for a phone user; `hint:` comments name the sweep's red, retried and left-out parts) and `known-limits`
+     (the previous notes' limits carried with "Still from <prev>:": strike what landed, add this build's, fill in
+     the draft-check line). Delete the marker and hint lines.
+   - Scan again: the same command with `--check <notes.md>` in place of `--out` must exit 0 (the notes equal the
+     script's outside the blocks, no marker left, `PrivacyCheck` clean; 4 names the first line that differs).
 5. **Install from the draft before publishing** (T81): one agent downloads the APKs from the draft
    itself (`gh release download <tag> -p "*x86_64.apk" -p "*arm64-v8a.apk"`, never a local build) and
    on a fresh emulator runs `python -I tools/android-ui.py upgrade --serial <serial> --prev-apk <the
