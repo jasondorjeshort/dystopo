@@ -147,5 +147,4 @@ Four read-only reviewers read the idea files against the code; five Sonnet-class
   signals and stops; Valhalla's costing docs; the 2023 MUTCD text on the speed differential; the parcel carrier's
   own statement. These are a short read for the pass that builds the drive cluster.
 - On the OSM dev server, at ADR 0042's build: a custom-scheme redirect, and whether `private` visibility still works.
-- Promote: the hook fields to `docs/reference/` when the per-agent cost hook is built; the BLE and LoRa licence
-  facts to ADR 0051's record at its next amendment.
+- Promote: the hook fields to `docs/reference/` with the cost hook; BLE and LoRa facts to ADR 0051's next amendment.
