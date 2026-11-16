@@ -1,6 +1,9 @@
 """T147: sweep-summary.py offline: load_last_json with log text around a report, and the both-units part's four
 screenshots (both phones after each carry); T154: the diagnostics part; T268: the startup part; T270: the a11y part;
-T289: `changes` keeps the diff's three --first lists on a rerun, the route-sheet part and `routeSheet`'s counts.
+T289: `changes` keeps the diff's three --first lists on a rerun, the route-sheet part and `routeSheet`'s counts;
+T292: the retry's classification on fixture logs of each device class, each outcome code and failures never retried,
+`--retry-check`, `retried`, `reruns` (with -RerunOf), the sheet's mark, other changes.json lists kept, and sweep.ps1's
+-ListParts order against its Part calls.
 
     python -I tools/test_sweep_summary.py
     python -I -m unittest discover -s tools -p test_sweep_summary.py
@@ -160,6 +163,147 @@ try:
     assert s["routeSheet"]["changed"] == 1 and s["parts"]["route-sheet"]["planned"] == 3, s
     write("route-changes.json", json.dumps({"error": "boom"}))
     assert summary.route_changes(d)["error"] == "boom"
+
+    # T292 (T295's lists, T289's rerun bug): any other list in changes.json is kept on a rerun of the summary.
+    write("changes.json", json.dumps({"count": 0, "changed": [], "leftOut": ["ui/features/a.png"], "unknown": ["device/b.png"],
+                                      "renumbered": [{"x": 1}]}))
+    ch = summary.changes(d)
+    assert ch["leftOut"] == ["ui/features/a.png"] and ch["unknown"] == ["device/b.png"] and "renumbered" not in ch, ch
+
+    # T292: the retry. Fixture logs of each device class, each outcome code, and failures that are never retried.
+    import time
+    r = os.path.join(d, "retry-fixtures")
+    os.makedirs(os.path.join(r, "ui", "features"))
+    os.makedirs(os.path.join(r, "device"))
+
+    def put(rel, text, mtime=None):
+        p = os.path.join(r, *rel.split("/"))
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        if mtime is not None:
+            os.utime(p, (mtime, mtime))
+
+    device_class = {
+        "device-offline": ("release.err.log", "Open-View 1\nadb.exe: error: device offline\n"),
+        "device-not-found": ("routes.err.log", "error: device 'emulator-5560' not found\n"),
+        "adb-permission-denied": ("features.json", "[ui] install-map: FAILED\n" + json.dumps(
+            {"ok": False, "steps": [{"step": "install-map", "ok": False, "error": "mkdir /sdcard/Android: Permission denied"}]})),
+        "storage-not-ready": ("device/emu.err.log", "the guest's storage was not ready 180 s after sys.boot_completed (pm path android: '')\n"),
+    }
+    for reason, (rel, text) in device_class.items():
+        got = summary.retry_reason("1", "emulator private 4.4 GB at the start", [(rel, text)])
+        assert got and got["reason"] == reason and got["file"] == rel, (reason, got)
+    # The outcome codes of sweep.ps1's Part: retried on the code alone, the line is the note's first clause.
+    for code in ("emulator-gone", "guard-stop"):
+        # The order sweep.ps1 writes (T292's sweep): the memory clause and retry counts first, then how the emulator went.
+        got = summary.retry_reason(code, "emulator private 4.7 GB at the start, peak 5.1 GB, none at the end; captureRetries 52; "
+                                         "emulator-5560 stopped while the part ran, not by its guard; the part's own result: 1", [])
+        assert got == {"reason": code, "line": "emulator-5560 stopped while the part ran, not by its guard", "file": "steps.tsv"}, got
+    # A device-class line in the note (a body that threw) is enough too.
+    assert summary.retry_reason("error", "adb -s emulator-5560 shell getprop failed: error: device offline", [])["reason"] == "device-offline"
+    # Never retried: an assertion, a golden, a test, a budget; a timeout, a skip or a refused boot even with a device line;
+    # the success line of the storage wait, and a "Permission denied" that is not the device's.
+    never = [("1", "", [("release.json", json.dumps({"ok": False, "probeOk": False, "error": "probe /dem: 200, expected 402"}))]),
+             ("1", "", [("check.log", "StyleParityTest > golden rainier-z13 FAILED\nAssertionError: expected 0 differing pixels\n")]),
+             ("1", "", [("startup.json", json.dumps({"budget": {"red": True, "reasons": ["stage composition: over its ceiling"]}}))]),
+             ("1", "rebooted emulator-5560 before release; guest storage ready 4.3 s after sys.boot_completed", []),
+             ("1", "", [("x.log", "PermissionError: [Errno 13] Permission denied: 'C:/tmp/x'\n")]),
+             ("timeout", "timed out at its ceiling of 900 s; error: device offline", []),
+             ("skip", "error: device offline", []), ("cap-refused", "", [("e.log", "device offline")]), ("0", "", [])]
+    for code, note, texts in never:
+        assert summary.retry_reason(code, note, texts) is None, (code, note, texts)
+    # A recovered device error early in a long log is not the failure: only the last LOG_TAIL lines are read.
+    t0 = time.time()
+    put("tour.log", "error: device offline\n" + "".join(f"[tour] view {i}: ok\n" for i in range(summary.LOG_TAIL + 5)) + "AssertionError: 3 views failed\n", t0 - 3600)
+    assert summary.retry_reason("1", "", summary.part_texts(r, ["tour.log"])) is None
+    put("tour.log", "error: device offline\nAssertionError: 3 views failed\n", t0 - 3600)
+    assert summary.retry_reason("1", "", summary.part_texts(r, ["tour.log"]))["reason"] == "device-offline"
+
+    # retry_check over a folder: only files written since the run started count, the first run's text files are copied to
+    # retry/<part>/ (no PNG), and retries.json records it; an assertion is not retried and leaves no record.
+    put("release.err.log", "adb.exe: error: device offline\n", t0 - 3600)  # an older sweep's line: not this run's
+    put("features.json", "[ui] install-map: FAILED\n" + json.dumps({"ok": False, "steps": [{"step": "x", "ok": False, "error": "wrong card: 12 km, expected 13 km"}]}))
+    assert summary.retry_check(r, "features", "1", t0 - 1, 40.0, "") == {"retry": False}
+    assert not os.path.exists(os.path.join(r, "retries.json"))
+    put("features.err.log", "Traceback ...\nsubprocess error: adb: error: failed to copy: remote couldn't create file: Permission denied\n")
+    with open(os.path.join(r, "ui", "features", "01-map.png"), "wb") as f:
+        f.write(b"png")
+    got = summary.retry_check(r, "features", "1", t0 - 1, 40.0, "emulator private 4.4 GB")
+    assert got["retry"] and got["reason"] == "adb-permission-denied" and got["file"] == "features.err.log", got
+    assert os.path.exists(os.path.join(r, "retry", "features", "features.err.log"))
+    assert os.path.exists(os.path.join(r, "retry", "features", "features.json"))
+    assert not os.path.exists(os.path.join(r, "retry", "features", "ui", "features", "01-map.png")), "no PNG copied"
+    assert not os.path.exists(os.path.join(r, "retry", "features", "release.err.log")), "an older file is not this run's"
+    # The copies under retry/ are never read again as the part's own files.
+    assert summary.part_files(r, t0 - 1) == ["features.err.log", "features.json"], summary.part_files(r, t0 - 1)
+    # The CLI: one JSON line, retries.json appended (a second retry of another part).
+    import subprocess, sys
+    put("device/note.txt", "emulator-5560 stopped while the part ran, not by its guard (no stop line); the part's own result: 1")
+    out = subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), r, "--retry-check", "release", "--code",
+                          "emulator-gone", "--since", str(t0 - 1), "--seconds", "61.5", "--note-file", os.path.join(r, "device", "note.txt")],
+                         capture_output=True, text=True, check=True).stdout
+    assert json.loads(out)["reason"] == "emulator-gone", out
+    with open(os.path.join(r, "retries.json"), encoding="utf-8") as f:
+        rec = json.load(f)
+    assert [(x["part"], x["reason"], x["code"]) for x in rec] == [("features", "adb-permission-denied", "1"), ("release", "emulator-gone", "emulator-gone")], rec
+
+    # The summary of that folder: each retried part's two lines (the last decides), `retried` and `reruns`, the sheet's mark.
+    put("steps.tsv", "release\temulator-gone\t61.5\tretried once (emulator-gone: ...)\nrelease\t0\t120.0\tthe retry\n"
+                     "features\t1\t40.0\tretried once (adb-permission-denied: ...)\nfeatures\t1\t300.0\tthe retry\n"
+                     "recenter\t0\t50.0\t\nmatrix\tskip\t0\tneeds -Matrix\n")
+    subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), r, "--no-sheet"], check=False, capture_output=True)
+    with open(os.path.join(r, "summary.json"), encoding="utf-8") as f:
+        s = json.load(f)
+    rel_, feat = s["parts"]["release"], s["parts"]["features"]
+    assert rel_["ok"] and rel_["passedOnRetry"] and rel_["runs"] == 2 and rel_["earlier"][0]["exit"] == "emulator-gone", rel_
+    assert not feat["ok"] and "passedOnRetry" not in feat and feat["runs"] == 2, feat
+    assert s["failed"] == ["features"] and not s["ok"] and s["totalSeconds"] == 571.5, s
+    assert [(x["part"], x["reason"], x["passedOnRetry"], x["firstRun"]["exit"]) for x in s["retried"]] == [
+        ("features", "adb-permission-denied", False, "1"), ("release", "emulator-gone", True, "emulator-gone")], s["retried"]
+    assert s["reruns"] == {"release": 1, "features": 1}, s["reruns"]
+    with open(os.path.join(r, "sheet.html"), encoding="utf-8") as f:
+        page = f.read()
+    assert "ok on retry: emulator-gone" in page and "passed on retry: release" in page and "FAIL (2 runs)" in page, page[:600]
+    # A sweep with no retry has an empty `retried` and `reruns`.
+    clean = os.path.join(d, "retry-clean")
+    os.makedirs(clean)
+    with open(os.path.join(clean, "steps.tsv"), "w", encoding="utf-8") as f:
+        f.write("probe\t0\t4.0\t\n")
+    subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), clean, "--no-sheet"], check=False, capture_output=True)
+    with open(os.path.join(clean, "summary.json"), encoding="utf-8") as f:
+        s = json.load(f)
+    assert s["retried"] == [] and s["reruns"] == {} and "rerunOf" not in s, s
+
+    # -RerunOf: a -Only rerun into a second folder counts against the first, and follows the first's own rerunOf.
+    second = os.path.join(d, "sweep-rerun")
+    os.makedirs(second)
+    with open(os.path.join(second, "steps.tsv"), "w", encoding="utf-8") as f:
+        f.write("features\t0\t290.0\t\nrecenter\t0\t40.0\t\nprobe\t0\t5.0\t\n")
+    with open(os.path.join(second, "meta.json"), "w", encoding="utf-8") as f:
+        json.dump({"rerunOf": r}, f)
+    third = os.path.join(d, "sweep-rerun2")
+    os.makedirs(third)
+    with open(os.path.join(third, "steps.tsv"), "w", encoding="utf-8") as f:
+        f.write("features\t0\t280.0\t\n")
+    with open(os.path.join(third, "meta.json"), "w", encoding="utf-8") as f:
+        json.dump({"rerunOf": second}, f)
+    # features: retried in the first (1), rerun in the second (+1); recenter ran in the first; probe did not (not a rerun).
+    assert summary.reruns(second) == {"features": 2, "recenter": 1}, summary.reruns(second)
+    assert summary.reruns(third) == {"features": 3}, summary.reruns(third)
+    subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), third, "--no-sheet"], check=False, capture_output=True)
+    with open(os.path.join(third, "summary.json"), encoding="utf-8") as f:
+        s = json.load(f)
+    assert s["rerunOf"] == "sweep-rerun" and s["reruns"] == {"features": 3}, s
+
+    # sweep.ps1 -ListParts: its $runOrder is the order of the Part calls in the script (the order they run in).
+    import re
+    with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as f:
+        ps = f.read()
+    m = re.search(r"\$runOrder = @\(([^)]*)\)", ps)
+    order = re.findall(r"'([\w-]+)'", m.group(1))
+    calls = re.findall(r"^\s*\$\w+ = Part '([\w-]+)'", ps, re.M)
+    assert order == calls, (order, calls)
+    assert order.index("startup") > order.index("bothunits") and order.index("a11y") > order.index("startup") and order[-1] == "apk-strings", order
 finally:
     shutil.rmtree(d, ignore_errors=True)
 

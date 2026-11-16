@@ -87,11 +87,31 @@
 # T289: with -Prev and a route-sheet folder, tools/route-diff.py diff runs before the summary: route-changes.png (each
 # changed route's old and new picture side by side with the figures and their differences, then the new routes) and
 # route-changes.json; summary.json's routeSheet has the counts (changed, new, skipped, removed). A changed route only shows.
+# T292, the retry: a device part whose first run failed for the machine's sake is run once more, after a reboot of the
+# sweep's emulator and with a fresh ceiling. The machine's sake is the Part function's outcome code emulator-gone or
+# guard-stop, or a device-class line (device offline, device not found, an adb or /sdcard "Permission denied", the guest's
+# storage not ready after a boot) in the part's note, its logs' last 100 lines or its reports' error strings; the list is
+# DEVICE_LINES in tools/sweep-summary.py, which decides (--retry-check). A golden, test, assertion or budget failure, a
+# timeout, a skip and a refused boot are never retried, nor is a part without a device. steps.tsv keeps both runs (the first
+# line's note starts "retried once (<reason>: <line> [<file>]", the second's "the retry after <reason>, with a fresh ceiling
+# of <n> s"), the first run's text files are copied to retry\<part>\ (PNGs are not), and retries.json records it;
+# summary.json's `retried` lists each retry, `reruns` counts per part the runs after the first whatever the cause, and the
+# sheet marks a part that passed on its retry. -RerunOf <earlier sweep folder> on a -Only rerun into a second folder counts
+# its parts as reruns of that folder's (meta.json rerunOf; with -SummaryOnly it is written into an existing folder's meta).
+# -DiffArgs '<words>' passes extra arguments to the sweep-diff.py call (with -Prev; double quotes keep a value whole).
+# -ListParts prints one JSON object and exits, running nothing:
+#   {"schema":1,"parts":[{"order":1,"name":"check","device":false,"build":null,"default":true,"ceilingS":2400}, ...]}
+# one entry per part in the order the script runs them (not $allParts: startup and a11y after bothunits, apk-strings last);
+# device: needs the sweep's emulator; build: "debug", "release" (the release APK) or null; default: runs in a sweep with no
+# -Only (matrix is opt-in; bothunits is on unless -NoBothUnits); ceilingS: the part's ceiling with -PartTimeouts applied.
+# New fields may be added; schema changes only when one is renamed or removed.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1                     # everything
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDevice           # no emulator on this machine
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Skip check,tour    # parts by name
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only live          # just these parts
+#   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -Only a11y -RerunOf out\sweep-<date>   # T292: a counted rerun
+#   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -ListParts          # T292: the parts in run order, JSON
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoBothUnits        # no second emulator (T147: bothunits is on by default)
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDaemon -EmuMemory 3072   # T170: no Gradle daemon left running, 3 GB emulators
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -PartTimeouts update=2000      # T191: one part's ceiling in seconds
@@ -116,6 +136,9 @@
 # out\ itself; in a worktree they are copied (never linked) from -DataDir, default the main checkout's out\.
 # Only those files are copied, so packs of other places in the main out\ never reach a worktree.
 # DYSTOPO_CACHE defaults to the main checkout's cache\ and JAVA_HOME to the JDK 21 named in docs/reference/machines.md.
+# T292 (the coordinator's ask): an unknown parameter is refused before anything runs (exit 1, no sweep folder made); before,
+# it fell into $args and a real sweep started. No positional arguments either (a stray word bound to -Date).
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$Date = (Get-Date -Format 'yyyyMMdd-HHmm'),
     # Relative to the checkout only (T154); default out\sweep-<Date>.
@@ -176,6 +199,13 @@ param(
     [string]$Prev = '',
     [string[]]$First = @(),
     [switch]$SummaryOnly,
+    # T292: extra arguments for the sweep-diff.py call, one string split at spaces (double quotes keep a value whole).
+    [string]$DiffArgs = '',
+    # T292: the sweep folder this one reruns (a -Only rerun into a second folder; relative to the checkout or absolute, only
+    # read): meta.json's rerunOf, so summary.json's reruns counts each part run again here against that folder.
+    [string]$RerunOf = '',
+    # T292: print the parts in the order they run as JSON and exit (the shape is in the header).
+    [switch]$ListParts,
     # Playwright browser channel for demo-check.py and the sheet ('' = bundled chromium).
     [string]$Channel = 'chrome',
     # T105: the server the debug build's device parts use, set in the app before its first start (android-emu.ps1 -Server)
@@ -252,6 +282,22 @@ foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Objec
 function Part-Ceiling([string]$name) { if ($ceilings.ContainsKey($name)) { $ceilings[$name] } else { $PartTimeout } }
 $outsideTimeoutS = 1800
 
+# T292: the order the Part calls below run in (not $allParts: startup and a11y run after bothunits, apk-strings last);
+# tools/test_sweep_summary.py checks it against the calls. -ListParts prints it (the header gives the shape) and exits.
+$runOrder = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'release', 'first-run', 'features', 'recenter', 'permissions', 'diagnostics', 'upgrade', 'background', 'network', 'update', 'matrix', 'apk-strings')
+if ($ListParts) {
+    $debugBuild = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y')
+    $i = 0
+    $list = foreach ($p in $runOrder) {
+        $i++
+        [ordered]@{ order = $i; name = $p; device = ($deviceParts -contains $p)
+            build = $(if ($debugBuild -contains $p) { 'debug' } elseif ($deviceParts -contains $p -or $p -eq 'apk-strings') { 'release' } else { $null })
+            default = ($p -ne 'matrix'); ceilingS = (Part-Ceiling $p) }
+    }
+    [ordered]@{ schema = 1; parts = @($list) } | ConvertTo-Json -Depth 4 -Compress
+    exit 0
+}
+
 # --- environment -------------------------------------------------------------------------------------------
 foreach ($jdk in @('C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot', 'C:\Program Files\Java\jdk-21')) { # the two PCs (machines.md)
     if (-not $env:JAVA_HOME -and (Test-Path $jdk)) { $env:JAVA_HOME = $jdk }
@@ -291,6 +337,12 @@ if ($Prev) {
     $Prev = if ([IO.Path]::IsPathRooted($Prev)) { [IO.Path]::GetFullPath($Prev) } else { [IO.Path]::GetFullPath((Join-Path $repo $Prev)) }
     if (-not (Test-Path -LiteralPath $Prev -PathType Container)) { throw "-Prev is not a folder: '$Prev'" }
 }
+# T292: -DiffArgs split into words for sweep-diff.py; -RerunOf resolved like -Prev and checked to be a sweep folder.
+$extraDiffArgs = @([regex]::Matches($DiffArgs, '"([^"]*)"|(\S+)') | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value } })
+if ($RerunOf) {
+    $RerunOf = if ([IO.Path]::IsPathRooted($RerunOf)) { [IO.Path]::GetFullPath($RerunOf) } else { [IO.Path]::GetFullPath((Join-Path $repo $RerunOf)) }
+    if (-not (Test-Path -LiteralPath (Join-Path $RerunOf 'steps.tsv'))) { throw "-RerunOf is not a sweep folder (no steps.tsv): '$RerunOf'" }
+}
 function Write-Summary {
     $stepsFile = Join-Path $Out 'steps.tsv'
     if ($Prev -and (Test-Path -LiteralPath $stepsFile)) {
@@ -308,6 +360,7 @@ function Write-Summary {
     if ($Prev) {
         $diffArgs = @('-I', (Join-Path $repo 'tools\sweep-diff.py'), $Prev, $Out, '--channel', $Channel)
         if ($First.Count) { $diffArgs += @('--first', ($First -join ',')) }
+        $diffArgs += $extraDiffArgs # T292: -DiffArgs, as given
         $d0 = Get-Date
         & python @diffArgs | Out-Host
         $diffCode = $LASTEXITCODE
@@ -325,6 +378,13 @@ function Write-Summary {
 }
 if ($SummaryOnly) {
     if (-not (Test-Path -LiteralPath (Join-Path $Out 'steps.tsv'))) { throw "-SummaryOnly needs an existing sweep folder as -Out (no steps.tsv in '$Out')" }
+    if ($RerunOf) { # T292: named after the run, for the summary's reruns
+        $mf = Join-Path $Out 'meta.json'
+        $m = [ordered]@{}
+        if (Test-Path -LiteralPath $mf) { (Get-Content -Raw -LiteralPath $mf | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $m[$_.Name] = $_.Value } }
+        $m['rerunOf'] = $RerunOf
+        $m | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 $mf
+    }
     exit (Write-Summary)
 }
 New-Item -ItemType Directory -Force $Out | Out-Null
@@ -576,7 +636,7 @@ function Get-GuardStops([int]$skip) {
 function Test-EmuLost {
     if (-not $script:emuWatch -or $script:emuLost) { return $false }
     $b = Read-EmuPrivate
-    if (-not $script:emuSeen -or $script:emuWatch -eq 'boot') { return $false } # device-boot: android-emu.ps1 reports its own
+    if (-not $script:emuSeen -or "$($script:emuWatch)" -eq 'boot') { return $false } # device-boot: android-emu.ps1 reports its own. T292: as a string; $true -eq 'boot' is True in PowerShell, so a lost emulator was never seen mid-part, only after the body ended
     if ($null -ne $b) { $script:emuGoneSince = $null; return $false }
     if (-not $script:emuGoneSince) { $script:emuGoneSince = Get-Date; return $false }
     if (((Get-Date) - $script:emuGoneSince).TotalSeconds -lt 20) { return $false }
@@ -590,12 +650,14 @@ function Describe-EmuLost {
 }
 # Before a device part or tour run: reboots the sweep's own emulator when it is past -EmuRebootGB or gone. Returns
 # @{ Ok; Note }: Note is the reboot's line ('' when none was needed); Ok false when the reboot failed.
-function Ensure-Emulator([string]$before) {
+# T292: -Retry <reason> reboots whatever the private bytes: the part is run again after a device-class failure, and a fresh
+# boot is the state its first run should have had.
+function Ensure-Emulator([string]$before, [string]$Retry = '') {
     if ($script:emuBroken) { return @{ Ok = $false; Note = $script:emuBroken } }
     if (-not $script:emulatorStarted) { return @{ Ok = $true; Note = '' } } # one the sweep did not boot is left as it is
     $b = Read-EmuPrivate
-    if ($null -ne $b -and $b -le $EmuRebootGB * 1GB) { return @{ Ok = $true; Note = '' } }
-    $why = if ($null -eq $b) { "$serial was not running" } else { "private $(Format-Gb $b) over $EmuRebootGB GB" }
+    if (-not $Retry -and $null -ne $b -and $b -le $EmuRebootGB * 1GB) { return @{ Ok = $true; Note = '' } }
+    $why = if ($null -eq $b) { "$serial was not running" } elseif ($Retry) { "the retry after $Retry" } else { "private $(Format-Gb $b) over $EmuRebootGB GB" }
     $script:emuReboots++
     $n = $script:emuReboots
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -673,83 +735,114 @@ function Get-PreviousApk([string]$tag, [string]$dir, [string[]]$patterns, [strin
     $apk
 }
 
+# T292: whether a device part's failed first run is run again, and why: tools/sweep-summary.py --retry-check decides (the
+# Part outcome codes emulator-gone and guard-stop, or a device-class line in the note or in what the part wrote since it
+# started; its DEVICE_LINES; a golden, test, assertion, budget or timeout never), copies the run's text files to retry\<part># and appends retries.json. Returns the decision ({retry, reason, line, file}) or $null.
+function Get-RetryReason([string]$name, $code, [string]$note, [datetime]$t0, [double]$seconds) {
+    try {
+        $dir = Join-Path $Out 'retry'
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        $nf = Join-Path $dir "$name-note.txt"
+        [IO.File]::WriteAllText($nf, $note, (New-Object Text.UTF8Encoding $false))
+        $since = ([DateTimeOffset]$t0).ToUnixTimeMilliseconds() / 1000.0 - 1
+        $o = Join-Path $dir "$name-check.json"
+        $c = Run $py @('-I', (Join-Path $repo 'tools\sweep-summary.py'), $Out, '--retry-check', $name, '--code', "$code", '--since', "$since",
+            '--seconds', "$([math]::Round($seconds, 1))", '--note-file', $nf) $o (Join-Path $dir "$name-check.err.log") -TimeoutS 120
+        if ("$c" -ne '0') { Write-Host "[sweep] ${name}: the retry check failed (exit $c, retry\$name-check.err.log); not retried"; return $null }
+        $r = Get-Content -Raw -LiteralPath $o | ConvertFrom-Json
+        if ($r.retry) { Write-Host "[sweep] ${name}: retried once ($($r.reason): $($r.line))"; return $r }
+    } catch { Write-Host "[sweep] ${name}: the retry check failed ($($_.Exception.Message)); not retried" }
+    $null
+}
+
 function Part([string]$name, [scriptblock]$body) {
     if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and $NoBothUnits) { '-NoBothUnits' } else { 'not selected' }); return $false }
     # T233: a device part runs on an emulator under the sweep's threshold (rebooted first when past it or gone), and its
     # private bytes are read while it runs.
     $device = (-not $NoDevice) -and ($deviceParts -contains $name)
-    $rebootNote = ''
-    if ($device -and $name -ne 'device-boot') {
-        $r = Ensure-Emulator $name
-        if (-not $r.Ok) { Step $name 'error' 0 $r.Note; return $false }
-        $rebootNote = $r.Note
-    }
-    if ($device) {
-        $script:guardSkip = Get-GuardLineCount
-        $script:emuWatch = if ($name -eq 'device-boot') { 'boot' } else { $true }
-        $script:emuSeen = $false; $script:emuPeak = 0.0; $script:emuRunPeak = 0.0; $script:emuGoneSince = $null; $script:emuLost = ''
-        $emuStart = Read-EmuPrivate
-    }
-    $t0 = Get-Date
-    $sw = [System.Diagnostics.Stopwatch]::StartNew() # the seconds column: monotonic, so a clock change (DST) cannot make it negative
-    $note = ''
-    $script:partNote = '' # T105: a body may leave a note for its steps.tsv line (a retry and its reason)
-    # T191: the part's ceiling; every Run inside it waits at most until this deadline.
-    $script:partCeiling = Part-Ceiling $name
-    $script:partDeadline = $t0.AddSeconds($script:partCeiling)
-    $script:partTimedOut = ''
-    if ($InjectHang -eq $name) {
-        # T191, a test of the ceiling: a child that starts a grandchild, prints its PID and both sleep past any ceiling.
-        # T233: it also leaves an empty <part>.stdout.json, as a killed device tour does, for the retry count to read.
-        [IO.File]::WriteAllText((Join-Path $Out "$name.stdout.json"), '')
-        $body = { Run $py @('-I', '-c', "import subprocess, sys, time; g = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(100000)']); print('grandchild', g.pid, flush=True); time.sleep(100000)") (Join-Path $Out "$name.hang.log") (Join-Path $Out "$name.hang.err.log") }
-    }
-    try {
-        # The body's last output is the exit code (anything it printed before that is ignored).
-        $code = @(& $body) | Select-Object -Last 1
-        if ($script:partTimedOut) { $code = 'timeout'; $note = $script:partTimedOut } # a body that caught it still timed out
-    } catch {
-        if ($script:partTimedOut) { $code = 'timeout'; $note = $script:partTimedOut }
-        else { $code = 'error'; $note = "$($_.Exception.Message)" }
-    } finally {
-        $script:partDeadline = $null
-    }
-    # T233: what the part did to its emulator, and whether it lost it (its guard, or a stop by hand).
-    if ($device) {
-        $emuEnd = Read-EmuPrivate
-        $script:emuWatch = $false
-        if (-not $script:emuLost -and $script:emuSeen -and $null -eq $emuEnd -and $name -ne 'device-boot') { $script:emuLost = Describe-EmuLost }
-        if ($script:emuLost) {
-            $how = if ($script:emuLost -match 'guard stopped') { 'guard-stop' } else { 'emulator-gone' }
-            $rest = if ("$code" -eq 'error') { $note.Replace($script:emuLost, '').TrimStart(';', ' ') } else { (@("the part's own result: $code", $note) | Where-Object { $_ }) -join '; ' }
-            $note = (@($script:emuLost, $rest) | Where-Object { $_ }) -join '; '
-            $code = $how
+    # T292: a device part whose first run failed for the machine's sake (Get-RetryReason) is run once more, after a reboot
+    # of the sweep's emulator, with a fresh ceiling; each run has its steps.tsv line, the first one saying why it was retried.
+    $retry = $null
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $rebootNote = ''
+        if ($device -and $name -ne 'device-boot') {
+            $r = Ensure-Emulator $name $(if ($retry) { $retry.reason } else { '' })
+            if (-not $r.Ok) { Step $name 'error' 0 $r.Note; return $false }
+            $rebootNote = $r.Note
         }
-        $peak = if ($script:emuSeen) { $script:emuPeak } else { $null }
-        $mem = "emulator private $(Format-Gb $emuStart) at the start, peak $(Format-Gb $peak), $(Format-Gb $emuEnd) at the end" +
-            $(if ($null -ne $emuStart -and $null -ne $peak) { " (+$(Format-Gb ($peak - $emuStart)) to the peak)" } else { '' })
-        $script:partNote = (@($rebootNote, $script:partNote, $mem) | Where-Object { $_ }) -join '; '
-        $tsv = Join-Path $dev 'emu-private.tsv'
-        if (-not (Test-Path $tsv)) { Set-Content -Encoding ascii $tsv "part`tstartGB`tpeakGB`tendGB`trebooted`tlost" }
-        $g = { param($v) if ($null -eq $v) { '' } else { '{0:f2}' -f ($v / 1GB) } }
-        Add-Content -Encoding ascii $tsv ("$name`t$(& $g $emuStart)`t$(& $g $peak)`t$(& $g $emuEnd)`t$([bool]$rebootNote)`t$($script:emuLost -replace '[\t\r\n]', ' ')")
+        if ($device) {
+            $script:guardSkip = Get-GuardLineCount
+            $script:emuWatch = if ($name -eq 'device-boot') { 'boot' } else { $true }
+            $script:emuSeen = $false; $script:emuPeak = 0.0; $script:emuRunPeak = 0.0; $script:emuGoneSince = $null; $script:emuLost = ''
+            $emuStart = Read-EmuPrivate
+        }
+        $t0 = Get-Date
+        $sw = [System.Diagnostics.Stopwatch]::StartNew() # the seconds column: monotonic, so a clock change (DST) cannot make it negative
+        $note = ''
+        $script:partNote = '' # T105: a body may leave a note for its steps.tsv line (a retry and its reason)
+        # T191: the part's ceiling; every Run inside it waits at most until this deadline.
+        $script:partCeiling = Part-Ceiling $name
+        $script:partDeadline = $t0.AddSeconds($script:partCeiling)
+        $script:partTimedOut = ''
+        if ($InjectHang -eq $name) {
+            # T191, a test of the ceiling: a child that starts a grandchild, prints its PID and both sleep past any ceiling.
+            # T233: it also leaves an empty <part>.stdout.json, as a killed device tour does, for the retry count to read.
+            [IO.File]::WriteAllText((Join-Path $Out "$name.stdout.json"), '')
+            $body = { Run $py @('-I', '-c', "import subprocess, sys, time; g = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(100000)']); print('grandchild', g.pid, flush=True); time.sleep(100000)") (Join-Path $Out "$name.hang.log") (Join-Path $Out "$name.hang.err.log") }
+        }
+        try {
+            # The body's last output is the exit code (anything it printed before that is ignored).
+            $code = @(& $body) | Select-Object -Last 1
+            if ($script:partTimedOut) { $code = 'timeout'; $note = $script:partTimedOut } # a body that caught it still timed out
+        } catch {
+            if ($script:partTimedOut) { $code = 'timeout'; $note = $script:partTimedOut }
+            else { $code = 'error'; $note = "$($_.Exception.Message)" }
+        } finally {
+            $script:partDeadline = $null
+        }
+        # T233: what the part did to its emulator, and whether it lost it (its guard, or a stop by hand).
+        if ($device) {
+            $emuEnd = Read-EmuPrivate
+            $script:emuWatch = $false
+            if (-not $script:emuLost -and $script:emuSeen -and $null -eq $emuEnd -and $name -ne 'device-boot') { $script:emuLost = Describe-EmuLost }
+            if ($script:emuLost) {
+                $how = if ($script:emuLost -match 'guard stopped') { 'guard-stop' } else { 'emulator-gone' }
+                $rest = if ("$code" -eq 'error') { $note.Replace($script:emuLost, '').TrimStart(';', ' ') } else { (@("the part's own result: $code", $note) | Where-Object { $_ }) -join '; ' }
+                $note = (@($script:emuLost, $rest) | Where-Object { $_ }) -join '; '
+                $code = $how
+            }
+            $peak = if ($script:emuSeen) { $script:emuPeak } else { $null }
+            $mem = "emulator private $(Format-Gb $emuStart) at the start, peak $(Format-Gb $peak), $(Format-Gb $emuEnd) at the end" +
+                $(if ($null -ne $emuStart -and $null -ne $peak) { " (+$(Format-Gb ($peak - $emuStart)) to the peak)" } else { '' })
+            $script:partNote = (@($rebootNote, $script:partNote, $mem) | Where-Object { $_ }) -join '; '
+            $tsv = Join-Path $dev 'emu-private.tsv'
+            if (-not (Test-Path $tsv)) { Set-Content -Encoding ascii $tsv "part`tstartGB`tpeakGB`tendGB`trebooted`tlost" }
+            $g = { param($v) if ($null -eq $v) { '' } else { '{0:f2}' -f ($v / 1GB) } }
+            Add-Content -Encoding ascii $tsv ("$name`t$(& $g $emuStart)`t$(& $g $peak)`t$(& $g $emuEnd)`t$([bool]$rebootNote)`t$($script:emuLost -replace '[\t\r\n]', ' ')")
+        }
+        # T185: the retries the part's reports counted (screen captures, adb forwards restored, cut reads) on its steps.tsv line.
+        # T233: an empty report (a program killed before it wrote one; Get-Content -Raw gives $null) counts nothing, and a
+        # report that cannot be read leaves the counts out; neither may stop the sweep before its summary (2026-11-06).
+        $n = @{}
+        try {
+            foreach ($f in @(Get-ChildItem $Out -Recurse -File -Include "$name.json", '*.stdout.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 })) {
+                $text = "$(Get-Content -Raw -LiteralPath $f.FullName -ErrorAction SilentlyContinue)"
+                if (-not $text) { continue }
+                foreach ($m in [regex]::Matches($text, '"(captureRetries|forwardRestores|incompleteReadRetries)":\s*(\d+)')) { $n[$m.Groups[1].Value] += [int]$m.Groups[2].Value } }
+        } catch { Write-Host "[sweep] $name`: the retry counts were not read ($($_.Exception.Message))" }
+        $counts = @($n.Keys | Sort-Object | Where-Object { $n[$_] } | ForEach-Object { '{0} {1}' -f $_, $n[$_] })
+        $counts = $counts -join ', '
+        if ($counts) { $script:partNote = (@($script:partNote, $counts) | Where-Object { $_ }) -join '; ' }
+        if ($script:partNote) { $note = (@($script:partNote, $note) | Where-Object { $_ }) -join '; ' }
+        if ($attempt -eq 1 -and $device -and "$code" -ne '0') { $retry = Get-RetryReason $name $code $note $t0 $sw.Elapsed.TotalSeconds }
+        if ($attempt -eq 1 -and $retry) {
+            Step $name $code $sw.Elapsed.TotalSeconds "retried once ($($retry.reason): $($retry.line) [$($retry.file)]; the first run's logs in retry\$name\); $note"
+            continue
+        }
+        if ($retry) { $note = "the retry after $($retry.reason), with a fresh ceiling of $($script:partCeiling) s; $note" }
+        Step $name $code $sw.Elapsed.TotalSeconds $note
+        return ("$code" -eq '0')
     }
-    # T185: the retries the part's reports counted (screen captures, adb forwards restored, cut reads) on its steps.tsv line.
-    # T233: an empty report (a program killed before it wrote one; Get-Content -Raw gives $null) counts nothing, and a
-    # report that cannot be read leaves the counts out; neither may stop the sweep before its summary (2026-11-06).
-    $n = @{}
-    try {
-        foreach ($f in @(Get-ChildItem $Out -Recurse -File -Include "$name.json", '*.stdout.json' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $t0 })) {
-            $text = "$(Get-Content -Raw -LiteralPath $f.FullName -ErrorAction SilentlyContinue)"
-            if (-not $text) { continue }
-            foreach ($m in [regex]::Matches($text, '"(captureRetries|forwardRestores|incompleteReadRetries)":\s*(\d+)')) { $n[$m.Groups[1].Value] += [int]$m.Groups[2].Value } }
-    } catch { Write-Host "[sweep] $name`: the retry counts were not read ($($_.Exception.Message))" }
-    $counts = @($n.Keys | Sort-Object | Where-Object { $n[$_] } | ForEach-Object { '{0} {1}' -f $_, $n[$_] })
-    $counts = $counts -join ', '
-    if ($counts) { $script:partNote = (@($script:partNote, $counts) | Where-Object { $_ }) -join '; ' }
-    if ($script:partNote) { $note = (@($script:partNote, $note) | Where-Object { $_ }) -join '; ' }
-    Step $name $code $sw.Elapsed.TotalSeconds $note
-    "$code" -eq '0'
 }
 
 # T105: the build-cache failure of the finding docs/findings/2026-10-14-debug-test-compile-loses-internal-after-cache-hit.md
@@ -865,6 +958,7 @@ $devtool = Join-Path $repo 'devtool\build\install\devtool\bin\devtool.bat'
 $meta = [ordered]@{ host = 'windows'; startedAt = (Get-Date).ToString('s'); noDevice = [bool]$NoDevice; noDaemon = [bool]$NoDaemon; emuMemoryMb = $EmuMemory
     commit = "$(& git rev-parse --short HEAD 2>$null)".Trim(); partTimeoutS = $PartTimeout; partTimeoutsS = $ceilings
     emuLimitGB = $EmuLimitGB; emuRebootGB = $EmuRebootGB } # T233
+if ($RerunOf) { $meta['rerunOf'] = $RerunOf } # T292
 $meta | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Out 'meta.json')
 
 $emulatorStarted = $false
