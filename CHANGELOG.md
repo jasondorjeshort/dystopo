@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-16
+
+- T291: A drive as a speed profile, pass one: a finished route priced, no search changed (routing lane, after T290)
+
 ### 2026-11-15
 
 - T290: A route's cost, edge by edge and turn by turn (routing lane, first)
