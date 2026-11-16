@@ -154,10 +154,10 @@ class SweepDiff(unittest.TestCase):
         self.assertEqual((ch["prev"], ch["first"]), ("sweep-a", ["ui/upgrade/02-routes.png"]))
         self.assertTrue(ch["png"].endswith("changes.png") and ch["json"].endswith("changes.json"))
         self.assertTrue(s["ok"] and s["parts"]["diff"]["ok"], s)
-        # A rerun of the summary keeps the entry it reads (changes.json); the --first lists are the diff's own.
+        # A rerun of the summary keeps the entry it reads (changes.json), T289: the three --first lists with it.
         subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), b, "--no-sheet"], capture_output=True, text=True)
         kept = self.summary()["changes"]
-        self.assertEqual(kept, {k: v for k, v in ch.items() if k not in ("firstMissing", "firstUnchanged", "firstAdded")})
+        self.assertEqual(kept, ch)
         self.assertIsNone(summary.changes(a))
 
         # Two identical folders: nothing changed, and a sheet left from an earlier run is removed.

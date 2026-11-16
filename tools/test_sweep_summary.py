@@ -1,7 +1,9 @@
 """T147: sweep-summary.py offline: load_last_json with log text around a report, and the both-units part's four
-screenshots (both phones after each carry); T154: the diagnostics part; T268: the startup part; T270: the a11y part.
+screenshots (both phones after each carry); T154: the diagnostics part; T268: the startup part; T270: the a11y part;
+T289: `changes` keeps the diff's three --first lists on a rerun, the route-sheet part and `routeSheet`'s counts.
 
     python -I tools/test_sweep_summary.py
+    python -I -m unittest discover -s tools -p test_sweep_summary.py
 """
 import importlib.util
 import json

@@ -292,7 +292,7 @@ def blocks_html(res, prev_name, this_name):
               f"{', ' + str(len(res['failed'])) + ' failed' if res['failed'] else ''}"
               f" <span class='sub'>{html.escape(prev_name)} to {html.escape(this_name)}</span></h1>"
               "<p class='key'>Each map: <b class='p'>purple</b> its own route, <b class='o'>orange dashes</b> the other sweep's line"
-              " where it differs. Changed when the distance moves by more than 0.1 m, the time by more than 1 s, the fuel"
+              " (on top of the purple where the two are the same). Changed when the distance moves by more than 0.1 m, the time by more than 1 s, the fuel"
               " index by more than one part in a million, the turns at all, or the line.</p>"]
     for i, c in enumerate(res["changed"]):
         a, b = routes_a[c["name"]], routes_b[c["name"]]
@@ -386,7 +386,7 @@ def render_sheet(res, this, channel):
 
 def diff_main(prev, this, channel, sheet=True):
     res = diff_folders(prev, this)
-    res["pages"] = render_sheet(res, this, channel) if sheet and (res["changed"] or res["new"]) else []
+    res["pages"] = render_sheet(res, this, channel) if sheet and (res["changed"] or res["new"] or res["removed"] or res["failed"]) else []
     if not res["pages"]:
         for f in os.listdir(this):
             if re.fullmatch(r"route-changes(-\d+)?\.(png|html)", f):
