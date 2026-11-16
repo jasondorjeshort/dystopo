@@ -48,12 +48,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  * every line of a section is a `\tat ` line, stack or not; [StartupText.format]):
  * - `startup-<UTC stamp>-<pid>.txt`: a report, when [StartupWindow.reasons] is not empty; quota [Reports.KEEP_STARTUP],
  *   of its own.
- * - `trace-<UTC stamp>-<pid>.txt`: every start's trace, the newest [KEEP_TRACES], hidden from the list; Report the last start
- *   reads the newest.
+ * - `trace-<UTC stamp>-<pid>.txt`: every start's trace, the newest [KEEP_TRACES], hidden from the list (`GET /debug/startup`
+ *   `traces` names them; `GET /reports/{id}` reads one).
  * - `.startup-progress-<start id>`: the in-progress file: rewritten every second from 1 s into a stall (before the first
  *   frame, from 1 s after the window opens). The normal end writes the final files, then deletes it. A leftover found at
  *   the next launch becomes a report ([StartupLeftover]).
- * - `.startup-history`: one line a start, the newest [StartupText.HISTORY_KEEP]; the last section of each report.
+ * - `.startup-history`: one line a start, the newest [StartupText.HISTORY_KEEP]; the last section of each report (its words,
+ *   [StartupText.historyWords]). T302: a cold start of a new process adds its figures after [StartupText.STATS_SEP] as
+ *   `key=value` pairs ([coldStats]): `firstFrameMs`, `fullyLoadedMs`, the header's `fdTableMs` and `packageInfoMs`, and each
+ *   launch stage's ms (`GET /debug/launch`), read by Report a problem › Report recent stats
+ *   ([io.github.jasondorjeshort.dystopo.app.reports.RecentStats]) and by `devtool dump-scan --recent-stats` from a dump's `starts`.
  *
  * Header keys beyond the common ones: `startId`, `pid`, `startKind`, `kindSource`, `outcome` (`finished`, `running`,
  * `ended`, `noFirstFrame`, `left`), `reasons` (comma-separated `stall`, `mapNotDrawn`, `firstFrame`, `notFinished`, `mainThreadRead` (T266), or `-`),
@@ -459,7 +463,8 @@ object StartupTrace {
                 progressFile(dir, rec.id).delete()
                 return
             }
-            val history = addHistory(dir, StartupText.historyLine(rec, BuildConfig.VERSION_NAME))
+            val stats = if (rec.kind == StartupWindow.COLD && rec.processWindow) runCatching { coldStats(a, rec) }.onFailure { Log.w(TAG, "the start's figures", it) }.getOrDefault(emptyMap()) else emptyMap()
+            val history = addHistory(dir, StartupText.historyLine(rec, BuildConfig.VERSION_NAME, stats))
             val body = StartupText.format(rec, a.head.toMap(), Reports.system(), history)
             val name = StartupText.fileName(rec)
             if (rec.reasons.isNotEmpty()) {
@@ -476,6 +481,30 @@ object StartupTrace {
 
     private fun readHistory(dir: File): List<String> =
         runCatching { File(dir, HISTORY).readLines().filter { it.isNotBlank() } }.getOrDefault(emptyList())
+
+    /** T302: `.startup-history`'s lines, oldest first, with their figures (Report recent stats reads them). */
+    fun history(dir: File): List<String> = synchronized(writeLock) { readHistory(dir) }
+
+    /**
+     * T302: a cold start's figures for its history line, keyed as `tools/launch-budget.json` keys them: the first frame and the
+     * map drawn (the window's, as `tools/android-startup.py` reads them), T280's two header figures, and every launch stage's
+     * ms that ran (`GET /debug/launch` `stages`). The I/O thread, at the window's close.
+     */
+    private fun coldStats(a: Active, rec: StartupWindow.Record): Map<String, String> {
+        val out = linkedMapOf<String, String>()
+        rec.firstFrameMs?.let { out["firstFrameMs"] = it.toString() }
+        a.window.fullyLoadedMs()?.let { out["fullyLoadedMs"] = it.toString() }
+        a.head["fdTableMs"]?.let { out["fdTableMs"] = it }
+        a.head["packageInfoMs"]?.let { out["packageInfoMs"] = it }
+        @Suppress("UNCHECKED_CAST")
+        val stages = io.github.jasondorjeshort.dystopo.app.launch.AppLaunch.json(null)["stages"] as? List<Map<String, Any?>> ?: emptyList()
+        for (row in stages) {
+            val name = row["name"] as? String ?: continue
+            val ms = (row["ms"] as? Number)?.toLong() ?: continue
+            if (name !in out) out[name] = ms.toString()
+        }
+        return out
+    }
 
     private fun addHistory(dir: File, line: String): List<String> {
         val lines = (readHistory(dir) + line).takeLast(StartupText.HISTORY_KEEP)
@@ -684,6 +713,9 @@ class StartupWindow(val id: String, val openAt: Long, val epochAt: Long, kind: S
 
     val firstFrameSeen: Boolean get() = firstFrameAt >= 0
     val fullyLoadedSeen: Boolean get() = fullyLoadedAt >= 0
+
+    /** T302: the map drawn, from the window's start (as `GET /debug/startup` `window.fullyLoadedMs`), or null. */
+    fun fullyLoadedMs(): Long? = fullyLoadedAt.takeIf { it >= 0 }?.minus(openAt)
 
     /** How long ago the first frame was, or -1. */
     fun firstFrameAge(now: Long): Long = firstFrameAt.let { if (it < 0) -1L else now - it }
@@ -1106,8 +1138,30 @@ object StartupText {
         return threads.firstOrNull { (title, frames) -> "(BLOCKED)" !in title && frames.any { it.substringBefore('(') == method } }
     }
 
-    fun historyLine(r: StartupWindow.Record, version: String): String =
-        "$version ${r.kind}, first frame ${r.firstFrameMs?.let(::seconds) ?: "none"}, longest stall ${seconds(r.longestStallMs)}, ${r.outcome}"
+    /** T302: what separates a history line's words from its figures ([historyStats]). */
+    const val STATS_SEP = " | "
+
+    /** [stats] (T302, a cold start's figures) follow the words as `key=value` pairs; blanks and `=` in a value become `_`. */
+    fun historyLine(r: StartupWindow.Record, version: String, stats: Map<String, String> = emptyMap()): String =
+        "$version ${r.kind}, first frame ${r.firstFrameMs?.let(::seconds) ?: "none"}, longest stall ${seconds(r.longestStallMs)}, ${r.outcome}" +
+            if (stats.isEmpty()) "" else STATS_SEP + stats.entries.joinToString(" ") { (k, v) -> "$k=" + v.replace(BLANKS, "_") }
+
+    private val BLANKS = Regex("[\\s=]+")
+
+    /** T302: a history line without its figures, as reports show it. */
+    fun historyWords(line: String): String = line.substringBefore(STATS_SEP)
+
+    /** T302: a history line's figures (empty for a line without them: a warm or hot start, or one written before T302). */
+    fun historyStats(line: String): Map<String, String> {
+        val tail = line.substringAfter(STATS_SEP, "")
+        if (tail.isEmpty()) return emptyMap()
+        val out = linkedMapOf<String, String>()
+        for (part in tail.split(' ')) {
+            val eq = part.indexOf('=')
+            if (eq > 0) out[part.substring(0, eq)] = part.substring(eq + 1)
+        }
+        return out
+    }
 
     /** A leftover's line, from what its file says. */
     fun historyLine(d: MainWatchdog.Dump, outcome: String): String {
@@ -1246,7 +1300,7 @@ object StartupText {
             for ((title, frames) in collapseThreads(d.threads.filter { it !== holder })) sections += "$title, while main was blocked under ${d.mark}" to frames
         }
         for (s in r.snapshots) for ((title, frames) in s.threads) sections += "$title, ${s.afterMs / 1000} s after the first frame" to frames
-        sections += S_HISTORY to history.takeLast(HISTORY_KEEP)
+        sections += S_HISTORY to history.takeLast(HISTORY_KEEP).map(::historyWords)
         return MainWatchdog.Dump.format(header, sections)
     }
 }
@@ -1283,7 +1337,7 @@ object StartupLeftover {
         header["reasons"] = (kept + StartupWindow.REASON_NOT_FINISHED).distinct().joinToString(",")
         exitReason?.let { header["exitReason"] = it.toString() }
         exitName?.let { header["exitReasonName"] = it }
-        val sections = dump.sections.filter { it.first != StartupText.S_HISTORY } + (StartupText.S_HISTORY to history)
+        val sections = dump.sections.filter { it.first != StartupText.S_HISTORY } + (StartupText.S_HISTORY to history.map(StartupText::historyWords))
         return MainWatchdog.Dump.format(header, sections)
     }
 }

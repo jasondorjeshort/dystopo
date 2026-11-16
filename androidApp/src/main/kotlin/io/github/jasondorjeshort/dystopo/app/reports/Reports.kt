@@ -122,13 +122,29 @@ object Reports {
     /** The kept reports, newest first (unreadable files left out). */
     fun all(): List<Report> = list().mapNotNull(::read)
 
-    /** A kept report, or a kept trace (T228: Report the last start; hidden from [all]). */
-    fun get(id: String): Report? = (list() + StartupTrace.traces(dir())).firstOrNull { it.name == "$id.txt" }?.let(::read)
+    /** A kept report, a kept trace (T228; hidden from [all]), or T302's [recentStats] (its id [RecentStats.ID]). */
+    fun get(id: String): Report? =
+        if (id == RecentStats.ID) recentStats() else (list() + StartupTrace.traces(dir())).firstOrNull { it.name == "$id.txt" }?.let(::read)
 
     fun delete(id: String): Boolean = list().firstOrNull { it.name == "$id.txt" }?.delete() == true
 
-    /** T228: the newest start's trace, for Report the last start. */
-    fun lastStart(): Report? = StartupTrace.traces(dir()).firstOrNull()?.let(::read)
+    /**
+     * T302: Report recent stats, made now ([RecentStats.dump]; a worker thread): `.startup-history`, the bundled launch budget,
+     * and the phone's figures: the online tile store's (`TileCache.json`, its move's state, way and time among them; the empty
+     * tiles dropped are this process's count), the offline areas by state, and the memory sampler's heap figures. Each part
+     * that cannot be read says so in its line instead of failing the report.
+     */
+    fun recentStats(app: DystopoApp = DystopoApp.instance): Report {
+        val history = StartupTrace.history(dir(app))
+        val budget = runCatching { app.assets.open(RecentStats.BUDGET_ASSET).use { RecentStats.Budget.parse(it.readBytes().decodeToString()) } }
+            .onFailure { Log.w(TAG, "launch budget unreadable", it) }.getOrNull()
+        val phone = ArrayList<String>()
+        phone += RecentStats.tileLines(runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache.json() }.getOrNull())
+        phone += runCatching { RecentStats.areaLine(io.github.jasondorjeshort.dystopo.app.areas.Areas.all().map { it.state to it.bytes }) }
+            .getOrDefault("Offline maps: not read")
+        phone += RecentStats.memoryLines(MemorySampler.lines(), Runtime.getRuntime().maxMemory())
+        return Report(RecentStats.ID, RecentStats.dump(System.currentTimeMillis(), system(), history, budget, phone))
+    }
 
     /**
      * The names this phone knows a report could carry, for [Scrub.Known]: its packs, its offline areas (names and

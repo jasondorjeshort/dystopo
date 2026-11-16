@@ -246,7 +246,7 @@ object DiagnosticDump {
             samples.mapNotNull { it.number("heapKb") }.maxOrNull()?.let { "heap $it kB" },
             samples.mapNotNull { it.number("pssKb") }.maxOrNull()?.let { "PSS $it kB" },
         ).joinToString(", ")
-        val startLines = d.section(DumpFormat.S_STARTS).takeLast(starts)
+        val startLines = d.section(DumpFormat.S_STARTS).takeLast(starts).map(io.github.jasondorjeshort.dystopo.app.StartupText::historyWords) // T302: the words, not the figures
         return buildString {
             append(ISSUE_INTRO).append("\n\n")
             append("Version: ").append(h["version"] ?: "?").append(" (").append(h["versionCode"] ?: "?").append(", ").append(h["build"] ?: "?").append(")\n")
