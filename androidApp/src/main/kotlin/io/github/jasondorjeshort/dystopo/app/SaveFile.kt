@@ -29,7 +29,7 @@ object SaveFile {
     /** The launcher's contract; the name [ask] passes it carries the extension. */
     fun contract() = ActivityResultContracts.CreateDocument(MIME)
 
-    private class Pending(val name: String, val fileName: String, val bytes: ByteArray, val say: (String) -> Unit, val after: () -> Unit, val line: String = saved(name))
+    private class Pending(val name: String, val fileName: String, val bytes: ByteArray, val say: (String) -> Unit, val after: () -> Unit, val line: (Uri) -> String = { saved(name) })
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var pending: Pending? = null
@@ -54,8 +54,8 @@ object SaveFile {
         ask(name, RoutePlanner.gpx(plan.route.copy(name = name)), { RouteSession.say(it) })
     }, "dystopo-save-file").start()
 
-    /** T258: saves [bytes] as [fileName] through the same dialog (the diagnostic dump); [line] is said after the save. */
-    fun bytes(fileName: String, bytes: ByteArray, line: String, say: (String) -> Unit) = launch(Pending(fileName, fileName, bytes, say, {}, line))
+    /** T258: saves [bytes] as [fileName] through the same dialog (the diagnostic dump); [line] (T301: from the saved document's uri, a worker thread) is said after the save, then [after] runs. */
+    fun bytes(fileName: String, bytes: ByteArray, line: (Uri) -> String, say: (String) -> Unit, after: () -> Unit = {}) = launch(Pending(fileName, fileName, bytes, say, after, line))
 
     private fun ask(name: String, gpx: String, say: (String) -> Unit, after: () -> Unit = {}) =
         launch(Pending(name, gpxFileName(name), gpx.toByteArray(Charsets.UTF_8), say, after))
@@ -97,7 +97,7 @@ object SaveFile {
         }
         try {
             checkNotNull(resolver.openOutputStream(uri, "wt")) { "the folder did not open" }.use { it.write(p.bytes) }
-            val line = p.line
+            val line = p.line(uri)
             last = linkedMapOf("name" to p.name, "fileName" to p.fileName, "bytes" to p.bytes.size, "message" to line)
             p.say(line)
             runCatching(p.after).onFailure { Log.w(TAG, "after saving ${p.fileName}", it) }
@@ -139,7 +139,8 @@ class GpxItem(val name: String, val gpx: String)
 /**
  * T272: Share GPX (T258's follow-up, the survey's point 4; no folder sync): the GPX of one track or route, or of a
  * selection, through the system's share sheet. The files are written to `cacheDir/share/` (files there older than a day
- * go first) and offered by the app's own FileProvider (the manifest's `${applicationId}.gpxshare`, `res/xml/share_paths.xml`)
+ * go first; T301: the diagnostic dump's copy in `share/diagnostics/` goes through the same provider, [authority] and [DIR],
+ * `reports/DiagnosticDump.kt`) and offered by the app's own FileProvider (the manifest's `${applicationId}.gpxshare`, `res/xml/share_paths.xml`)
  * as `application/gpx+xml`, read permission granted to the app the user picks: one file with `ACTION_SEND`, several with
  * `ACTION_SEND_MULTIPLE`, inside the system's chooser. The select bar's Export GPX writes the same files into a folder the
  * user picks ([toFolder]). `GET /tracks/ui` `share` has the launches and the last result.

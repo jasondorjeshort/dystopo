@@ -55,7 +55,9 @@ import kotlin.concurrent.thread
  * app: the tester reads the page, signs in and submits. No email option (the crash-report survey: it needs a mailbox and
  * sends unseen through a third-party mail app). T228: **Report the last start** shows the newest start's trace the same way,
  * for a start that felt slow but passed the thresholds; it has no Delete. T258: below them, **Send diagnostics** ([DiagnosticDump])
- * saves the diagnostic dump through the system's save dialog, with the line under it saying what the file holds.
+ * saves the diagnostic dump through the system's save dialog, with the line under it saying what the file holds. T301:
+ * after the save the line names the file and its folder, and **Share** and **Open GitHub issue** take it on ([DiagnosticDump.share],
+ * [DiagnosticDump.openIssue]).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -114,9 +116,18 @@ fun ReportRow() {
         // T258: the second action, the diagnostic dump, saved through the system's dialog.
         BasicText(DUMP_TEXT, Modifier.padding(top = 10.dp), style = TextStyle(color = Muted, fontSize = 11.sp))
         FlowRow(Modifier.padding(top = 2.dp)) {
-            Option(DUMP_TITLE, false) { DiagnosticDump.save(ReportUi::sayDump) }
+            Option(DUMP_TITLE, false) { ReportUi.dumpAction = null; DiagnosticDump.save(ReportUi::sayDump, ReportUi::dumpReady) }
         }
         ReportUi.dumpMessage?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)) }
+        // T301: after the save, the file goes on by the share sheet or into an issue.
+        ReportUi.dumpSaved?.let { saved ->
+            BasicText(DUMP_ISSUE_NOTICE, Modifier.padding(top = 4.dp), style = TextStyle(color = Ink, fontSize = 12.sp))
+            FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Option(DUMP_SHARE, false) { ReportUi.dumpAction = DiagnosticDump.share(context, saved) }
+                Option(OPEN_ISSUE, false) { ReportUi.dumpAction = DiagnosticDump.openIssue(context, saved) }
+            }
+            ReportUi.dumpAction?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Medium)) }
+        }
     }
 }
 
@@ -165,6 +176,15 @@ object ReportUi {
     /** T258: Send diagnostics' line, from any thread. */
     fun sayDump(line: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post { dumpMessage = line }
+    }
+
+    /** T301: the dump the dialog saved (Share and Open GitHub issue show under it), and the line after one of them. */
+    var dumpSaved by mutableStateOf<DiagnosticDump.Saved?>(null)
+    var dumpAction by mutableStateOf<String?>(null)
+
+    /** T301: [DiagnosticDump.save]'s answer, from any thread: null when a new dump starts, the saved one after the save. */
+    fun dumpReady(s: DiagnosticDump.Saved?) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { dumpSaved = s; if (s == null) dumpAction = null }
     }
 
     /** The text Open GitHub issue last put on the clipboard, and the link it opened (for the routes). */
