@@ -6,7 +6,10 @@
 Pairs each PNG of the two folders by its path relative to the folder (the device tour's views, the ui/<part>/ sets of
 the release parts, first-run and its direct run, the release smoke views, the world tour's renders, the demo and live
 screenshots). Composites and server data are left out: sheet.png, changes*.png, the tour contact sheets
-(*-sheet.png, tour/contact-sheet.png) and anything under an `out/` folder (the sweep servers' sprites).
+(*-sheet.png, tour/contact-sheet.png) and anything under an `out/` folder (the sweep servers' sprites). T289: the route
+sheet's pictures (`route-sheet/`) and its own sheet (`route-changes*.png`) are left out in both folders too: they have
+their own sheet (tools/route-diff.py), so here they are neither paired nor added nor removed, and no --first name
+matches them.
 
 The tolerance for timing (two sweeps of the same build differ by the tiles that had landed, a label placed a frame
 later, the clock): both images are drawn at --width pixels wide (a 1080 px screenshot shrinks four times, an average
@@ -55,7 +58,7 @@ ORIGIN = "http://sweep-diff.invalid"
 # applied per orientation.
 STATUS_BAR = {"portrait": 0.03, "landscape": 0.06}
 DEVICE_PREFIXES = ("device/", "ui/", "first-run/", "release/")
-SKIP = ("sheet.png", "changes.png", "changes-*.png", "*-sheet.png", "tour/contact-sheet.png")
+SKIP = ("sheet.png", "changes.png", "changes-*.png", "*-sheet.png", "tour/contact-sheet.png", "route-changes*.png")
 # T111's capture limit: Chrome's full-page capture is at most 16,384 px tall.
 SHEET_MAX_PX = 16000
 DEFAULTS = {"width": 270, "pixel": 40, "frac": 0.004}
@@ -72,6 +75,8 @@ def shots(d):
         rel_root = norm(os.path.relpath(root, d))
         parts = [] if rel_root == "." else rel_root.split("/")
         if "out" in parts or "server-out" in parts:  # the sweep servers' data (sprites)
+            continue
+        if parts and parts[0] == "route-sheet":  # T289: the route pictures have their own sheet (route-diff.py)
             continue
         for f in files:
             if not f.lower().endswith(".png"):

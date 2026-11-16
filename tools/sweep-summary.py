@@ -15,7 +15,9 @@ T81's release realism parts: routing and search tours, APK string scan, features
 background, network, update, the device matrix with any known defects; T139: the two-emulator both-units check, its
 carries and screenshots, or the skip and its reason when the second emulator did not start; T268: the launch budget's
 table, each stage's and frame's median against its ceiling; T270: the accessibility part's counts per screen and kind, the
-findings new against tools/a11y-baseline.json and the baseline's size); `ok` overall is
+findings new against tools/a11y-baseline.json and the baseline's size; T289: the route sheet's routes planned, drawn,
+skipped by name and failed, and from route-changes.json (tools/route-diff.py diff) `routeSheet`: the counts changed, new,
+skipped, removed, unchanged and failed, what moved per changed route and the sheet's pages); `ok` overall is
 true when every part that ran exited 0. Skipped parts are listed, not counted as failures.
 
 Privacy: only public names reach the summary. Tour failures are named only when the area is in areas.json;
@@ -602,12 +604,52 @@ def changes(d):
         same = os.path.splitdrive(p)[0].lower() == os.path.splitdrive(REPO)[0].lower()
         return (os.path.relpath(p, REPO) if same else p).replace(os.sep, "/")
 
+    # T289 (T288's report): the three --first lists are kept too, so a rerun of the summary does not drop them.
     return {"count": r["count"], "paired": r.get("paired"), "timing": len(r.get("timing") or []),
             "added": len(r.get("added") or []), "removed": len(r.get("removed") or []),
             "prev": os.path.basename(os.path.normpath(r.get("prev") or "")),
             "changed": [c.get("path") for c in r.get("changed") or []][:40],
             "first": [c.get("path") for c in r.get("changed") or [] if c.get("first")],
+            "firstMissing": r.get("firstMissing") or [], "firstUnchanged": r.get("firstUnchanged") or [],
+            "firstAdded": r.get("firstAdded") or [],
             "png": rel("changes.png"), "json": rel("changes.json")}
+
+
+def rel_path(p):
+    """A path relative to the checkout when on its drive, with forward slashes."""
+    same = os.path.splitdrive(p)[0].lower() == os.path.splitdrive(REPO)[0].lower()
+    return (os.path.relpath(p, REPO) if same else p).replace(os.sep, "/")
+
+
+def route_sheet(d, part):
+    """T289: the route-sheet part (tools/route-diff.py run): the routes planned, drawn, skipped by name and failed."""
+    r = load_last_json(os.path.join(d, "route-sheet.json"))
+    if not isinstance(r, dict):
+        return {}
+    return {"routes": r.get("routes"), "planned": r.get("planned"), "pictures": r.get("pictures"),
+            "skipped": [s.get("name") for s in r.get("skipped") or []],
+            "noPicture": [s.get("name") for s in r.get("noPicture") or []],
+            "failed": r.get("failed") or [], "routeSeconds": r.get("seconds")}
+
+
+PARTS["route-sheet"] = route_sheet  # T289
+
+
+def route_changes(d):
+    """T289: summary.json's `routeSheet` from route-changes.json (tools/route-diff.py diff), or None: the counts
+    (changed, new, skipped, removed, unchanged, failed), the changed routes' names and what moved, the sheet's pages."""
+    r = load(os.path.join(d, "route-changes.json"))
+    if not isinstance(r, dict):
+        return None
+    if r.get("error"):
+        return {"error": r["error"], "json": rel_path(os.path.join(d, "route-changes.json"))}
+    return {"changed": r.get("count", 0), "new": len(r.get("new") or []), "skipped": len(r.get("skipped") or []),
+            "removed": len(r.get("removed") or []), "unchanged": len(r.get("unchanged") or []),
+            "failed": len(r.get("failed") or []), "prev": os.path.basename(os.path.normpath(r.get("prev") or "")),
+            "routes": {c.get("name"): c.get("why") for c in r.get("changed") or []},
+            "skippedNames": r.get("skipped") or [],
+            "png": [rel_path(p["png"]) for p in r.get("pages") or [] if p.get("png")],
+            "json": rel_path(os.path.join(d, "route-changes.json"))}
 
 
 def main():
@@ -659,6 +701,9 @@ def main():
     ch = changes(d)  # T259: kept when the summary is written again after sweep-diff.py
     if ch:
         summary["changes"] = ch
+    rc = route_changes(d)  # T289: the route sheet's counts against the previous sweep
+    if rc:
+        summary["routeSheet"] = rc
     with open(os.path.join(d, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))

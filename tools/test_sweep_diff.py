@@ -154,10 +154,10 @@ class SweepDiff(unittest.TestCase):
         self.assertEqual((ch["prev"], ch["first"]), ("sweep-a", ["ui/upgrade/02-routes.png"]))
         self.assertTrue(ch["png"].endswith("changes.png") and ch["json"].endswith("changes.json"))
         self.assertTrue(s["ok"] and s["parts"]["diff"]["ok"], s)
-        # A rerun of the summary keeps the entry it reads (changes.json); the --first lists are the diff's own.
+        # A rerun of the summary keeps the entry it reads (changes.json), T289: the three --first lists with it.
         subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), b, "--no-sheet"], capture_output=True, text=True)
         kept = self.summary()["changes"]
-        self.assertEqual(kept, {k: v for k, v in ch.items() if k not in ("firstMissing", "firstUnchanged", "firstAdded")})
+        self.assertEqual(kept, ch)
         self.assertIsNone(summary.changes(a))
 
         # Two identical folders: nothing changed, and a sheet left from an earlier run is removed.
@@ -229,6 +229,21 @@ class SweepDiff(unittest.TestCase):
         s = self.summary()
         self.assertTrue(s["ok"])
         self.assertEqual(s["changes"]["firstAdded"], ["ui/upgrade/08-new-screen.png"])
+
+    def test_route_sheet_pictures_are_left_out(self):
+        # T289: the route sheet's pictures and its own sheet, in the new sweep only, have their own comparison.
+        png(os.path.join(self.b, "route-sheet/x.png"), W, H, [BUTTON])
+        png(os.path.join(self.b, "route-changes.png"), W, H, [BUTTON])
+        png(os.path.join(self.b, "route-changes-2.png"), W, H, [BUTTON])
+        self.assertFalse([n for n in diff.shots(self.b) if "route-sheet" in n or "route-changes" in n])
+        r = run_diff(self.a, self.b, "route")
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        rep = self.changes()
+        self.assertEqual(rep["added"], ["ui/upgrade/08-new-screen.png"])
+        self.assertEqual(rep["firstAdded"], [])
+        r = run_diff(self.a, self.b, "route-sheet")
+        self.assertEqual(r.returncode, 1, (r.stdout, r.stderr))
+        self.assertEqual(self.changes()["firstMissing"], ["route-sheet"])
 
     def test_first_outcome_alone(self):
         changed = [{"path": "ui/x/02-moved.png"}]

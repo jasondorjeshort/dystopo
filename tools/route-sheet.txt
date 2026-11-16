@@ -1,0 +1,40 @@
+# The route sheet (T289): public routes planned by devtool `route` in every PowerShell sweep (the part `route-sheet`),
+# drawn on their map and compared with the previous sweep's by tools/route-diff.py (route-changes.png and .json).
+#   python -I tools/route-diff.py run --list tools/route-sheet.txt --out out/sweep-<date>/route-sheet
+# One route a line, columns separated by spaces:
+#   <name> <pack> <mode> <from lat,lon> <to lat,lon> [<prefer>]
+# <name> names the files (<name>.png, .gpx, .json) and pairs the route with its namesake in the previous sweep: never
+# rename a line without saying so in the report (a renamed line reads as one removed and one new). <pack> is the pack's
+# file name for a public area of areas.json (montblanc for mont-blanc): out/<pack>-outdoors.pmtiles holds the graph (out/<pack>-dem.pmtiles draws the picture); a line
+# whose pack is not in out/ is skipped by name, and one whose DEM pack is missing is planned but has no picture.
+# <mode> hike|bike|drive; <prefer> time|fuel|quick, drives only. Public places only (areas.json names, no crow lines:
+# they use no graph; no line that expects a refusal: a route that is not found fails the part).
+#
+# The six public drives of docs/reference/devtool-commands.md (the `route` line), each under the three values of
+# Plan drives for.
+paradise-sunrise-drive-time      rainier   drive 46.7864,-121.7366 46.9145,-121.6425 time
+paradise-sunrise-drive-fuel      rainier   drive 46.7864,-121.7366 46.9145,-121.6425 fuel
+paradise-sunrise-drive-quick     rainier   drive 46.7864,-121.7366 46.9145,-121.6425 quick
+paradise-longmire-drive-time     rainier   drive 46.7864,-121.7366 46.7500,-121.8120 time
+paradise-longmire-drive-fuel     rainier   drive 46.7864,-121.7366 46.7500,-121.8120 fuel
+paradise-longmire-drive-quick    rainier   drive 46.7864,-121.7366 46.7500,-121.8120 quick
+longmire-box-canyon-drive-time   rainier   drive 46.7500,-121.8120 46.7650,-121.6365 time
+longmire-box-canyon-drive-fuel   rainier   drive 46.7500,-121.8120 46.7650,-121.6365 fuel
+longmire-box-canyon-drive-quick  rainier   drive 46.7500,-121.8120 46.7650,-121.6365 quick
+les-houches-chamonix-drive-time  montblanc drive 45.8905,6.8000 45.9180,6.8650 time
+les-houches-chamonix-drive-fuel  montblanc drive 45.8905,6.8000 45.9180,6.8650 fuel
+les-houches-chamonix-drive-quick montblanc drive 45.8905,6.8000 45.9180,6.8650 quick
+les-houches-entreves-drive-time  montblanc drive 45.8905,6.8000 45.8170,6.9530 time
+les-houches-entreves-drive-fuel  montblanc drive 45.8905,6.8000 45.8170,6.9530 fuel
+les-houches-entreves-drive-quick montblanc drive 45.8905,6.8000 45.8170,6.9530 quick
+chamonix-les-bossons-drive-time  montblanc drive 45.9180,6.8650 45.9030,6.8370 time
+chamonix-les-bossons-drive-fuel  montblanc drive 45.9180,6.8650 45.9030,6.8370 fuel
+chamonix-les-bossons-drive-quick montblanc drive 45.9180,6.8650 45.9030,6.8370 quick
+# The rainier hikes and the ride of tools/routing-tour.txt (its names). No montblanc hike yet: none is a checked public
+# route.
+paradise-panorama-hike           rainier   hike  46.7864,-121.7366 46.8024,-121.7289
+sunrise-frozen-lake              rainier   hike  46.9145,-121.6425 46.9185,-121.6630
+reflection-pinnacle              rainier   hike  46.7686,-121.7295 46.7570,-121.7330
+mowich-spray-park                rainier   hike  46.9317,-121.8619 46.9187,-121.8312
+summit-paradise                  rainier   hike  46.853,-121.760   46.7864,-121.7366
+paradise-panorama-bike           rainier   bike  46.7864,-121.7366 46.8024,-121.7289

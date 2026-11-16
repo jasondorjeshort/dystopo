@@ -8,6 +8,11 @@
 #   demo-serve   the same tour against devtool serve (pack mode: the phone style, the Android stand-in)
 #   live         demo-check.py against devtool serve --live: one view per elevation source, |src= checked
 #   sync-sim     sync-sim with clock skew, crash-restarts and paged pulls, 20 seeds
+#   route-sheet  T289 (no device): tools/route-diff.py run plans every line of tools/route-sheet.txt (the six public drives
+#                under time, fuel and quick, the rainier hikes and the ride) with devtool route on this checkout's out\
+#                packs: route-sheet\<name>.png (the route on its map), .gpx and .json; a line whose pack is not in out\ is
+#                skipped by name (in a worktree only the Rainier packs are copied: copy the montblanc pair and its graph
+#                file in by hand), a route not found fails the part. The nightly tools/sweep.sh does not run it.
 #   device-boot  android-emu.ps1 -Build on a fresh emulator (own AVD, console port and host port). T105: the debug
 #                build's server is the sweep's own (-DeviceServer: live, its serve --live on -BasePort+2 as 10.0.2.2, or
 #                direct, none), set before the app's first start and named in steps.tsv; never the build's default 8765
@@ -79,6 +84,9 @@
 # count in summary.json's `changes`. -SummaryOnly -Out <existing sweep folder> -Prev <folder> redoes just those steps.
 # T288: the diff is the step `diff` in steps.tsv; a -First name that matches no frame of either sweep turns the sweep red
 # (changes.firstMissing, `diff` failed in summary.json, exit 1) until the name is corrected or a step opens that screen.
+# T289: with -Prev and a route-sheet folder, tools/route-diff.py diff runs before the summary: route-changes.png (each
+# changed route's old and new picture side by side with the figures and their differences, then the new routes) and
+# route-changes.json; summary.json's routeSheet has the counts (changed, new, skipped, removed). A changed route only shows.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1                     # everything
 #   powershell -ExecutionPolicy Bypass -File tools\sweep.ps1 -NoDevice           # no emulator on this machine
@@ -193,7 +201,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
-$allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'device-boot', 'device-tour',
+$allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour',
     'routes', 'search', 'probe', 'bothunits', 'release', 'apk-strings', 'first-run', 'features', 'recenter', 'diagnostics', 'upgrade', 'permissions', 'background', 'network',
     'update', 'matrix')
 $deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'release', 'first-run', 'features', 'recenter', 'diagnostics', 'upgrade', 'permissions',
@@ -232,6 +240,9 @@ $ceilings['a11y'] = 1200
 # montblanc pack, with the pack's push, a cold start and the phone's first routing graph) took 283 to 328 s alone on the
 # implementer's emulator, so about 750 s for the part: 1500 s, twice that, for a loaded emulator and a slow graph build.
 $ceilings['features'] = 1500
+# T289: the route sheet's 24 routes took 104 s on the implementer's PC with the graph files built (3 to 6 s a route, mostly
+# the JVM's start and the picture); a graph file built anew adds about a minute a pack, so 600 s.
+$ceilings['route-sheet'] = 600
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
         throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
@@ -285,6 +296,12 @@ function Write-Summary {
     if ($Prev -and (Test-Path -LiteralPath $stepsFile)) {
         $kept = @([IO.File]::ReadAllLines($stepsFile) | Where-Object { ($_ -split "`t", 2)[0] -ne 'diff' })
         [IO.File]::WriteAllText($stepsFile, (@($kept | ForEach-Object { "$_`r`n" }) -join ''), (New-Object Text.UTF8Encoding $false))
+    }
+    # T289: with -Prev and a route sheet in this sweep, its comparison first, so the summary reads route-changes.json. A
+    # changed route only shows; an error is written into route-changes.json and shown in summary.json's routeSheet.
+    if ($Prev -and (Test-Path -LiteralPath (Join-Path $Out 'route-sheet') -PathType Container)) {
+        & python -I (Join-Path $repo 'tools\route-diff.py') diff $Prev $Out --channel $Channel | Out-Host
+        if ($LASTEXITCODE -ne 0) { Write-Host "[sweep] route-diff.py failed (exit $LASTEXITCODE); see route-changes.json" }
     }
     & python -I (Join-Path $repo 'tools\sweep-summary.py') $Out --channel $Channel | Out-Host
     $code = $LASTEXITCODE
@@ -888,7 +905,7 @@ try {
     $debugDeviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits')
     $debugDeviceParts += 'startup' # T268 (end T268)
     $debugDeviceParts += 'a11y' # T270 (end T270)
-    $needDevtool = @('tour', 'demo-serve', 'live', 'sync-sim') + $(if ($DeviceServer -eq 'live' -and -not $NoDevice) { $debugDeviceParts } else { @() }) |
+    $needDevtool = @('tour', 'demo-serve', 'live', 'sync-sim', 'route-sheet') + $(if ($DeviceServer -eq 'live' -and -not $NoDevice) { $debugDeviceParts } else { @() }) |
         Where-Object { Want $_ }
     if ($needDevtool) {
         $code = Run $gradle @(':devtool:installDist') (Join-Path $Out 'devtool-install.log') (Join-Path $Out 'devtool-install.err.log')
@@ -933,6 +950,14 @@ try {
     $null = Part 'sync-sim' {
         Run $devtool @('sync-sim', '--peers', '3', '--ops', '2000', '--seed', '42', '--partitions', '5', '--reorder', '--seeds', '20',
             '--skew-days', '2', '--crashes', '3', '--page', '50') (Join-Path $Out 'sync-sim.json') (Join-Path $Out 'sync-sim.err.log')
+    }
+
+    # T289: the route sheet (no device): every line of tools/route-sheet.txt planned by devtool route on this checkout's
+    # out\ packs, <name>.png, .gpx and .json in route-sheet\; a missing pack is skipped by name, a route not found fails.
+    # With -Prev, Write-Summary compares them (route-changes.png); a changed route only shows.
+    $null = Part 'route-sheet' {
+        Run $py @('-I', 'tools/route-diff.py', 'run', '--list', 'tools/route-sheet.txt', '--devtool', $devtool, '--packs', $localOut,
+            '--out', (Join-Path $Out 'route-sheet')) (Join-Path $Out 'route-sheet.json') (Join-Path $Out 'route-sheet.err.log')
     }
 
     # --- device parts -------------------------------------------------------------------------------------
