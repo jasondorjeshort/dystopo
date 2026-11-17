@@ -934,6 +934,7 @@ def run(args):
                     path = os.path.join(args.out, f"{shot:02d}-{sname.replace(':', '-')}.png")
                     marked = mark(raster, findings)
                     check.encode_png(marked, path)
+                    dev.place(path)  # T295: the frame's sidecar, the area GET /camera shows (a name, never a coordinate)
                     entry["png"] = path
                     rasters.append(marked)
                     sheet_reps.append({"index": shot, "label": sname, "ok": True, "failed": []})
