@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-16
 
+- T299: Sweep loose ends: the montblanc pair in a worktree, an altitude with the fix (tools lane, after T293)
 - T293: One signing step owns the release key (tools lane, after T292)
 - T302: "Report recent stats" in place of "Report the last start" (app lane, after T301)
 - T292: The sweep retries a part once on a machine failure, and counts every rerun (tools lane, first)
