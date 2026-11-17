@@ -11,8 +11,8 @@
 #   route-sheet  T289 (no device): tools/route-diff.py run plans every line of tools/route-sheet.txt (the six public drives
 #                under time, fuel and quick, the rainier hikes and the ride) with devtool route on this checkout's out\
 #                packs: route-sheet\<name>.png (the route on its map), .gpx and .json; a line whose pack is not in out\ is
-#                skipped by name (in a worktree only the Rainier packs are copied: copy the montblanc pair and its graph
-#                file in by hand), a route not found fails the part. The nightly tools/sweep.sh does not run it.
+#                skipped by name (in a worktree the montblanc pair and its graph are copied in like the Rainier packs,
+#                T299), a route not found fails the part. The nightly tools/sweep.sh does not run it.
 #   device-boot  android-emu.ps1 -Build on a fresh emulator (own AVD, console port and host port). T105: the debug
 #                build's server is the sweep's own (-DeviceServer: live, its serve --live on -BasePort+2 as 10.0.2.2, or
 #                direct, none), set before the app's first start and named in steps.tsv; never the build's default 8765
@@ -135,6 +135,9 @@
 #
 # Data: the Rainier packs (rainier-dem, rainier-outdoors; rainier-osm optional). In the main checkout they are
 # out\ itself; in a worktree they are copied (never linked) from -DataDir, default the main checkout's out\.
+# T299: the montblanc pair (montblanc-outdoors, montblanc-dem) and its graph (montblanc-outdoors-graph.idx) too, when
+# -DataDir has them and out\ does not, so route-sheet's drives and the features drive step run on a copy: devtool
+# route writes graph and overlay files beside a pack, and a worktree's code must never write into the main out\.
 # Only those files are copied, so packs of other places in the main out\ never reach a worktree.
 # DYSTOPO_CACHE defaults to the main checkout's cache\ and JAVA_HOME to the JDK 21 named in docs/reference/machines.md.
 # T292 (the coordinator's ask): an unknown parameter is refused before anything runs (exit 1, no sweep folder made); before,
@@ -985,7 +988,8 @@ try {
     # T87: rainier-osm.pmtiles (the OpenMapTiles profile) is optional: copied when present, never warned about,
     # because no part needs it (the demo page reads it only with ?osm=openmaptiles).
     $packs = @('rainier-dem.pmtiles', 'rainier-outdoors.pmtiles')
-    $optionalPacks = @('rainier-osm.pmtiles')
+    # T299: the montblanc pair and its graph (the route sheet's drives, the features drive step) are optional too.
+    $optionalPacks = @('rainier-osm.pmtiles', 'montblanc-outdoors.pmtiles', 'montblanc-dem.pmtiles', 'montblanc-outdoors-graph.idx')
     $localOut = Join-Path $repo 'out'
     foreach ($f in $packs + $optionalPacks) {
         $dst = Join-Path $localOut $f
@@ -1282,8 +1286,8 @@ try {
         try {
             $null = Part 'features' {
                 if (-not $uiServer) { throw 'the sweep server for the UI parts did not start' }
-                # T288: the drive step's montblanc pair, this checkout's out\ first, else read by path from -DataDir (never
-                # copied or linked here); with neither the step drives on rainier and reports no fuel line.
+                # T288: the drive step's montblanc pair, this checkout's out\ first (copied there from -DataDir since T299),
+                # else read by path from -DataDir; with neither the step drives on rainier and reports no fuel line.
                 $driveDir = if (Test-Path (Join-Path $localOut 'montblanc-outdoors.pmtiles')) { $localOut } else { $DataDir }
                 $driveArgs = @('--drive-osm', (Join-Path $driveDir 'montblanc-outdoors.pmtiles'), '--drive-dem', (Join-Path $driveDir 'montblanc-dem.pmtiles'))
                 Run $py (@('-I', 'tools/android-ui.py', 'features', '--serial', $serial, '--apk', (Release-Apk $serial), '--server', $uiServer,
