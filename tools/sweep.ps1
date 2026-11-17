@@ -1463,6 +1463,8 @@ try {
     # an emulator standing in for the phone) the count and SHA-256 of its data files' listing (path, size, mtime). Only the
     # digest is kept, never the listing: the owner's data stays on the phone.
     function Get-ReleaseFacts {
+        # A phone that went away (unplugged, an emulator that died) is said so, never read as an install that changed.
+        if ((Tool-Text $adbExe @('-s', $Phone, 'get-state') 30) -ne 'device') { return [ordered]@{ reachable = $false } }
         $listed = Phone-Adb @('shell', 'pm', 'list', 'packages', $DystopoReleasePackage) -Read
         $facts = [ordered]@{ installed = (@($listed -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoReleasePackage" }).Count -gt 0) }
         if (-not $facts.installed) { return $facts }
@@ -1501,6 +1503,8 @@ try {
             sdk = (Phone-Adb @('shell', 'getprop', 'ro.build.version.sdk')); emulator = ($Phone -match '^emulator-'); release = (Get-ReleaseFacts) }
         $facts | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $phoneDir 'attach.json')
         $script:phoneRelease = $facts.release
+        # A rerun without phone-install (-Only phone-startup ...) uses the debug build already on the phone.
+        $script:phoneInstalled = [bool](@((Phone-Adb @('shell', 'pm', 'list', 'packages', $DystopoDebugPackage)) -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoDebugPackage" }).Count)
         $script:partNote = "$($facts.model), Android $($facts.android); the release $(if ($facts.release.installed) { "installed (versionCode $($facts.release.versionCode))" } else { 'not installed' })"
         $script:phoneReady = $true
         0
@@ -1547,6 +1551,7 @@ try {
     $null = Phone-Step 'phone-release' {
         $before = $script:phoneRelease
         $after = Get-ReleaseFacts
+        if ($after.reachable -eq $false) { throw "the phone $Phone is no longer listed by adb as a device: the release install could not be read again" }
         $changed = @(foreach ($k in @('installed', 'versionCode', 'firstInstallTime', 'lastUpdateTime')) { if ("$($before[$k])" -ne "$($after[$k])") { $k } })
         $listing = if ($null -ne $before.listingSha256 -and $null -ne $after.listingSha256) { $before.listingSha256 -eq $after.listingSha256 } else { $null }
         [ordered]@{ before = $before; after = $after; changed = $changed; listingSame = $listing } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $phoneDir 'release.json')

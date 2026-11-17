@@ -443,8 +443,8 @@ def phone(d):
                        "pssMb": mb(mem.get("totalPssKb"), 1024), "javaHeapMb": mb(mem.get("javaHeapUsedBytes"), 1 << 20)}
     s = load_last_json(os.path.join(pd, "startup.json"))
     if isinstance(s, dict):
-        stages = s.get("stageMedians") or {}
-        slow = sorted(((k, v.get("medianMs")) for k, v in stages.items() if isinstance(v, dict) and isinstance(v.get("medianMs"), (int, float))),
+        stages = s.get("stageMedians") or []  # [{name, medianMs, maxMs, launches, thread}, ...]
+        slow = sorted(((v.get("name"), v.get("medianMs")) for v in stages if isinstance(v, dict) and isinstance(v.get("medianMs"), (int, float))),
                       key=lambda kv: -kv[1])[:5]
         out["startup"] = {"launches": len(s.get("launches") or []),
                           "medians": {k: v for k, v in (s.get("medians") or {}).items() if v is not None},
@@ -541,7 +541,9 @@ def phone_table(p):
         rows.append(("startup", f"{st.get('launches')} cold launches; medians: first frame {m.get('firstFrameMs')} ms, map drawn {m.get('fullyLoadedMs')} ms, "
                      f"am start {m.get('amTotalMs')} ms; slowest stages: " + ", ".join(f"{x['stage']} {x['medianMs']} ms" for x in st.get("slowestStages") or [])))
     g = p.get("diagnostics") or {}
-    if g:
+    if g.get("error"):
+        rows.append(("diagnostics", f"not read: {g['error']}"))
+    elif g:
         rows.append(("diagnostics", f"heap {g.get('heapUsedMb')} of {g.get('heapMaxMb')} MB (peak {g.get('peakHeapMb')}), native {g.get('nativeMb')} MB, "
                      f"PSS {g.get('pssMb')} MB, available {g.get('availMemMb')} MB, low memory {g.get('lowMemory')}"))
     r = p.get("release") or {}
@@ -587,7 +589,7 @@ def sheet_images(d):
 
 def write_sheet(d, summary, channel, render):
     imgs = sheet_images(d)
-    if not imgs:
+    if not imgs and not summary.get("phone"):  # T303: a phone-only rerun's figures still get a sheet
         return None
     parts = []
     section = None
@@ -994,7 +996,10 @@ def main():
     summary["reruns"] = reruns(d)
     if isinstance(meta, dict) and meta.get("rerunOf"):
         summary["rerunOf"] = os.path.basename(os.path.normpath(meta["rerunOf"]))
-    ph = phone(d)  # T303: before the sheet, which shows it
+    try:
+        ph = phone(d)  # T303: before the sheet, which shows it
+    except Exception as e:  # a report in an unexpected shape is reported, not fatal (as for the parts)
+        ph = {"summaryError": str(e)[:200]}
     if ph:
         summary["phone"] = ph
     sheet = write_sheet(d, summary, a.channel, not a.no_sheet)

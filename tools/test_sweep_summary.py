@@ -319,7 +319,7 @@ try:
     pw("tour.json", {"viewsOk": 9, "viewsTotal": 10, "fixBy": "POST /location", "views": [{"label": "a", "ok": True, "seconds": 12.5}, {"label": "b", "ok": False}],
                      "memory": {"totalPssKb": 409600}, "contourGeneration": {"count": 5, "avgMs": 80, "maxMs": 200}})
     pw("startup.json", {"launches": [{}] * 5, "medians": {"firstFrameMs": 900, "fullyLoadedMs": 2100, "amTotalMs": None},
-                        "stageMedians": {"packs": {"medianMs": 40}, "mapview": {"medianMs": 120}, "x": {"medianMs": None}}}, "[startup] log line\n")
+                        "stageMedians": [{"name": "packs", "medianMs": 40}, {"name": "mapview", "medianMs": 120}, {"name": "x", "medianMs": None}]}, "[startup] log line\n")
     pw("diagnostics.json", {"path": "/diagnostics", "body": {"heapMaxBytes": 512 << 20, "heapUsedBytes": 64 << 20, "pssKb": 300 * 1024,
                                                             "lowMemory": False, "system": {"buildType": "debug"}}})
     pw("release.json", {"before": rel, "after": rel, "changed": [], "listingSame": True})
