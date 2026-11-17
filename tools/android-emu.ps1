@@ -9,7 +9,7 @@
 # in logcat (`I/Dystopo: debug server on port N token T`); this script reads that line and forwards -Port to
 # that device port, and ends by printing the token. Both change whenever the app restarts: run
 # `tools\android-emu.ps1 -Avd <avd> -EmuPort <n> -Port <p> -Forward` (or the Python tools, which do it
-# themselves) to re-read them. The app setting debugFixedPort=1 keeps the debug routes on 8686 with the
+# themselves) to re-read them. The app setting debugFixedPort=1 keeps the debug routes on the tile port (8688 in a debug build, T303) with the
 # GET /health token bootstrap (from the next launch); the script then still finds the port in logcat.
 #
 # Several emulators side by side: give each its own AVD, console port and host port. The serial is
@@ -178,9 +178,10 @@ $script:fixLat = $Matches[1]; $script:fixLon = $Matches[2]; $script:fixAlt = $Ma
 if ($Api -gt 0) { $SystemImage = "system-images;android-$Api;google_apis;x86_64" }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
 $emulator = Join-Path $sdk 'emulator\emulator.exe'
-$package = 'io.github.jasondorjeshort.dystopo'
-$activity = "$package/io.github.jasondorjeshort.dystopo.app.MainActivity"
-$devicePort = 8686
+. (Join-Path $PSScriptRoot 'android-ids.ps1')  # T303: the debug build's own id and tile port
+$package = $DystopoDebugPackage
+$activity = Get-DystopoActivity $package
+$devicePort = $DystopoDebugTilePort
 foreach ($tool in @($adb, $emulator)) { if (-not (Test-Path $tool)) { throw "$tool missing; run tools\android-sdk.ps1" } }
 if ($EmuPort -ne 0 -and ($EmuPort % 2 -ne 0 -or $EmuPort -lt 5554 -or $EmuPort -gt 5682)) { throw "-EmuPort must be even, 5554-5682 (got $EmuPort)" }
 
@@ -260,7 +261,7 @@ function Get-DebugEndpoint([int]$timeoutS = 60) {
     }
 }
 
-# T57: forwards -Port to the debug server; returns the token ('' when the line never appeared: then 8686 and
+# T57: forwards -Port to the debug server; returns the token ('' when the line never appeared: then the tile port 8688 and
 # the /health bootstrap, the debugFixedPort mode of builds before T57).
 function Connect-DebugServer {
     $taken = @(Get-Forwards | Where-Object { $_.Port -eq $Port -and $_.Serial -ne $script:serial })

@@ -28,6 +28,7 @@ android {
         versionName = (project.findProperty("dystopoVersion") as String?) ?: "0.1.0-dev"
         // Loopback port of the tile server (and, in debug builds, the debug endpoints).
         buildConfigField("int", "SERVER_PORT", "8686")
+        manifestPlaceholders["appLabel"] = "@string/app_name"
     }
 
     // T55: the release key comes from tools/release.properties (gitignored, like tools/release.keystore; the
@@ -50,6 +51,13 @@ android {
     buildTypes {
         debug {
             buildConfigField("boolean", "DEBUG_ENDPOINTS", "true")
+            // T303: the debug build is its own app (io.github.jasondorjeshort.dystopo.debug, labelled "Dystopo debug"), so it
+            // installs beside the release on one phone and never touches the release's data. Its tile server takes 8688, not
+            // the release's 8686, so both can run at once (two apps cannot bind one loopback port). The scripts read both ids
+            // from one place per language: tools/android_debug.py (Python) and tools/android-ids.ps1 (PowerShell).
+            applicationIdSuffix = ".debug"
+            buildConfigField("int", "SERVER_PORT", "8688")
+            manifestPlaceholders["appLabel"] = "Dystopo debug"
         }
         release {
             buildConfigField("boolean", "DEBUG_ENDPOINTS", "false")

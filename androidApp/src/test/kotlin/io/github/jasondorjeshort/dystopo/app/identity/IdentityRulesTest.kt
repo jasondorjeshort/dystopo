@@ -84,6 +84,14 @@ class IdentityRulesTest {
         assertEquals(PolicyLists.release.anchors.keyIds, IdentityRules.debugAnchors(null).keyIds)
     }
 
+    @Test fun debugPolicyTakesTheRunningBuildsOwnPackage() {
+        // T303: a debug build's id carries the .debug suffix; it is added at run time, never to the release lists.
+        val own = PolicyLists.release.packages.single() + ".debug"
+        assertTrue(own in IdentityRules.debugPolicy(listOf(debugSigner), listOf(own)).packages)
+        assertFalse(own in IdentityRules.debugPolicy(listOf(debugSigner)).packages)
+        assertFalse(own in AttestationPolicy.release().packages)
+    }
+
     @Test fun renewalTimes() {
         assertTrue(IdentityRules.signingKeyDue(null, now))
         assertFalse(IdentityRules.signingKeyDue(now + 2 * day, now))

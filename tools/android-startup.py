@@ -60,8 +60,8 @@ android_debug = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(android_debug)
 adb = android_debug.adb
 
-PACKAGE = android_debug.PACKAGE
-ACTIVITY = PACKAGE + "/io.github.jasondorjeshort.dystopo.app.MainActivity"
+PACKAGE = android_debug.DEBUG_PACKAGE  # T303: the debug build's own id (the ids live in android_debug.py)
+ACTIVITY = android_debug.activity(PACKAGE)
 AM_LINE = re.compile(r"^\s*(TotalTime|WaitTime|ThisTime|LaunchState):\s*(\S+)", re.M)
 
 

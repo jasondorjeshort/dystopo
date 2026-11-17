@@ -15,9 +15,16 @@ E/AndroidRuntime( 6796): Process: io.github.jasondorjeshort.dystopo, PID: 6796
 E/AndroidRuntime( 6796): java.lang.IllegalStateException: Reading a state that was created after the snapshot was taken
 E/AndroidRuntime( 6796): 	at androidx.compose.runtime.snapshots.SnapshotKt.readError(Snapshot.kt:2109)
 """
-got = m.parse_crash(SAMPLE)
+got = m.parse_crash(SAMPLE, m.RELEASE_PACKAGE)
 assert got and got.startswith("java.lang.IllegalStateException: Reading a state") and "PID: 6796" in got, got
 assert m.parse_crash(SAMPLE.replace("io.github.jasondorjeshort.dystopo", "com.other")) is None
+# T303: the debug build is <release id>.debug; each id matches only its own process, never the other's by prefix.
+assert m.DEBUG_PACKAGE == m.RELEASE_PACKAGE + ".debug" and m.PACKAGE == m.DEBUG_PACKAGE
+REL = SAMPLE.replace("io.github.jasondorjeshort.dystopo,", m.RELEASE_PACKAGE + ",")
+DBG = SAMPLE.replace("io.github.jasondorjeshort.dystopo,", m.DEBUG_PACKAGE + ",")
+assert m.parse_crash(REL) is None and m.parse_crash(DBG) is not None
+assert m.parse_crash(REL, m.RELEASE_PACKAGE) is not None and m.parse_crash(DBG, m.RELEASE_PACKAGE) is None
+assert m.activity(m.DEBUG_PACKAGE) == "io.github.jasondorjeshort.dystopo.debug/io.github.jasondorjeshort.dystopo.app.MainActivity"
 assert m.parse_crash("") is None
 
 

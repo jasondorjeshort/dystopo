@@ -6,7 +6,7 @@ per-launch token, only in logcat:
     I/Dystopo( 1234): debug server on port 41237 token 0f3a...
 
 `endpoint()` reads that line for the app's current process; `bootstrap()` also points a host port at it with
-`adb forward`. With the app setting `debugFixedPort=1` the line names 8686 (the tile server, which then also
+`adb forward`. With the app setting `debugFixedPort=1` the line names the tile server's port (8688 in a debug build, T303; which then also
 answers the debug routes and hands out the token from GET /health without one, as before T57); `health_token()`
 is that fallback, for a host port forwarded by hand with no adb serial to read.
 
@@ -19,7 +19,23 @@ import subprocess
 import time
 import urllib.request
 
-PACKAGE = "io.github.jasondorjeshort.dystopo"
+# T303: the app's two application ids, the one place the Python scripts read them from. The debug build has its own id
+# (androidApp/build.gradle.kts, applicationIdSuffix ".debug"), so it installs beside the release on one phone; its tile
+# server is on device port 8688, the release's on 8686. Debug-build steps (debug routes, run-as) use DEBUG_PACKAGE; the
+# release parts (taps only) use RELEASE_PACKAGE. The activity's class name is the Kotlin package's and does not change.
+RELEASE_PACKAGE = "io.github.jasondorjeshort.dystopo"
+DEBUG_PACKAGE = RELEASE_PACKAGE + ".debug"
+PACKAGE = DEBUG_PACKAGE  # what this module's debug-port helpers look for
+MAIN_ACTIVITY = "io.github.jasondorjeshort.dystopo.app.MainActivity"
+RELEASE_TILE_PORT = 8686
+DEBUG_TILE_PORT = 8688
+
+
+def activity(package):
+    """The launcher activity's component for `am start -n`: <package>/<the full class name>."""
+    return f"{package}/{MAIN_ACTIVITY}"
+
+
 TAG = "Dystopo"
 LINE = re.compile(r"debug server on port (\d+) token ([0-9a-f]+)")
 
@@ -68,8 +84,8 @@ def forward_owner(exe, port):
     return None
 
 
-def app_pid(exe, serial):
-    code, out = adb(exe, serial, "shell", "pidof", PACKAGE, timeout=30)
+def app_pid(exe, serial, package=None):
+    code, out = adb(exe, serial, "shell", "pidof", package or PACKAGE, timeout=30)
     out = out.strip().split()
     return out[0] if code == 0 and out and out[0].isdigit() else None
 
@@ -92,7 +108,7 @@ def device_now(exe, serial):
     return out if code == 0 and re.fullmatch(r"\d\d-\d\d \d\d:\d\d:\d\d\.000", out) else None
 
 
-def launch_crash(exe, serial, since=None):
+def launch_crash(exe, serial, since=None, package=None):
     """The app's uncaught exception since `since` (from `device_now`), as "Type: message (Process: ..., PID n)", or None.
 
     Reads logcat's crash buffer for a `FATAL EXCEPTION` of our package, so a launch that dies reports the
@@ -102,26 +118,27 @@ def launch_crash(exe, serial, since=None):
     if since:
         args += ["-t", since]
     _, out = adb(exe, serial, *args, timeout=60)
-    return parse_crash(out)
+    return parse_crash(out, package)
 
 
-def parse_crash(text):
-    """The first `FATAL EXCEPTION` of our package in logcat `-v brief` text, as "Type: message [Process: ..., PID n]"."""
+def parse_crash(text, package=None):
+    """The first `FATAL EXCEPTION` of our package in logcat `-v brief` text, as "Type: message [Process: ..., PID n]".
+    T303: `package` (default the debug build's) must be the process name exactly: the release id is a prefix of the debug's."""
     lines = text.splitlines()
     for i, ln in enumerate(lines):
         if "FATAL EXCEPTION" not in ln:
             continue
         block = [b.split("): ", 1)[-1].strip() for b in lines[i + 1:i + 40]]
         proc = next((b for b in block if b.startswith("Process:")), "")
-        if PACKAGE not in proc:
+        if not re.match(rf"Process: {re.escape(package or PACKAGE)}(,|$)", proc):
             continue
         exc = next((b for b in block if re.match(r"[A-Za-z0-9_.$]+(Exception|Error)(?::|$)", b)), "uncaught exception")
         return f"{exc} [{proc}]"
     return None
 
 
-def raise_if_crashed(exe, serial, since=None):
-    crash = launch_crash(exe, serial, since)
+def raise_if_crashed(exe, serial, since=None, package=None):
+    crash = launch_crash(exe, serial, since, package)
     if crash:
         raise LaunchCrash(f"the app crashed: {crash}")
 

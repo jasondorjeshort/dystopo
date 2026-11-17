@@ -16,7 +16,7 @@ X-Dystopo-Token header on every probe, except the no-token and wrong-token probe
 T57: debug builds serve the debug routes on a random port per launch, announced with the token only in
 logcat (`debug server on port N token T`). With --serial (or ANDROID_SERIAL, or the serial that owns
 --port) the script reads that line, forwards --port to it, expects GET /health without a token to be a
-401 (no bootstrap), and also probes the tile server (device port 8686, through a temporary forward): map
+401 (no bootstrap), and also probes the tile server (device port 8688 in the debug build, T303, through a temporary forward): map
 routes need the token, debug routes are 404 there with or without it. Without adb it reads the token from
 GET /health without one (the app's debugFixedPort=1 mode) and expects that bootstrap to answer 200.
 
@@ -156,7 +156,7 @@ def main():
             return 1
     else:
         TOKEN = read_token(host, port) or ""
-    fixed = device_port in (None, 8686)  # debugFixedPort=1: debug routes and the /health bootstrap on 8686
+    fixed = device_port in (None, android_debug.DEBUG_TILE_PORT)  # debugFixedPort=1: debug routes and the /health bootstrap on the tile port
     if not TOKEN or not health(host, port):
         print(json.dumps({"ok": False, "serverAlive": False, "error": f"/health did not answer on {host}:{port} before probing (token read: {bool(TOKEN)})"}))
         return 1
@@ -198,8 +198,8 @@ def main():
     ]
     tile_port = None
     if exe and serial and not fixed:
-        # T57: the tile server on device port 8686 answers map routes only (like release); a temporary host forward.
-        code, out = android_debug.adb(exe, serial, "forward", "tcp:0", "tcp:8686", timeout=30)
+        # T57: the tile server (device port 8688 in a debug build, T303) answers map routes only (like release); a temporary host forward.
+        code, out = android_debug.adb(exe, serial, "forward", "tcp:0", f"tcp:{android_debug.DEBUG_TILE_PORT}", timeout=30)
         tile_port = int(out.strip().splitlines()[-1]) if code == 0 and out.strip().splitlines()[-1].strip().isdigit() else None
     if tile_port:
         probes += [

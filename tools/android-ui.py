@@ -105,9 +105,6 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-PACKAGE = "io.github.jasondorjeshort.dystopo"
-ACTIVITY = PACKAGE + "/io.github.jasondorjeshort.dystopo.app.MainActivity"
-EXTERNAL = f"/sdcard/Android/data/{PACKAGE}/files"
 
 
 def _load(name, file):
@@ -119,6 +116,23 @@ def _load(name, file):
 
 debug = _load("android_debug", "android_debug.py")
 firstrun = _load("android_firstrun", "android-firstrun.py")  # Device, settle_map, contour_share, fresh_install
+# T303: the release parts drive the release build (its own id); routes, search and bothunits drive the debug build, whose
+# id carries the .debug suffix. main() calls use_package for those. The ids live in android_debug.py.
+DEBUG_PARTS = ("routes", "search", "bothunits")
+PACKAGE = debug.RELEASE_PACKAGE
+ACTIVITY = debug.activity(PACKAGE)
+EXTERNAL = f"/sdcard/Android/data/{PACKAGE}/files"
+
+
+def use_package(package):
+    """Points every package-derived name of this module at `package` (the part's build)."""
+    global PACKAGE, ACTIVITY, EXTERNAL, STORE_OLD, STORE_NEW, UPDATE_API_FILE
+    PACKAGE = package
+    ACTIVITY = debug.activity(package)
+    EXTERNAL = f"/sdcard/Android/data/{package}/files"
+    STORE_OLD = f"/data/data/{package}/cache/online/tiles"
+    STORE_NEW = f"/data/data/{package}/no_backup/tiles"
+    UPDATE_API_FILE = f"{EXTERNAL}/update-api.txt"
 check = firstrun.check  # decode_png, changed_share
 
 
@@ -279,13 +293,14 @@ def type_text(dev, text):
 
 
 def app_pid(dev):
-    return debug.app_pid(dev.exe, dev.serial)
+    return debug.app_pid(dev.exe, dev.serial, PACKAGE)
 
 
 def crash_lines(dev):
     """The crash buffer when it holds a crash of this app (Java: FATAL EXCEPTION with our process; native: our name)."""
     lines = dev.adb("logcat", "-d", "-b", "crash", check_ok=False).splitlines()
-    return lines if any(PACKAGE in l for l in lines) else []
+    own = re.compile(re.escape(PACKAGE) + r"(?!\.debug)")  # T303: the release id is a prefix of the debug build's
+    return lines if any(own.search(l) for l in lines) else []
 
 
 def crash_reason(lines):
@@ -1244,7 +1259,7 @@ def card_intruders(nodes):
     intruders = []
     for i, n in enumerate(nodes):
         b = n["bounds"]
-        if first <= i <= last or not b or not n["pkg"].startswith(PACKAGE):
+        if first <= i <= last or not b or n["pkg"] != PACKAGE:
             continue
         if b[0] <= box[0] and b[1] <= box[1] and b[2] >= box[2] and b[3] >= box[3]:
             continue  # holds the whole card: the window, the map
@@ -3581,6 +3596,7 @@ def main():
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     if args.part not in ("strings",) and not args.serial:
         ap.error("--serial is required for device parts")
+    use_package(debug.DEBUG_PACKAGE if args.part in DEBUG_PARTS else debug.RELEASE_PACKAGE)  # T303
     t0 = time.time()
     since = debug.device_now(debug.adb_path(), args.serial) if args.serial else None
     try:
@@ -3590,7 +3606,7 @@ def main():
     if args.serial and not report.get("ok"):
         # T86: a launch that died is reported as that, with the exception line, not as "no settled map within N s".
         try:
-            crash = debug.launch_crash(debug.adb_path(), args.serial, since)
+            crash = debug.launch_crash(debug.adb_path(), args.serial, since, PACKAGE)
         except Exception:
             crash = None
         if crash:
