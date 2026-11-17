@@ -1,22 +1,22 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-16 22:40 UTC, at the commit after 350a35dc, by main session (wave 35: seven merged, the 5-hour gate holding)
+Updated: 2026-11-17 03:20 UTC, at the commit after 8837fcfe, by main session (wave 35: all eleven merged, the closing sweep running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-34.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 35 is open** (`docs/TASKS.md`, T292 to T302, the development-process cleanup and four simple debugging tasks the owner added). **Merged (7 of 11):** T292, T294, T296, T297, T298, T301, T302 (log entries and Status lines written). **Running:** T295's implementer (capture lane, emulator `dystopo35-T295` on 5560). **Not launched:** T293 and T299 (tools lane, in that order), T300 (capture lane, after T295). **The 5-hour gate holds** (52 % at 22:39 UTC; resets 23:30 UTC, 18:30 Eastern): no agent launch, verifiers and chores included, until then or the owner's grant.
-- Owed by the coordinator: a cleanup chore for T292, T301, T302 (branches, worktrees) and the folders left by long paths (`dystopo-wt/T294`, `T301-verify`, `T302-verify`: the `\\?\` delete); the wave paragraph's coordinator edits still open: the release skill's lines T293 reports, the `release-realism.md` lines T295 reports, a line for `tools/release-notes.py` in `release-realism.md` (T297's follow-up), the Later lines T299 and T300 strike.
-- New flakes to watch at the close's sweep: `features`' Settings > Sources test failing to reach a LAN server in a `-Only features` run (T292's verifier); the device tour's offline world view at z3 not drawn once (T302's verifier).
-- **The review of every pending idea** (2026-11-16): `docs/findings/2026-11-16-research-for-pending-ideas.md`. v0.1.31-alpha is the last release; its sweep `out/sweep-20261115-2123` is the next close's `-Prev`. The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; long-path folders go by the `\\?\` delete.
+- **Wave 35: all eleven merged** (T292 to T302; log entries and Status lines written; the last, T300, at f78f8218). **The closing sweep is running** from the main checkout (`-Prev out\sweep-20261115-2123`, started about 03:15 UTC 2026-11-17; a Sonnet agent reads its summary and both sheets). A cleanup chore for T293, T295, T299, T300 (branches, worktrees) is running beside it. The meter at the last merge: 5-hour 49 % (resets 04:30 UTC), 7-day 73.
+- The sweep's `-Prev` has no sidecars, so its sides read `unknown` and are kept on the before-and-after sheet (expected; T295). Known flakes to watch in it: `features`' Settings > Sources failing to reach the LAN server; the device tour's offline world view at z3 not drawn (drawn in T295's rerun).
+- **For the owner:** T293's permission test was not refused: a script run by an agent can read `tools\release.properties` in the main checkout (the deny rule covers the Read tool only). Nothing read a value; closing it is a permission-settings change, the owner's.
+- Still owed by the coordinator at the close: the README status; the meter at the close in the wave paragraph's allowance sentence (planned 61 to 63.5) with the per-task figure revised if more than five points off; per-task costs by `python -I tools/agent-cost.py <Tnn>`; the wave moved to `docs/tasks/wave-35.md` (Haiku chore). v0.1.31-alpha is the last release; the live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; long-path folders go by the `\\?\` delete.
 
 ## Next
 
-1. After the reset: the cleanup chore; T293 (tools lane) on a free emulator slot; T295's verifier when it reports; then T299 after T293 and T300 after T295. The close: a sweep (the app changed: T301, T302), and a release if it is green (the owner: this wave "might not even lead to a release"; T301 and T302 are user-visible, so one is likely).
-2. Then the routing work, in the order of the research finding's Drive routing section: ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes).
+1. Read the sweep's report. Green: publish v0.1.32-alpha by the `release` skill (T301 and T302 are user-visible: Send diagnostics ends in Share and Open GitHub issue; Report recent stats; release notes by `tools/release-notes.py`). Red: a fix task per finding, from the report. Then the close steps above and the handoff.
+2. Then the routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes).
 3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
 
 ## Waiting on user
