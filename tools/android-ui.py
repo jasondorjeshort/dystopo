@@ -1619,23 +1619,129 @@ def plan_drive(dev, key, a, b, first=False, fuel_wait=0):
             "routeLinePx": px, "png": png}
 
 
+def drive_value(dev, nodes):
+    """T300: the key of the value Plan drives for shows filled on the open row (the one chosen) and {label: filled}; the
+    key is None when the frame shows none or more than one filled."""
+    _, r = dev.frame()
+    on = chosen(r, nodes, [p[1] for p in DRIVE_PREFS])
+    keys = [k for k, label, _line in DRIVE_PREFS if on.get(label)]
+    return (keys[0] if len(keys) == 1 else None), on
+
+
+def pack_files(dev):
+    """T300: the file names in the app's packs folder (`adb shell ls`; a release build has no run-as)."""
+    out = dev.shell("ls", f"{EXTERNAL}/packs", check_ok=False)
+    return sorted(x.strip() for x in out.split() if x.strip().endswith(".pmtiles"))
+
+
+def pack_list(dev, name):
+    """T300: Offline maps (the one list) opened by its chip and captured; whether any row names `name`; closed again."""
+    dev.tap_text(PACKS_CHIP, timeout=10)
+    time.sleep(2)
+    nodes = dev.nodes()
+    png = dev.screencap("drive-restored-packs")[0]
+    texts = [t for t in dev.texts(nodes) if t.strip()]
+    close_sheet(dev)
+    return {"rows": texts[:30], "names": any(re.search(name, t, re.I) for t in texts), "png": png}
+
+
+def restore_drive(dev, pack, before, pushed):
+    """T300: puts back what the drive step changed, on success and on failure alike: the pack files the step pushed itself
+    are removed (`pushed`; a pack that was there before is left), the app cold-started (whatever the step left open is
+    gone, and the app reads its packs folder at start), and Plan drives for set back to `before` (the key the row showed
+    before the step; nothing is set when it could not be read); then the row opened again and Offline maps, each
+    captured and read back: the row filled at `before`, no row naming the pack. Each part is tried whatever the one
+    before it did; what failed is in `errors`."""
+    out = {"value": before, "removed": [], "errors": []}
+
+    def attempt(what, fn):
+        try:
+            return fn()
+        except Exception as e:  # reported, never raised: the step's report says what was not put back
+            out["errors"].append(f"{what}: {type(e).__name__}: {e}")
+            return None
+
+    if pushed:
+        for f in pushed:
+            attempt(f"remove {f}", lambda f=f: dev.shell("rm", "-f", f"{EXTERNAL}/packs/{f}"))
+        left = attempt("list the packs", lambda: pack_files(dev))
+        out["packFiles"] = left
+        out["removed"] = [f for f in pushed if left is not None and f not in left]
+        if len(out["removed"]) < len(pushed):
+            out["errors"].append(f"pack files not removed: {sorted(set(pushed) - set(out['removed']))}")
+    # A cold start whatever the step left open (a card, a sheet, a pop-up); the app reads its packs folder at start.
+    attempt("cold start", lambda: (open_map(dev, *PARADISE, 13, cold=True), time.sleep(8)))
+    if before:
+        label, line = next((lab, ln) for k, lab, ln in DRIVE_PREFS if k == before)
+        row = attempt("set the row back", lambda: set_drive_pref(dev, "restore", label, line))
+        if row and row.get("error"):
+            out["errors"].append(row["error"])
+    else:
+        out["errors"].append("the row's value before the step was not read: nothing set back")
+    if before:
+        def read_row():
+            _n, nodes = drive_row(dev)
+            key, on = drive_value(dev, nodes)
+            out["rowAfter"], out["rowFilled"] = key, on
+            out["rowPng"] = dev.screencap("drive-restored-row")[0]
+            close_sheet(dev)
+            if key != before:
+                out["errors"].append(f"the row reads {key!r} after the restore, not {before!r} ({on})")
+        attempt("read the row", read_row)
+    if pushed:
+        def read_list():
+            lst = pack_list(dev, pack)
+            out["packList"], out["packListPng"] = lst["rows"], lst["png"]
+            if lst["names"]:
+                out["errors"].append(f"Offline maps still lists {pack}")
+        attempt("read Offline maps", read_list)
+    out["ok"] = not out["errors"]
+    return out
+
+
 def drive_step(dev, args):
     """T288: the sweep opens wave 33's row, help and card line by taps: Settings > Navigation and tracking, the row Plan
     drives for (a frame that also holds the Extended readout row above it) and its help pop-up; then one drive planned
     under each value with the route card captured each time, on the `montblanc` pack (Les Houches to Chamonix, where
     least fuel takes another road and the card's fuel line shows) when --drive-osm exists, else the `rainier` drive
     Paradise to Longmire with `fuelLine: absent` and no failure for that. A missing fuel line is reported, never failed:
-    a wave may mean to change the route (the route sheet's rule)."""
+    a wave may mean to change the route (the route sheet's rule). T300: the row's value before the step and the pack files
+    the step pushed itself are put back in a `finally` (restore_drive), so the steps and parts after it find the phone as
+    it was; the report's `restored` says what was set back and removed, and a restore that did not hold fails the step."""
     t0 = time.time()
     pack, dem, osm = drive_pack(args)
     drive = DRIVES[pack]
     out = {"pack": pack, "drive": drive["name"], "frames": {}}
+    st = {"before": None, "pushed": []}
+    errors = []
+    try:
+        drive_body(dev, pack, dem, osm, drive, out, st, errors)
+    except Exception as e:  # reported like Run.step does, after the restore
+        errors.append(f"{type(e).__name__}: {e}")
+    finally:
+        out["restored"] = restore_drive(dev, pack, st["before"], st["pushed"])
+    errors += out["restored"]["errors"]
+    fuel = out.get("values", {}).get("fuel", {})
+    out["fuelLine"] = fuel.get("fuelLine")
+    out["seconds"] = round(time.time() - t0, 1)
+    png = fuel.get("png")
+    return {"ok": not errors, **out, **({"png": png} if png else {}), **({"error": "; ".join(errors)} if errors else {})}
+
+
+def drive_body(dev, pack, dem, osm, drive, out, st, errors):
+    """drive_step's taps. `st` gets the row's value before the step and the pack files to remove as soon as each is known,
+    so a failure part way still has them restored."""
     if osm:
+        had = pack_files(dev)
+        names = [f"{pack}-{kind}.pmtiles" for kind, src in (("dem", dem), ("outdoors", osm)) if src]
+        st["pushed"] = [f for f in names if f not in had]  # set before the push: a push cut short is removed too
+        out["packFilesBefore"] = had
         push_packs_only(dev, pack, dem, osm)
     clear_route(dev)
     close_sheet(dev)
     # The row as it stands (least time, the default), the Extended readout row above it, then the help pop-up.
     _n, nodes = drive_row(dev)
+    st["before"], out["rowBefore"] = drive_value(dev, nodes)
     out["extendedReadout"] = extended_row(dev, nodes)
     out["frames"]["row"] = dev.screencap("drive-row")[0]
     dev.tap(dev.find("^Help: Plan drives for$", nodes))
@@ -1646,7 +1752,8 @@ def drive_step(dev, args):
     if ok_btn:
         dev.tap(ok_btn)
     close_sheet(dev)
-    errors = [] if help_text else ["no help pop-up for Plan drives for"]
+    if not help_text:
+        errors.append("no help pop-up for Plan drives for")
     out["values"] = {}
     for i, (key, label, line) in enumerate(DRIVE_PREFS):
         row = set_drive_pref(dev, key, label, line)
@@ -1658,9 +1765,6 @@ def drive_step(dev, args):
         if not r["card"] or r["routeLinePx"] < 150:
             errors.append(f"{label}: card {r['card']!r}, route line {r['routeLinePx']} samples")
     clear_route(dev)
-    out["fuelLine"] = out["values"]["fuel"]["fuelLine"]
-    out["seconds"] = round(time.time() - t0, 1)
-    return {"ok": not errors, **out, "png": out["values"]["fuel"]["png"], **({"error": "; ".join(errors)} if errors else {})}
 
 
 # --- features (a) -----------------------------------------------------------------------------------------------

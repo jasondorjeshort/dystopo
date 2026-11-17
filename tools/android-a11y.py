@@ -624,8 +624,48 @@ def scr_route_details(c):
     c.best_start = wait_best_start(c)
 
 
+# T300: the navigation screen read what the parts before it left. The off-route line adds the way to turn when the app has
+# a heading ("Head NW 3.7 mi to rejoin (behind-right)", a line taller than the baseline's), and the app keeps one: a
+# simulated heading (`/camera/heading`, `/location?bearing=`), the course between the last two fixes 5 m to 2 km apart
+# (controls/Heading.kt keeps it, however old, until a jump), or the compass while facing; the device tour's replay left a
+# course when a11y ran next to it, and a startup part's cold launches cleared it. The camera button reads "Heading up"
+# in north-up and "North up" in facing, which persists across restarts. So the screen's setup pins all three: no
+# simulated heading, north-up, and a fix 7 km off (a jump, which drops the course) before the fix at Paradise again;
+# then checks the started navigation has no heading and the map is north-up, and skips the screen with the reason when not.
+NAV_JUMP = (46.7500, -121.8120)  # Longmire, about 7 km from Paradise: farther than Heading.JUMP_M (2 km)
+NAV_PIN_S = 6.0  # how long the started navigation may take to read the pinned state
+
+
+def pin_nav_state(c):
+    """What the screen found (logged: the orientation and the app's heading, `GET /camera`), then the pin."""
+    o = (c.srv.ok("GET", "/camera") or {}).get("orientation") or {}
+    log(f"navigation: found orientation {o.get('mode')}, heading {json.dumps(o.get('heading'))[:300]}")
+    c.srv.ok("POST", "/camera/heading")
+    c.srv.ok("POST", "/camera/orientation?mode=north-up")
+    for lat, lon in (NAV_JUMP, PARADISE):
+        c.srv.ok("POST", f"/location?lat={lat}&lon={lon}&accuracy=8")
+        time.sleep(0.5)
+
+
+def nav_state(c, timeout=None):
+    """(heading, orientation) once navigation reads no heading and the map is north-up, else after `timeout`: the
+    navigation's heading (`GET /nav` `heading`) and the map's orientation mode (`GET /camera`)."""
+    deadline = time.time() + (NAV_PIN_S if timeout is None else timeout)
+    while True:
+        heading = (c.srv.ok("GET", "/nav") or {}).get("heading") or {}
+        mode = ((c.srv.ok("GET", "/camera") or {}).get("orientation") or {}).get("mode")
+        if (heading.get("deg") is None and mode == "north-up") or time.time() > deadline:
+            return heading, mode
+        time.sleep(0.5)
+
+
 def scr_nav(c):
+    pin_nav_state(c)
     c.srv.ok("POST", f"/nav/start?track={c.track_id}")
+    heading, mode = nav_state(c)
+    log(f"navigation: heading {json.dumps(heading)}, orientation {mode}")
+    if heading.get("deg") is not None or mode != "north-up":
+        raise RuntimeError(f"the pinned state did not hold: heading {json.dumps(heading)}, orientation {mode}")
 
 
 def scr_profile(c):
