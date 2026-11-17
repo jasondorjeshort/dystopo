@@ -1259,7 +1259,7 @@ try {
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
         $script:emuPhase = 'release' # T233: a reboot from here boots only; every release part installs its own APK
         $null = Part 'release' {
-            # After the debug parts: it uninstalls the debug build (signed with the other key). T105: the sweep's own copy.
+            # After the debug parts; T303: the release installs beside the debug build (its own id). T105: the sweep's own copy.
             Run 'powershell.exe' @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-release.ps1', '-Serial', $serial, '-Apk', (Release-Apk $serial),
                 '-Port', "$($Port + 1)", '-Dem', $dem, '-Osm', $osm, '-Out', (Join-Path $Out 'release')) (Join-Path $Out 'release.log') (Join-Path $Out 'release.err.log')
         }
