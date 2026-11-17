@@ -30,6 +30,8 @@ emulator's cold start is over the 5 s limit on its own. The release skill alread
 
 2026-11-17, the owner, asked to raise this one's priority ("We could do this soon, yes. This sounds fun."): beyond a sweep the owner attends on USB, keep the phone on wireless debugging overnight so the nightly sweep runs a short phone-only part (the startup launches, the tile store's figures, `GET /diagnostics`) and real-hardware figures arrive every day, not only at releases. Note against the Plan: the debug and release builds share one package, so the safe first step is a debug package suffix (`applicationIdSuffix`), letting the debug build sit beside the owner's release install without touching its data.
 
+2026-11-17: pass one merged as T303 (the debug package `.debug` beside the release install, `tools/sweep.ps1 -Phone <serial>`, proved on a stand-in emulator). Left here: the first run on the owner's phone, and the second pass, wireless debugging overnight with a short phone part in the nightly sweep.
+
 Plan: one pass, `tools/sweep.ps1` and `tools/sweep-summary.py` only (plus `docs/reference/` sweep page's paragraph):
 a `-Phone <serial>` option that, after the emulator parts, runs on that serial `tools/android-check.py` with the
 tour's fixes sent as `POST /location` on the debug port (never `adb emu geo fix`), `tools/android-startup.py

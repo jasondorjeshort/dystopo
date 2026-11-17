@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-17
+
+- T303: The owner's phone in the sweep, pass one: a debug package of its own and `-Phone <serial>`
+
 ## v0.1.32-alpha (2026-11-17)
 
 ### 2026-11-16
