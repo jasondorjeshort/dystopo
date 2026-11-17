@@ -24,6 +24,8 @@ on the route card and the map's light.
 - What the sun is for on a drive: shade and ice on a winter road, low sun ahead, the daylight left at the far end.
   A survey first (ADR 0039) of what drivers and planners use.
 
+2026-11-17, from conversation (a moonshot, not triaged): the terrain sunset along the route, not the horizon's: the time the sun actually drops behind the ridge at each point, from the DEM's horizon (as `routing/ShadeAlong.kt` and the horizon idea `2026-10-31-horizon-and-shade-shipped-as-derived-data.md` compute it), so the card can say when the sun leaves this trail, which in a valley can be an hour before the official sunset.
+
 Question: build it for hikes now and add drives when the speed profile reaches the phone, or wait and build both
 together? Found 2026-11-16 (triage): the map already relights the terrain for any instant (T188's sun-and-shade
 control, `app/options/SunShade.kt` `SunClock`, shadow tiles by the minute) and `routing/ShadeAlong.kt` gives a

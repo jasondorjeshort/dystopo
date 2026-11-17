@@ -35,6 +35,8 @@ distance off the ground."
   measurements (`GnssMeasurement`) add, and how surveyors state a summit fix's confidence.
 - Whether the still detector is the accelerometer idea's step detector or a smaller one of its own.
 
+2026-11-17, from conversation: the barometer, GNSS and DEM read three heights at once on the emulator at Paradise (1,586.5, 1,647.5 and 1,654.2 m, `GET /readout` in T299's verification). Idea: the altimeter learns this phone's sensor offsets over many hikes, re-anchoring the barometer quietly where the height is known. The owner: "We don't need to just do this on summits; it should be related to the update-from-topo-data click we want to have": every ground-mode set (this file's first pass), not only a summit, is a calibration point the learned offset is built from. Recorded, not triaged.
+
 Plan: two passes, the ground mode first; this file stays for the second. Pass one: "Set my height from the ground
 here" beside T197's pin (`ReadoutEstimator.pin`, `POST /readout/calibrate?ground=1`): the phone's height above the
 ground asked once and remembered (a plain setting in the phone's registry, not synced), a still test of its own on

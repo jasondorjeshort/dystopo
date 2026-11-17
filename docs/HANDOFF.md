@@ -15,9 +15,10 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 
 ## Next
 
-1. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
-2. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
-3. Tooling follow-ups from wave 35 (Later): the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
+1. **The owner's phone in the sweep, raised by the owner (2026-11-17)**: `docs/ideas/2026-11-08-the-owners-phone-in-the-sweep.md` (its Plan, plus the debug package suffix first so the debug build sits beside the owner's release install; the owner attends the first run on USB, then wireless debugging overnight). Six new ideas of 2026-11-17 are untriaged, recorded at the owner's word ("We'll prioritize later").
+2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
+3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
+4. Tooling follow-ups from wave 35 (Later): the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
 
 ## Waiting on user
 
