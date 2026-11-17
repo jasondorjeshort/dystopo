@@ -637,6 +637,9 @@ NAV_PIN_S = 6.0  # how long the started navigation may take to read the pinned s
 
 
 def pin_nav_state(c):
+    """What the screen found (logged: the orientation and the app's heading, `GET /camera`), then the pin."""
+    o = (c.srv.ok("GET", "/camera") or {}).get("orientation") or {}
+    log(f"navigation: found orientation {o.get('mode')}, heading {json.dumps(o.get('heading'))[:300]}")
     c.srv.ok("POST", "/camera/heading")
     c.srv.ok("POST", "/camera/orientation?mode=north-up")
     for lat, lon in (NAV_JUMP, PARADISE):
