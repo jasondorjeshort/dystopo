@@ -4,19 +4,21 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.32-alpha (2026-11-17)
+
 ### 2026-11-16
 
-- T300: The drive step restores what it changes (capture lane, after T295)
-- T295: Sweep frames carry the area they show, and the sheet leaves out a frame outside them (capture lane, after T294 and T292)
-- T299: Sweep loose ends: the montblanc pair in a worktree, an altitude with the fix (tools lane, after T293)
-- T293: One signing step owns the release key (tools lane, after T292)
-- T302: "Report recent stats" in place of "Report the last start" (app lane, after T301)
-- T292: The sweep retries a part once on a machine failure, and counts every rerun (tools lane, first)
-- T301: Send diagnostics ends in a share (app lane, first)
-- T294: The a11y baseline keys a size the same in kB and MB (capture lane, first; chore-sized)
-- T296: Verification by script: a run in sweep order, a Checks file, and a Haiku-class verifier where it suffices (process lane)
-- T298: The usage meter and tokens per agent, recorded by hooks (process lane, merged last)
-- T297: Release notes: the mechanical sections written by a script (process lane)
+- T301: Report a problem > Send diagnostics: after the file is saved, Share sends it to an app you pick, and Open GitHub issue starts an issue with the file's summary (version, phone, memory, the last starts) for you to attach the file to
+- T302: "Report recent stats" replaces "Report the last start": the median of the recent starts against the limits the app is tested against, the map tile store, offline maps by state and the app's memory use, with no names, tracks or locations
+- T300: Tooling: the sweep's drive step puts back the setting and the map it changed, and the accessibility check pins the navigation screen's state
+- T295: Tooling: every phone screenshot of the sweep names the public area it shows, and the before-and-after sheet leaves out any that is outside them
+- T299: Tooling: the sweep's Mont Blanc routes run from a task's own copy, and the test phone starts with an altitude
+- T293: Tooling: one script signs the sweep's release builds; no copy of the release key is made
+- T292: Tooling: a sweep part that fails because the test phone dropped runs once more, and every rerun is counted
+- T294: Tooling: the accessibility baseline reads a size the same in kB and MB
+- T296: Tooling: a task's checks run by script, in the sweep's order
+- T298: Tooling: what each agent costs is recorded
+- T297: Tooling: the release notes' fixed sections are written by a script
 
 ## v0.1.31-alpha (2026-11-16)
 
