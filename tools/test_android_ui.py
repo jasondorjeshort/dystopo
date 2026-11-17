@@ -510,3 +510,101 @@ assert re.search(ui.FUEL_LINE, "Planned for least time: the server does not plan
 assert not re.search(ui.FUEL_LINE, "Based on typical driving speeds")
 assert re.match(ui.CARD, "4.8 mi · up 365 ft, down 347 ft · 0:08")
 print("test_android_ui (T288): ok")
+
+# T300: the drive step puts back the row's value and removes the pack files it pushed, on success and on failure alike;
+# a pack that was there before is left. A fake phone: its packs folder and its Plan drives for value.
+class _Phone:
+    def __init__(self, files, value="time"):
+        self.files, self.value, self.shots, self.cold = set(files), value, 0, 0
+
+    def shell(self, *a, **kw):
+        if a[0] == "ls":
+            return " ".join(sorted(self.files))
+        if a[0] == "rm":
+            self.files.discard(a[-1].rsplit("/", 1)[-1])
+        return ""
+
+    def screencap(self, name):
+        self.shots += 1
+        return f"{self.shots:02d}-{name}.png", b""
+
+    def find(self, pattern, nodes=None):
+        return {"text": pattern}
+
+    def tap(self, n):
+        pass
+
+    def wait_for(self, pattern, timeout):
+        return {"text": "How the phone plans a drive"}, []
+
+
+def _drive_run(files, value, fail_at=None, phone_cls=_Phone):
+    phone = phone_cls(files, value)
+    calls = []
+
+    def push(dev, name, dem, osm):
+        if fail_at == "push":
+            raise RuntimeError("adb push failed")
+        dev.files |= {f"{name}-dem.pmtiles", f"{name}-outdoors.pmtiles"}
+
+    def set_pref(dev, key, label, line):
+        calls.append(("set", key, label))
+        dev.value = next(k for k, lab, _l in ui.DRIVE_PREFS if lab == label)
+        return {"line": line, "filled": {label: True}, "png": f"drive-row-{key}.png"}
+
+    def plan(dev, key, a, b, first=False, fuel_wait=0):
+        if fail_at == key:
+            raise RuntimeError(f"no drive card ({key})")
+        return {"card": "4.8 mi · 0:08", "second": "Based on typical driving speeds", "fuelLine": "absent", "routeLinePx": 400, "png": f"drive-{key}.png"}
+
+    def cold(dev, lat, lon, z, cold=False):
+        dev.cold += cold
+
+    patches = {"drive_pack": lambda args: ("montblanc", "d.pmtiles", "o.pmtiles"), "push_packs_only": push,
+               "drive_row": lambda dev: (None, []), "drive_value": lambda dev, nodes: (dev.value, {dev.value: True}),
+               "extended_row": lambda dev, nodes: None, "set_drive_pref": set_pref, "plan_drive": plan,
+               "clear_route": lambda dev: None, "close_sheet": lambda dev: None, "open_map": cold,
+               "pack_list": lambda dev, name: {"rows": sorted(dev.files), "names": any(name in f for f in dev.files), "png": "packs.png"}}
+    saved = {k: getattr(ui, k) for k in patches}
+    sleep = ui.time.sleep
+    try:
+        for k, v in patches.items():
+            setattr(ui, k, v)
+        ui.time.sleep = lambda s: None
+        r = ui.drive_step(phone, None)
+    finally:
+        for k, v in saved.items():
+            setattr(ui, k, v)
+        ui.time.sleep = sleep
+    return r, phone, calls
+
+
+rainier = {"rainier-dem.pmtiles", "rainier-outdoors.pmtiles"}
+mb = {"montblanc-dem.pmtiles", "montblanc-outdoors.pmtiles"}
+# Success: the row from Least time (the default) through each value, back to Least time; the pushed pair gone.
+r, phone, calls = _drive_run(rainier, "time")
+assert r["ok"], r
+assert phone.value == "time" and phone.files == rainier and phone.cold == 1, (phone.value, phone.files)
+assert r["restored"]["value"] == "time" and r["restored"]["rowAfter"] == "time" and sorted(r["restored"]["removed"]) == sorted(mb), r["restored"]
+assert calls[-1] == ("set", "restore", "Least time"), calls
+# The value before was another one: that one is put back.
+r, phone, _c = _drive_run(rainier, "fuel")
+assert r["ok"] and phone.value == "fuel" and r["rowBefore"] == {"fuel": True}, r
+# Failure part way (the second drive): the step fails with its reason, and both are still put back.
+r, phone, calls = _drive_run(rainier, "time", fail_at="fuel")
+assert not r["ok"] and "no drive card (fuel)" in r["error"], r
+assert phone.value == "time" and phone.files == rainier and r["restored"]["ok"], (phone.value, phone.files, r["restored"])
+# A push cut short: what it left is removed, the row (never read) is not touched and the report says so.
+r, phone, calls = _drive_run(rainier, "quick", fail_at="push")
+assert not r["ok"] and phone.files == rainier and phone.value == "quick" and not any(c[0] == "set" for c in calls), (phone.files, calls)
+assert "not read" in r["error"], r
+# The pair was there before the step: it is left where it was.
+r, phone, _c = _drive_run(rainier | mb, "time")
+assert r["ok"] and phone.files == rainier | mb and r["restored"]["removed"] == [] and "packList" not in r["restored"], r["restored"]
+# A file the phone keeps (rm refused) fails the step and names it.
+class _Stuck(_Phone):
+    def shell(self, *a, **kw):
+        return "" if a[0] == "rm" else super().shell(*a, **kw)
+r, phone, _c = _drive_run(rainier, "time", phone_cls=_Stuck)
+assert not r["ok"] and "not removed" in r["error"] and "still lists montblanc" in r["error"], r["error"]
+print("test_android_ui (T300): ok")
