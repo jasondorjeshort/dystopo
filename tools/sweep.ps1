@@ -54,7 +54,7 @@
 #                values on the montblanc pair (this checkout's out\, else -DataDir's by path; rainier without it); no crash
 #   recenter     T105 (T93's follow-up): pan away from the fix, one tap on Recenter, the puck back where it was
 #   diagnostics  T154 (T143's follow-up): Settings > About and advanced > Diagnostics on the sweep's release build (the
-#                release key where tools\release.properties exists): every line, the max heap equal to dalvik.vm.heapsize,
+#                release key, Gradle's in the main checkout, tools\sign-release.ps1's from a worktree, T293): every line, the max heap equal to dalvik.vm.heapsize,
 #                Copy report, Refresh, then after a force-stop "Last session" names how it ended. Screenshots in ui\diagnostics\.
 #   upgrade      the previous published release (-PrevRelease, default the latest on GitHub) with a track, a trip,
 #                the pack and metric units, then this build installed over it: all of it survives. T91: the
@@ -75,7 +75,8 @@
 #                checked with android-ui.py matrix and deleted afterwards
 # The release build is made once with -PdystopoVersion=<describe>-sweep -PdystopoVersionCode=<commit count>, as
 # release.yml does, so it installs over the published release (a versionCode 1 build cannot). T105: its APKs are copied
-# to apk\ (apks.json: file, bytes, SHA-256) and every release part installs those copies, since the update part's
+# to apk\ (apks.json: file, bytes, SHA-256, signedBy; T293: from a worktree, which has no key, each copy is first re-signed
+# by tools\sign-release.ps1 with the main checkout's key) and every release part installs those copies, since the update part's
 # second build overwrites androidApp\build\outputs\apk\release.
 # and writes out\sweep-<date>\: steps.tsv, each part's log and JSON, summary.json and sheet.png (a contact
 # sheet of the contact sheets) through tools/sweep-summary.py. Exit 1 when any part failed.
@@ -893,6 +894,19 @@ function Stop-Server([string]$name) {
 # published release; android-release.ps1 and android-firstrun.py then use it as it is.
 $script:releaseBuilt = $false
 $apkCopies = Join-Path $Out 'apk'
+# T293: the release key is read only by Gradle in the checkout that holds tools\release.properties (the main checkout)
+# and, for a build made elsewhere, by tools\sign-release.ps1, which re-signs an APK with the main checkout's key and
+# prints only its certificate's SHA-256. No worktree holds a copy of the key.
+$script:keyHere = Test-Path (Join-Path $repo 'tools\release.properties')
+# Re-signs $apk in place; returns what signed it ('sign-release.ps1 <cert prefix>', or 'debug key' when the main
+# checkout has no key either, the build's own fallback). <base>.json and <base>.err.log hold the script's output.
+function Sign-Release([string]$apk, [string]$base) {
+    $code = Run 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repo 'tools\sign-release.ps1'), '-Apk', $apk) "$base.json" "$base.err.log" -TimeoutS 300
+    if ("$code" -eq '2') { Write-Host "[sweep] no release key in the main checkout: $([IO.Path]::GetFileName($apk)) keeps the debug key"; return 'debug key' }
+    $r = try { Get-Content -Raw "$base.json" | ConvertFrom-Json } catch { $null }
+    if ("$code" -ne '0' -or -not $r -or -not $r.ok) { throw "sign-release.ps1 failed on $([IO.Path]::GetFileName($apk)) (exit $code; see $base.json)" }
+    "sign-release.ps1 $($r.certSha256.Substring(0, 11))"
+}
 function Build-Release {
     if ($script:releaseBuilt) { return }
     $count = "$(& git rev-list --count HEAD 2>$null)".Trim()
@@ -909,10 +923,14 @@ function Build-Release {
     # T105: the sweep's own copies of the release APKs, which every release part installs: the update part's second build
     # (versionCode +1) overwrites androidApp\build\outputs\apk\release, and the parts after it, and a later check of the
     # APK the release part tried, must not pick that one up. apks.json lists them with their SHA-256.
+    # T293: a checkout without the key (a task worktree) built them with the debug key; each copy is re-signed in place
+    # by tools\sign-release.ps1 with the main checkout's key, and apks.json's bytes and SHA-256 are read after that.
     New-Item -ItemType Directory -Force $apkCopies | Out-Null
     $list = foreach ($f in Get-ChildItem (Join-Path $repo 'androidApp\build\outputs\apk\release') -Filter '*.apk') {
         Copy-Item -LiteralPath $f.FullName -Destination $apkCopies -Force
-        [ordered]@{ file = $f.Name; bytes = $f.Length; sha256 = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower() }
+        $copy = Join-Path $apkCopies $f.Name
+        $signedBy = if ($script:keyHere) { 'gradle' } else { Sign-Release $copy (Join-Path $apkCopies "$($f.BaseName).sign") }
+        [ordered]@{ file = $f.Name; bytes = (Get-Item -LiteralPath $copy).Length; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $copy).Hash.ToLower(); signedBy = $signedBy }
     }
     [ordered]@{ version = "$desc-sweep"; versionCode = [int]$count; apks = @($list) } | ConvertTo-Json -Depth 4 | Set-Content -Encoding ascii (Join-Path $apkCopies 'apks.json')
     $script:releaseBuilt = $true
@@ -1313,7 +1331,7 @@ try {
         }
         $null = Part 'update' {
             # T83: this build (A) and a second build of the same commit with versionCode +1 (B), both with this machine's
-            # release key, and the previous published release's universal APK (the start of the user's path).
+            # release key (from a worktree, B re-signed by tools\sign-release.ps1 as Build-Release's copies are), and the previous published release's universal APK (the start of the user's path).
             Build-Release
             $udir = Join-Path $ui 'update'
             New-Item -ItemType Directory -Force $udir | Out-Null
@@ -1324,6 +1342,7 @@ try {
             $c = Run $gradle @(':androidApp:assembleRelease', "-PdystopoVersion=$desc-sweep-next", "-PdystopoVersionCode=$($count + 1)") (Join-Path $udir 'assemble-next.log') (Join-Path $udir 'assemble-next.err.log')
             if ($c -ne 0) { throw 'assembleRelease of the next build failed (see update\assemble-next.err.log)' }
             Copy-Item (Join-Path $apkDir 'androidApp-universal-release.apk') (Join-Path $udir 'next.apk') -Force
+            if (-not $script:keyHere) { $null = Sign-Release (Join-Path $udir 'next.apk') (Join-Path $udir 'next.sign') } # T293: as Build-Release's copies
             $tag = $PrevRelease
             if (-not $tag) { $tag = Tool-Text 'gh' @('release', 'list', '--exclude-drafts', '--limit', '1', '--json', 'tagName', '--jq', '.[0].tagName') } # T191: bounded
             if (-not $tag) { throw 'no previous release (gh release list); pass -PrevRelease' }
