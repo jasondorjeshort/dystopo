@@ -174,4 +174,47 @@ help_screens[0][1](type("C", (), {"srv": FakeSrv()})())
 assert calls == [("POST", "/help/open?key=settings.drivePreference")], calls
 assert len({s[0] for s in a11y.SCREENS}) == len(a11y.SCREENS), "screen names are unique (the baseline keys on them)"
 
+# T300: the navigation screen pins what earlier parts leave (a heading, the orientation) before it starts, and is skipped
+# with the reason when the started navigation still has a heading or the map is not north-up.
+import math
+
+
+class NavSrv:
+    def __init__(self, heading=None, mode="north-up"):
+        self.calls, self.heading, self.mode = [], heading, mode
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/nav":
+            return {"heading": {"deg": self.heading, "source": "course" if self.heading is not None else None}}
+        if path == "/camera":
+            return {"orientation": {"mode": self.mode}}
+        return {}
+
+
+def nav_ctx(srv):
+    return type("C", (), {"srv": srv, "track_id": "t1"})()
+
+
+sleep, pin_s = a11y.time.sleep, a11y.NAV_PIN_S
+a11y.time.sleep, a11y.NAV_PIN_S = (lambda s: None), 0.0
+try:
+    srv = NavSrv()
+    a11y.scr_nav(nav_ctx(srv))
+    posts = [p for m, p in srv.calls if m == "POST"]
+    assert posts[:2] == ["/camera/heading", "/camera/orientation?mode=north-up"], posts
+    assert posts[-1] == "/nav/start?track=t1" and posts[-2].startswith(f"/location?lat={a11y.PARADISE[0]}&lon={a11y.PARADISE[1]}&"), posts
+    jump = [p for p in posts if p.startswith("/location")][0]
+    lat, lon = (float(v.split("=")[1]) for v in jump.split("?")[1].split("&")[:2])
+    km = 6371 * math.hypot(math.radians(lat - a11y.PARADISE[0]), math.radians(lon - a11y.PARADISE[1]) * math.cos(math.radians(lat)))
+    assert km > 2.5, km  # farther than Heading.JUMP_M, so the course is dropped
+    for bad in (NavSrv(heading=310.0), NavSrv(mode="facing")):
+        try:
+            a11y.scr_nav(nav_ctx(bad))
+            raise AssertionError("a heading or facing left must skip the screen")
+        except RuntimeError as e:
+            assert "did not hold" in str(e), e
+finally:
+    a11y.time.sleep, a11y.NAV_PIN_S = sleep, pin_s
+
 print("test_android_a11y: ok")
