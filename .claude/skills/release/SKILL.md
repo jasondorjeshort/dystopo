@@ -70,9 +70,11 @@ A draft that is superseded before publishing is deleted together with its tag.
 `docs/findings/2026-10-11-actions-billing-stopped-release.md`). An agent builds the same release
 locally:
 
-1. `git worktree add --detach ..\dystopo-rel <tag>`, copy `tools\release.keystore` and
-   `tools\release.properties` in.
-2. `./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist -PdystopoVersion=<tag without v> -PdystopoVersionCode=$(git rev-list --count HEAD)`.
+1. `git worktree add --detach ..\dystopo-rel <tag>` (no key copied: the build signs with the debug key; T293).
+2. `./gradlew licenseCheck :androidApp:assembleRelease :server:installDist :devtool:installDist -PdystopoVersion=<tag without v> -PdystopoVersionCode=$(git rev-list --count HEAD)`,
+   then re-sign the universal APK with the key where it lives: `powershell -ExecutionPolicy Bypass -File
+   tools\sign-release.ps1 -Apk androidApp\build\outputs\apk\release\androidApp-universal-release.apk`; its
+   `certSha256` must read `47:31:38:10...` (exit 2: no key in the main checkout).
 3. Name and zip the assets as the workflow's "Collect artifacts" and "World tour contact sheet" steps
    do (`dystopo-<tag>-universal.apk` only during alpha, `dystopo-server-<tag>.zip`,
    `dystopo-devtool-<tag>.zip`, `NOTICES.md` from `notices.py --out`, `version.json` as the workflow
@@ -83,8 +85,8 @@ locally:
    `docs/images/android-tour-sheet.png`, as the workflow's notes template does.
 4. `gh release create <tag> --draft --prerelease --verify-tag --notes-file <notes> out/release/*`, then
    verify from the draft and publish as usual (steps 3 to 7).
-5. Delete the signing copies and the worktree afterwards (`git-guard` refuses `git worktree remove --force`:
-   delete the signing copies, then the directory, then `git worktree prune`).
+5. Delete the worktree afterwards (`git-guard` refuses `git worktree remove --force`: delete the directory,
+   then `git worktree prune`).
 
 Traps found by the dry run on a fresh Windows PC (2026-10-25, `docs/reference/machines.md`):
 - PowerShell splits an unquoted `-PdystopoVersion=0.1.13-alpha` at the first dot (`Task '.1.13-alpha' not found`):
