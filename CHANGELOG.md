@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-16
 
+- T300: The drive step restores what it changes (capture lane, after T295)
 - T295: Sweep frames carry the area they show, and the sheet leaves out a frame outside them (capture lane, after T294 and T292)
 - T299: Sweep loose ends: the montblanc pair in a worktree, an altitude with the fix (tools lane, after T293)
 - T293: One signing step owns the release key (tools lane, after T292)
