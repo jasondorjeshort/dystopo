@@ -329,6 +329,21 @@ def cpu_between(a, b):
     return {"others": round(max(0.0, busy - app), 2), "app": round(app, 2), "cores": b[2]}
 
 
+# T303: on a phone the tour's fix goes by POST /location on the debug port (never `adb emu geo fix`, an emulator's
+# console command): --fix lat,lon[,alt] sets this, and every restart sends it once the style is loaded. Device fixes stay
+# detached until POST /location?device=1, so the phone's own GPS never moves the puck during the tour.
+FIX = None
+
+
+def send_fix(server):
+    """T303: the --fix as an injected GPS fix; returns the answer, or None without --fix."""
+    if not FIX:
+        return None
+    lat, lon, alt = FIX
+    q = f"/location?lat={lat}&lon={lon}&accuracy=10" + (f"&alt={alt}" if alt is not None else "")
+    return server.json(q, method="POST", timeout=30)
+
+
 def restart_app(exe, serial, server, timeout):
     since = android_debug.device_now(exe, serial)
     adb(exe, serial, "shell", "am", "force-stop", PACKAGE)
@@ -341,6 +356,7 @@ def restart_app(exe, serial, server, timeout):
         try:
             h = server.json("/health", timeout=10)
             if h.get("map", {}).get("styleLoaded"):
+                send_fix(server)  # T303
                 return h
         except (urllib.error.URLError, OSError, ValueError, RuntimeError):
             server.reset()
@@ -2021,6 +2037,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", type=int, default=8686, help="host port forwarded to the app's debug server")
     ap.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""), help="device that must own --port (default: ANDROID_SERIAL)")
+    ap.add_argument("--fix", default="", help="T303: lat,lon[,alt]: after each app restart send this fix by POST /location "
+                                              "(a phone: no `adb emu geo fix`)")
     ap.add_argument("--views", default="")
     ap.add_argument("--views-file", default="")
     ap.add_argument("--out", default="out/android-tour.png", help="screenshots <stem>-<i>.png, <stem>-sheet.png, <stem>.json")
@@ -2075,6 +2093,14 @@ def main():
                          "with it (layoutBaseline in the summary; reported, never a failure)")
     ap.add_argument("--layout-tolerance-px", type=float, default=1.0, help="T241: what --layout-baseline lets a side move, px")
     args = ap.parse_args()
+    global FIX
+    if args.fix:
+        try:
+            f = [float(x) for x in args.fix.split(",")]
+            assert len(f) in (2, 3)
+        except (ValueError, AssertionError):
+            ap.error("--fix is lat,lon[,alt]")
+        FIX = (f[0], f[1], f[2] if len(f) == 3 else None)
 
     views = [] if (args.direct_only or args.cards_only) else read_views(args)
     card_steps = [] if args.no_cards or args.direct_only else read_steps(args)  # T212
@@ -2112,7 +2138,7 @@ def main():
         avd = None
 
     summary = {"port": args.port, "serial": serial, "avd": avd, "pngDecoder": "pillow" if HAVE_PIL else "stdlib",
-               "contourBudgetMs": args.contour_budget_ms, "setup": {}}
+               "contourBudgetMs": args.contour_budget_ms, "setup": {}, "fixBy": "POST /location" if FIX else None}  # T303
     want = None if args.server is None else ("" if args.server.lower() in ("none", "direct", "") else args.server)
     try:
         if want is not None:

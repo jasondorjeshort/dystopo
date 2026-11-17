@@ -83,3 +83,32 @@ try:
 except OSError:
     assert time.time() - t0 < 2
 print("ok")
+
+
+# T303: the phone guard refuses installs, uninstalls, pm clear and anything naming the release package, on the guarded
+# serial only; the debug package's calls pass.
+os.environ.pop(m.GUARD_ENV, None)
+assert m.guard_problem("phone1", ["uninstall", m.RELEASE_PACKAGE]) is None  # no guard set
+os.environ[m.GUARD_ENV] = "phone1"
+try:
+    assert m.guard_problem("emulator-5570", ["uninstall", m.RELEASE_PACKAGE]) is None  # another serial
+    for bad in (["uninstall", m.DEBUG_PACKAGE], ["install", "-r", "x.apk"], ["shell", "pm", "clear", m.DEBUG_PACKAGE],
+                ["shell", "am", "force-stop", m.RELEASE_PACKAGE], ["shell", "run-as", m.RELEASE_PACKAGE, "ls"],
+                ["shell", "am", "start", "-n", m.activity(m.RELEASE_PACKAGE)],
+                ["shell", f"ls /sdcard/Android/data/{m.RELEASE_PACKAGE}/files"], ["shell", f"run-as {m.RELEASE_PACKAGE} ls"]):
+        assert m.guard_problem("phone1", bad), bad
+    for good in (["shell", "am", "force-stop", m.DEBUG_PACKAGE], ["shell", "run-as", m.DEBUG_PACKAGE, "ls", "files/packs"],
+                 ["shell", "am", "start", "-W", "-n", m.activity(m.DEBUG_PACKAGE)], ["forward", "tcp:8700", "tcp:41237"],
+                 ["shell", "pidof", m.DEBUG_PACKAGE], ["logcat", "-d", "-b", "crash"],
+                 ["shell", f"ls /sdcard/Android/data/{m.DEBUG_PACKAGE}/files"]):
+        assert m.guard_problem("phone1", good) is None, good
+    fresh = importlib.util.module_from_spec(spec)  # the module's own adb (the tests above replaced m.adb)
+    spec.loader.exec_module(fresh)
+    try:
+        fresh.adb("adb-not-run", "phone1", "uninstall", m.RELEASE_PACKAGE)
+        raise AssertionError("not refused")
+    except fresh.PhoneGuardRefused as e:
+        assert "phone guard" in str(e)
+finally:
+    os.environ.pop(m.GUARD_ENV, None)
+print("guard ok")

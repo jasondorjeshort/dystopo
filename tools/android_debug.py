@@ -68,7 +68,35 @@ def run_bounded(cmd, timeout, input=None, grace=10.0, capture_output=True, **kw)
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
+# T303, the phone guard: sweep.ps1 -Phone sets DYSTOPO_PHONE_GUARD to the phone's serial for its phone parts. Then every
+# adb call this module makes to that serial is refused when it would install, uninstall or clear anything, or names the
+# release package or its data (the owner's own app and data): the phone parts touch only the debug package.
+GUARD_ENV = "DYSTOPO_PHONE_GUARD"
+
+
+class PhoneGuardRefused(RuntimeError):
+    """An adb call the phone guard refused (T303); the message names the call."""
+
+
+def guard_problem(serial, args):
+    """Why the phone guard refuses `adb -s <serial> <args>`, or None (also None when no guard is set for that serial)."""
+    guarded = os.environ.get(GUARD_ENV, "")
+    if not guarded or serial != guarded:
+        return None
+    words = " ".join(str(a) for a in args).split()
+    for i, w in enumerate(words):
+        w = w.strip("'\"")
+        if w in ("install", "install-multiple", "uninstall") or (w == "clear" and i and words[i - 1].strip("'\"") == "pm"):
+            return f"'{w}' on the phone"
+        if w == RELEASE_PACKAGE or w.startswith(RELEASE_PACKAGE + "/") or f"/{RELEASE_PACKAGE}/" in w or w.endswith(f"/{RELEASE_PACKAGE}"):
+            return f"the release package ({w}) on the phone"
+    return None
+
+
 def adb(exe, serial, *args, timeout=120):
+    why = guard_problem(serial, args)
+    if why:
+        raise PhoneGuardRefused(f"refused by the phone guard (T303): {why}: adb -s {serial} {' '.join(map(str, args))}")
     cmd = [exe] + (["-s", serial] if serial else []) + list(args)
     p = run_bounded(cmd, timeout, text=True, encoding="utf-8", errors="replace")
     return p.returncode, p.stdout + p.stderr
@@ -228,3 +256,37 @@ def health_token(base, timeout=10.0):
     """The debugFixedPort fallback: GET /health without a token answers {"token": ...} to loopback callers."""
     with urllib.request.urlopen(base + "/health", timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))["token"]
+
+
+def main(argv=None):
+    """T303: `python -I tools/android_debug.py get --serial S --port P --path /diagnostics [--launch]`: starts the debug
+    build when --launch (or when it is not running), forwards --port to its debug server and prints the route's JSON."""
+    import argparse
+    ap = argparse.ArgumentParser(description="GET one debug route of the debug build through adb")
+    ap.add_argument("cmd", choices=["get"])
+    ap.add_argument("--serial", required=True)
+    ap.add_argument("--port", type=int, required=True)
+    ap.add_argument("--path", required=True)
+    ap.add_argument("--launch", action="store_true", help="start the app first (am start -W) even when it runs")
+    a = ap.parse_args(argv)
+    exe = adb_path()
+    if not exe:
+        print(json.dumps({"error": "adb not found (set ANDROID_HOME)"}))
+        return 2
+    try:
+        if a.launch or not app_pid(exe, a.serial):
+            adb(exe, a.serial, "shell", "am", "start", "-W", "-n", activity(PACKAGE), timeout=120)
+        _, token = bootstrap(exe, a.serial, a.port, timeout=60.0)
+        sep = "&" if "?" in a.path else "?"
+        with urllib.request.urlopen(f"http://127.0.0.1:{a.port}{a.path}{sep}t={token}", timeout=60) as r:
+            body = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        print(json.dumps({"error": f"{type(e).__name__}: {e}"[:400], "path": a.path}))
+        return 1
+    print(json.dumps({"path": a.path, "package": PACKAGE, "body": body}))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
