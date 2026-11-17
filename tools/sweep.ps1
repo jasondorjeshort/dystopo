@@ -73,6 +73,27 @@
 #   matrix       (-Matrix only) font scale 2.0 and dark mode on the sweep's emulator, then fresh emulators per
 #                -MatrixDevices entry (default: the minimum API 26 phone, an API 35 tablet in German), each
 #                checked with android-ui.py matrix and deleted afterwards
+# T303, the owner's phone (-Phone <serial>, opt-in; after the emulator parts, on that serial, with the debug build only):
+#   phone-attach       the serial must be listed by `adb devices` as `device` (else this step fails and names why, and the
+#                      phone parts after it are skips); it must not be the sweep's own emulator. Reads the model, Android
+#                      and the release install's facts (installed, versionCode, first install and last update times, and
+#                      where `su` works, as on an emulator, a digest of its data files' listing) into phone\attach.json.
+#   phone-install      builds the debug APK when no device part did, checks with aapt2 that its package is the debug
+#                      build's own (<release id>.debug), `adb install -r -g` it (a debug build signed by another key is
+#                      refused by name, never uninstalled) and pushes the Rainier packs to the debug app (run-as).
+#   phone-tour         android-check.py --views-file tools/android-tour.txt --server none --fix <Paradise>: the fix is sent
+#                      as POST /location on the debug port after every restart (never `adb emu geo fix`); --no-offline
+#                      and --no-cards, which switch airplane mode, the font scale, rotation and density of the phone.
+#   phone-startup      android-startup.py --launches 5 (cold) over the seeded store, as the startup part but reported
+#                      against no budget (the ceilings are the emulator's): phone\startup.json.
+#   phone-diagnostics  GET /diagnostics on the debug port (tools/android_debug.py get): phone\diagnostics.json.
+#   phone-release      the release install's facts again: red when it was removed, replaced or updated during the run;
+#                      a changed listing digest is a note (the owner may use the app meanwhile): phone\release.json.
+# Safety as code: the phone parts' programs run with DYSTOPO_PHONE_GUARD=<serial> (tools/android_debug.py), under which any
+# adb call to the phone that installs, uninstalls or clears, or names the release package or its data, is refused; the
+# sweep's own adb calls to the phone go through Phone-Adb, which applies the same rule. Nothing read off the phone is
+# written outside the sweep folder (out\). The debug app stays on the phone for the next run. -PhonePort (default -Port+3)
+# is the host port forwarded to its debug server. summary.json gets a `phone` section and the sheet a Phone section.
 # The release build is made once with -PdystopoVersion=<describe>-sweep -PdystopoVersionCode=<commit count>, as
 # release.yml does, so it installs over the published release (a versionCode 1 build cannot). T105: its APKs are copied
 # to apk\ (apks.json: file, bytes, SHA-256, signedBy; T293: from a worktree, which has no key, each copy is first re-signed
@@ -169,6 +190,9 @@ param(
     # peer -BasePort+3. T147: part of every device sweep; -NoBothUnits leaves it out, -BothUnits is kept for old command lines.
     [switch]$BothUnits,
     [switch]$NoBothUnits,
+    # T303: the owner's phone (a serial from `adb devices`): the phone parts after the emulator parts (header). '' = none.
+    [string]$Phone = '',
+    [int]$PhonePort = 0,
     # T170 (T154's follow-up): no Gradle daemon for any build of the sweep, its own and those of the scripts it runs
     # (android-emu.ps1 -Build, android-push-pack.ps1, android-release.ps1): GRADLE_OPTS gains -Dorg.gradle.daemon=false,
     # which every child inherits, so each build runs in a single-use daemon that ends with it.
@@ -250,6 +274,10 @@ $allParts += 'startup'; $deviceParts += 'startup'
 # T270: the accessibility part, a debug-build device part
 $allParts += 'a11y'; $deviceParts += 'a11y'
 # end T270
+# T303: the owner's phone, opt-in with -Phone; not device parts (the sweep's emulator is not theirs).
+$phoneParts = @('phone-attach', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics', 'phone-release')
+$allParts += $phoneParts
+# end T303
 foreach ($p in $Skip + $Only + @($InjectHang | Where-Object { $_ })) { if ($allParts -notcontains $p) { throw "unknown part '$p' (parts: $($allParts -join ', '))" } }
 
 # T191: the per-part ceilings, from the parts' timings in the sweeps of waves 20 to 23 (steps.tsv of out\sweep-w20,
@@ -277,6 +305,8 @@ $ceilings['features'] = 1500
 # T289: the route sheet's 24 routes took 104 s on the implementer's PC with the graph files built (3 to 6 s a route, mostly
 # the JVM's start and the picture); a graph file built anew adds about a minute a pack, so 600 s.
 $ceilings['route-sheet'] = 600
+# T303: the phone's tour is one run of the device tour's views without the offline and card steps; a phone may be slower.
+$ceilings['phone-tour'] = 1200
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
         throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
@@ -288,15 +318,15 @@ $outsideTimeoutS = 1800
 
 # T292: the order the Part calls below run in (not $allParts: startup and a11y run after bothunits, apk-strings last);
 # tools/test_sweep_summary.py checks it against the calls. -ListParts prints it (the header gives the shape) and exits.
-$runOrder = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'release', 'first-run', 'features', 'recenter', 'permissions', 'diagnostics', 'upgrade', 'background', 'network', 'update', 'matrix', 'apk-strings')
+$runOrder = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'release', 'first-run', 'features', 'recenter', 'permissions', 'diagnostics', 'upgrade', 'background', 'network', 'update', 'matrix', 'phone-attach', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics', 'phone-release', 'apk-strings')
 if ($ListParts) {
-    $debugBuild = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y')
+    $debugBuild = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics')
     $i = 0
     $list = foreach ($p in $runOrder) {
         $i++
         [ordered]@{ order = $i; name = $p; device = ($deviceParts -contains $p)
             build = $(if ($debugBuild -contains $p) { 'debug' } elseif ($deviceParts -contains $p -or $p -eq 'apk-strings') { 'release' } else { $null })
-            default = ($p -ne 'matrix'); ceilingS = (Part-Ceiling $p) }
+            default = ($p -ne 'matrix' -and $phoneParts -notcontains $p); ceilingS = (Part-Ceiling $p); phone = ($phoneParts -contains $p) } # T303: phone parts need -Phone
     }
     [ordered]@{ schema = 1; parts = @($list) } | ConvertTo-Json -Depth 4 -Compress
     exit 0
@@ -421,6 +451,8 @@ $reserved = @(8765, 8686, 8687)
 $ports = [ordered]@{ 'demo-server' = $BasePort; 'serve' = $BasePort + 1; 'serve-live' = $BasePort + 2; 'firstrun-server' = $BasePort + 3
     'ui-server' = $BasePort + 4; 'network-server' = $BasePort + 5; 'network-proxy' = $BasePort + 6; 'update-mock' = $BasePort + 7 }
 if (-not $NoDevice) { $ports['debug-forward'] = $Port; $ports['release-probe'] = $Port + 1; $ports['bothunits-forward'] = $Port + 2 }
+if (-not $PhonePort) { $PhonePort = $Port + 3 } # T303
+if ($Phone) { $ports['phone-forward'] = $PhonePort }
 if (-not $NoDevice -and $EmuPort -eq 5554) { throw "-EmuPort 5554 is the coordinator's emulator; pick another" }
 if (-not $MatrixEmuPort) { $MatrixEmuPort = $EmuPort + 2 }
 if (($Matrix -or -not $NoBothUnits) -and -not $NoDevice -and $MatrixEmuPort -eq 5554) { throw "-MatrixEmuPort 5554 is the coordinator's emulator; pick another" }
@@ -431,6 +463,12 @@ function Want([string]$part) {
     if ($part -eq 'device-boot' -and $script:bootImplied) { return -not $NoDevice } # T79: implied by device parts
     if ($part -eq 'matrix' -and -not $Matrix -and $Only -notcontains 'matrix') { return $false } # T81: opt-in
     if ($part -eq 'bothunits' -and $NoBothUnits) { return $false } # T139, T147: on unless -NoBothUnits (a second emulator)
+    if ($phoneParts -contains $part) {
+        # T303: only with -Phone; -Only filters them only when it names one of them (-Only device-tour -Phone x runs both).
+        if (-not $Phone -or $Skip -contains $part) { return $false }
+        if ($Only.Count -and @($Only | Where-Object { $phoneParts -contains $_ }).Count -and $Only -notcontains $part -and $part -ne 'phone-attach') { return $false }
+        return $true
+    }
     if ($Only.Count -and $Only -notcontains $part) { return $false }
     if ($Skip -contains $part) { return $false }
     if ($NoDevice -and $deviceParts -contains $part) { return $false }
@@ -442,7 +480,7 @@ function Want([string]$part) {
 $portParts = @{ 'demo-server' = @('demo-static'); 'serve' = @('demo-serve'); 'firstrun-server' = @('first-run', 'bothunits')
     'serve-live' = @('live') + $(if ($DeviceServer -eq 'live') { $deviceParts } else { @() })
     'ui-server' = @('features', 'permissions'); 'network-server' = @('network'); 'network-proxy' = @('network'); 'update-mock' = @('update')
-    'debug-forward' = $deviceParts; 'release-probe' = $deviceParts; 'bothunits-forward' = @('bothunits') }
+    'debug-forward' = $deviceParts; 'release-probe' = $deviceParts; 'bothunits-forward' = @('bothunits'); 'phone-forward' = $phoneParts }
 # T191: whether a TCP port is taken. The listener table first; then a bind of the wildcard address with exclusive use,
 # which fails while any socket holds the port: inside the agents' sandbox the table leaves out listeners (a listener
 # held by python on 127.0.0.1, even the asking process's own, was missing from GetActiveTcpListeners, netstat and
@@ -760,7 +798,7 @@ function Get-RetryReason([string]$name, $code, [string]$note, [datetime]$t0, [do
 }
 
 function Part([string]$name, [scriptblock]$body) {
-    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and $NoBothUnits) { '-NoBothUnits' } else { 'not selected' }); return $false }
+    if (-not (Want $name)) { Skipped $name $(if ($NoDevice -and $deviceParts -contains $name) { 'no device' } elseif ($name -eq 'matrix' -and -not $Matrix) { 'needs -Matrix' } elseif ($name -eq 'bothunits' -and $NoBothUnits) { '-NoBothUnits' } elseif ($phoneParts -contains $name -and -not $Phone) { 'needs -Phone' } else { 'not selected' }); return $false }
     # T233: a device part runs on an emulator under the sweep's threshold (rebooted first when past it or gone), and its
     # private bytes are read while it runs.
     $device = (-not $NoDevice) -and ($deviceParts -contains $name)
@@ -1221,7 +1259,7 @@ try {
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
         $script:emuPhase = 'release' # T233: a reboot from here boots only; every release part installs its own APK
         $null = Part 'release' {
-            # After the debug parts: it uninstalls the debug build (signed with the other key). T105: the sweep's own copy.
+            # After the debug parts; T303: the release installs beside the debug build (its own id). T105: the sweep's own copy.
             Run 'powershell.exe' @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-release.ps1', '-Serial', $serial, '-Apk', (Release-Apk $serial),
                 '-Port', "$($Port + 1)", '-Dem', $dem, '-Osm', $osm, '-Out', (Join-Path $Out 'release')) (Join-Path $Out 'release.log') (Join-Path $Out 'release.err.log')
         }
@@ -1393,6 +1431,136 @@ try {
     } else {
         foreach ($p in @($deviceParts | Where-Object { $_ -ne 'device-boot' })) { if (Want $p) { Step $p 'error' 0 $deviceSkipNote } else { Skipped $p 'not selected' } }
     }
+    # T303: the owner's phone (-Phone <serial>), after the emulator parts, with the debug build only (the header says what
+    # each part runs). Every program a phone part starts inherits DYSTOPO_PHONE_GUARD=<serial> (this process only), so
+    # tools/android_debug.py refuses any adb call to the phone that installs, uninstalls, clears or names the release
+    # package; the sweep's own calls go through Phone-Adb, which applies the same rule. Nothing goes outside $phoneDir.
+    $phoneDir = Join-Path $Out 'phone'
+    $script:phoneReady = $false
+    $script:phoneInstalled = $false
+    $script:phoneRelease = $null
+    function Phone-Refusal([string[]]$argv) {
+        $words = @(($argv -join ' ') -split '\s+' | ForEach-Object { $_.Trim("'", '"') } | Where-Object { $_ })
+        for ($i = 0; $i -lt $words.Count; $i++) {
+            $w = $words[$i]
+            if ($w -in @('install', 'uninstall', 'install-multiple') -or ($w -eq 'clear' -and $i -gt 0 -and $words[$i - 1] -eq 'pm')) { return "'$w' on the phone" }
+            if ($w -eq $DystopoReleasePackage -or $w.StartsWith("$DystopoReleasePackage/") -or $w.Contains("/$DystopoReleasePackage/") -or $w.EndsWith("/$DystopoReleasePackage")) {
+                return "the release package ($w) on the phone"
+            }
+        }
+        $null
+    }
+    # The sweep's adb calls to the phone. Reads of the release package's facts (`pm list packages`, `dumpsys package <id>`,
+    # and where su works a listing) pass with -Read; the one install is Install-time code in phone-install, after its checks.
+    function Phone-Adb([string[]]$argv, [int]$TimeoutS = 60, [switch]$Read) {
+        if (-not $Read) {
+            $why = Phone-Refusal $argv
+            if ($why) { throw "refused by the phone guard (T303): $why`: adb -s $Phone $($argv -join ' ')" }
+        }
+        Tool-Text $adbExe (@('-s', $Phone) + $argv) $TimeoutS
+    }
+    # The release install's facts: installed, versionCode, first install and last update times, and (where su works, as on
+    # an emulator standing in for the phone) the count and SHA-256 of its data files' listing (path, size, mtime). Only the
+    # digest is kept, never the listing: the owner's data stays on the phone.
+    function Get-ReleaseFacts {
+        # A phone that went away (unplugged, an emulator that died) is said so, never read as an install that changed.
+        if ((Tool-Text $adbExe @('-s', $Phone, 'get-state') 30) -ne 'device') { return [ordered]@{ reachable = $false } }
+        $listed = Phone-Adb @('shell', 'pm', 'list', 'packages', $DystopoReleasePackage) -Read
+        $facts = [ordered]@{ installed = (@($listed -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoReleasePackage" }).Count -gt 0) }
+        if (-not $facts.installed) { return $facts }
+        $d = Phone-Adb @('shell', 'dumpsys', 'package', $DystopoReleasePackage) 60 -Read
+        foreach ($k in @('versionCode', 'versionName', 'firstInstallTime', 'lastUpdateTime')) {
+            if ($d -match "(?m)\b$k=(\S+(?: \S+)?)") { $facts[$k] = ($Matches[1] -replace ' minSdk.*$', '').Trim() }
+        }
+        $list = Phone-Adb @('shell', "su 0 sh -c 'cd /data/data/$DystopoReleasePackage && find . -type f -exec stat -c ""%n %s %Y"" {} +'") 120 -Read
+        if ($list -and $list -notmatch 'not found|denied|inaccessible|No such') {
+            $lines = @($list -split "`r?`n" | Where-Object { $_ } | Sort-Object)
+            $sha = [Security.Cryptography.SHA256]::Create()
+            $facts.files = $lines.Count
+            $facts.listingSha256 = (($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($lines -join "`n")) | ForEach-Object { $_.ToString('x2') }) -join '')
+        } else { $facts.files = $null; $facts.listingNote = 'no su: the data listing is not readable on this device' }
+        $facts
+    }
+    # Part's own parameter is $body, so the phone part's block is $phoneBody (a scriptblock finds variables by scope).
+    function Phone-Step([string]$name, [scriptblock]$phoneBody) {
+        $null = Part $name {
+            if ($name -ne 'phone-attach' -and -not $script:phoneReady) { $script:partNote = 'skipped: phone-attach did not pass'; 'skip'; return }
+            $env:DYSTOPO_PHONE_GUARD = $Phone
+            try { & $phoneBody } finally { Remove-Item Env:\DYSTOPO_PHONE_GUARD -ErrorAction SilentlyContinue }
+        }
+    }
+    if ($Phone) {
+        New-Item -ItemType Directory -Force $phoneDir | Out-Null
+        . (Join-Path $repo 'tools\android-ids.ps1')
+    }
+    $null = Phone-Step 'phone-attach' {
+        $devices = Tool-Text $adbExe @('devices') 30
+        $state = @($devices -split "`r?`n" | Where-Object { $_ -match "^$([regex]::Escape($Phone))\s+(\S+)" } | ForEach-Object { $_ -split '\s+' | Select-Object -Index 1 }) | Select-Object -First 1
+        if (-not $state) { throw "refused: the phone $Phone is not attached (adb devices lists no such serial): connect it by USB or wireless debugging, accept this PC's key, and run again" }
+        if ($state -ne 'device') { throw "refused: the phone $Phone is attached but '$state' (unauthorized: accept the debugging prompt on the phone; offline: reconnect it)" }
+        if ($Phone -eq $serial -and @($deviceParts | Where-Object { Want $_ }).Count) { throw "refused: -Phone $Phone is the sweep's own emulator (-EmuPort $EmuPort); name another serial" }
+        $facts = [ordered]@{ model = (Phone-Adb @('shell', 'getprop', 'ro.product.model')); android = (Phone-Adb @('shell', 'getprop', 'ro.build.version.release'))
+            sdk = (Phone-Adb @('shell', 'getprop', 'ro.build.version.sdk')); emulator = ($Phone -match '^emulator-'); release = (Get-ReleaseFacts) }
+        $facts | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $phoneDir 'attach.json')
+        $script:phoneRelease = $facts.release
+        # A rerun without phone-install (-Only phone-startup ...) uses the debug build already on the phone.
+        $script:phoneInstalled = [bool](@((Phone-Adb @('shell', 'pm', 'list', 'packages', $DystopoDebugPackage)) -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoDebugPackage" }).Count)
+        $script:partNote = "$($facts.model), Android $($facts.android); the release $(if ($facts.release.installed) { "installed (versionCode $($facts.release.versionCode))" } else { 'not installed' })"
+        $script:phoneReady = $true
+        0
+    }
+    $null = Phone-Step 'phone-install' {
+        $apk = Join-Path $repo 'androidApp\build\outputs\apk\debug\androidApp-debug.apk'
+        if (-not $booted -or -not (Test-Path $apk)) {
+            # No device part built it in this sweep: build it here (a debug-only invocation never splits the APK).
+            $c = Run $gradle @(':androidApp:assembleDebug') (Join-Path $phoneDir 'build.log') (Join-Path $phoneDir 'build.err.log')
+            if ($c -ne 0) { throw ":androidApp:assembleDebug failed (exit $c; phone\build.err.log)" }
+        }
+        $sdkDir = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
+        $aapt = Get-ChildItem (Join-Path $sdkDir 'build-tools') -Directory -ErrorAction SilentlyContinue | Sort-Object { [version]($_.Name -replace '[^\d.].*$', '') } |
+            ForEach-Object { Join-Path $_.FullName 'aapt2.exe' } | Where-Object { Test-Path $_ } | Select-Object -Last 1
+        if (-not $aapt) { throw 'refused: no aapt2 under the SDK build-tools, so the APK package cannot be checked; nothing installed' }
+        $pkg = Tool-Text $aapt @('dump', 'packagename', $apk) 60
+        if ($pkg -ne $DystopoDebugPackage) { throw "refused: the APK's package is '$pkg', not the debug build's $DystopoDebugPackage; nothing installed" }
+        # The one install on the phone, past the guard by design: the APK was just read as the debug package.
+        $inst = Tool-Text $adbExe @('-s', $Phone, 'install', '-r', '-g', $apk) 600
+        if ($inst -notmatch 'Success') {
+            $err = Get-Content -Raw (Join-Path (Join-Path $Out 'tool') "$($script:toolRuns).err.log") -ErrorAction SilentlyContinue
+            if ("$inst $err" -match 'UPDATE_INCOMPATIBLE|signatures do not match') { throw "refused: the phone's Dystopo debug is signed by another key and the sweep never uninstalls; remove Dystopo debug on the phone by hand and run again" }
+            throw "adb install of the debug build failed: $("$inst $err".Trim())"
+        }
+        $script:phoneInstalled = $true
+        $c = Run 'powershell.exe' @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-push-pack.ps1', '-Dem', $dem, '-Osm', $osm, '-Package', $DystopoDebugPackage, '-Serial', $Phone) (Join-Path $phoneDir 'push-pack.log') (Join-Path $phoneDir 'push-pack.err.log')
+        $script:partNote = "$DystopoDebugPackage installed; the Rainier packs pushed (exit $c)"
+        $c
+    }
+    $null = Phone-Step 'phone-tour' {
+        if (-not $script:phoneInstalled) { $script:partNote = 'skipped: the debug build is not installed'; 'skip'; return }
+        Run $py @('-I', 'tools/android-check.py', '--port', "$PhonePort", '--serial', $Phone, '--views-file', 'tools/android-tour.txt',
+            '--server', 'none', '--fix', '46.7864,-121.7366,1629', '--no-offline', '--no-cards', '--out', (Join-Path $phoneDir 'tour.png')) (Join-Path $phoneDir 'tour.stdout.json') (Join-Path $phoneDir 'tour.err.log')
+    }
+    $null = Phone-Step 'phone-startup' {
+        if (-not $script:phoneInstalled) { $script:partNote = 'skipped: the debug build is not installed'; 'skip'; return }
+        Run $py @('-I', 'tools/android-startup.py', '--serial', $Phone, '--port', "$PhonePort", '--launches', '5', '--seed-tracks', '52',
+            '--dem', $dem, '--osm', $osm, '--clear-online-cache', '--clear-divergences', '--quiet', '240') (Join-Path $phoneDir 'startup.json') (Join-Path $phoneDir 'startup.err.log')
+    }
+    $null = Phone-Step 'phone-diagnostics' {
+        if (-not $script:phoneInstalled) { $script:partNote = 'skipped: the debug build is not installed'; 'skip'; return }
+        Run $py @('-I', 'tools/android_debug.py', 'get', '--serial', $Phone, '--port', "$PhonePort", '--path', '/diagnostics') (Join-Path $phoneDir 'diagnostics.json') (Join-Path $phoneDir 'diagnostics.err.log')
+    }
+    $null = Phone-Step 'phone-release' {
+        $before = $script:phoneRelease
+        $after = Get-ReleaseFacts
+        if ($after.reachable -eq $false) { throw "the phone $Phone is no longer listed by adb as a device: the release install could not be read again" }
+        $changed = @(foreach ($k in @('installed', 'versionCode', 'firstInstallTime', 'lastUpdateTime')) { if ("$($before[$k])" -ne "$($after[$k])") { $k } })
+        $listing = if ($null -ne $before.listingSha256 -and $null -ne $after.listingSha256) { $before.listingSha256 -eq $after.listingSha256 } else { $null }
+        [ordered]@{ before = $before; after = $after; changed = $changed; listingSame = $listing } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $phoneDir 'release.json')
+        $script:partNote = if (-not $before.installed) { 'no release install on the phone' } elseif ($changed.Count) { "the release install changed: $($changed -join ', ')" } else {
+            "the release install unchanged (versionCode, install and update times$(if ($null -ne $listing) { "; its data listing $(if ($listing) { 'the same' } else { 'changed: the owner may have used the app' })" }))" }
+        if ($changed.Count) { 1 } else { 0 }
+    }
+    if ($Phone -and $script:phoneReady) { $null = Tool-Text $adbExe @('-s', $Phone, 'forward', '--remove', "tcp:$PhonePort") 30 }
+    # end T303
     # T81: the release APK's strings through PrivacyCheck (no device; builds the APK when no device part did).
     $null = Part 'apk-strings' {
         Build-Release

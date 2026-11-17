@@ -16,11 +16,14 @@ param(
     [switch]$NoGlyphs,
     [switch]$NoOsm,
     [switch]$NoSprites,
-    [string]$Package = 'io.github.jasondorjeshort.dystopo',
+    # T303: default the debug build's id (tools/android-ids.ps1); run-as needs a debuggable build.
+    [string]$Package = '',
     [string]$Name = '',
     [string]$Serial = ''
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'android-ids.ps1')
+if (-not $Package) { $Package = $DystopoDebugPackage }
 function Write-Host { Write-Output ($args -join ' ') } # T65: progress on the output stream (see android-emu.ps1)
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = Split-Path -Parent $PSScriptRoot

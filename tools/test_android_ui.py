@@ -608,3 +608,13 @@ class _Stuck(_Phone):
 r, phone, _c = _drive_run(rainier, "time", phone_cls=_Stuck)
 assert not r["ok"] and "not removed" in r["error"] and "still lists montblanc" in r["error"], r["error"]
 print("test_android_ui (T300): ok")
+
+# T303: the release parts drive the release build's id, routes/search/bothunits the debug build's (.debug), and every
+# package-derived name follows use_package.
+assert ui.PACKAGE == ui.debug.RELEASE_PACKAGE and set(ui.DEBUG_PARTS) == {"routes", "search", "bothunits"}
+ui.use_package(ui.debug.DEBUG_PACKAGE)
+assert ui.ACTIVITY == ui.debug.DEBUG_PACKAGE + "/io.github.jasondorjeshort.dystopo.app.MainActivity"
+assert ui.EXTERNAL.endswith(".dystopo.debug/files") and ".dystopo.debug/" in ui.STORE_NEW and ui.UPDATE_API_FILE.startswith(ui.EXTERNAL)
+ui.use_package(ui.debug.RELEASE_PACKAGE)
+assert ui.EXTERNAL == "/sdcard/Android/data/io.github.jasondorjeshort.dystopo/files" and ui.firstrun.PACKAGE == ui.debug.RELEASE_PACKAGE
+print("test_android_ui (T303): ok")

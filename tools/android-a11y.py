@@ -70,8 +70,8 @@ check = firstrun.check  # Raster, encode_png, fill, draw_text, contact_sheet, ch
 debug = firstrun.debug
 startup = _load("android_startup", "android-startup.py")  # seed_gpx, push_pack
 
-PACKAGE = debug.PACKAGE
-ACTIVITY = firstrun.ACTIVITY
+PACKAGE = debug.DEBUG_PACKAGE  # T303: the debug build's own id; firstrun's ACTIVITY is the release's
+ACTIVITY = debug.activity(PACKAGE)
 
 MIN_DP = 48.0  # Android's and Material's touch target
 FLOOR_DP = 24.0  # WCAG 2.5.8 (AA)

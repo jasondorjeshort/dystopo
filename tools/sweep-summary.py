@@ -416,6 +416,62 @@ def a11y(d, part):
 # end T270
 
 
+# T303: the owner's phone (sweep.ps1 -Phone <serial>): its parts' outputs under phone/, folded into one `phone` section.
+PHONE_PARTS = ("phone-attach", "phone-install", "phone-tour", "phone-startup", "phone-diagnostics", "phone-release")
+
+
+def phone(d):
+    """The phone section: the device (model and Android, never the serial), the tour's views and memory, the cold
+    launches' medians and slowest stages, the diagnostics' heap and memory figures, and whether the release install was
+    left as it was. Only figures; nothing the phone holds of the owner's (the release's data is a listing digest, compared)."""
+    pd = os.path.join(d, "phone")
+    if not os.path.isdir(pd):
+        return {}
+    out = {}
+    a = load(os.path.join(pd, "attach.json"))
+    if isinstance(a, dict):
+        out["device"] = {k: a.get(k) for k in ("model", "android", "sdk", "emulator")}
+    t = load(os.path.join(pd, "tour.json"))
+    if isinstance(t, dict):
+        views = t.get("views") or []
+        mem = t.get("memory") or {}
+        cg = t.get("contourGeneration") or {}
+        out["tour"] = {"viewsOk": t.get("viewsOk"), "viewsTotal": t.get("viewsTotal"), "fixBy": t.get("fixBy"),
+                       "failedViews": [v.get("label") for v in views if not v.get("ok")],
+                       "firstViewS": views[0].get("seconds") if views else None,
+                       "contourMs": {k: cg.get(k) for k in ("count", "avgMs", "maxMs")},
+                       "pssMb": mb(mem.get("totalPssKb"), 1024), "javaHeapMb": mb(mem.get("javaHeapUsedBytes"), 1 << 20)}
+    s = load_last_json(os.path.join(pd, "startup.json"))
+    if isinstance(s, dict):
+        stages = s.get("stageMedians") or []  # [{name, medianMs, maxMs, launches, thread}, ...]
+        slow = sorted(((v.get("name"), v.get("medianMs")) for v in stages if isinstance(v, dict) and isinstance(v.get("medianMs"), (int, float))),
+                      key=lambda kv: -kv[1])[:5]
+        out["startup"] = {"launches": len(s.get("launches") or []),
+                          "medians": {k: v for k, v in (s.get("medians") or {}).items() if v is not None},
+                          "slowestStages": [{"stage": k, "medianMs": v} for k, v in slow],
+                          "undeclared": (s.get("budget") or {}).get("undeclared") or s.get("undeclared") or []}
+        if s.get("error"):
+            out["startup"]["error"] = str(s["error"])[:200]
+    g = load_last_json(os.path.join(pd, "diagnostics.json"))
+    if isinstance(g, dict):
+        body = g.get("body") or {}
+        system = body.get("system") or {}
+        out["diagnostics"] = {"heapMaxMb": mb(body.get("heapMaxBytes"), 1 << 20), "heapUsedMb": mb(body.get("heapUsedBytes"), 1 << 20),
+                              "peakHeapMb": mb(body.get("peakHeapBytes"), 1 << 20), "nativeMb": mb(body.get("nativeAllocatedBytes"), 1 << 20),
+                              "pssMb": mb(body.get("pssKb"), 1024), "availMemMb": mb(body.get("availMemBytes"), 1 << 20),
+                              "lowMemory": body.get("lowMemory"), "buildType": system.get("buildType")}
+        if g.get("error"):
+            out["diagnostics"]["error"] = str(g["error"])[:200]
+    r = load(os.path.join(pd, "release.json"))
+    if isinstance(r, dict):
+        before = r.get("before") or {}
+        out["release"] = {"installed": before.get("installed"), "versionName": before.get("versionName"),
+                          "changed": r.get("changed") or [], "unchanged": before.get("installed") and not r.get("changed"),
+                          "listingSame": r.get("listingSame"), "files": before.get("files")}
+    return out
+# end T303
+
+
 PARTS = {
     "a11y": a11y,  # T270
     "startup": startup,  # T268
@@ -466,6 +522,40 @@ def shot_labels(d, part):
             for v in r if isinstance(v, dict)}
 
 
+PHONE_TOUR = "Phone: device tour (debug build, the fix by POST /location)"  # T303
+
+
+def phone_table(p):
+    """T303: the phone section's figures as an HTML block for the sheet ('' without a phone run)."""
+    if not p:
+        return ""
+    dev = p.get("device") or {}
+    rows = []
+    t = p.get("tour") or {}
+    if t:
+        rows.append(("tour", f"{t.get('viewsOk')}/{t.get('viewsTotal')} views ok, first view {t.get('firstViewS')} s, PSS {t.get('pssMb')} MB"
+                     + (f", failed: {', '.join(map(str, t.get('failedViews') or []))}" if t.get("failedViews") else "")))
+    st = p.get("startup") or {}
+    if st:
+        m = st.get("medians") or {}
+        rows.append(("startup", f"{st.get('launches')} cold launches; medians: first frame {m.get('firstFrameMs')} ms, map drawn {m.get('fullyLoadedMs')} ms, "
+                     f"am start {m.get('amTotalMs')} ms; slowest stages: " + ", ".join(f"{x['stage']} {x['medianMs']} ms" for x in st.get("slowestStages") or [])))
+    g = p.get("diagnostics") or {}
+    if g.get("error"):
+        rows.append(("diagnostics", f"not read: {g['error']}"))
+    elif g:
+        rows.append(("diagnostics", f"heap {g.get('heapUsedMb')} of {g.get('heapMaxMb')} MB (peak {g.get('peakHeapMb')}), native {g.get('nativeMb')} MB, "
+                     f"PSS {g.get('pssMb')} MB, available {g.get('availMemMb')} MB, low memory {g.get('lowMemory')}"))
+    r = p.get("release") or {}
+    if r:
+        rows.append(("release install", "not installed" if not r.get("installed") else
+                     ("unchanged" if r.get("unchanged") else f"CHANGED: {', '.join(r.get('changed') or [])}")
+                     + ("" if r.get("listingSame") is None else f"; data listing {'the same' if r.get('listingSame') else 'changed'}")))
+    head = f"Phone: {dev.get('model') or '?'}, Android {dev.get('android') or '?'}"
+    return (f"<h2>{html.escape(head)}</h2><table>" + "".join(f"<tr><td>{html.escape(k)}</td><td>{html.escape(v)}</td></tr>" for k, v in rows)
+            + "</table>")
+
+
 def sheet_images(d):
     """(section, label, path relative to d) for every PNG worth looking at, in a fixed order."""
     out = []
@@ -489,6 +579,7 @@ def sheet_images(d):
         add(title, os.path.join("ui", part, "*.png"))
     add("Device matrix", os.path.join("ui", "matrix", "*", "*.png"))
     add("Both units, two phones through a sync peer", os.path.join("ui", "bothunits", "*.png"))  # T139
+    add(PHONE_TOUR, os.path.join("phone", "tour-sheet.png"), label="tour sheet")  # T303
     add("Accessibility, offending nodes outlined", os.path.join("a11y", "a11y-sheet.png"), label="a11y sheet")  # T270 (end T270)
     for part, title in (("live", "Live views (serve --live)"), ("demo-static", "Demo tour, static page"),
                         ("demo-serve", "Demo tour, devtool serve")):
@@ -498,7 +589,7 @@ def sheet_images(d):
 
 def write_sheet(d, summary, channel, render):
     imgs = sheet_images(d)
-    if not imgs:
+    if not imgs and not summary.get("phone"):  # T303: a phone-only rerun's figures still get a sheet
         return None
     parts = []
     section = None
@@ -506,7 +597,7 @@ def write_sheet(d, summary, channel, render):
         if sec != section:
             if section is not None:
                 parts.append("</div>")
-            big = sec in ("World tour", "Device tour")
+            big = sec in ("World tour", "Device tour", PHONE_TOUR)
             parts.append(f"<h2>{html.escape(sec)}</h2><div class='grid{' big' if big else ''}'>")
             section = sec
         parts.append(f"<figure><img src='{html.escape(rel.replace(os.sep, '/'))}'><figcaption>{html.escape(label)}</figcaption></figure>")
@@ -533,7 +624,7 @@ def write_sheet(d, summary, channel, render):
            "h1{font-size:20px}h2{font-size:15px;margin:18px 0 6px}table{border-collapse:collapse}td{padding:1px 10px 1px 0}"
            ".grid{display:grid;grid-template-columns:repeat(var(--cols,6),1fr);gap:6px}.grid.big{grid-template-columns:repeat(var(--bigcols,2),1fr)}"
            "figure{margin:0}img{width:100%;display:block;border:1px solid #ccc}figcaption{font-size:11px;color:#555}"
-           f"</style>{head}<table>{rows}</table>{''.join(parts)}")
+           f"</style>{head}<table>{rows}</table>{phone_table(summary.get('phone'))}{''.join(parts)}")
     html_path = os.path.join(d, "sheet.html")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(doc)
@@ -905,6 +996,12 @@ def main():
     summary["reruns"] = reruns(d)
     if isinstance(meta, dict) and meta.get("rerunOf"):
         summary["rerunOf"] = os.path.basename(os.path.normpath(meta["rerunOf"]))
+    try:
+        ph = phone(d)  # T303: before the sheet, which shows it
+    except Exception as e:  # a report in an unexpected shape is reported, not fatal (as for the parts)
+        ph = {"summaryError": str(e)[:200]}
+    if ph:
+        summary["phone"] = ph
     sheet = write_sheet(d, summary, a.channel, not a.no_sheet)
     if sheet:
         rel = os.path.relpath(sheet, REPO) if os.path.splitdrive(sheet)[0].lower() == os.path.splitdrive(REPO)[0].lower() else sheet

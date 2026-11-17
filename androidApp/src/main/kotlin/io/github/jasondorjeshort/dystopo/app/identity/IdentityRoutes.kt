@@ -137,7 +137,7 @@ object IdentityRoutes {
         if (which == "release" || !BuildConfig.DEBUG_ENDPOINTS) {
             AttestationPolicy.release() to PolicyLists.release.anchors
         } else {
-            IdentityRules.debugPolicy(runCatching { Signing.own(app) }.getOrDefault(emptyList())) to InstallIdentity.debugAnchors(app)
+            IdentityRules.debugPolicy(runCatching { Signing.own(app) }.getOrDefault(emptyList()), listOf(app.packageName)) to InstallIdentity.debugAnchors(app)
         }
 
     private fun testChain(app: DystopoApp, r: Request): Response {

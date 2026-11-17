@@ -301,9 +301,41 @@ try:
         ps = f.read()
     m = re.search(r"\$runOrder = @\(([^)]*)\)", ps)
     order = re.findall(r"'([\w-]+)'", m.group(1))
-    calls = re.findall(r"^\s*\$\w+ = Part '([\w-]+)'", ps, re.M)
+    calls = re.findall(r"^\s*\$\w+ = (?:Part|Phone-Step) '([\w-]+)'", ps, re.M)  # T303: the phone parts go through Phone-Step
     assert order == calls, (order, calls)
     assert order.index("startup") > order.index("bothunits") and order.index("a11y") > order.index("startup") and order[-1] == "apk-strings", order
+    # T303: the phone parts run after every emulator part, in sweep-summary.py's order.
+    assert [p for p in order if p.startswith("phone-")] == list(summary.PHONE_PARTS) and order.index("phone-attach") > order.index("matrix"), order
+
+    # T303: the phone section, from the phone parts' outputs under phone/ (and none without them).
+    ph = os.path.join(d, "sweep-phone")
+    os.makedirs(os.path.join(ph, "phone"))
+    assert summary.phone(ph) == {}
+    def pw(name, obj, prefix=""):
+        with open(os.path.join(ph, "phone", name), "w", encoding="utf-8") as f:
+            f.write(prefix + json.dumps(obj))
+    rel = {"installed": True, "versionCode": "550", "versionName": "0.1.32-alpha", "firstInstallTime": "a", "lastUpdateTime": "b", "files": 12, "listingSha256": "ab"}
+    pw("attach.json", {"model": "Pixel X", "android": "15", "sdk": "35", "emulator": False, "release": rel})
+    pw("tour.json", {"viewsOk": 9, "viewsTotal": 10, "fixBy": "POST /location", "views": [{"label": "a", "ok": True, "seconds": 12.5}, {"label": "b", "ok": False}],
+                     "memory": {"totalPssKb": 409600}, "contourGeneration": {"count": 5, "avgMs": 80, "maxMs": 200}})
+    pw("startup.json", {"launches": [{}] * 5, "medians": {"firstFrameMs": 900, "fullyLoadedMs": 2100, "amTotalMs": None},
+                        "stageMedians": [{"name": "packs", "medianMs": 40}, {"name": "mapview", "medianMs": 120}, {"name": "x", "medianMs": None}]}, "[startup] log line\n")
+    pw("diagnostics.json", {"path": "/diagnostics", "body": {"heapMaxBytes": 512 << 20, "heapUsedBytes": 64 << 20, "pssKb": 300 * 1024,
+                                                            "lowMemory": False, "system": {"buildType": "debug"}}})
+    pw("release.json", {"before": rel, "after": rel, "changed": [], "listingSame": True})
+    p = summary.phone(ph)
+    assert p["device"] == {"model": "Pixel X", "android": "15", "sdk": "35", "emulator": False}, p
+    assert p["tour"]["viewsOk"] == 9 and p["tour"]["failedViews"] == ["b"] and p["tour"]["pssMb"] == 400 and p["tour"]["fixBy"] == "POST /location", p
+    assert p["startup"]["launches"] == 5 and p["startup"]["medians"] == {"firstFrameMs": 900, "fullyLoadedMs": 2100}, p
+    assert [x["stage"] for x in p["startup"]["slowestStages"]] == ["mapview", "packs"], p
+    assert p["diagnostics"]["heapMaxMb"] == 512 and p["diagnostics"]["pssMb"] == 300 and p["diagnostics"]["buildType"] == "debug", p
+    assert p["release"]["unchanged"] is True and p["release"]["listingSame"] is True, p
+    assert "serial" not in json.dumps(p)
+    t = summary.phone_table(p)
+    assert "Pixel X" in t and "9/10 views ok" in t and "unchanged" in t and "the same" in t, t
+    pw("release.json", {"before": rel, "after": {**rel, "lastUpdateTime": "c"}, "changed": ["lastUpdateTime"], "listingSame": False})
+    assert summary.phone(ph)["release"]["unchanged"] is False and "CHANGED: lastUpdateTime" in summary.phone_table(summary.phone(ph))
+    assert summary.phone_table({}) == ""
 finally:
     shutil.rmtree(d, ignore_errors=True)
 

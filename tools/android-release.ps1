@@ -52,8 +52,9 @@ $ProgressPreference = 'SilentlyContinue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\sdk' }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
-$package = 'io.github.jasondorjeshort.dystopo'
-$activity = "$package/io.github.jasondorjeshort.dystopo.app.MainActivity"
+. (Join-Path $PSScriptRoot 'android-ids.ps1')  # T303: the release build's id; the debug build's is another app
+$package = $DystopoReleasePackage
+$activity = Get-DystopoActivity $package
 $external = "/sdcard/Android/data/$package/files"
 function Resolve-RepoPath([string]$p) { if ([IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $repoRoot $p } }
 $outDir = Resolve-RepoPath $Out
@@ -342,7 +343,7 @@ if ($Runs -gt 0) {
 }
 
 if ($Port -gt 0) {
-    Adb forward "tcp:$Port" 'tcp:8686' | Out-Null
+    Adb forward "tcp:$Port" "tcp:$DystopoReleaseTilePort" | Out-Null
     # The /dem tile under the first view at z10.
     $lat, $lon, $z = $Views[0] -split ','
     $zt = 10; $nTiles = [math]::Pow(2, $zt)
@@ -366,7 +367,7 @@ if ($Port -gt 0) {
 }
 
 # Crash-free: nothing in the crash buffer, and the app's own error lines.
-$crash = @(Adb logcat -d -b crash | Where-Object { $_ -match $package })
+$crash = @(Adb logcat -d -b crash | Where-Object { $_ -match (Get-DystopoPackagePattern $package) })
 $errors = @(Adb logcat -d '*:E' | Where-Object { $f = ($_ -split '\s+'); $f.Count -gt 3 -and $script:pids.ContainsKey($f[2]) })
 $report.logcat = [ordered]@{ crashLines = $crash.Count; appErrorLines = $errors.Count; appErrors = @($errors | Select-Object -First 20); pids = @($script:pids.Keys) }
 $report.ok = (@($viewResults + $runResults | Where-Object { -not $_.ok }).Count -eq 0) -and $crash.Count -eq 0 -and ($Port -le 0 -or $report.probeOk)

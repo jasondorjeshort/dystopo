@@ -65,8 +65,6 @@ import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-PACKAGE = "io.github.jasondorjeshort.dystopo"
-ACTIVITY = PACKAGE + "/io.github.jasondorjeshort.dystopo.app.MainActivity"
 
 
 def _load(name, file):
@@ -78,6 +76,8 @@ def _load(name, file):
 
 debug = _load("android_debug", "android_debug.py")
 check = _load("android_check", "android-check.py")  # decode_png, changed_share
+PACKAGE = debug.RELEASE_PACKAGE  # T303: the release build, driven by taps (the ids live in android_debug.py)
+ACTIVITY = debug.activity(PACKAGE)
 
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

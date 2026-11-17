@@ -37,10 +37,11 @@ object IdentityRules {
     /**
      * The debug policy (debug builds only, ADR 0051: "debug builds alone add the debug signer and a test root"): the
      * release lists plus this build's own signer digests, read from the running app at run time, so the release lists
-     * never hold a debug key (`ReleaseListsTest`).
+     * never hold a debug key (`ReleaseListsTest`). T303: likewise the running build's own application id ([ownPackages],
+     * `<release id>.debug` for a debug build), read from the app, so a debug build's attestation is not refused for its package.
      */
-    fun debugPolicy(ownSigners: List<String>, lists: PolicyLists = PolicyLists.release): AttestationPolicy =
-        AttestationPolicy(lists.packages.toSet(), (lists.signers.map { it.sha256 } + ownSigners.map { it.lowercase() }).toSet())
+    fun debugPolicy(ownSigners: List<String>, ownPackages: List<String> = emptyList(), lists: PolicyLists = PolicyLists.release): AttestationPolicy =
+        AttestationPolicy((lists.packages + ownPackages).toSet(), (lists.signers.map { it.sha256 } + ownSigners.map { it.lowercase() }).toSet())
 
     /** The release roots plus the test root (debug builds); the release roots alone when [testRoot] is null. */
     fun debugAnchors(testRoot: TrustAnchors?, lists: PolicyLists = PolicyLists.release): TrustAnchors =
