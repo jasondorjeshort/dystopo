@@ -3093,7 +3093,34 @@ BELOW = {"install-previous": ("previous", 1), "lower-quiet": ("current", 1)}
 
 # T223: the Updates row's version line, short; the whole build id behind Details ("This build: 0.1.19-alpha", before it the whole id).
 VERSION_LINE = r"^(This build: |Up to date · )"
-UPDATE_LINE = r"^(Up to date.*|Update to .* (refused|is ready|not installed).*|Update check failed.*|No release with an APK.*)$"
+# T305: with the failure sentences of UpdateFailure (Updater.kt) since T301, so a failed check ends the wait at once.
+UPDATE_FAILED = r"(Update check failed.*|The update check did not work\..*|GitHub did not answer\..*|No connection\.|Could not read the release list\.)"
+UPDATE_LINE = r"^(Up to date.*|Update to .* (refused|is ready|not installed).*|No release with an APK.*|" + UPDATE_FAILED + r")$"
+GITHUB_RATE_LIMIT_URL = "https://api.github.com/rate_limit"  # T305: read without spending the quota it reports
+
+
+def github_core_quota(timeout=15):
+    """T305: GitHub's unauthenticated core quota for this machine's public address ({"remaining", "limit", "reset"}), which
+    the emulator shares through its NAT; None when it cannot be read. Read before the real-API step: at 0 the app's check
+    is answered 403 "rate limited", which says nothing about the app."""
+    req = urllib.request.Request(GITHUB_RATE_LIMIT_URL, headers={"User-Agent": "sweep-check", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            core = json.loads(r.read().decode("utf-8"))["resources"]["core"]
+        return {k: core.get(k) for k in ("remaining", "limit", "reset")}
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def rate_limited_skip(line, log_lines, quota):
+    """T305: the reason the real-API step is a skip rather than a failure, or None: the app's check failed and its log
+    names GitHub's rate limit (HTTP 403 "rate limited"), or the quota read before the check was already spent."""
+    if quota and quota.get("remaining") == 0:
+        when = time.strftime("%H:%M UTC", time.gmtime(quota["reset"])) if isinstance(quota.get("reset"), int) else "later"
+        return f"GitHub's API quota for this network is spent (0 of {quota.get('limit')}, resets {when}); the real check was not asked"
+    if line and re.match("^" + UPDATE_FAILED + "$", line) and any("rate limited" in l for l in log_lines[-40:]):
+        return f"the app's check was answered by GitHub's rate limit ({line})"
+    return None
 
 
 def derived_tags(offered, names):
@@ -3364,12 +3391,21 @@ def part_update(args):
 
     def real_api():
         # The real GitHub API, read only: nothing newer than this branch's build is published, so it is quiet.
+        # T305: GitHub's unauthenticated quota is per public address, shared with every device behind it; spent, the
+        # app's check is answered 403, so the step is a skip with its reason (`skipped`), never a pass or a failure.
+        quota = github_core_quota()
+        why = rate_limited_skip(None, [], quota)
+        if why:
+            return {"ok": True, "skipped": why, "quota": quota}
         dev.shell("rm", "-f", UPDATE_API_FILE, check_ok=False)
         line, png = check_for_updates(dev, timeout=120)
         close_sheet(dev)
+        why = rate_limited_skip(line, log.lines(), None)
+        if why:
+            return {"ok": True, "skipped": why, "line": line, "rowPng": png, "quota": quota}
         banner, _ = dev.wait_for(r"^Update to ", 3)
         ok = line.startswith("Up to date") and banner is None
-        return {"ok": ok, "line": line, "rowPng": png, **({} if ok else {"error": f"real API: {line}"})}
+        return {"ok": ok, "line": line, "rowPng": png, "quota": quota, **({} if ok else {"error": f"real API: {line}"})}
 
     try:
         for name, fn in (("install-previous", previous), ("create-data", data), ("install-current", current),
@@ -3447,11 +3483,25 @@ def settled(dev, pattern, timeout=10):
     raise RuntimeError(f"'{pattern}' did not settle on screen within {timeout} s (texts: {dev.texts()[:25]})")
 
 
+DIAG_FOLD_LINE = r"^How much memory the app uses"  # DiagnosticsRow.kt: the line under the row's own fold heading, open or not
+
+
+def diagnostics_fold(dev, nodes):
+    """T305: the Diagnostics row's own "Technical details" heading: the last one above the row's line DIAG_FOLD_LINE, or
+    None while that line is not on screen. The Updates row has a fold of the same name when a check failed (the
+    2026-11-18 sweep: GitHub's rate limit, its fold open on "Hide"), and the first heading on the page is that one."""
+    line = dev.find(DIAG_FOLD_LINE, nodes)
+    if not line:
+        return None
+    heads = [n for n in nodes if (n["text"] or n["desc"]) == "Technical details" and n["bounds"] and n["bounds"][1] < line["bounds"][1]]
+    return max(heads, key=lambda n: n["bounds"][1]) if heads else None
+
+
 def read_diagnostics(dev, timeout=40):
     """Settings > About and advanced, scrolled down to the Diagnostics row until its Copy report, T223's "Technical
-    details" fold opened on the way (a tap on its heading or Show; "Hide" can show twice on the page, the Updates row has
-    one, so the fold is never read by that): the row's lines in order (read across the scrolls) and the screenshots on the
-    way."""
+    details" fold opened on the way (a tap on its own heading, diagnostics_fold: the Updates row can have a fold of the
+    same name, and "Hide" can show twice on the page, so the fold is never read by that): the row's lines in order (read
+    across the scrolls) and the screenshots on the way."""
     open_settings(dev, "About and advanced", "^Updates$")
     dev.wait_for("^Technical details$|^Diagnostics$|^Max heap: ", 5)
     lines, shots = [], []
@@ -3461,7 +3511,7 @@ def read_diagnostics(dev, timeout=40):
     while time.time() < deadline:
         nodes = dev.nodes()
         if not fold_opened and not dev.find("^Max heap: ", nodes):
-            fold = dev.find("^Technical details$", nodes) or dev.find("^Show$", nodes)
+            fold = diagnostics_fold(dev, nodes)
             if fold:
                 dev.tap(fold)
                 fold_opened = True

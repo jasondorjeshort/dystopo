@@ -313,6 +313,34 @@ for line in ("Synced with your server: 14 sent, nothing new received", "Syncing 
 for line in ("This build: 0.1.19-alpha", "Up to date · 0.1.19-alpha"):
     assert re.match(ui.VERSION_LINE, line), line
 assert re.match(ui.UPDATE_LINE, "Up to date · 0.1.19-alpha")
+# T305: the failure sentences end the wait for a result; one answered by GitHub's rate limit, or a spent quota, is a skip.
+for line in ("The update check did not work. Try again later.", "GitHub did not answer. Try again later.", "No connection.",
+             "Could not read the release list.", "Update check failed: HTTP 500"):
+    assert re.match(ui.UPDATE_LINE, line), line
+limited = ["11-18 10:37:46.179 W/DystopoUpdate( 5920): update check failed (attempt 1): other 403: HTTP 403 from api.github.com (rate limited; try later)",
+           "11-18 10:37:46.181 I/DystopoUpdate( 5920): update failed: The update check did not work. Try again later."]
+assert "rate limit" in ui.rate_limited_skip("The update check did not work. Try again later.", limited, None)
+assert ui.rate_limited_skip("The update check did not work. Try again later.", limited[1:], None) is None, "not limited: a failure"
+assert ui.rate_limited_skip("Up to date · 0.1.32-alpha", limited, None) is None
+assert "resets 18:47 UTC" in ui.rate_limited_skip(None, [], {"remaining": 0, "limit": 60, "reset": 1795027678})
+assert ui.rate_limited_skip(None, [], {"remaining": 12, "limit": 60, "reset": 1795027678}) is None and ui.rate_limited_skip(None, [], None) is None
+
+
+# T305: the Diagnostics row's own fold, not the Updates row's of the same name (open on Hide after a failed check).
+class FoldScreen:
+    find = ui.firstrun.Device.find
+
+
+def node(text, top):
+    return {"text": text, "desc": "", "bounds": [60, top, 1000, top + 40]}
+
+
+page = [node("Updates", 300), node("Technical details", 600), node("Hide", 600), node("Kind: other, HTTP 403", 700),
+        node("Technical details", 930), node("Show", 930), node("How much memory the app uses and how the last recording went.", 1010),
+        node("Report a problem", 1120)]
+assert ui.diagnostics_fold(FoldScreen(), page)["bounds"][1] == 930
+assert ui.diagnostics_fold(FoldScreen(), page[:4]) is None, "the row's line not on screen yet: scroll, tap nothing"
+assert ui.diagnostics_fold(FoldScreen(), [node("Technical details", 200), node("How much memory the app uses", 260)])["bounds"][1] == 200
 # Only the documents app's button is the save dialog's: the route card has a Save of its own.
 assert ui.is_save_button({"pkg": "com.google.android.documentsui", "text": "SAVE", "bounds": [0, 0, 1, 1]})
 assert ui.is_save_button({"pkg": "com.android.documentsui", "text": "Save", "bounds": [0, 0, 1, 1]})

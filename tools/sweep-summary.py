@@ -144,17 +144,28 @@ def mb(v, unit):
 
 
 def device_tour(d, part):
-    runs = sorted(p for p in glob.glob(os.path.join(d, "device", "tour*.json")) if ".stdout." not in p)
+    # T305: only the runs' own reports, tour<n>.json: the frames' sidecars (tour1-3.place.json, T295) also match tour*.json
+    # and read as empty runs. A run that wrote no report (android-check.py died before its summary) is listed with the
+    # last line of its tour<n>.err.log.
+    dev = os.path.join(d, "device")
+    nums = sorted({int(m.group(1)) for p in glob.glob(os.path.join(dev, "tour*"))
+                   if (m := re.match(r"^tour(\d+)\.(?:json|stdout\.json|err\.log)$", os.path.basename(p)))})
     res = []
-    for p in runs:
-        s = load(p)
+    for n in nums:
+        s = load(os.path.join(dev, f"tour{n}.json"))
         if not isinstance(s, dict):
+            try:
+                with open(os.path.join(dev, f"tour{n}.err.log"), encoding="utf-8", errors="replace") as f:
+                    err = [ln.strip() for ln in f if ln.strip()]
+            except OSError:
+                err = []
+            res.append({"run": n, "viewsOk": None, "viewsTotal": None, "noReport": err[-1][:300] if err else "no report and no log"})
             continue
         cg = s.get("contourGeneration") or {}
         mem = s.get("memory") or {}
         setup = s.get("setup") or {}
         views = s.get("views") or []
-        res.append({"viewsOk": s.get("viewsOk"), "viewsTotal": s.get("viewsTotal"),
+        res.append({"run": n, "viewsOk": s.get("viewsOk"), "viewsTotal": s.get("viewsTotal"),
                     "glyphsOk": (s.get("glyphs") or {}).get("ok"),
                     "failedViews": [v.get("label") for v in views if not v.get("ok")],
                     # T154: per view and source, the tiles a pack answered before the view's baseline that the check counted
@@ -170,7 +181,7 @@ def device_tour(d, part):
                     "nativeHeapMb": mb(mem.get("nativeHeapAllocatedBytes"), 1 << 20)})
     for r in res:
         for k in ("failedViews", "servedBeforeBaseline"):
-            if not r[k]:
+            if k in r and not r[k]:
                 del r[k]
     return {"runs": res} if res else {}
 
@@ -261,6 +272,9 @@ def ui_steps(r):
     out = {"steps": {s.get("step"): s.get("ok") for s in steps}}
     if r.get("knownDefects"):
         out["knownDefects"] = r["knownDefects"]
+    skipped = {s.get("step"): s["skipped"] for s in steps if s.get("skipped")}  # T305: a step passed over, with its reason
+    if skipped:
+        out["skippedSteps"] = skipped
     bad = next((s for s in steps if not s.get("ok")), None)
     if bad or r.get("error"):
         out["error"] = f"{bad.get('step')}: {bad.get('error')}" if bad else r.get("error")
@@ -620,7 +634,9 @@ def write_sheet(d, summary, channel, render):
             why = f": {reasons[k]}" if reasons.get(k) else ""
             return f"<td style='color:#b26a00'>ok on retry{html.escape(why)}</td>"
         runs = f" ({v['runs']} runs)" if v.get("runs") else ""
-        return f"<td>{'ok' if v['ok'] else 'FAIL'}{runs}</td>"
+        # T305: a step passed over (the update part's real-API check when GitHub's quota is spent) is named in the row.
+        skipped = "".join(f"; {html.escape(s)} skipped: {html.escape(str(why))}" for s, why in (v.get("skippedSteps") or {}).items())
+        return f"<td>{'ok' if v['ok'] else 'FAIL'}{runs}{skipped}</td>"
 
     rows = "".join(f"<tr><td>{html.escape(k)}</td>{state(k, v)}<td>{v['seconds']}</td></tr>"
                    for k, v in summary["parts"].items())
