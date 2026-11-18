@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-18
+
+- T304: The phone parts over wireless debugging: a failed adb read is not a change
+
 ### 2026-11-17
 
 - T303: The owner's phone in the sweep, pass one: a debug package of its own and `-Phone <serial>`

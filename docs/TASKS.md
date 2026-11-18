@@ -26,6 +26,7 @@ The first run on the owner's phone (2026-11-18, sweep `20261118-0901`, wireless 
 **Owns:** `tools/sweep.ps1` (the phone parts, `Get-ReleaseFacts`, a strict variant of `Tool-Text` if needed), `tools/sweep-summary.py` (only if the phone section must show the new states), `docs/reference/release-realism.md` (the phone parts; wireless debugging: one transport, screen on, Wi-Fi power saving off).
 **Done when:** `./gradlew check` green; `-Phone emulator-<n>` against a stand-in emulator with a release install: the phone parts green as before and the release unchanged; the same with the stand-in's adb made to fail in the middle (for example `adb -s <serial> emu kill`, or the stand-in stopped by serial, after phone-install): phone-release reads "could not re-read", never "changed", the parts after the failure are skipped with the named reason and the run takes no 60 s per part; `-Phone <a serial not attached>` still stops at the named step. The rerun on the owner's phone is the owner's to attend, not in Done when.
 **Checks:** none.
+**Status: merged.** Verifier MERGE, no fix round (8ebdb972, merged as cf4522e9). Follow-ups: the rerun on the owner's phone (the owner attends); the tour's own first adb timeout (30 to 60 s in `android_debug.py`) is still spent once per stall; a link that comes back mid-run is not used by the skipped parts (rerun with `-Only`); the guard's refusal check takes the first match in argv order (no caller affected).
 
 ## Owner actions pending (as of 2026-10-27)
 
