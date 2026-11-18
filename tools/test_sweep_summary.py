@@ -90,6 +90,14 @@ try:
     write(os.path.join("device", "tour1.json"), json.dumps(tour))
     runs = summary.device_tour(d, "device-tour")["runs"]
     assert runs[0]["servedBeforeBaseline"] == {"region-z8": {"osm": 1}} and "failedViews" not in runs[0], runs
+    # T305: the frames' sidecars (tour1-0.place.json) are not runs; a run that died before its report is listed with its log's last line.
+    write(os.path.join("device", "tour1-0.place.json"), json.dumps({"area": "rainier", "basis": "camera"}))
+    write(os.path.join("device", "tour1-1-cards-glance.place.json"), json.dumps({"area": "rainier", "basis": "camera"}))
+    write(os.path.join("device", "tour2.stdout.json"), "")
+    write(os.path.join("device", "tour2.err.log"), "quiet device after 6.3 s\nzlib.error: Error -5 while decompressing data\n")
+    runs = summary.device_tour(d, "device-tour")["runs"]
+    assert [r["run"] for r in runs] == [1, 2] and runs[0]["viewsOk"] == 2, runs
+    assert runs[1]["viewsOk"] is None and runs[1]["noReport"].startswith("zlib.error"), runs
 
     # T268: the startup part's table (android-startup.py --budget's report), the reasons when red, the seeded store.
     assert summary.PARTS["startup"](d, "startup") == {}, "no report, no entry"

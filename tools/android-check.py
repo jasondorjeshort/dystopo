@@ -1538,14 +1538,39 @@ def puck_ok(p, slack_s=5.0):
     return not (age > after + slack_s and p["mode"] not in ("stale", "lost"))
 
 
-def screencap(exe, serial, path):
-    """T212: the whole screen as the user sees it (the cards are Compose, which `/screenshot`'s map snapshot leaves out)."""
-    r = subprocess.run([exe, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
-    if r.returncode == 0 and r.stdout.startswith(b"\x89PNG"):
-        with open(path, "wb") as f:
-            f.write(r.stdout)
-        write_place(path, *device_place(exe, serial))
-        return path
+SCREENCAP_WAITS = (0.5, 1, 2)  # T305: seconds before each retry of a capture that came back failed or cut short
+SCREENCAP_STATS = {"retries": 0, "failures": 0, "reasons": []}  # T305: the summary's captureRetries (sweep.ps1 sums them)
+
+
+def png_whole(raw):
+    """T305: True for a PNG that ends in its IEND chunk. Under load `adb exec-out screencap -p` can exit 0 with the PNG
+    cut short (the 2026-11-18 sweep's tour2: 1.4 MB with no IEND), which the cards sheet then failed to decode."""
+    return raw[:8] == b"\x89PNG\r\n\x1a\n" and len(raw) >= 20 and raw[-8:-4] == b"IEND"
+
+
+def screencap(exe, serial, path, run=subprocess.run, sleep=time.sleep):
+    """T212: the whole screen as the user sees it (the cards are Compose, which `/screenshot`'s map snapshot leaves out).
+    T305: a capture that fails or comes back cut short is retried after SCREENCAP_WAITS (counted in SCREENCAP_STATS);
+    None, and no file, when none came back whole."""
+    for i, wait in enumerate((0,) + SCREENCAP_WAITS):
+        if wait:
+            SCREENCAP_STATS["retries"] += 1
+            sleep(wait)
+        try:
+            r = run([exe, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=60)
+            code, raw = r.returncode, r.stdout or b""
+        except subprocess.TimeoutExpired:
+            code, raw = None, b""
+        if code == 0 and png_whole(raw):
+            with open(path, "wb") as f:
+                f.write(raw)
+            write_place(path, *device_place(exe, serial))
+            return path
+        reason = f"{os.path.basename(path)} attempt {i + 1}: exit {code}, {len(raw)} bytes" + ("" if code != 0 or not raw else ", cut short")
+        if len(SCREENCAP_STATS["reasons"]) < 20:
+            SCREENCAP_STATS["reasons"].append(reason)
+        print(f"[capture] {reason}", file=sys.stderr)
+    SCREENCAP_STATS["failures"] += 1
     return None
 
 
@@ -1963,8 +1988,12 @@ def cards_sheet(steps, path):
         for name, shot in (st.get("shots") or {}).items():
             if not shot:
                 continue
-            with open(shot, "rb") as f:
-                rasters.append(decode_png(f.read()))
+            try:  # T305: a frame that does not decode leaves the sheet, not the whole run's report
+                with open(shot, "rb") as f:
+                    rasters.append(decode_png(f.read()))
+            except (OSError, ValueError, zlib.error, struct.error) as e:
+                print(f"[cards] {os.path.basename(shot)} left off the cards sheet: {e}", file=sys.stderr)
+                continue
             reports.append({"index": f"{st.get('scale')}r{st.get('rotation')}", "label": name, "ok": st.get("ok"), "failed": (st.get("failed") or [])[:1]})
     return contact_sheet(reports, rasters, path, cols=6)
 
@@ -2184,6 +2213,7 @@ def main():
     except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
         summary["error"] = f"cannot reach the app on port {args.port}: {e}"
         summary["connection"] = {**server.counters, "events": server.events}  # T185
+        summary["captureRetries"] = SCREENCAP_STATS["retries"]  # T305: adb screencaps asked again (cut short or failed)
         print(json.dumps(summary, indent=2))
         return 2
 
@@ -2423,6 +2453,7 @@ def main():
     summary["viewsTotal"] = len(reports)
     summary["sheet"] = contact_sheet(reports, rasters, f"{stem}-sheet{ext}")
     summary["connection"] = {**server.counters, "events": server.events}  # T185: forwards restored, cut reads asked again
+    summary["captureRetries"] = SCREENCAP_STATS["retries"]  # T305: adb screencaps asked again (cut short or failed)
     summary["ok"] = (summary["viewsOk"] == len(reports) and summary["glyphs"]["ok"] and summary["backgroundStep"].get("ok", True) is not False
                      and summary["directStep"].get("ok", True) is not False and summary["cardsStep"].get("ok", True) is not False
                      and summary["offlineStep"].get("ok", True) is not False)  # T254

@@ -256,4 +256,46 @@ assert not ac.puck_ok({"mode": "stale", "ageS": 20.0, "staleAfterS": 300.0}), "g
 assert ac.puck_ok({"mode": "lost", "ageS": 20.0, "staleAfterS": 300.0}), "the estimate's give-up is grey at any age"
 assert not ac.puck_ok({"mode": "blue", "ageS": 1.0, "staleAfterS": 300.0}) and not ac.puck_ok({"error": "timed out"})
 
+# T305: a cut-short adb screencap is asked again; none whole leaves no file; a frame that does not decode leaves the
+# cards sheet instead of failing the run (the 2026-11-18 sweep's tour2).
+import shutil
+import subprocess
+import tempfile
+tmp = tempfile.mkdtemp()
+real_write_place = ac.write_place
+try:
+    ac.encode_png(ac.Raster(4, 3), os.path.join(tmp, "whole.png"))
+    with open(os.path.join(tmp, "whole.png"), "rb") as f:
+        WHOLE = f.read()
+    assert ac.png_whole(WHOLE) and not ac.png_whole(WHOLE[:-12]) and not ac.png_whole(b"") and not ac.png_whole(b"x" * 40)
+    answers = [(0, WHOLE[: len(WHOLE) // 2]), (1, b""), (0, WHOLE)]
+    calls, places = [], []
+
+    def fake_run(cmd, **kw):
+        code, out = answers[len(calls)]
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, code, out, b"")
+
+    ac.write_place = lambda path, *a: places.append(path)
+    shot = os.path.join(tmp, "t-cards-a.png")
+    got = ac.screencap("adb", "emulator-1", shot, run=fake_run, sleep=lambda s: None)
+    assert got == shot and len(calls) == 3 and ac.SCREENCAP_STATS["retries"] == 2 and places == [shot], (calls, ac.SCREENCAP_STATS)
+    with open(shot, "rb") as f:
+        assert f.read() == WHOLE
+    assert "cut short" in ac.SCREENCAP_STATS["reasons"][0], ac.SCREENCAP_STATS
+    calls.clear()
+    answers = [(0, WHOLE[:30])] * 4
+    gone = os.path.join(tmp, "t-cards-b.png")
+    assert ac.screencap("adb", "emulator-1", gone, run=fake_run, sleep=lambda s: None) is None and not os.path.exists(gone)
+    assert ac.SCREENCAP_STATS["failures"] == 1 and ac.SCREENCAP_STATS["retries"] == 5, ac.SCREENCAP_STATS
+    cut = os.path.join(tmp, "t-cards-c.png")
+    with open(cut, "wb") as f:
+        f.write(WHOLE[:-20])
+    sheet = ac.cards_sheet([{"scale": 1.0, "rotation": 0, "ok": True, "shots": {"glance": shot, "planning": cut, "none": None}}],
+                           os.path.join(tmp, "t-cards-sheet.png"))
+    assert sheet and os.path.exists(sheet), sheet
+finally:
+    ac.write_place = real_write_place
+    shutil.rmtree(tmp, ignore_errors=True)
+
 print("test_android_check: ok")
