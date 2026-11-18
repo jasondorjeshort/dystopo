@@ -14,6 +14,8 @@
 //     error = a one-line description. Each hook decides what an error means (git-guard denies
 //     every git command; the others fall back to DEFAULTS and say so).
 // Keys starting with "$" (for example "$comment") are ignored at any level.
+// loadSection(file, key) checks one section the same way, without the defaults and the file's other
+// keys unread (git-guard rule 20 reads another repository's privacy section with it).
 //
 // Debug: node .claude/hooks/policy.js [file]  prints the effective policy, or the error and exit 1.
 // CLAUDE.md check: node .claude/hooks/policy.js --claude-check  checks CLAUDE.md in the current
@@ -184,6 +186,32 @@ function load(file) {
     return { policy, error: null, source };
   } catch (e) {
     return { policy: DEFAULTS, error: `${source}: ${e.message}`, source };
+  }
+}
+
+// What one object section of a policy file sets (key: a top-level SCHEMA key such as "privacy"),
+// checked as load() checks it but never filled from the defaults, the file's other keys never read:
+// { section, error, source }. section is null when the file is absent (source null too) or does not
+// have the key, else the keys it gives (a key it leaves out is undefined); error as load() words it.
+// git-guard reads another repository's privacy section with it (rule 20), so a key that
+// repository's newer base added elsewhere does not refuse the push, while an unknown key or a wrong
+// value inside the section still does.
+function loadSection(file, key) {
+  if (!SCHEMA[key] || typeof SCHEMA[key] !== 'object') throw new Error(`loadSection: ${key} is not a policy section`);
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) {
+    if (e && e.code === 'ENOENT') return { section: null, error: null, source: null };
+    return { section: null, error: `cannot read ${file}: ${e.message}`, source: file };
+  }
+  try {
+    const raw = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('top level must be an object');
+    if (raw[key] === undefined) return { section: null, error: null, source: file };
+    const given = merge(SCHEMA[key], raw[key], {}, key);
+    for (const k of Object.keys(given)) if (given[k] === undefined) delete given[k];
+    return { section: given, error: null, source: file };
+  } catch (e) {
+    return { section: null, error: `${file}: ${e.message}`, source: file };
   }
 }
 
@@ -491,7 +519,7 @@ function claudeCheck(root, edit) {
   return { lines, info, files: files.size, code: lines.length ? 1 : 0 };
 }
 
-module.exports = { load, matches, docCap, lineCount, hasLengthMarker, overLimit, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, integrateLimits, usageVerdict, meterThresholds, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
+module.exports = { load, loadSection, matches, docCap, lineCount, hasLengthMarker, overLimit, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, integrateLimits, usageVerdict, meterThresholds, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
 
 if (require.main === module && process.argv[2] === '--cap-check') {
   const c = process.argv[3] ? capCheck(process.argv[3])

@@ -135,6 +135,9 @@ prefix `personal data in the outgoing commits`. Three advice sentences:
 
 The scan result is cached per (repository, refs, remote) within one guard run.
 
+Amended 2026-11-18: a push in another repository is scanned with the lists its own policy's privacy
+section sets unioned with the guard's, the hit advice naming that file; when, rule 20's row in [the hook specs](0002-hook-specs.md).
+
 `.claude/hooks/git/pre-push`: POSIX sh, executable bit set in git (`git update-index
 --chmod=+x`); LF endings come from the existing `.gitattributes` (`* text=auto eol=lf`), no new
 line there:

@@ -70,8 +70,10 @@ for (let i = 0; i < argv.length; i++) {
   else { process.stderr.write(`test-hooks: unknown or incomplete argument: ${a}\n`); process.exit(2); }
 }
 
-function run(hook, stdin, env) {
-  const script = hook === 'statusline' ? path.join(HOOKS, '..', 'statusline.js') : path.join(HOOKS, `${hook}.js`);
+// hooksDir: run the hook from another copy of this directory (PV48's scratch workspace).
+function run(hook, stdin, env, hooksDir) {
+  const dir = hooksDir || HOOKS;
+  const script = hook === 'statusline' ? path.join(dir, '..', 'statusline.js') : path.join(dir, `${hook}.js`);
   const r = spawnSync(NODE, [script], {
     input: stdin, encoding: 'utf8', timeout: 30000, env: env || process.env,
   });
@@ -206,9 +208,10 @@ const NOTE_MARK = 'git-guard reads the command line, not what runs';
 const withNote = (d) => d.reason.includes(NOTE_MARK) || 'reason lacks the note about command text';
 const noNote = (d) => !d.reason.includes(NOTE_MARK) || 'reason carries the note, but git is the command here';
 
-// Runs git-guard once. o: { command, agent, tool, cwd, policy, raw, merged, home }. expect: 'allow',
+// Runs git-guard once. o: { command, agent, tool, cwd, policy, raw, merged, home, hooks }. expect: 'allow',
 // 'internal' (exit 2, reason on stderr), a rule number, or 'policy' (malformed policy deny). HOME
-// is o.home (a PV case's never and allow files) or the empty guardHome.
+// is o.home (a PV case's never and allow files) or the empty guardHome. o.hooks: run the guard
+// copied into that directory, under the policy.json beside it (HOOK_POLICY_FILE unset).
 function guardCase(id, o, expect, extra) {
   if (!selected(id)) return;
   const input = { hook_event_name: 'PreToolUse', tool_name: o.tool || 'Bash', cwd: o.cwd || repoMain, tool_input: { command: o.command } };
@@ -216,7 +219,7 @@ function guardCase(id, o, expect, extra) {
   const stdin = o.raw !== undefined && o.raw !== null ? o.raw : JSON.stringify(input);
   // task/T1 has a merged pull request, task/T2 does not (git-guard's GIT_GUARD_MERGED seam).
   const home = o.home || guardHome;
-  const r = run('git-guard', stdin, envWith({ HOOK_POLICY_FILE: o.policy || POLICIES.hatchery, GIT_GUARD_MERGED: 'task/T1', HOME: home, USERPROFILE: home }));
+  const r = run('git-guard', stdin, envWith({ HOOK_POLICY_FILE: o.hooks ? undefined : o.policy || POLICIES.hatchery, GIT_GUARD_MERGED: 'task/T1', HOME: home, USERPROFILE: home }), o.hooks);
   const shown = JSON.stringify(String(o.command).split(fwd(scratch)).join('<scratch>'));
   const where = `${o.tool === 'PowerShell' ? ' ps' : ''}${o.cwd === repoTask ? ' on task/T1' : ''}${o.policyName ? ` (${o.policyName})` : ''}`;
   const label = `${shown} [${o.agent == null ? '-' : JSON.stringify(o.agent)}]${where} -> ${typeof expect === 'number' ? `deny rule ${expect}` : expect}`;
@@ -698,7 +701,7 @@ for (const [n, command, agent, cwd, want] of GP) {
   const pv = (id, command, repo, expect, o) => {
     const x = o || {};
     guardCase(id, { command, agent: x.agent === undefined ? 'pusher' : x.agent, cwd: repo.dir, policy: x.policy || POL,
-      home: x.home, policyName: x.label }, expect, x.extra);
+      home: x.home, policyName: x.label, hooks: x.hooks }, expect, x.extra);
   };
   const cli = (repo, args, o) => {
     const x = o || {};
@@ -1032,6 +1035,124 @@ for (const [n, command, agent, cwd, want] of GP) {
     must(ghTag.dir, ['tag', '-a', 'v2', '-m', 'release'], GH);
     pv('PV47c', 'git push origin v2', ghTag, 20, { extra: says('tag v2 tagger (identity: ') });
     pv('PV47d', PUSH, pvRepo('gh-text', [{ msg: `change\n\nmerged by ${GH.email}`, files: { 'a.txt': `committer ${GH.email}\n` } }]), 'allow');
+
+    // PV48: a push in another repository than the guard's own is scanned with both policies: allow
+    // and identities the union of the lists the other file sets, that file malformed a refusal
+    // naming it. The guard runs from a copy of the hooks in a scratch workspace (its own policy.json,
+    // no HOOK_POLICY_FILE), so the workspace is the repository holding .claude/hooks/; the other
+    // repositories here sit inside it and are excluded there, as a workspace ignores the repos inside it.
+    const ws = pvRepo('ws');
+    const wsHooks = path.join(ws.dir, '.claude', 'hooks');
+    fs.mkdirSync(wsHooks, { recursive: true });
+    for (const f of ['git-guard.js', 'shell-parse.js', 'policy.js', 'privacy-scan.js']) fs.copyFileSync(path.join(HOOKS, f), path.join(wsHooks, f));
+    fs.writeFileSync(path.join(wsHooks, 'policy.json'), JSON.stringify(Object.assign({}, HATCHERY_POLICY, { privacy: { allow: [], identities: [PV_ID] } })));
+    fs.appendFileSync(path.join(ws.dir, '.git', 'info', 'exclude'), '.claude/\nallow/\nnone/\nbad/\nids/\nids-other/\nhit/\nextra/\nsubkey/\nsubish/\nno-privacy/\nempty-privacy/\n');
+    const OTHER2 = `${SEG}2${AT}corp.internal`;
+    const nestedPolicy = (privacy) => `${JSON.stringify({ privacy }, null, 2)}\n`;
+    // A nested repository with a bare origin; base: files in its pushed base commit; commits: outgoing.
+    const nested = (name, base, commits) => {
+      const dir = path.join(ws.dir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      must(scratch, ['init', '-q', '--bare', `${ws.dir}-${name}-origin.git`]);
+      must(dir, ['init', '-q']);
+      must(dir, ['checkout', '-q', '-b', 'main']);
+      pvCommit(dir, { msg: 'base', files: Object.assign({ 'base.txt': 'base\n' }, base) });
+      must(dir, ['remote', 'add', 'origin', `${ws.dir}-${name}-origin.git`]);
+      must(dir, ['push', '-q', 'origin', 'main']);
+      return { dir, shas: (commits || []).map((c) => pvCommit(dir, c)) };
+    };
+    const POLICY_REL = '.claude/hooks/policy.json';
+    nested('allow', { [POLICY_REL]: nestedPolicy({ allow: [OTHER] }) }, [line('a.txt', `mail ${OTHER}`)]);
+    nested('none', {}, [line('a.txt', `mail ${OTHER}`)]);
+    nested('bad', { [POLICY_REL]: '{ "privacy": { "allow": ["a*"] } }\n' }, [line('a.txt', 'nothing personal')]);
+    const withId = nestedPolicy({ identities: [PV_ID, { name: 'hooks-test', email: OTHER2 }] });
+    nested('ids', { [POLICY_REL]: nestedPolicy({ identities: [PV_ID] }) }, [{ files: { [POLICY_REL]: withId } }]);
+    nested('ids-other', { [POLICY_REL]: withId }, [line('a.txt', `mail ${OTHER2}`)]);
+    nested('hit', { [POLICY_REL]: nestedPolicy({ allow: [OTHER] }) }, [line('a.txt', `mail ${OTHER2}`)]);
+    // Only the privacy section of the other repository's file is read: a top-level key this base does
+    // not know is never seen (a newer base's), one inside privacy is still refused.
+    nested('extra', { [POLICY_REL]: `${JSON.stringify({ futureKey: { on: true }, privacy: { allow: [OTHER] } }, null, 2)}\n` },
+      [line('a.txt', `mail ${OTHER}`)]);
+    nested('subkey', { [POLICY_REL]: nestedPolicy({ allow: [OTHER], futureSub: true }) }, [line('a.txt', `mail ${OTHER}`)]);
+    // A policy file in a subdirectory of another repository, not at its top-level.
+    nested('subish', { [`deep/${POLICY_REL}`]: nestedPolicy({ allow: [OTHER] }) }, [line('a.txt', `mail ${OTHER}`)]);
+    // No privacy key, and an empty privacy section: no list is set, so nothing is unioned (never the
+    // default allow ["user"]); the workspace's allow is empty, so a user path is a hit.
+    const userPath = line('a.txt', 'path /home/user/y');
+    nested('no-privacy', { [POLICY_REL]: '{}\n' }, [userPath]);
+    nested('empty-privacy', { [POLICY_REL]: nestedPolicy({}) }, [userPath]);
+    pvCommit(ws.dir, line('a.txt', `mail ${OTHER}`));
+    const inWs = { dir: ws.dir };
+    const wsCase = (id, command, expect, label, extra) => pv(id, command, inWs, expect, { hooks: wsHooks, label, extra });
+    wsCase('PV48a', 'git -C allow push origin main', 'allow', 'nested allow lists the literal');
+    wsCase('PV48b', 'cd allow && git push origin main', 'allow', 'nested allow lists the literal');
+    wsCase('PV48c', PUSH, 20, 'the same literal in the workspace', says('a.txt:1 (email: '));
+    wsCase('PV48d', 'git -C none push origin main', 20, 'nested repository without a policy', says('a.txt:1 (email: '));
+    wsCase('PV48e', 'git -C bad push origin main', 20, 'nested policy malformed',
+      says('could not read what this push sends', 'pushed repository\'s own policy', `bad${path.sep}.claude${path.sep}hooks${path.sep}policy.json`));
+    wsCase('PV48f', 'git -C ids push origin main', 'allow', 'nested identity in its policy file');
+    wsCase('PV48g', 'git -C ids-other push origin main', 20, 'nested identity in another file', says('a.txt:1 (email: '));
+    // The workspace's own commits pushed with a nested work tree, or from inside a nested repo by
+    // --git-dir, keep the workspace's section: the repository is its git common dir, not its work tree.
+    const own = (id, command, label, dir) => pv(id, command, { dir: dir || ws.dir }, 20, { hooks: wsHooks, label, extra: says('a.txt:1 (email: ') });
+    own('PV48h', 'git --work-tree=allow push origin main', 'workspace commits, nested work tree');
+    own('PV48i', 'GIT_WORK_TREE=allow git push origin main', 'workspace commits, nested work tree');
+    own('PV48j', 'git -C allow --git-dir=../.git push origin main', 'workspace commits, nested work tree');
+    own('PV48k', 'git --git-dir=../.git push origin main', 'workspace commits, from the nested repo', path.join(ws.dir, 'allow'));
+    // A worktree of the workspace whose policy.json allows the literal: the same repository.
+    const wt = path.join(ws.dir, '.claude', 'worktrees', 'wt');
+    must(ws.dir, ['worktree', 'add', '-q', '-b', 'wt', wt]);
+    fs.mkdirSync(path.join(wt, '.claude', 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(wt, '.claude', 'hooks', 'policy.json'),
+      JSON.stringify(Object.assign({}, HATCHERY_POLICY, { privacy: { allow: [OTHER], identities: [PV_ID] } })));
+    own('PV48l', 'git push origin wt', 'worktree of the workspace, its policy edited', wt);
+    // The hit advice names the other repository's file whose privacy section was unioned, and only then.
+    const sep = path.sep;
+    const UNIONED = 'privacy section and ';
+    const both = (...checks) => (d) => { for (const c of checks) { const e = c(d); if (e !== true) return e; } return true; };
+    wsCase('PV48m', 'git -C hit push origin main', 20, 'nested hit names the unioned file',
+      says('a.txt:1 (email: ', UNIONED, `hit${sep}.claude${sep}hooks${sep}policy.json's, unioned`));
+    wsCase('PV48m2', PUSH, 20, 'workspace hit, nothing unioned', both(says('a.txt:1 (email: '), lacks(UNIONED)));
+    wsCase('PV48n', 'git -C extra push origin main', 'allow', 'nested policy: unknown top-level key, valid privacy');
+    wsCase('PV48o', 'git -C subkey push origin main', 20, 'nested policy: unknown key inside privacy',
+      says('pushed repository\'s own policy', `subkey${sep}.claude${sep}hooks${sep}policy.json`, 'unknown key privacy.futureSub'));
+    // A repository-locating prefix: GIT_DIR as --git-dir does; GIT_COMMON_DIR, which the scan's git is
+    // not given, keeps the workspace's section (fail safe).
+    own('PV48p', 'GIT_DIR=../.git git push origin main', 'workspace commits by GIT_DIR, from the nested repo', path.join(ws.dir, 'allow'));
+    own('PV48q', `GIT_COMMON_DIR=${fwd(ws.dir)}/.git git -C allow push origin main`, 'GIT_COMMON_DIR prefix, nested -C');
+    // The other repository's work tree given by --work-tree as a subdirectory holding a policy file:
+    // not that repository's top-level, so its section is not read.
+    wsCase('PV48s', 'git -C subish --work-tree=deep push origin main', 20, 'policy in a --work-tree subdirectory',
+      both(says('a.txt:1 (email: '), lacks(UNIONED)));
+    wsCase('PV48t', 'git -C no-privacy push origin main', 20, 'other policy without a privacy key', says('a.txt:1 (home: '));
+    wsCase('PV48u', 'git -C empty-privacy push origin main', 20, 'other policy with an empty privacy section', says('a.txt:1 (home: '));
+    // A repository variable set some way the reader does not follow refuses the push.
+    wsCase('PV48v', `set -a; GIT_COMMON_DIR=${fwd(ws.dir)}/.git; git -C allow push origin main`, 20, 'GIT_COMMON_DIR under set -a',
+      says('could not read what this push sends', 'another repository variable'));
+    // PV48r: a worktree of the workspace whose .git file names its gitdir through the UNC admin share
+    // (//localhost/<d>$/...) is still the workspace: directories compare by dev and inode, not by
+    // path. Windows only, where the share answers; git accepts the share's path only with
+    // safe.directory=*, which the case's own HOME gives.
+    const uncOf = (p) => `//localhost/${p[0]}$${fwd(p.slice(2))}`;
+    const uncReady = process.platform === 'win32' && /^[A-Za-z]:/.test(ws.dir) && fs.existsSync(uncOf(path.join(ws.dir, '.git')));
+    if (selected('PV48r') && !uncReady) {
+      skipped++; noteGroup('PV48r'); process.stdout.write('SKIP PV48r the UNC admin share of the scratch directory is not reachable (Windows only)\n');
+    } else if (uncReady) {
+      const wtu = path.join(ws.dir, '.claude', 'worktrees', 'wtu');
+      must(ws.dir, ['worktree', 'add', '-q', '-b', 'wtu', wtu]);
+      // r+ and a truncate: Windows refuses to open git's hidden .git file for "w".
+      const gitFile = fs.openSync(path.join(wtu, '.git'), 'r+');
+      fs.ftruncateSync(gitFile, 0);
+      fs.writeSync(gitFile, `gitdir: ${uncOf(path.join(ws.dir, '.git', 'worktrees', 'wtu'))}\n`, 0);
+      fs.closeSync(gitFile);
+      fs.mkdirSync(path.join(wtu, '.claude', 'hooks'), { recursive: true });
+      fs.writeFileSync(path.join(wtu, '.claude', 'hooks', 'policy.json'), nestedPolicy({ allow: [OTHER] }));
+      const uncHome = path.join(scratch, 'unc-home');
+      fs.mkdirSync(uncHome, { recursive: true });
+      fs.writeFileSync(path.join(uncHome, '.gitconfig'), '[safe]\n\tdirectory = *\n');
+      pv('PV48r', 'git push origin wtu', { dir: wtu }, 20,
+        { hooks: wsHooks, home: uncHome, label: 'worktree with a UNC gitdir, its policy edited', extra: both(says('a.txt:1 (email: '), lacks(UNIONED)) });
+    }
   }
 }
 
