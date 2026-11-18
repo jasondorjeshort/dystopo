@@ -468,6 +468,9 @@ def phone(d):
         out["release"] = {"installed": before.get("installed"), "versionName": before.get("versionName"),
                           "changed": r.get("changed") or [], "unchanged": before.get("installed") and not r.get("changed"),
                           "listingSame": r.get("listingSame"), "files": before.get("files")}
+        if r.get("unreadable"):  # T304: a failed adb read is not a change; nothing was compared
+            out["release"]["unchanged"] = None
+            out["release"]["unreadable"] = str(r["unreadable"])[:200]
     return out
 # end T303
 
@@ -547,7 +550,9 @@ def phone_table(p):
         rows.append(("diagnostics", f"heap {g.get('heapUsedMb')} of {g.get('heapMaxMb')} MB (peak {g.get('peakHeapMb')}), native {g.get('nativeMb')} MB, "
                      f"PSS {g.get('pssMb')} MB, available {g.get('availMemMb')} MB, low memory {g.get('lowMemory')}"))
     r = p.get("release") or {}
-    if r:
+    if r.get("unreadable"):
+        rows.append(("release install", f"could not re-read: {r['unreadable']}"))
+    elif r:
         rows.append(("release install", "not installed" if not r.get("installed") else
                      ("unchanged" if r.get("unchanged") else f"CHANGED: {', '.join(r.get('changed') or [])}")
                      + ("" if r.get("listingSame") is None else f"; data listing {'the same' if r.get('listingSame') else 'changed'}")))

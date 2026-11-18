@@ -335,6 +335,12 @@ try:
     assert "Pixel X" in t and "9/10 views ok" in t and "unchanged" in t and "the same" in t, t
     pw("release.json", {"before": rel, "after": {**rel, "lastUpdateTime": "c"}, "changed": ["lastUpdateTime"], "listingSame": False})
     assert summary.phone(ph)["release"]["unchanged"] is False and "CHANGED: lastUpdateTime" in summary.phone_table(summary.phone(ph))
+    # T304: a failed re-read is not a change: no "CHANGED", no "unchanged", the reason shown.
+    pw("release.json", {"before": rel, "after": None, "unreadable": "adb shell pm list timed out after 30 s", "changed": [], "listingSame": None})
+    u = summary.phone(ph)["release"]
+    assert u["unchanged"] is None and "timed out" in u["unreadable"], u
+    t = summary.phone_table(summary.phone(ph))
+    assert "could not re-read: adb shell pm list timed out" in t and "CHANGED" not in t and "unchanged" not in t, t
     assert summary.phone_table({}) == ""
 finally:
     shutil.rmtree(d, ignore_errors=True)
