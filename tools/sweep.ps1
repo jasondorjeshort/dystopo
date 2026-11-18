@@ -94,6 +94,12 @@
 # sweep's own adb calls to the phone go through Phone-Adb, which applies the same rule. Nothing read off the phone is
 # written outside the sweep folder (out\). The debug app stays on the phone for the next run. -PhonePort (default -Port+3)
 # is the host port forwarded to its debug server. summary.json gets a `phone` section and the sheet a Phone section.
+# T304 (wireless debugging stalls): phone-attach also needs `adb shell echo ok` to answer within 15 s (after one `adb -s
+# <serial> reconnect` when it does not); a release fact whose adb read failed is retried twice (each retry after the probe
+# passes) and otherwise fails the part with "could not read" / "could not re-read the release install", never "changed";
+# after a phone part that did not pass, the probe runs (with one reconnect), and when the phone does not answer the
+# later phone parts are skips, "adb stopped answering", and phone-release only probes once; a part that exits non-zero
+# carries its error log's last line (else its output's) in its note.
 # The release build is made once with -PdystopoVersion=<describe>-sweep -PdystopoVersionCode=<commit count>, as
 # release.yml does, so it installs over the published release (a versionCode 1 build cannot). T105: its APKs are copied
 # to apk\ (apks.json: file, bytes, SHA-256, signedBy; T293: from a worktree, which has no key, each copy is first re-signed
@@ -1459,21 +1465,80 @@ try {
         }
         Tool-Text $adbExe (@('-s', $Phone) + $argv) $TimeoutS
     }
+    # T304 (the first run on the owner's phone, over wireless debugging: a five-minute stall of the link made each phone
+    # part spend its own 60 s adb timeout, and an empty `pm list packages` read as "the release install changed"): a
+    # strict read that tells a failed or timed-out adb call from an empty answer. Returns @{ ok; text; why }.
+    # The guard as Phone-Adb -Read: reads naming the release package pass; install, uninstall and pm clear never do.
+    function Phone-Read([string[]]$argv, [int]$TimeoutS = 30) {
+        $refused = Phone-Refusal $argv
+        if ($refused -and $refused -notlike 'the release package*') { throw "refused by the phone guard (T303): $refused`: adb -s $Phone $($argv -join ' ')" }
+        $dir = Join-Path $Out 'tool'
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        $script:toolRuns++
+        $o = Join-Path $dir "$($script:toolRuns).out.log"
+        $e = Join-Path $dir "$($script:toolRuns).err.log"
+        $code = Run $adbExe (@('-s', $Phone) + $argv) $o $e -TimeoutS $TimeoutS
+        $text = if (Test-Path $o) { "$(Get-Content -Raw $o)".Trim() } else { '' }
+        if ("$code" -eq '0') { return @{ ok = $true; text = $text } }
+        $what = "adb $(($argv | Select-Object -First 4) -join ' ')"
+        if ("$code" -eq 'timeout') { return @{ ok = $false; text = $text; why = "$what timed out after $TimeoutS s" } }
+        $last = @("$(Get-Content -Raw $e -ErrorAction SilentlyContinue)" -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
+        @{ ok = $false; text = $text; why = "$what exited $code$(if ($last) { ": $($last.Trim())" })" }
+    }
+    # The reachability probe: a command that runs on the phone (`get-state` answers from the PC's adb server even while
+    # the link is stalled). '' when it answered, else why not.
+    $script:phoneProbeS = 15
+    function Phone-Probe {
+        $r = Phone-Read @('shell', 'echo', 'ok') $script:phoneProbeS
+        if ($r.ok -and $r.text -eq 'ok') { return '' }
+        if ($r.ok) { "shell echo ok answered '$($r.text)'" } else { $r.why }
+    }
+    # The probe, and on a failure `adb -s <serial> reconnect` once and the probe again. '' when the phone answers.
+    function Phone-Reachable {
+        $why = Phone-Probe
+        if (-not $why) { return '' }
+        Write-Host "[sweep] the phone $Phone did not answer ($why): adb reconnect, then the probe again"
+        $null = Tool-Text $adbExe @('-s', $Phone, 'reconnect') $script:phoneProbeS
+        Start-Sleep -Seconds 3
+        $again = Phone-Probe
+        if (-not $again) { $script:phoneReconnects++; return '' }
+        "$why; after adb reconnect, $again"
+    }
+    # A read of the release install's facts: retried twice, each retry after a probe that passed; a failed probe ends it.
+    function Phone-ReadRetry([string[]]$argv, [int]$TimeoutS = 30) {
+        $r = Phone-Read $argv $TimeoutS
+        for ($i = 0; $i -lt 2 -and -not $r.ok; $i++) {
+            $why = Phone-Probe
+            if ($why) { $r.why = "$($r.why); the probe then: $why"; return $r }
+            Start-Sleep -Seconds 2
+            $r = Phone-Read $argv $TimeoutS
+        }
+        $r
+    }
     # The release install's facts: installed, versionCode, first install and last update times, and (where su works, as on
     # an emulator standing in for the phone) the count and SHA-256 of its data files' listing (path, size, mtime). Only the
-    # digest is kept, never the listing: the owner's data stays on the phone.
-    function Get-ReleaseFacts {
-        # A phone that went away (unplugged, an emulator that died) is said so, never read as an install that changed.
-        if ((Tool-Text $adbExe @('-s', $Phone, 'get-state') 30) -ne 'device') { return [ordered]@{ reachable = $false } }
-        $listed = Phone-Adb @('shell', 'pm', 'list', 'packages', $DystopoReleasePackage) -Read
-        $facts = [ordered]@{ installed = (@($listed -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoReleasePackage" }).Count -gt 0) }
+    # digest is kept, never the listing: the owner's data stays on the phone. T304: only facts read are returned; a read
+    # that failed gives @{ unreadable = <why> }, never an install that changed. -NoReconnect after adb stopped answering.
+    function Get-ReleaseFacts([switch]$NoReconnect) {
+        # A phone that went away (unplugged, an emulator that died, a stalled link) is said so.
+        $why = if ($NoReconnect) { Phone-Probe } else { Phone-Reachable }
+        if ($why) { return [ordered]@{ unreadable = "the phone does not answer ($why)" } }
+        $r = Phone-ReadRetry @('shell', 'pm', 'list', 'packages', $DystopoReleasePackage) 30
+        if (-not $r.ok) { return [ordered]@{ unreadable = $r.why } }
+        $facts = [ordered]@{ installed = (@($r.text -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoReleasePackage" }).Count -gt 0) }
         if (-not $facts.installed) { return $facts }
-        $d = Phone-Adb @('shell', 'dumpsys', 'package', $DystopoReleasePackage) 60 -Read
+        $r = Phone-ReadRetry @('shell', 'dumpsys', 'package', $DystopoReleasePackage) 60
+        if (-not $r.ok) { return [ordered]@{ unreadable = $r.why } }
+        $d = $r.text
         foreach ($k in @('versionCode', 'versionName', 'firstInstallTime', 'lastUpdateTime')) {
             if ($d -match "(?m)\b$k=(\S+(?: \S+)?)") { $facts[$k] = ($Matches[1] -replace ' minSdk.*$', '').Trim() }
         }
-        $list = Phone-Adb @('shell', "su 0 sh -c 'cd /data/data/$DystopoReleasePackage && find . -type f -exec stat -c ""%n %s %Y"" {} +'") 120 -Read
-        if ($list -and $list -notmatch 'not found|denied|inaccessible|No such') {
+        if (-not $facts.versionCode) { return [ordered]@{ unreadable = "adb shell dumpsys package gave no versionCode ($($d.Length) characters)" } }
+        $r = Phone-Read @('shell', "su 0 sh -c 'cd /data/data/$DystopoReleasePackage && find . -type f -exec stat -c ""%n %s %Y"" {} +'") 120
+        # No su exits non-zero on a phone; a failure is "no su" only when the phone still answers.
+        if (-not $r.ok -and "$($r.why)" -match 'timed out') { $why = Phone-Probe; if ($why) { return [ordered]@{ unreadable = "$($r.why); the probe then: $why" } } }
+        $list = $r.text
+        if ($r.ok -and $list -and $list -notmatch 'not found|denied|inaccessible|No such') {
             $lines = @($list -split "`r?`n" | Where-Object { $_ } | Sort-Object)
             $sha = [Security.Cryptography.SHA256]::Create()
             $facts.files = $lines.Count
@@ -1482,34 +1547,70 @@ try {
         $facts
     }
     # Part's own parameter is $body, so the phone part's block is $phoneBody (a scriptblock finds variables by scope).
-    function Phone-Step([string]$name, [scriptblock]$phoneBody) {
+    # T304: $logs (the part's error log, then its stdout) give a non-zero exit's note the last line written; after a part
+    # that did not pass, the probe (with one reconnect) runs, and when the phone does not answer the later phone parts are
+    # skipped with "adb stopped answering" instead of each spending its own timeout (phone-release still tries, one probe).
+    $script:phoneAdbDead = ''
+    $script:phoneReconnects = 0
+    function Last-LogLine([string[]]$logs) {
+        foreach ($f in $logs) {
+            if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
+            $line = @("$(Get-Content -Raw -LiteralPath $f -ErrorAction SilentlyContinue)" -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '^[\]\[{}(),]+$' }) | Select-Object -Last 1
+            if ($line) { return "$([IO.Path]::GetFileName($f)): $(if ($line.Length -gt 300) { $line.Substring(0, 300) + '...' } else { $line })" }
+        }
+        ''
+    }
+    function Phone-Step([string]$name, [string[]]$logs, [scriptblock]$phoneBody) {
+        $script:phoneLastCode = 'skip'
         $null = Part $name {
             if ($name -ne 'phone-attach' -and -not $script:phoneReady) { $script:partNote = 'skipped: phone-attach did not pass'; 'skip'; return }
+            if ($script:phoneAdbDead -and $name -ne 'phone-release') { $script:partNote = "skipped: adb stopped answering ($($script:phoneAdbDead))"; 'skip'; return }
+            $script:phoneLastCode = 'error'
             $env:DYSTOPO_PHONE_GUARD = $Phone
-            try { & $phoneBody } finally { Remove-Item Env:\DYSTOPO_PHONE_GUARD -ErrorAction SilentlyContinue }
+            try { $c = @(& $phoneBody) | Select-Object -Last 1 } finally { Remove-Item Env:\DYSTOPO_PHONE_GUARD -ErrorAction SilentlyContinue }
+            $script:phoneLastCode = "$c"
+            if ("$c" -notin @('0', 'skip')) {
+                $line = Last-LogLine $logs
+                if ($line) { $script:partNote = (@($script:partNote, $line) | Where-Object { $_ }) -join '; ' }
+            }
+            $c
+        }
+        if ($Phone -and $script:phoneReady -and -not $script:phoneAdbDead -and $script:phoneLastCode -notin @('0', 'skip') -and $name -notin @('phone-attach', 'phone-release')) {
+            $why = Phone-Reachable
+            if ($why) {
+                $script:phoneAdbDead = "after $name`: $why"
+                Write-Host "[sweep] adb stopped answering $($script:phoneAdbDead): the phone parts after it are skipped"
+            }
         }
     }
     if ($Phone) {
         New-Item -ItemType Directory -Force $phoneDir | Out-Null
         . (Join-Path $repo 'tools\android-ids.ps1')
     }
-    $null = Phone-Step 'phone-attach' {
+    $null = Phone-Step 'phone-attach' @() {
         $devices = Tool-Text $adbExe @('devices') 30
         $state = @($devices -split "`r?`n" | Where-Object { $_ -match "^$([regex]::Escape($Phone))\s+(\S+)" } | ForEach-Object { $_ -split '\s+' | Select-Object -Index 1 }) | Select-Object -First 1
         if (-not $state) { throw "refused: the phone $Phone is not attached (adb devices lists no such serial): connect it by USB or wireless debugging, accept this PC's key, and run again" }
         if ($state -ne 'device') { throw "refused: the phone $Phone is attached but '$state' (unauthorized: accept the debugging prompt on the phone; offline: reconnect it)" }
         if ($Phone -eq $serial -and @($deviceParts | Where-Object { Want $_ }).Count) { throw "refused: -Phone $Phone is the sweep's own emulator (-EmuPort $EmuPort); name another serial" }
+        # T304: listed is not answering (a stalled wireless link stays `device`): a command must run, with one reconnect.
+        $why = Phone-Reachable
+        if ($why) { throw "refused: the phone $Phone is listed but does not answer a command ($why); for wireless debugging: screen on, Wi-Fi power saving off, one transport" }
         $facts = [ordered]@{ model = (Phone-Adb @('shell', 'getprop', 'ro.product.model')); android = (Phone-Adb @('shell', 'getprop', 'ro.build.version.release'))
             sdk = (Phone-Adb @('shell', 'getprop', 'ro.build.version.sdk')); emulator = ($Phone -match '^emulator-'); release = (Get-ReleaseFacts) }
         $facts | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $phoneDir 'attach.json')
+        # T304: without the before facts nothing could be compared afterwards, so nothing is installed.
+        if ($facts.release.unreadable) { throw "could not read the release install before the run ($($facts.release.unreadable)); nothing installed" }
         $script:phoneRelease = $facts.release
         # A rerun without phone-install (-Only phone-startup ...) uses the debug build already on the phone.
-        $script:phoneInstalled = [bool](@((Phone-Adb @('shell', 'pm', 'list', 'packages', $DystopoDebugPackage)) -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoDebugPackage" }).Count)
-        $script:partNote = "$($facts.model), Android $($facts.android); the release $(if ($facts.release.installed) { "installed (versionCode $($facts.release.versionCode))" } else { 'not installed' })"
+        $r = Phone-ReadRetry @('shell', 'pm', 'list', 'packages', $DystopoDebugPackage) 30
+        if (-not $r.ok) { throw "could not read whether the debug build is installed ($($r.why))" }
+        $script:phoneInstalled = [bool](@($r.text -split "`r?`n" | Where-Object { $_.Trim() -eq "package:$DystopoDebugPackage" }).Count)
+        $script:partNote = "$($facts.model), Android $($facts.android); the release $(if ($facts.release.installed) { "installed (versionCode $($facts.release.versionCode))" } else { 'not installed' })$(if ($script:phoneReconnects) { '; answered after adb reconnect' })"
         $script:phoneReady = $true
         0
     }
-    $null = Phone-Step 'phone-install' {
+    $null = Phone-Step 'phone-install' @((Join-Path $phoneDir 'push-pack.err.log'), (Join-Path $phoneDir 'push-pack.log')) {
         $apk = Join-Path $repo 'androidApp\build\outputs\apk\debug\androidApp-debug.apk'
         if (-not $booted -or -not (Test-Path $apk)) {
             # No device part built it in this sweep: build it here (a debug-only invocation never splits the APK).
@@ -1534,24 +1635,28 @@ try {
         $script:partNote = "$DystopoDebugPackage installed; the Rainier packs pushed (exit $c)"
         $c
     }
-    $null = Phone-Step 'phone-tour' {
+    $null = Phone-Step 'phone-tour' @((Join-Path $phoneDir 'tour.err.log'), (Join-Path $phoneDir 'tour.stdout.json')) {
         if (-not $script:phoneInstalled) { $script:partNote = 'skipped: the debug build is not installed'; 'skip'; return }
         Run $py @('-I', 'tools/android-check.py', '--port', "$PhonePort", '--serial', $Phone, '--views-file', 'tools/android-tour.txt',
             '--server', 'none', '--fix', '46.7864,-121.7366,1629', '--no-offline', '--no-cards', '--out', (Join-Path $phoneDir 'tour.png')) (Join-Path $phoneDir 'tour.stdout.json') (Join-Path $phoneDir 'tour.err.log')
     }
-    $null = Phone-Step 'phone-startup' {
+    $null = Phone-Step 'phone-startup' @((Join-Path $phoneDir 'startup.err.log'), (Join-Path $phoneDir 'startup.json')) {
         if (-not $script:phoneInstalled) { $script:partNote = 'skipped: the debug build is not installed'; 'skip'; return }
         Run $py @('-I', 'tools/android-startup.py', '--serial', $Phone, '--port', "$PhonePort", '--launches', '5', '--seed-tracks', '52',
             '--dem', $dem, '--osm', $osm, '--clear-online-cache', '--clear-divergences', '--quiet', '240') (Join-Path $phoneDir 'startup.json') (Join-Path $phoneDir 'startup.err.log')
     }
-    $null = Phone-Step 'phone-diagnostics' {
+    $null = Phone-Step 'phone-diagnostics' @((Join-Path $phoneDir 'diagnostics.err.log'), (Join-Path $phoneDir 'diagnostics.json')) {
         if (-not $script:phoneInstalled) { $script:partNote = 'skipped: the debug build is not installed'; 'skip'; return }
         Run $py @('-I', 'tools/android_debug.py', 'get', '--serial', $Phone, '--port', "$PhonePort", '--path', '/diagnostics') (Join-Path $phoneDir 'diagnostics.json') (Join-Path $phoneDir 'diagnostics.err.log')
     }
-    $null = Phone-Step 'phone-release' {
+    $null = Phone-Step 'phone-release' @() {
         $before = $script:phoneRelease
-        $after = Get-ReleaseFacts
-        if ($after.reachable -eq $false) { throw "the phone $Phone is no longer listed by adb as a device: the release install could not be read again" }
+        # T304: only facts read are compared; after adb stopped answering, one probe (no reconnect) decides whether to read.
+        $after = Get-ReleaseFacts -NoReconnect:([bool]$script:phoneAdbDead)
+        if ($after.unreadable) {
+            [ordered]@{ before = $before; after = $null; unreadable = $after.unreadable; changed = @(); listingSame = $null } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $phoneDir 'release.json')
+            throw "could not re-read the release install: $($after.unreadable) (not a change: nothing was compared)"
+        }
         $changed = @(foreach ($k in @('installed', 'versionCode', 'firstInstallTime', 'lastUpdateTime')) { if ("$($before[$k])" -ne "$($after[$k])") { $k } })
         $listing = if ($null -ne $before.listingSha256 -and $null -ne $after.listingSha256) { $before.listingSha256 -eq $after.listingSha256 } else { $null }
         [ordered]@{ before = $before; after = $after; changed = $changed; listingSame = $listing } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $phoneDir 'release.json')
