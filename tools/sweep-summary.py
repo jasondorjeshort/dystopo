@@ -272,6 +272,9 @@ def ui_steps(r):
     out = {"steps": {s.get("step"): s.get("ok") for s in steps}}
     if r.get("knownDefects"):
         out["knownDefects"] = r["knownDefects"]
+    skipped = {s.get("step"): s["skipped"] for s in steps if s.get("skipped")}  # T305: a step passed over, with its reason
+    if skipped:
+        out["skippedSteps"] = skipped
     bad = next((s for s in steps if not s.get("ok")), None)
     if bad or r.get("error"):
         out["error"] = f"{bad.get('step')}: {bad.get('error')}" if bad else r.get("error")
@@ -631,7 +634,9 @@ def write_sheet(d, summary, channel, render):
             why = f": {reasons[k]}" if reasons.get(k) else ""
             return f"<td style='color:#b26a00'>ok on retry{html.escape(why)}</td>"
         runs = f" ({v['runs']} runs)" if v.get("runs") else ""
-        return f"<td>{'ok' if v['ok'] else 'FAIL'}{runs}</td>"
+        # T305: a step passed over (the update part's real-API check when GitHub's quota is spent) is named in the row.
+        skipped = "".join(f"; {html.escape(s)} skipped: {html.escape(str(why))}" for s, why in (v.get("skippedSteps") or {}).items())
+        return f"<td>{'ok' if v['ok'] else 'FAIL'}{runs}{skipped}</td>"
 
     rows = "".join(f"<tr><td>{html.escape(k)}</td>{state(k, v)}<td>{v['seconds']}</td></tr>"
                    for k, v in summary["parts"].items())

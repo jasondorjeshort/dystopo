@@ -82,6 +82,12 @@ try:
     write("diagnostics.json", json.dumps(diag))
     assert summary.PARTS["diagnostics"](d, "diagnostics")["error"] == "after-force-stop: after the force-stop: ended"
 
+    # T305: a step passed over is named with its reason (the update part's real-API check when GitHub's quota is spent).
+    write("update.json", json.dumps({"part": "update", "ok": True, "steps": [{"step": "survived", "ok": True},
+                                                                         {"step": "real-api", "ok": True, "skipped": "quota spent"}]}))
+    got = summary.PARTS["update"](d, "update")
+    assert got["skippedSteps"] == {"real-api": "quota spent"} and "error" not in got, got
+
     # T154: the device tour's runs name the views whose tiles check counted a tile served before the baseline.
     os.makedirs(os.path.join(d, "device"))
     tour = {"viewsOk": 2, "viewsTotal": 2, "views": [
