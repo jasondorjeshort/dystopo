@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-09
+verified: 2026-11-18
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -57,7 +57,7 @@ run of the local release path (fake tag, nothing published) passed here except t
 | Main checkout | `~\Documents\src\dystopo` |
 | Shared download cache | `DYSTOPO_CACHE=~\Documents\src\dystopo\cache` (starts empty; the world tour pulls about 73 MB) |
 | JDK 21 | `JAVA_HOME=C:\Program Files\Java\jdk-21` (user variable); the default `java` on PATH is jdk-25, so a shell that lost the variable builds with the wrong JDK |
-| Android SDK | `~\Android\sdk` (`local.properties`; build-tools 35.0.0, API 35 `google_apis` x86_64 image, emulator with WHPX working); `ANDROID_HOME` and `platform-tools` are on the user PATH |
+| Android SDK | `~\Android\sdk` (`local.properties`; build-tools 35.0.0, API 35 `google_apis` x86_64 image, emulator with WHPX working); `ANDROID_HOME` is set; `platform-tools` was added to the user PATH on 2026-11-18 (it was missing; a shell started before then needs the full path to `adb.exe`) |
 | AVDs | `~\Android\avd` (`-AvdHome`); C: has about 190 GB free, E: only about 10 GB (`sweep.ps1` defaults to `E:\dystopo-avd` only where that folder exists, T191; pass `-AvdHome` here) |
 | RAM | 48 GB. Wave 20 (2026-10-25) ran short with six 4 GB emulators plus a Gradle daemon per agent (0.7 to 2.7 GB each; Gradle stopped idle ones itself "to reclaim system physical memory", and the Kotlin compiler ran out of memory once): boot emulators with `-Memory 3072`, keep at most three running at once (verifiers wait for a slot), run every Gradle build with `--no-daemon`, and stop an emulator by serial as soon as its last check is done. Wave 22 (2026-10-30): with five parallel `check` builds beside three 3 GB emulators the Kotlin compiler ran out of memory several times and once hung 35 min in the shared compile daemon; a two-minute wait and a retry passed, and `./gradlew check --no-daemon -Pkotlin.compiler.execution.strategy=in-process -Dorg.gradle.jvmargs=-Xmx3g` built first time under the same load. Five or six emulators at once also brought "system died" binder crashes and ANR dialogs on the guests. T190 (2026-10-31): the cap is machine-wide and enforced, `emulators.max` (2) in `.claude/hooks/policy.json`, with a lock per emulator in `~/.dystopo/emulators/` and a hook stopping an ending agent's emulators (`android-emulator.md`, The emulator cap). Measured host cost per emulator, debug app on the Rainier map for a minute: the qemu and `emulator.exe` pair's working set 3.7 GB at `-Memory 2048` and 4.1 GB at 3072 (private bytes 4.5 and 4.9 GB), not the 10 GB guessed before; the default is now 3072, so the cap's two emulators take about 8.5 GB. A 3072 cold boot of a new AVD did not finish in 18 minutes while the host's CPU read 99.9% (thirteen Gradle and devtool JVMs at 9.5 GB beside the owner's own programs); the same AVD booted in 60 s once the load eased, so a stuck boot under load is CPU, not RAM |
 | GitHub CLI | `gh` 2.103 (`C:\Program Files\GitHub CLI\gh.exe`), logged in as the owner's account; a shell started before the install needs the full path |
