@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-18, after be7b5770, by main session (T304 merged; the owner's phone rerun next)
+Updated: 2026-11-18, by main session (wave 36 closed, no release)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
-`docs/tasks/wave-35.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
+`docs/tasks/wave-36.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **No wave is open.** Wave 35 (T292 to T302, the development-process cleanup and four debugging tasks) is closed and recorded in `docs/tasks/wave-35.md`; its follow-ups are in the board's Later. **v0.1.32-alpha is published** (tag on 19662337, versionCode 1797; Send diagnostics ends in Share and Open GitHub issue; Report recent stats). Its sweep `out/sweep-20261116-2212` is the next close's `-Prev` (its frames carry sidecars, so the next diff can leave out by area).
-- The closing sweep was red on `startup` alone on a loaded machine, green rerun alone; an A/B run put main about 5 % over v0.1.31-alpha in map-drawn time, 6,270 to 6,611 ms against a 6,680 ceiling: measure again at the next sweep (Later).
-- **Cost:** the 7-day meter read 85 at the close (47 at planning); the `wave` skill's per-task figure is now 3.0 points, and `python -I tools/agent-cost.py <Tnn>` gives each task's real token sum. The hold is 97, so the next wave must fit the remaining points or wait for the 7-day reset (`resets_at` in the session's usage file).
+- **No wave is open.** Wave 36 (T303 and T304, the owner's phone in the sweep) is closed and recorded in `docs/tasks/wave-36.md`; its follow-ups are in the board's Later. The phone parts ran green on the owner's phone over wireless debugging (sweep `out/sweep-20261118-1301`: startup median fully loaded 2,000 ms, the release unchanged); "Dystopo debug" stays installed there. **v0.1.32-alpha** is still the published release; no release this wave (the release build is unchanged).
+- The full sweep of 2026-11-18 (`out/sweep-20261118-0901`) was red on four emulator parts: `device-tour`, `startup` (7,127 ms against 6,680, the third reading over), `diagnostics`, `update`; not yet looked into (Later). `out/sweep-20261116-2212` stays the next close's `-Prev`.
+- **Cost:** the 7-day meter read 87 at the close (86 at planning); the per-task figure stays 3.0. The hold is 97, so about three tasks fit before the 7-day reset (`resets_at` in the session's usage file).
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
 
-1. **The owner's phone in the sweep: T303 and T304 merged (wave 36).** The first run on the owner's phone (2026-11-18, wireless debugging) went red on adb stalls and a false "release changed" (the app was untouched); T304 (cf4522e9) fixed the reads and skips. Next: the owner reruns `-Phone <ip:port> -Only phone-attach,phone-install,phone-tour,phone-startup,phone-diagnostics,phone-release` (screen on, Wi-Fi power saving off, one adb transport; the port from `adb mdns services`). Then wave 36 closes (its record; no release). Ideas untriaged: six of 2026-11-17 and Java 25 of 2026-11-18.
+1. **The red emulator parts of the 2026-11-18 sweep** (Later): a debugging task before the next release. Ideas untriaged: six of 2026-11-17 and Java 25 of 2026-11-18 ("We'll prioritize later").
 2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
 3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
 4. Tooling follow-ups from wave 35 (Later): the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
