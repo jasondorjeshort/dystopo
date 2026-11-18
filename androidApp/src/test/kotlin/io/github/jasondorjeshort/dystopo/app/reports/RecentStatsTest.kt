@@ -48,9 +48,9 @@ class RecentStatsTest {
 
     @Test
     fun theBudgetIsReadWithItsCeilingsAndTheEmulatorsMedians() {
-        assertEquals(300L, budget.ceilings["prepare"])
-        assertEquals(210.0, budget.emulator["prepare"], "the median of the sweeps' medians")
-        assertEquals(4909L, budget.ceilings["firstFrameMs"])
+        assertEquals(360L, budget.ceilings["prepare"]) // T306: tools/launch-budget.json as set on 2026-11-18
+        assertEquals(255.0, budget.emulator["prepare"], "the median of the sweeps' medians")
+        assertEquals(5050L, budget.ceilings["firstFrameMs"])
         assertEquals("prepare", budget.stages.first())
         assertFalse("firstFrameMs" in budget.stages, "the frames are not stages")
     }
@@ -65,7 +65,7 @@ class RecentStatsTest {
         )
         val lines = RecentStats.stepLines(RecentStats.figures(history), budget)
         assertEquals(listOf(
-            "first frame 3200 ms, limit 4909 ms", "prepare 200 ms, limit 300 ms", "maplibre 400 ms, limit 302 ms, over",
+            "first frame 3200 ms, limit 5050 ms", "prepare 200 ms, limit 360 ms", "maplibre 400 ms, limit 312 ms, over",
             "custom 7 ms (1 of 3)", "open-files table 12.5 ms (1 of 3)", "package read 0.4 ms (1 of 3)",
         ), lines)
         val r = Report(RecentStats.ID, RecentStats.dump(1_763_300_000_000L, system, history, budget, listOf("Offline maps: none")))
