@@ -105,6 +105,15 @@ assert sm["prepare"] == {"name": "prepare", "medianMs": 50, "maxMs": 60, "launch
 assert sm["style"]["medianMs"] == 800.0 and sm["style"]["launches"] == 2, sm
 assert s["undeclared"] == [{"stage": "prepare", "kind": "DiskReadViolation", "launches": [3]}], s["undeclared"]
 
+# T306: the warm-up launch is reported apart and left out of every median; an undeclared kind in it still counts.
+wu = [launch(9500, 10000, [("prepare", 900, ["DiskReadViolation"]), ("tracking", 999, []), ("style", 999, [])])]
+s = m.summary(ls, "cold", wu)
+assert s["medians"]["firstFrameMs"] == 3700 and s["medians"]["fullyLoadedMs"] == 5200, s["medians"]
+assert {r["name"]: r["medianMs"] for r in s["stageMedians"]} == {"prepare": 50, "tracking": 250, "style": 800.0}, s["stageMedians"]
+assert len(s["launches"]) == 3 and s["warmup"] == {"launches": 1, "measured": 3, "lines": wu}, s["warmup"]
+assert s["undeclared"] == [{"stage": "prepare", "kind": "DiskReadViolation", "launches": [1, 4]}], s["undeclared"]
+assert m.summary(ls, "cold")["warmup"] == {"launches": 0, "measured": 3, "lines": []}
+
 # The ceiling: the larger median times 1.25, up to a whole ms, and never under the median plus 16 ms.
 assert m.ceiling([3700, 3600]) == 4625 and m.ceiling([3600, None]) == 4500 and m.ceiling([None]) is None
 assert m.ceiling([0]) == 16 and m.ceiling([0.4]) == 17 and m.ceiling([8]) == 24 and m.ceiling([64]) == 80 and m.ceiling([68]) == 85
@@ -119,6 +128,16 @@ assert b["stages"] == {"prepare": {"ceilingMs": 64, "medianMs": [40, 48]}, "trac
                        "style": {"ceilingMs": 1000, "medianMs": [None, 800]}}, b["stages"]
 assert b["factor"] == 1.25 and b["floorMs"] == 16 and b["set"] == {"date": "2026-11-13", "from": ["a/startup.json", "b/startup.json"]} and b["aliases"] == {}
 assert m.make_budget([r1], ["a"], "d", old={"aliases": {"old": "new"}, "rule": "R"})["aliases"] == {"old": "new"}
+# T306: --set-budget never lowers a ceiling: a higher old one is kept (with the new medians, `kept` its set date), a lower
+# one gives way; a `raised` note stays.
+was = {"set": {"date": "2026-11-13"}, "frames": {"firstFrameMs": {"ceilingMs": 4000, "medianMs": [3200]}},
+       "stages": {"prepare": {"ceilingMs": 90, "medianMs": [70], "raised": "why"}, "tracking": {"ceilingMs": 200, "medianMs": [150], "raised": "why"},
+                  "style": {"ceilingMs": 1200, "medianMs": [900], "kept": "2026-10-01"}}}
+nb = m.make_budget([r1, r2], ["a", "b"], "d", old=was)
+assert nb["stages"]["prepare"] == {"ceilingMs": 90, "medianMs": [40, 48], "raised": "why", "kept": "2026-11-13"}, nb["stages"]
+assert nb["stages"]["tracking"] == {"ceilingMs": 375, "medianMs": [300, None], "raised": "why"}, nb["stages"]
+assert nb["stages"]["style"] == {"ceilingMs": 1200, "medianMs": [None, 800], "kept": "2026-10-01"}, nb["stages"]
+assert nb["frames"]["firstFrameMs"] == {"ceilingMs": 4625, "medianMs": [3600, 3700]}, nb["frames"]
 assert json.loads(m.format_budget(b)) == b, "the file's text reads back as the budget"
 assert '\n  "prepare": {"ceilingMs": 64, "medianMs": [40, 48]},\n' in m.format_budget(b), "one line per stage"
 
@@ -166,7 +185,9 @@ with open(os.path.join(here, "launch-budget.json"), encoding="utf-8") as f:
 assert real["factor"] == m.FACTOR and set(real["frames"]) == {"firstFrameMs", "fullyLoadedMs"}, real.get("frames")
 assert len(real["stages"]) >= 20, "the stages of T266's list"
 for k, v in list(real["frames"].items()) + list(real["stages"].items()):
-    assert max(x for x in v["medianMs"] if x is not None) < v["ceilingMs"] <= m.ceiling(v["medianMs"], real["factor"], real["floorMs"]), (k, v)
+    rule = m.ceiling(v["medianMs"], real["factor"], real["floorMs"])
+    assert max(x for x in v["medianMs"] if x is not None) < v["ceilingMs"], (k, v)
+    assert v["ceilingMs"] <= rule or (v.get("kept") and v["ceilingMs"] > rule), (k, v, rule)  # T306: kept, never lowered by --set-budget
 
 # The seed: a fixed id per index, inside areas.json's Rainier box, a GPX the importer reads.
 tid, text = m.seed_gpx(3, 50)

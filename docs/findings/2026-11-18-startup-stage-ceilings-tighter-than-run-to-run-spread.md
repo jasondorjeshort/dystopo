@@ -1,7 +1,8 @@
 ---
 date: 2026-11-18
-status: open
+status: resolved (T306)
 area: tooling / sweep startup part, launch budget
+promoted_to: docs/reference/android-emulator.md
 ---
 
 # The startup part's red is noise: identical code spreads past several of its ceilings
@@ -50,11 +51,24 @@ Medians of five cold launches, ms (fully loaded, first frame, and the stages tha
   after a fresh boot or install takes 8.5 to 10 s, and when the next ones are slow too the median follows. (`online`
   over 114 in the A/B is that setup's: no server set.)
 
-## Next
+## Resolution (T306)
 
-- A budget choice, the coordinator's: set the ceilings again from more runs (`android-startup.py --set-budget` over,
-  say, eight sweep-condition reports, so the spread above is inside them), or widen the factor for the stages that
-  read the disk (`tracking`, `packs`), or take the median over more launches (say 9) with the first launch after a
-  boot left out. Raising a ceiling needs its line in the dated log (`tools/launch-budget.json`, rule).
-- Until then a red `startup` with every figure within about 1.5x of its ceiling is not evidence of a regression;
-  an A/B as above is.
+The coordinator took the first and third of three choices (more reports; more launches with the first left out), not
+a wider factor for the disk-reading stages, which would hide a regression in exactly those. The part now runs
+`--warmup 1 --launches 9`: the first launch after the boot and seed is measured and left out of the medians (map
+drawn 7,409 to 9,740 ms in nine runs, against 5,328 to 6,982 for every other launch). The budget was set again with
+`--set-budget` from nine `-Only startup` reports on main (a fresh emulator each, nothing else heavy running), the
+factor kept at 1.25; `--set-budget` no longer lowers a ceiling (the reports are of the part alone after a boot, and a
+full sweep reads some stages slower).
+
+- On those nine runs the old method (the warm-up plus four launches, the old budget) was red three times (`tracking`,
+  once with `settings`); the nine-launch medians against the old budget were red once (`tracking` 186). Nine-launch
+  medians: map drawn 5,633 to 6,300 ms, first frame 3,720 to 4,040, `tracking` 109 to 186, `packs` 54 to 67, `online`
+  73 to 93 (single launches: `tracking` 96 to 241, `packs` 49 to 157, `online` 58 to 193).
+- Raised: first frame 4,909 to 5,050, map drawn 6,680 to 7,875, `prepare` 300 to 360, `maplibre` 302 to 312,
+  `tracking` 174 to 233, `online` 114 to 117, `composition` 1,458 to 1,599; none over 1.5 times its old value. The
+  rest are kept (`kept` in `tools/launch-budget.json`).
+- The table above holds five-launch medians with the first launch in. Against the new ceilings the sweep and reruns a
+  and c read green; rerun b and A/B 6 are over on `packs` (132, 137), A/B 1 on `tracking` by 1 ms and on `online`, and
+  A/B 2 and 5 on `online` (that setup had no server). No nine-launch median after a warm-up in T306's runs read
+  `packs` over 67, so a `packs` red now is worth an A/B.
