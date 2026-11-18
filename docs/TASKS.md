@@ -10,6 +10,16 @@ Every task is done only when: (1) `./gradlew check` passes (existing tests plus 
 
 **Checks:** (from wave 36) after Done when: the JSON items `tools/verify-task.ps1 -Checks` runs (`docs/reference/verifying-a-task.md`), or none; a task whose Done when is wholly in Checks gets a Haiku-class verifier (T296).
 
+## Wave 37 (T1–T304 merged, v0.1.32-alpha published; the red parts of the 2026-11-18 sweep)
+
+Planned 2026-11-18 on the owner's word ("Do it."): one debugging task for the four emulator parts the full sweep of 2026-11-18 left red, before the next release. One task on the owner's go whose work is to find causes, not to choose a design, so no research agent and no critic; a cause that needs an app change beyond a few lines, or a design choice, comes back as a finding and a follow-up, not a fix. Allowance: the 7-day meter at 87 at planning, one task at 3.0 and no release, adds up to 90, under the hold of 97.
+
+### T305. The red parts of the 2026-11-18 sweep: `device-tour`, `startup`, `diagnostics`, `update`
+**Goal:** for each of the four parts red in `out/sweep-20261118-0901` (main checkout; at c8d29ca7), find the cause from its logs, then rerun the part alone on a machine with no other emulator or Gradle build running (`tools/sweep.ps1 -Only <part>` or `-SweepThrough <part>` as the part needs) to tell a flake from a real failure. `device-tour`: about 20 minutes and all but one of its run records empty in `summary.json` (one read 10 of 10 views): whether the tour failed, retried or only misreported. `startup`: fully loaded median 7,127 ms against the 6,680 ceiling, the third reading over it (6,611 at wave 35's close; a loaded-machine red before): measure main against v0.1.32-alpha on the same emulator in one sitting, as wave 35's A/B did, and say whether there is a regression and from which merge range. `diagnostics` (exit 1 in 86 s) and `update` (exit 1 in 595 s, the update from v0.1.32-alpha): the cause from their logs. Fix what is a tooling bug in the sweep or a part's script; a cause in the app goes in a finding (`finding` skill) with the evidence, fixed here only when the fix is a few lines and its test is obvious.
+**Owns:** `tools/sweep.ps1`, `tools/sweep-summary.py`, the scripts of the four parts (`tools/android-check.py`, `tools/android-startup.py`, the `diagnostics` and `update` parts' scripts as `sweep.ps1` names them) and their tests, new files in `docs/findings/` and its README, `docs/reference/release-realism.md` where a part's behaviour changes; app code only for a few-line fix named in the report.
+**Done when:** `./gradlew check` green; each of the four parts has a stated cause with the log lines or numbers behind it, and is either fixed (its rerun green, run from the worktree) or a flake shown by two green reruns, or left red with a finding that says why and what would fix it; the startup A/B's two medians and their spread; `-SweepThrough update` (or the four parts in one run) at the end, and its summary quoted.
+**Checks:** none.
+
 ## Owner actions pending (as of 2026-10-27)
 
 The owner's to-do list; the coordinator adds to it whenever a task leaves something only the owner can do, and strikes an item when it is done. `docs/HANDOFF.md` › Waiting on user points here.
