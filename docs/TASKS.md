@@ -27,6 +27,7 @@ Added 2026-11-18 on the owner's word ("Lets do the startup-limits task."), from 
 **Owns:** `tools/android-startup.py` and its tests, `tools/launch-budget.json`, the `startup` part's lines in `tools/sweep.ps1` (its arguments only), `docs/reference/release-realism.md` and any reference doc that states the startup budget's method, the finding's status and `promoted_to`, and its README row.
 **Done when:** `./gradlew check` green; the eight or more reports listed with their medians; the new `launch-budget.json`; three consecutive `-Only startup` runs from the worktree green on main; the table of margins; no ceiling more than 1.5 times its 2026-11-13 value without a sentence saying why.
 **Checks:** none.
+**Status: merged.** Verifier MERGE WITH NOTES, no fix round (b3ab5007, merged as b2f5b498). Follow-ups: the kept ceilings in a full-order sweep (maplibre and packs the candidates); a packs red now is worth an A/B; `RecentStatsTest.kt` hard-codes values from the budget file and breaks at the next `--set-budget` (assert against the parsed file or a fixture); `--set-budget` alone only ratchets ceilings up, lowering after an improvement is by hand; `phone-startup` still runs 5 launches without a warm-up.
 
 ## Owner actions pending (as of 2026-10-27)
 
