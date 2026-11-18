@@ -19,7 +19,8 @@
 #   device-tour  android-check.py --views-file tools/android-tour.txt --server <the same> (twice by default; token from
 #                logcat; T105: the first view waits until the device's load besides the app has settled)
 #   probe        android-probe.py
-#   startup      (T268, debug build, after bothunits) the launch budget: tools/android-startup.py --launches 5 (cold) over a
+#   startup      (T268, debug build, after bothunits) the launch budget: tools/android-startup.py --warmup 1 --launches 9
+#                (cold; T306: the warm-up is measured and left out of the medians) over a
 #                seeded store (52 synthetic tracks through POST /tracks/import, the Rainier packs), each stage's median of
 #                GET /debug/launch, the first frame's and the map drawn's against tools/launch-budget.json: red on a median
 #                over its ceiling or a StrictMode kind a stage's declared work does not allow. Report startup.json; the
@@ -1244,13 +1245,13 @@ try {
         }
         # T268: the launch budget, on the debug build before the release phase. Part's reboot check (Ensure-Emulator, at
         # -EmuRebootGB) runs before the body, so the store is seeded and the packs copied after it: the part never leans on
-        # what an earlier part left. Five cold launches add about 2.5 GB to the emulator's private bytes (finding of
+        # what an earlier part left. T306: one warm-up and nine measured cold launches. Five cold launches add about 2.5 GB to the emulator's private bytes (finding of
         # 2026-11-05), inside the guard's -EmuLimitGB from any level under -EmuRebootGB. T280: the seed also empties the online
         # tile cache (pinned tiles stay): the cacheIndex stage walks every cached file, and the device tour leaves about 270;
         # and deletes the kept trail divergences, which a recording after the seed (a11y's, on a kept emulator) runs over the
         # seeded tracks and the map then parses on the main thread (mapview 58 to about 200 ms).
         $null = Part 'startup' {
-            Run $py @('-I', 'tools/android-startup.py', '--serial', $serial, '--port', "$Port", '--launches', '5', '--seed-tracks', '52',
+            Run $py @('-I', 'tools/android-startup.py', '--serial', $serial, '--port', "$Port", '--warmup', '1', '--launches', '9', '--seed-tracks', '52',
                 '--dem', $dem, '--osm', $osm, '--clear-online-cache', '--clear-divergences', '--quiet', '240', '--budget', 'tools/launch-budget.json') (Join-Path $Out 'startup.json') (Join-Path $Out 'startup.err.log')
         }
         # end T268

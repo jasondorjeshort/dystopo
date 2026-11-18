@@ -163,15 +163,22 @@ def undeclared(launches):
     return [{"stage": s, "kind": k, "launches": v} for (s, k), v in out.items()]
 
 
-def summary(launches, mode):
+def summary(launches, mode, warm_up=None):
+    """The report. `launches` and every median are the measured launches only; T306's warm-up launches (the first after a
+    boot, an install or the seed read 8.5 to 10 s on the sweep's emulator and drag a median) are kept apart in `warmup`
+    (`launches`, `measured`, `lines`). An undeclared StrictMode kind counts in every launch, the warm-up's included: it is
+    not a time, and the first launch is where a one-off main-thread read shows; its launch numbers run from the first
+    warm-up."""
+    warm_up = list(warm_up or [])
     out = {
         "mode": mode, "launches": launches,
+        "warmup": {"launches": len(warm_up), "measured": len(launches), "lines": warm_up},
         "medians": {k: median(ln.get(k) for ln in launches) for k in ("amTotalMs", "firstFrameMs", "fullyLoadedMs", "longestStallMs", "launchOverheadMs")},
         "markMedians": mark_medians(launches),
     }
     if any(ln.get("stages") for ln in launches):  # T268
         out["stageMedians"] = stage_medians(launches)
-        out["undeclared"] = undeclared(launches)
+        out["undeclared"] = undeclared(warm_up + launches)
     return out
 
 
@@ -241,7 +248,8 @@ def format_budget(b):
 
 
 def make_budget(reports, sources, date, factor=FACTOR, old=None):
-    """The budget file from one or two reports: each frame's and stage's ceiling by `ceiling`, with the medians it came from."""
+    """The budget file from the reports: each frame's and stage's ceiling by `ceiling`, with the medians it came from. T306:
+    a stage of `old` with a `raised` note keeps its old entry when the reports would set it lower."""
     old = old or {}
     frames, stages = {}, {}
     for k in FRAMES:
@@ -257,15 +265,20 @@ def make_budget(reports, sources, date, factor=FACTOR, old=None):
         ms = [next((row.get("medianMs") for row in r.get("stageMedians") or [] if row["name"] == n), None) for r in reports]
         if any(m is not None for m in ms):
             stages[n] = {"ceilingMs": ceiling(ms, factor), "medianMs": ms}
+            was = (old.get("stages") or {}).get(n) or {}
+            if was.get("raised") and (was.get("ceilingMs") or 0) > stages[n]["ceilingMs"]:  # T306: kept, see the rule
+                stages[n] = dict(was)
     return {
         "about": "T268: the launch budget. Ceilings in ms per stage of GET /debug/launch (shared launch/Launch.kt) and for the "
-                 "first frame and the map drawn, against the medians of tools/android-startup.py --launches 5 (cold, a seeded "
-                 "store) in the sweep's startup part; a median over its ceiling, or a StrictMode kind a stage's declared work "
-                 "does not allow, turns the part red.",
-        "rule": "Set by android-startup.py --set-budget from the medians of sweeps (the first ceilings: three sweeps of 2026-11-13): the largest times the factor, rounded "
-                "up to whole ms, and never under that median plus floorMs (one frame at 60 Hz; a stage of a few ms swings by "
-                "more than a quarter of itself). Lower a ceiling by hand in the commit that lands an improvement; never raise "
-                "one without a line in the dated log. A renamed stage keeps its ceiling through aliases, {old name: new name}.",
+                 "first frame and the map drawn, against the medians of tools/android-startup.py --warmup 1 --launches 9 (cold, "
+                 "a seeded store; T306: the warm-up launch is measured and left out of the medians) in the sweep's startup "
+                 "part; a median over its ceiling, or a StrictMode kind a stage's declared work does not allow, turns the part red.",
+        "rule": "Set by android-startup.py --set-budget from the medians of at least eight startup.json reports in sweep conditions "
+                "(T306; the first ceilings: three sweeps of 2026-11-13): the largest times the factor, rounded up to whole ms, and "
+                "never under that median plus floorMs (one frame at 60 Hz; a stage of a few ms swings by more than a quarter of "
+                "itself). A ceiling with a raised note keeps its entry when the reports would set it lower (it was raised from "
+                "evidence they may lack). Lower a ceiling by hand in the commit that lands an improvement; never raise one "
+                "without a line in the dated log. A renamed stage keeps its ceiling through aliases, {old name: new name}.",
         "factor": factor,
         "floorMs": FLOOR_MS,
         "set": {"date": date, "from": sources},
@@ -452,7 +465,8 @@ def run(args):
         time.sleep(args.settle)
         if trace:
             previous = ((trace.wait_frame(args.wait) or {}).get("window") or {}).get("id")
-    for i in range(args.launches):
+    warm_up = []
+    for i in range(args.warmup + args.launches):
         if mode == "cold":
             adb(exe, args.serial, "shell", "am", "force-stop", PACKAGE)
             time.sleep(1.0)
@@ -487,14 +501,15 @@ def run(args):
                 previous = (trace.read().get("window") or {}).get("id")
             except (RuntimeError, OSError, ValueError, urllib.error.URLError):
                 pass
+        name = f"warm-up {i + 1}" if i < args.warmup else f"launch {i - args.warmup + 1}"  # T306
         st = {x["name"]: x.get("ms") for x in line.get("stages") or []}
         if "world" in st or "assets" in st:  # T280
-            log(f"launch {i + 1}: world {st.get('world')} ms, assets {st.get('assets')} ms, update-time reads {json.dumps(line.get('packageReads'))}; "
+            log(f"{name}: world {st.get('world')} ms, assets {st.get('assets')} ms, update-time reads {json.dumps(line.get('packageReads'))}; "
                 f"cacheIndex {st.get('cacheIndex')} ms over {json.dumps(line.get('cacheWalk'))}")
-        log(f"launch {i + 1}: am {line.get('amTotalMs')} ms, {line.get('kind')}, first frame {line.get('firstFrameMs')} ms, map drawn {line.get('fullyLoadedMs')} ms, longest stall {line.get('longestStallMs')} ms, runner {line.get('launchOverheadMs')} ms")
-        launches.append(line)
+        log(f"{name}: am {line.get('amTotalMs')} ms, {line.get('kind')}, first frame {line.get('firstFrameMs')} ms, map drawn {line.get('fullyLoadedMs')} ms, longest stall {line.get('longestStallMs')} ms, runner {line.get('launchOverheadMs')} ms")
+        (warm_up if i < args.warmup else launches).append(line)
         time.sleep(args.settle)
-    out = summary(launches, mode)
+    out = summary(launches, mode, warm_up)
     if seeded is not None:
         out["seed"] = seeded
     return out
@@ -503,7 +518,9 @@ def run(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--serial")
-    ap.add_argument("--launches", type=int, default=10)
+    ap.add_argument("--launches", type=int, default=10, help="launches measured into the medians")
+    ap.add_argument("--warmup", type=int, default=0,
+                    help="T306: launches before those, measured and reported under `warmup` but left out of every median")
     how = ap.add_mutually_exclusive_group()
     how.add_argument("--warm", action="store_true", help="BACK then launch: a new activity in a live process")
     how.add_argument("--hot", action="store_true", help="HOME then launch: the activity comes back")
@@ -523,7 +540,7 @@ def main():
                     help="T280: with the seed, delete the kept trail divergences (files/divergence.json), which the map parses on the main thread at launch")
     ap.add_argument("--quiet", type=float, default=0, help="before the launches, wait up to this many s for a quiet device")
     ap.add_argument("--budget", help="the ceilings file (tools/launch-budget.json): compare, exit 1 when red")
-    ap.add_argument("--set-budget", nargs="+", metavar="REPORT", help="write --budget from one or two reports instead of launching")
+    ap.add_argument("--set-budget", nargs="+", metavar="REPORT", help="write --budget from the reports (eight or more, T306) instead of launching")
     args = ap.parse_args()
     if args.set_budget:
         if not args.budget:
