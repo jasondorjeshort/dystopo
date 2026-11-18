@@ -23,8 +23,12 @@ run's thresholds and pending stall first (`POST /debug/startup/thresholds?clear=
 
 T268, the launch budget (the sweep's `startup` part, `tools/sweep.ps1`):
 
-  python -I tools/android-startup.py --serial emulator-5570 --port 8694 --launches 5 --seed-tracks 52 --dem out/rainier-dem.pmtiles --osm out/rainier-outdoors.pmtiles --budget tools/launch-budget.json
-  python -I tools/android-startup.py --set-budget out/sweep-a/startup.json out/sweep-b/startup.json --budget tools/launch-budget.json
+  python -I tools/android-startup.py --serial emulator-5570 --port 8694 --warmup 1 --launches 9 --seed-tracks 52 --dem out/rainier-dem.pmtiles --osm out/rainier-outdoors.pmtiles --budget tools/launch-budget.json
+  python -I tools/android-startup.py --set-budget out/sweep-a/startup.json ... out/sweep-h/startup.json --budget tools/launch-budget.json
+
+T306: `--warmup N` launches N times first, measured and reported under `warmup` (`launches`, `measured`, `lines`) but left
+out of every median: the first launch after a boot, an install or the seed reads 8.5 to 10 s on the sweep's emulator and
+dragged a five-launch median. An undeclared StrictMode kind in a warm-up launch still counts.
 
 Cold, each launch also waits for the map drawn (`fullyLoadedMs`) and reads `GET /debug/launch`: every stage's `ms` and the
 StrictMode kinds its declared work does not allow (`undeclared`). The report gains `stageMedians` (per stage: `medianMs`,
@@ -37,9 +41,9 @@ trail divergences (`files/divergence.json`: a recording after the seed runs them
 the phone's copy differs in size; then the device's load is waited out (`android_debug.wait_quiet`). `--budget` compares
 the medians with the file's ceilings (`budget`: one row per stage and frame, `red` and its `reasons`) and exits 1 when a
 median is over its ceiling or a stage shows an undeclared StrictMode kind; a stage missing from the run or from the file
-is listed, not red. `--set-budget` writes the file from the reports of several sweeps (`make_budget`, `ceiling`: the largest median
-times 1.25, and never under it plus 16 ms, `FLOOR_MS`); lower a ceiling by
-hand in the commit that lands an improvement, never raise one without a line in the dated log.
+is listed, not red. `--set-budget` writes the file from the reports of several sweeps, eight or more since T306 (`make_budget`,
+`ceiling`: the largest median times 1.25, and never under it plus 16 ms, `FLOOR_MS`; never under the file's old ceiling,
+`_keep`); lower a ceiling by hand in the commit that lands an improvement, never raise one without a line in the dated log.
 """
 import argparse
 import importlib.util
@@ -193,7 +197,7 @@ FRAMES = ("firstFrameMs", "fullyLoadedMs")
 
 
 def ceiling(medians, factor=FACTOR, floor=FLOOR_MS):
-    """The ceiling from one or two runs' medians: the larger times `factor`, rounded up to a whole ms, and at least that
+    """The ceiling from the runs' medians: the largest times `factor`, rounded up to a whole ms, and at least that
     median plus `floor` ms."""
     v = [m for m in medians if m is not None]
     return max(math.ceil(max(v) * factor - 1e-9), math.ceil(max(v)) + floor) if v else None
@@ -247,15 +251,30 @@ def format_budget(b):
     return "\n".join(lines) + "\n}\n"
 
 
+def _keep(entry, was, old):
+    """T306: `--set-budget` never lowers a ceiling. The reports are of the part alone after a fresh boot; a full sweep runs it
+    after the device parts and reads some stages slower (T268: `maplibre` 178 ms on a task's emulator, 203 to 241 on sweep
+    emulators), and a lower ceiling is set by hand in the commit that lands an improvement (the rule). When `was` (the old
+    file's entry) has the higher ceiling, the entry keeps it and says so in `kept` (the old file's set date); its `raised`
+    note stays either way."""
+    was = was or {}
+    if was.get("raised"):
+        entry["raised"] = was["raised"]
+    if (was.get("ceilingMs") or 0) > entry["ceilingMs"]:
+        entry["ceilingMs"] = was["ceilingMs"]
+        entry["kept"] = was.get("kept") or ((old or {}).get("set") or {}).get("date") or True
+    return entry
+
+
 def make_budget(reports, sources, date, factor=FACTOR, old=None):
     """The budget file from the reports: each frame's and stage's ceiling by `ceiling`, with the medians it came from. T306:
-    a stage of `old` with a `raised` note keeps its old entry when the reports would set it lower."""
+    never lower than `old`'s ceiling (`_keep`)."""
     old = old or {}
     frames, stages = {}, {}
     for k in FRAMES:
         ms = [(r.get("medians") or {}).get(k) for r in reports]
         if any(m is not None for m in ms):
-            frames[k] = {"ceilingMs": ceiling(ms, factor), "medianMs": ms}
+            frames[k] = _keep({"ceilingMs": ceiling(ms, factor), "medianMs": ms}, (old.get("frames") or {}).get(k), old)
     names = []
     for r in reports:
         for row in r.get("stageMedians") or []:
@@ -264,10 +283,7 @@ def make_budget(reports, sources, date, factor=FACTOR, old=None):
     for n in names:
         ms = [next((row.get("medianMs") for row in r.get("stageMedians") or [] if row["name"] == n), None) for r in reports]
         if any(m is not None for m in ms):
-            stages[n] = {"ceilingMs": ceiling(ms, factor), "medianMs": ms}
-            was = (old.get("stages") or {}).get(n) or {}
-            if was.get("raised") and (was.get("ceilingMs") or 0) > stages[n]["ceilingMs"]:  # T306: kept, see the rule
-                stages[n] = dict(was)
+            stages[n] = _keep({"ceilingMs": ceiling(ms, factor), "medianMs": ms}, (old.get("stages") or {}).get(n), old)
     return {
         "about": "T268: the launch budget. Ceilings in ms per stage of GET /debug/launch (shared launch/Launch.kt) and for the "
                  "first frame and the map drawn, against the medians of tools/android-startup.py --warmup 1 --launches 9 (cold, "
@@ -276,8 +292,8 @@ def make_budget(reports, sources, date, factor=FACTOR, old=None):
         "rule": "Set by android-startup.py --set-budget from the medians of at least eight startup.json reports in sweep conditions "
                 "(T306; the first ceilings: three sweeps of 2026-11-13): the largest times the factor, rounded up to whole ms, and "
                 "never under that median plus floorMs (one frame at 60 Hz; a stage of a few ms swings by more than a quarter of "
-                "itself). A ceiling with a raised note keeps its entry when the reports would set it lower (it was raised from "
-                "evidence they may lack). Lower a ceiling by hand in the commit that lands an improvement; never raise one "
+                "itself). It never lowers a ceiling: one the reports would set lower keeps its value and says so in kept (the date it "
+                "was set; the reports are of the part alone after a boot, a full sweep reads some stages slower). Lower a ceiling by hand in the commit that lands an improvement; never raise one "
                 "without a line in the dated log. A renamed stage keeps its ceiling through aliases, {old name: new name}.",
         "factor": factor,
         "floorMs": FLOOR_MS,
