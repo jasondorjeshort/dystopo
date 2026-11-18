@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-17 06:30 UTC, at the commit after fb68d247, by main session (wave 35 closed, v0.1.32-alpha published)
+Updated: 2026-11-18, after be7b5770, by main session (T304 merged; the owner's phone rerun next)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-35.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
@@ -15,7 +15,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 
 ## Next
 
-1. **The owner's phone in the sweep: T303 merged (ba39e526, wave 36's one task).** Next is the first run on the owner's phone, with the owner there: developer options and USB debugging on, the PC's key accepted, then a Sonnet agent runs `tools/sweep.ps1 -Phone <serial>` from the main checkout (the phone parts only if the script allows; otherwise the device parts) and reads the Phone section; it installs "Dystopo debug" beside the owner's release app and never touches that app. Then wave 36 closes (its record; no release, the release build is unchanged). Six ideas of 2026-11-17 are untriaged ("We'll prioritize later").
+1. **The owner's phone in the sweep: T303 and T304 merged (wave 36).** The first run on the owner's phone (2026-11-18, wireless debugging) went red on adb stalls and a false "release changed" (the app was untouched); T304 (cf4522e9) fixed the reads and skips. Next: the owner reruns `-Phone <ip:port> -Only phone-attach,phone-install,phone-tour,phone-startup,phone-diagnostics,phone-release` (screen on, Wi-Fi power saving off, one adb transport; the port from `adb mdns services`). Then wave 36 closes (its record; no release). Ideas untriaged: six of 2026-11-17 and Java 25 of 2026-11-18.
 2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
 3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
 4. Tooling follow-ups from wave 35 (Later): the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
