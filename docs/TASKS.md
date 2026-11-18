@@ -19,6 +19,7 @@ Planned 2026-11-18 on the owner's word ("Do it."): one debugging task for the fo
 **Owns:** `tools/sweep.ps1`, `tools/sweep-summary.py`, the scripts of the four parts (`tools/android-check.py`, `tools/android-startup.py`, the `diagnostics` and `update` parts' scripts as `sweep.ps1` names them) and their tests, new files in `docs/findings/` and its README, `docs/reference/release-realism.md` where a part's behaviour changes; app code only for a few-line fix named in the report.
 **Done when:** `./gradlew check` green; each of the four parts has a stated cause with the log lines or numbers behind it, and is either fixed (its rerun green, run from the worktree) or a flake shown by two green reruns, or left red with a finding that says why and what would fix it; the startup A/B's two medians and their spread; `-SweepThrough update` (or the four parts in one run) at the end, and its summary quoted.
 **Checks:** none.
+**Status: merged.** Verifier MERGE WITH NOTES, no fix round (3d2c1c89, merged as 89d888af). Follow-ups: the startup stage ceilings set again from more runs (the finding; red by chance until then); device-tour's direct step `IncompleteRead` flake after its 3 retries (more retries or a reconnect of the forward); the updater on a rate-limited check (an app idea: its own wording, or off the unauthenticated API); the capture retry has not yet met a cut-short PNG on a device.
 
 ## Owner actions pending (as of 2026-10-27)
 

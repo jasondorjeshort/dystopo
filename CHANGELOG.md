@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-18
 
+- T305: The red parts of the 2026-11-18 sweep: `device-tour`, `startup`, `diagnostics`, `update`
 - T304: The phone parts over wireless debugging: a failed adb read is not a change
 
 ### 2026-11-17
