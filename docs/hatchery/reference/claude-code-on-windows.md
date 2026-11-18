@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-17
+verified: 2026-11-18
 source: observed (machine user name in paths, ADR 0018 evidence 2026-10-17; PowerShell pipe and MSYS git show rewrite 2026-10-17; npm behaviour tested 2026-10-14; twelve waves of parallel agents on a downstream project; Windows 10 and 11, Claude Code 2.1.x, Git Bash and Windows PowerShell 5.1); hook and status line code read 2026-10-14, usage-gate grants 2026-10-15, per-session usage file 2026-10-16; robocopy and Remove-Item behaviour with junctions observed 2026-10-14
 ---
 
@@ -100,7 +100,7 @@ source: observed (machine user name in paths, ADR 0018 evidence 2026-10-17; Powe
 
 - The status line (`.claude/statusline.js`) writes the 5-hour and weekly percentages to one cache
   file per session, `~/.claude/usage-state/<session_id>.json`, labelled with the logged-in account;
-  the `usage-gate` hook (PreToolUse on `Agent|Workflow`) reads the file of the `session_id` it is
+  the `usage-gate` hook (PreToolUse on `Agent|Workflow|SendMessage`) reads the file of the `session_id` it is
   given and refuses a new launch while either meter is at or above its HOLD line. A file labelled
   with another account than the one logged in counts as no data. Bash is never gated. ADR 0011.
 - The lines are policy, not code: `usage.hold` and `usage.deny` in `.claude/hooks/policy.json`.

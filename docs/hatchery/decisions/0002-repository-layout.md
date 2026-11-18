@@ -69,7 +69,7 @@ most 40 lines per subagent launch; the file's first line says it is coordinator 
 follow their brief. Sections are fixed: Now, Next, Waiting on user, Open findings. No "recently done":
 `git log` has it. The `handoff` skill rewrites the file; the usage gate's HOLD and STOP reasons name it.
 
-The usage gate blocks only `Agent|Workflow` launches, never `Bash`. So wrap-up commits (`HANDOFF.md`,
+The usage gate blocks only `Agent|Workflow|SendMessage` calls, never `Bash`. So wrap-up commits (`HANDOFF.md`,
 WIP) are made by the main session itself at any usage level; the "runner commits" rule governs normal
 work below 50%. `CLAUDE.md` says this in both the Usage gating table and the Git section.
 

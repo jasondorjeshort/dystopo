@@ -2,7 +2,20 @@
 
 Section 3 of the hook specs (`0002-hook-specs.md`), moved out on 2026-10-16 when that file reached the 300-line cap. Same conventions and sources; section numbering is unchanged.
 
-## 3. `usage-gate.js` (PreToolUse, matcher `Agent|Workflow`, no `onFailure`) and the status line
+## 3. `usage-gate.js` (PreToolUse, matcher `Agent|Workflow|SendMessage`, no `onFailure`) and the status line
+
+The gate also judges `SendMessage`, whose input is `{to, message, summary?, notify_when_idle?}`: a send
+to a finished subagent resumes it with new work. A send to `"main"` (a report back) and a send with
+no or an empty `message` (a pure `notify_when_idle` subscription) start no work and are allowed at
+every level; every other send is denied by the same verdicts, grants and pool advice as `Agent`, the
+reason carrying ` No resuming or messaging agents (SendMessage).` after the advice. The caller is not
+looked at: a subagent's call carries the parent's `session_id` (plus `agent_id`, `agent_type`, which the
+gate ignores), so it reads the same usage file and grants as the main session. That is observed (a
+subagent's `CLAUDE_CODE_SESSION_ID` equals the parent's), not documented; when the payload's session
+has no file, the gate tries `CLAUDE_CODE_SESSION_ID` before failing open. Structured
+`shutdown_request` and `shutdown_response` messages also always pass, since they wind work down.
+Known limits: a `plan_approval_response` and a nested subagent's reply to its launcher stay gated; at
+HOLD the coordinator cannot message a running agent, but TaskStop still works.
 
 Cache: one file per session, `~/.claude/usage-state/<session_id>.json` under the user's `~/.claude`
 (never `CLAUDE_CONFIG_DIR`); its shape and the merge's rule order are ADR 0011's. A `session_id`

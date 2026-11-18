@@ -1530,7 +1530,7 @@ const stateFile = stateFileFor(SID);
 const gateInput = (extra) => JSON.stringify(Object.assign({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: {}, session_id: SID }, extra));
 // The scratch HOME, and no CLAUDE_CONFIG_DIR from the session running the suite, so the account
 // label is read from the scratch home (none there unless a case writes one).
-const gateEnv = (extra) => envWith(Object.assign({ HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: undefined }, extra));
+const gateEnv = (extra) => envWith(Object.assign({ HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: undefined, CLAUDE_CODE_SESSION_ID: undefined }, extra));
 const HOLD_MSG = 'Usage gate: 5h 55%, 7d 10%. 5h at or above 50%: Do not start new subagents. Let in-flight agents finish, run the handoff skill, commit from the main session, then report. Lifting this early is the user\'s decision (docs/hatchery/decisions/0006-hook-policy-file.md).';
 const STOP_MSG = 'Usage gate: 5h 85%, 7d 10%. 5h at or above 80%: Stop all work, run the handoff skill, commit WIP from the main session, end the turn.';
 const HOLD_85 = HOLD_MSG.replace('5h 55%', '5h 85%');
@@ -1865,6 +1865,68 @@ for (const [id, label, state, files, legacy, payload, expect, stderrHas, policy]
 }
 fs.rmSync(grantDir, { recursive: true, force: true });
 fs.rmSync(ovFile, { force: true });
+
+// SendMessage and a subagent caller. A send that would resume or message an agent is gated like an
+// Agent launch; a report to "main" and a message-less notify start no work and always pass; a
+// subagent's call (agent_id, agent_type in the payload) is judged like the main session's.
+// [id, label, tool, tool_input, extra payload, five-hour %, override, expected deny reason or null]
+{
+  const SEND = ' No resuming or messaging agents (SendMessage).';
+  const sendHold = HOLD_MSG.replace('Do not start new subagents. Let in-flight agents finish, run the handoff skill, commit from the main session, then report.',
+    `Do not start new subagents. Let in-flight agents finish, run the handoff skill, commit from the main session, then report.${SEND}`);
+  const sendStop = STOP_MSG.replace('end the turn.', `end the turn.${SEND}`);
+  const lift = { until: nowSec + 3600, reason: 'test: override lifts a send' };
+  const SM = [
+    ['UM01', 'SendMessage to a subagent name at HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 55, undefined, sendHold],
+    ['UM02', 'SendMessage to "main" at HOLD', 'SendMessage', { to: 'main', message: 'done' }, {}, 55, undefined, null],
+    ['UM03', 'SendMessage with no message (notify only) at HOLD', 'SendMessage', { to: 'worker', notify_when_idle: true }, {}, 55, undefined, null],
+    ['UM04', 'SendMessage with an empty message at HOLD', 'SendMessage', { to: 'worker', message: '' }, {}, 55, undefined, null],
+    ['UM05', 'SendMessage to a subagent below HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 20, undefined, null],
+    ['UM06', 'override lifts the SendMessage deny at HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 55, lift, null],
+    ['UM07', 'SendMessage to a subagent at STOP, even with an override', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 85, lift, sendStop],
+    ['UM08', 'SendMessage to "main" at STOP', 'SendMessage', { to: 'main', message: 'done' }, {}, 85, undefined, null],
+    ['UM09', 'Agent call from a subagent (agent_id) at HOLD', 'Agent', {}, { agent_id: 'a1b2', agent_type: 'coder' }, 55, undefined, HOLD_MSG],
+    ['UM10', 'SendMessage from a subagent (agent_id) at HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, { agent_id: 'a1b2', agent_type: 'coder' }, 55, undefined, sendHold],
+    ['UM11', 'Agent call from a subagent with an override', 'Agent', {}, { agent_id: 'a1b2', agent_type: 'coder' }, 55, lift, null],
+    ['UM12', 'structured shutdown_request at HOLD', 'SendMessage', { to: 'worker', message: { type: 'shutdown_request' } }, {}, 55, undefined, null],
+    ['UM13', 'structured shutdown_response at HOLD', 'SendMessage', { to: 'worker', message: { type: 'shutdown_response', approve: true } }, {}, 55, undefined, null],
+    ['UM14', 'structured plan_approval_response at HOLD stays gated', 'SendMessage', { to: 'worker', message: { type: 'plan_approval_response', approve: true } }, {}, 55, undefined, sendHold],
+  ];
+  for (const [id, label, tool, input, extra, pct, override, expect] of SM) {
+    if (!selected(id)) continue;
+    fs.writeFileSync(stateFile, JSON.stringify(fresh(pct, 10)));
+    if (override === undefined) fs.rmSync(ovFile, { force: true }); else fs.writeFileSync(ovFile, JSON.stringify(override));
+    const policy = pct >= 80 ? deny80 : POLICIES.hatchery;
+    const r = run('usage-gate', gateInput(Object.assign({ tool_name: tool, tool_input: input }, extra)), gateEnv({ HOOK_POLICY_FILE: policy }));
+    let ok;
+    let detail;
+    if (expect === null) { ok = r.code === 0 && r.stdout === ''; detail = 'expected allow (exit 0, no stdout)'; }
+    else {
+      const d = parseDecision(r.stdout);
+      ok = r.code === 0 && !!d && d.decision === 'deny' && d.reason === expect;
+      detail = `expected reason ${JSON.stringify(expect)}`;
+    }
+    report(id, `${label} -> ${expect === null ? 'allow' : 'deny'}`, ok, detail, r.stdout);
+  }
+  // The payload's session has no file: the environment's CLAUDE_CODE_SESSION_ID is tried before failing open.
+  for (const [id, label, envSid, expect] of [
+    ['UM15', 'payload session has no file, the env session id has: HOLD denies', 'sess-env', sendHold],
+    ['UM16', 'payload session has no file, the env session id has none: fails open', 'sess-nofile', null],
+  ]) {
+    if (!selected(id)) continue;
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(stateFileFor('sess-env'), JSON.stringify(fresh(55, 10)));
+    fs.rmSync(ovFile, { force: true });
+    const r = run('usage-gate', gateInput({ tool_name: 'SendMessage', tool_input: { to: 'worker', message: 'go' }, session_id: 'sess-payload' }),
+      gateEnv({ HOOK_POLICY_FILE: POLICIES.hatchery, CLAUDE_CODE_SESSION_ID: envSid }));
+    let ok;
+    if (expect === null) ok = r.code === 0 && r.stdout === '';
+    else { const d = parseDecision(r.stdout); ok = r.code === 0 && !!d && d.decision === 'deny' && d.reason === expect; }
+    report(id, `${label} -> ${expect === null ? 'allow' : 'deny'}`, ok, 'expected ' + (expect === null ? 'allow' : 'the HOLD deny'), r.stdout);
+  }
+  fs.rmSync(ovFile, { force: true });
+}
 
 // The account pool (ADR 0011, usage.pool): asked only when the gate is about to deny at HOLD. The
 // command is [node, stub, fixture, ...flags] with the stub and fixtures in the scratch dir, never a

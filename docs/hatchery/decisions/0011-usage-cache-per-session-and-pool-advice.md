@@ -135,7 +135,9 @@ that sleeps past the timeout, non-zero exit, bad JSON. Never a stub on PATH.
 - Unverified: a hook inside a subagent carries the parent's `session_id` (docs: "current session
   identifier"; inside a subagent `CLAUDE_CODE_SESSION_ID` equals the parent's, observed
   2026-10-16, but no hook payload was captured). If not, a nested launch takes the stale path,
-  fail-open, said on stderr.
+  fail-open, said on stderr. Update 2026-11-18: every record in a session's `subagents/agent-*.jsonl`
+  carries the parent's `sessionId`, and the gate now falls back to `CLAUDE_CODE_SESSION_ID`; still no
+  real subagent PreToolUse payload captured.
 - Residuals accepted: a torn identity read on the first render after a switch writes the new
   windows under the old label, treated as stale until the next successful render; a fresh session
   whose first response launches an agent may run the gate before its status line has written, so

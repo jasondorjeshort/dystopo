@@ -3,8 +3,9 @@
 Plan limits are the 5-hour session meter and the weekly meter (`/usage`). The status line shows
 both and flags HOLD and STOP at the thresholds in `.claude/hooks/policy.json` (`node
 .claude/hooks/policy.js` prints them; a project sets its own there, never in the JS); the
-`usage-gate` hook refuses new subagent launches from HOLD. The gate blocks launches only, never
-Bash. How the meters reach the hook, staleness, and the owner's override: ADR 0006 and
+`usage-gate` hook refuses new subagent launches, and a `SendMessage` that would resume or message
+an agent, from HOLD, whoever calls, except a report to `main` or a message-less notify, which
+always pass. The gate blocks launches and sends only, never Bash. How the meters reach the hook, staleness, and the owner's override: ADR 0006 and
 `docs/hatchery/decisions/0002-hook-specs.md`.
 
 | Usage (the worse meter, each judged against its own thresholds) | Behavior |
