@@ -628,6 +628,24 @@ object AppSettings {
         { "$KEY_SKY_PLOT must be phone or north (got $it)" }))
     val skyPlot: io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation get() = SKY_PLOT.value
     // end T307
+    // T308: the Horizon view's layer toggles (Satellites, Peaks, Sun), all on by default, each synced as the map's own layer
+    // choices are (`MapOptions.KEYS`); no settings row: the view's toggle buttons set them (ADR 0033: three keys added).
+    const val KEY_HORIZON_SATELLITES = "horizonSatellites"
+    const val KEY_HORIZON_PEAKS = "horizonPeaks"
+    const val KEY_HORIZON_SUN = "horizonSun"
+    val HORIZON_SATELLITES = flag(KEY_HORIZON_SATELLITES, true, synced = true)
+    val HORIZON_PEAKS = flag(KEY_HORIZON_PEAKS, true, synced = true)
+    val HORIZON_SUN = flag(KEY_HORIZON_SUN, true, synced = true)
+
+    /** The setting behind [layer]'s toggle. */
+    fun horizonLayer(layer: io.github.jasondorjeshort.dystopo.horizon.HorizonLayer): Setting<Boolean> = when (layer) {
+        io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.SATELLITES -> HORIZON_SATELLITES
+        io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.PEAKS -> HORIZON_PEAKS
+        io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.SUN -> HORIZON_SUN
+    }
+    val horizonLayers: io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
+        get() = io.github.jasondorjeshort.dystopo.horizon.HorizonLayers(HORIZON_SATELLITES.value, HORIZON_PEAKS.value, HORIZON_SUN.value)
+    // end T308
 }
 
 /**

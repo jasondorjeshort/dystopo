@@ -63,6 +63,7 @@ class SettingsRegistryTest {
         "recordAskActivity" to false, // T263
         "drivePreference" to "quick", // T282
         "skyPlot" to "north", // T307
+        "horizonSatellites" to false, "horizonPeaks" to false, "horizonSun" to false, // T308
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -94,7 +95,10 @@ class SettingsRegistryTest {
     // T263 (ADR 0033: one key added, synced): `recordAskActivity` and `app.recordAskActivity` too.
     // T282 (ADR 0033: one key added, synced): `drivePreference` and `app.drivePreference` too.
     // T307 (ADR 0033: one key added, synced): `skyPlot` and `app.skyPlot` too.
-    private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot")
+    // T308 (ADR 0033: three keys added, synced): the Horizon view's toggles, `horizonSatellites`, `horizonPeaks`, `horizonSun`.
+    private val t308Keys = listOf("horizonSatellites", "horizonPeaks", "horizonSun")
+    private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot") +
+        t308Keys + t308Keys.map { "app.$it" }
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -105,9 +109,10 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one")
-        assertEquals(18 + 1 + 1 + 1, t257Synced().size)
-        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1 + 1 + 1 + 3, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three")
+        assertEquals(18 + 1 + 1 + 1 + 3, t257Synced().size)
+        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(listOf("off", "off", "off"), t308Keys.map { SettingsSync.current()["app.$it"] }, "T308: the seeded toggles sync as off")
         assertEquals("north", SettingsSync.current()["app.skyPlot"], "T307: the seeded north syncs as north")
         assertEquals("quick", SettingsSync.current()["app.drivePreference"], "T282: the seeded quick syncs as quick")
         assertEquals("off", SettingsSync.current()["app.recordAskActivity"], "T263: the seeded off syncs as off")
@@ -180,7 +185,8 @@ class SettingsRegistryTest {
 
     /**
      * T307: "Sky plot" (ADR 0044): Follow the phone by default, synced, posted and read back; a stored value this build does
-     * not know reads as the default; the GPS status link and the setting are the Navigation page's last two rows.
+     * not know reads as the default; the Horizon view's link (T308; "GPS status" before) and the setting are the
+     * Navigation page's last two rows.
      */
     @Test
     fun skyPlotFollowsThePhoneByDefault() {
@@ -200,8 +206,30 @@ class SettingsRegistryTest {
         assertEquals(io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.NORTH, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))[AppSettings.SKY_PLOT])
         val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
         assertEquals(listOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS, io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.SKY_PLOT), rows.takeLast(2))
-        assertEquals("GPS status", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS.label)
+        assertEquals("Horizon view", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS.label)
         assertEquals(listOf("Follow the phone", "North up"), io.github.jasondorjeshort.dystopo.app.gnss.SKY_PLOT_CHOICES.map { it.second })
+    }
+
+    /**
+     * T308: the Horizon view's three toggles are on by default, each a synced switch of its own, posted and read back, and
+     * [AppSettings.horizonLayers] follows them.
+     */
+    @Test
+    fun theHorizonViewsTogglesAreOnByDefaultAndSynced() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(io.github.jasondorjeshort.dystopo.horizon.HorizonLayers.DEFAULT, AppSettings.horizonLayers)
+        for (k in t308Keys) {
+            assertEquals(true, AppSettings.json()[k], k)
+            assertEquals("on", SettingsSync.current()["app.$k"], k)
+        }
+        assertTrue(listOf(AppSettings.HORIZON_SATELLITES, AppSettings.HORIZON_PEAKS, AppSettings.HORIZON_SUN).all { it.synced })
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("horizonSatellites" to "0")))
+        assertEquals(false, posted[AppSettings.HORIZON_SATELLITES])
+        for ((s, v) in posted.plain) @Suppress("UNCHECKED_CAST") AppSettings.set(s as Setting<Any>, v)
+        assertEquals(io.github.jasondorjeshort.dystopo.horizon.HorizonLayers(satellites = false), AppSettings.horizonLayers)
+        assertEquals(AppSettings.HORIZON_PEAKS, AppSettings.horizonLayer(io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.PEAKS))
+        val synced = SettingsSync.plan(mapOf("app.horizonSun" to "off"), emptyMap(), SettingsRoutes.KEYS)
+        assertEquals(false, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))[AppSettings.HORIZON_SUN])
     }
 
     /** T285: Least fuel is stored, read back, synced and posted (the guard of T284 is gone). */

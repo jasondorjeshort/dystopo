@@ -70,7 +70,7 @@ class SettingsLayoutTest {
                 "Estimate position when GPS is poor", // T203
                 "Extended readout", // T257
                 "Plan drives for", // T282
-                "GPS status", "Sky plot", // T307
+                "Horizon view", "Sky plot", // T307; T308 renamed the first ("GPS status")
                 "Technical details", "Report a problem", // T143, the fold's heading since T223; T145
             ),
             later,

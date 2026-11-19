@@ -135,17 +135,15 @@ fun plotSats(sats: List<Satellite>): List<PlotSat> = sats.groupBy { it.id }.valu
 fun SkyPlot(
     sats: List<PlotSat>, horizon: HorizonProfile?, rotationDeg: Double, sunAzDeg: Double?, sunAltDeg: Double?,
     pal: GnssPalette, description: String, modifier: Modifier = Modifier,
+    /** T308: the Horizon view's layers (the sun's path, the peaks), drawn over the skyline and under the sun and satellites. */
+    extra: (DrawScope.(PlotGeometry) -> Unit)? = null,
 ) {
     Canvas(modifier.semantics { contentDescription = description }) {
-        val size = minOf(size.width, size.height)
-        val c = Offset(this.size.width / 2, this.size.height / 2)
-        val labelPx = 15.dp.toPx()
-        val radius = size / 2 - labelPx * 1.6f
-        fun at(elDeg: Double, azDeg: Double): Offset {
-            val r = radius * ((90 - elDeg.coerceIn(0.0, 90.0)) / 90).toFloat()
-            val a = (azDeg - rotationDeg) * PI / 180
-            return Offset(c.x + r * sin(a).toFloat(), c.y - r * cos(a).toFloat())
-        }
+        val g = PlotGeometry.of(this.size.width, this.size.height, density, rotationDeg)
+        val c = g.c
+        val labelPx = g.labelPx
+        val radius = g.radius
+        fun at(elDeg: Double, azDeg: Double): Offset = g.at(elDeg, azDeg)
         drawCircle(pal.sky, radius, c)
         // The terrain's skyline: the band between the rim and the horizon's elevation at each bearing.
         if (horizon != null) {
@@ -179,6 +177,7 @@ fun SkyPlot(
             drawContext.canvas.nativeCanvas.drawText(label, p.x, p.y + labelPx * 0.36f, points)
         }
         northMark(c, radius, rotationDeg, pal.link)
+        extra?.invoke(this, g)
         sun(sunAzDeg, sunAltDeg, ::at, pal)
         // The satellites.
         val r = 8.dp.toPx()
@@ -191,6 +190,27 @@ fun SkyPlot(
             drawPath(path, pal.ink, style = Stroke(if (s.used) 3.dp.toPx() else 1.dp.toPx()))
             if (ps.secondBand) drawCircle(pal.ink, r + 4.dp.toPx(), p, style = Stroke(1.dp.toPx()))
             drawContext.canvas.nativeCanvas.drawText(s.svid.toString(), p.x + r + 3.dp.toPx(), p.y - r * 0.4f, svid)
+        }
+    }
+}
+
+/**
+ * T308: where the plot draws: its centre [c], the rim's [radius] (the square's half less room for N E S W), turned by
+ * [rotationDeg]; [at] places an elevation and a true azimuth (the rim 0 degrees, the centre 90). The Horizon view's
+ * layers and taps use the same numbers as [SkyPlot].
+ */
+class PlotGeometry(val c: Offset, val radius: Float, val labelPx: Float, val rotationDeg: Double) {
+    fun at(elDeg: Double, azDeg: Double): Offset {
+        val r = radius * ((90 - elDeg.coerceIn(0.0, 90.0)) / 90).toFloat()
+        val a = (azDeg - rotationDeg) * PI / 180
+        return Offset(c.x + r * sin(a).toFloat(), c.y - r * cos(a).toFloat())
+    }
+
+    companion object {
+        /** The geometry of a plot [width] by [height] px at [density] px per dp. */
+        fun of(width: Float, height: Float, density: Float, rotationDeg: Double): PlotGeometry {
+            val labelPx = 15 * density
+            return PlotGeometry(Offset(width / 2, height / 2), minOf(width, height) / 2 - labelPx * 1.6f, labelPx, rotationDeg)
         }
     }
 }

@@ -211,9 +211,10 @@ object Gnss {
 
     /**
      * The position the view describes and the check holds still: while fixes are injected (debug) the injected one, else
-     * the view's own GPS fix, else the map's. Never the terrain estimate; never written to a report.
+     * the view's own GPS fix while the GNSS is held, else the map's (T308: the Horizon view with Satellites off follows
+     * the map's fix). Never the terrain estimate; never written to a report.
      */
-    fun position(): Location? = if (app.map.injectedLocation) mapFix() else lastFix ?: mapFix()
+    fun position(): Location? = if (app.map.injectedLocation || !held) mapFix() else lastFix ?: mapFix()
 
     /** The fix the summary describes (accuracy, age, height, speed, course): as [position]. */
     fun fix(): Location? = position()
@@ -221,7 +222,11 @@ object Gnss {
     // ---- the terrain's horizon ----
 
     /** A horizon at a point, or why there is none ([reason]); [source] `offline map` or `online`. */
-    class HorizonState(val lat: Double, val lon: Double, val profile: HorizonProfile?, val reason: String?, val source: String?, val zoom: Int?, val ms: Long)
+    class HorizonState(
+        val lat: Double, val lon: Double, val profile: HorizonProfile?, val reason: String?, val source: String?, val zoom: Int?, val ms: Long,
+        /** T308: the terrain [profile] was swept over, kept for the Horizon view's peaks (`Viewshed.peaks` on the profile). */
+        val terrain: io.github.jasondorjeshort.dystopo.dem.Terrain? = null,
+    )
 
     @Volatile var horizon: HorizonState? = null
         private set
@@ -272,7 +277,7 @@ object Gnss {
             val inPack = tiles.packs.demFor(zoom, WebMercator.lonToX(lon, zoom).toInt(), WebMercator.latToY(lat, zoom).toInt()) != null
             val terrain = Horizon.terrainAround(lat, lon, zoom, tileSize = p.tileSize) { w -> p.window(w.zoom, w.x0, w.y0, w.width, w.height) }
             val profile = Horizon.sweep(terrain, lat, lon, observerHeightM = Horizon.EYE_HEIGHT_M)
-            HorizonState(lat, lon, profile, null, if (inPack) "offline map" else "online", zoom, SystemClock.elapsedRealtime() - t0)
+            HorizonState(lat, lon, profile, null, if (inPack) "offline map" else "online", zoom, SystemClock.elapsedRealtime() - t0, terrain)
         } catch (e: IllegalArgumentException) {
             none(GnssText.NO_TERRAIN_HERE)
         } catch (e: Exception) {
