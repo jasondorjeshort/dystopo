@@ -44,25 +44,48 @@ that can follow the compass; Garmin handhelds have a sky page and a bar page (ho
 Organic Maps, Gaia and CalTopo have no satellite screen found. No app gives a verdict: all show raw data. Phone C/N0
 tops out near 48 dB-Hz, one study's outdoor mean was about 36; first fix 1 to 3 s assisted, 30 to 90 s cold outdoors.
 
+The follow-up read GPSTest's source (`GpsSkyView.java`, `StatusScreen.kt`, `LocationCard.kt`; read, not copied):
+the plot is square, rings at 0°, 30° and 60°, a north arrow on the rim and no other labels, and it turns with the
+phone's heading; shapes circle GPS, square GLONASS, triangle Galileo, pentagon BeiDou, hexagon QZSS, oval IRNSS,
+diamond SBAS; the fill is C/N0 on a ramp grey 10, red 21.7, yellow 33.3, green 45 dB-Hz, no legend; used in the fix
+is a thick outline, not used a thin one. The table: svid, constellation, carrier frequency label, C/N0 to one
+decimal, flags A (almanac), E (ephemeris), U (used), elevation, azimuth. The header: position, height, speed and
+their accuracies, fix time, time to first fix, satellite count, course, DOP. Aiding data: `sendExtraCommand` with
+`delete_aiding_data`, `force_time_injection`, `force_xtra_injection` under `ACCESS_LOCATION_EXTRA_COMMANDS`; phones
+may ignore it. Figures: Google's GNSS Analysis tool passes a phone whose four strongest GPS satellites average at
+least 38 dB-Hz in open sky (GLONASS 2.5 lower); a 2021 study's phone mean was 35.5 to 35.9 dB-Hz (L5 1 to 2 lower);
+Android's own `GnssMetrics` (in `dumpsys location`) keeps time to first fix and the top-four C/N0 average for the
+same reason. No published fault-against-obstruction rule and no published time-to-first-fix figure for phones.
+
 The layout taken from it: one scrolling portrait screen, top to bottom: the summary (used / in view, accuracy, fix
 age, height, speed, course, time to first fix, the time) with "Check my GPS" under it; the sky plot full width,
-north up, horizon and 30° and 60° rings, a shape per constellation, colour by C/N0 with a legend (not colour
-alone), filled when used and hollow when not, the svid beside the dot, a mark for a second band; the list sorted
-used first then by C/N0, with the constellation's shape, svid, a bar with its dB-Hz, elevation, azimuth, band (L1,
-L5), used and ephemeris. No setting (no split found). The verdict is the project's own and its thresholds are
-calibrated against the owner's phone and a known-good one before it says "hardware fault".
+horizon and 30° and 60° rings labelled, N E S W, a shape per constellation (the seven above), fill by C/N0 with a
+legend in dB-Hz (not colour alone), used in the fix a thick outline, the svid beside it, a mark for a second band;
+the list sorted used first then by C/N0, with the constellation's shape, svid, a bar with its dB-Hz, elevation,
+azimuth, band (L1, L5), used and ephemeris. One setting (ADR 0044: the apps split, GPSTest and SatStat turn the
+plot, the paper convention and the first survey's reading are north up): "Sky plot: Follow the phone / North up",
+default Follow the phone, the north mark always drawn. "Reset assistance data" is in the screen's menu, with "the
+next fix may take a few minutes", and says when the phone refused it.
+
+The verdict (the project's own; no app gives one): over 2 minutes standing still, each satellite's median C/N0;
+T4 the mean of the four strongest of the best constellation. Healthy: T4 at least 35 dB-Hz and 4 or more used.
+Weak signal: T4 25 to 35 or under 4 used: "move to open sky, away from buildings, out of the case". Likely
+hardware fault: T4 under 25 with nothing over 30 in any direction or height, while many satellites are in view
+(indoors sees few). The 35 rests on the two published figures; the 25 is unsourced, and both are checked against
+the owner's phone and a known-good one before the fault verdict ships. Time to first fix is shown, not judged.
 
 ## Open
 
-- Thresholds from published practice (the benchmark's technical variant, ADR 0044) rather than the figures above,
-  which are the usual rough ones.
+- The fault verdict's 25 dB-Hz is unsourced; calibrate on the owner's phone and a known-good one. A jammer drops
+  C/N0 and AGC together (`GnssMeasurement`, where the phone reports AGC): that is interference, not a fault.
 - The emulator's GNSS reports a fixed set of satellites; a debug route that injects a synthetic status is what makes
   the weak and faulty cases testable.
 
-Plan: one pass, on the survey above (and its follow-up's drawing rules and thresholds once in). In
+Plan: one pass, on the survey and the layout above. In
 `androidApp`: a `GnssStatus` listener registered only while the GPS view is open (and during the check), a GPS view
 screen with the layout above, reached from Settings › Navigation and tracking › "GPS status ›" and from the glance
-view's accuracy and fix-age entries; "Check my GPS" with the 2-minute run and its verdict. In `shared`: the verdict
+view's accuracy and fix-age entries; "Check my GPS" with the 2-minute run and its verdict; the sky plot's setting (synced key, row, help text, debug
+route); "Reset assistance data" in the screen's menu. In `shared`: the verdict
 rule (`GnssHealth`, pure Kotlin) with unit tests over synthetic satellite sets (open sky, indoors, all-weak, one
 constellation missing, a slow first fix). Debug routes: `GET /gnss` (the satellites, the summary, the check's
 state and verdict), `POST /gnss` to inject a synthetic status for screenshots, `POST /gnss/check` to start the
