@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.33-alpha (2026-11-19)
+
 ### 2026-11-19
 
 - T307: The GPS view: satellites, the terrain's horizon and "Check my GPS"
