@@ -203,3 +203,4 @@ cat "$T/lifted.txt"
 | [wave-35.md](wave-35.md) | T292 to T302 |
 | [wave-36.md](wave-36.md) | T303 to T304 |
 | [wave-37.md](wave-37.md) | T305 to T306 |
+| [wave-38.md](wave-38.md) | T307 to T307 |
