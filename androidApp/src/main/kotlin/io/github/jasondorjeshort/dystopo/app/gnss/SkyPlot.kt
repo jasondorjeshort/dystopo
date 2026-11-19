@@ -137,6 +137,8 @@ fun SkyPlot(
     pal: GnssPalette, description: String, modifier: Modifier = Modifier,
     /** T308: the Horizon view's layers (the sun's path, the peaks), drawn over the skyline and under the sun and satellites. */
     extra: (DrawScope.(PlotGeometry) -> Unit)? = null,
+    /** T308: drawn last, over the satellites (the peaks' names, so a satellite never hides one). */
+    over: (DrawScope.(PlotGeometry) -> Unit)? = null,
 ) {
     Canvas(modifier.semantics { contentDescription = description }) {
         val g = PlotGeometry.of(this.size.width, this.size.height, density, rotationDeg)
@@ -191,6 +193,7 @@ fun SkyPlot(
             if (ps.secondBand) drawCircle(pal.ink, r + 4.dp.toPx(), p, style = Stroke(1.dp.toPx()))
             drawContext.canvas.nativeCanvas.drawText(s.svid.toString(), p.x + r + 3.dp.toPx(), p.y - r * 0.4f, svid)
         }
+        over?.invoke(this, g)
     }
 }
 

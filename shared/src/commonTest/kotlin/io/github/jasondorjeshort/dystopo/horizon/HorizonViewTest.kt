@@ -122,7 +122,7 @@ class HorizonViewTest {
         PeakView(Peak(name, "peak", 0.0, 0.0, ele), distance, bearing, "", ele, false, 5.0, skyline, 1.0, skyline)
 
     @Test
-    fun theRimNamesTheHighestSkylinePeakOfEachThirtyDegreeSector() {
+    fun theRimNamesTheHighestSkylinePeakOfEachThirtyDegreeSectorTenDegreesApart() {
         val peaks = listOf(
             view("Low North", 5.0, 2000.0), view("High North", 25.0, 2500.0), view("Hidden Giant", 15.0, 4000.0, skyline = false),
             view("Edge", 30.0, 1800.0), view("Last", 359.9, 1500.0), view("Twin Far", 200.0, 2200.0, distance = 9000.0),
@@ -130,7 +130,12 @@ class HorizonViewTest {
         )
         assertEquals(listOf(0, 1, 11, 6), listOf(0.0, 30.0, 359.9, 200.0).map { PeakRim.sector(it) })
         assertEquals(0, PeakRim.sector(360.0))
-        assertEquals(listOf("High North", "Edge", "Twin Near", "Last"), PeakRim.labelled(peaks).map { it.peak.name })
+        // Edge wins its sector but stands 5 degrees from High North, which is higher: one name there. Last, at 359.9, is
+        // 25.1 degrees from High North the short way round, so it stays.
+        assertEquals(listOf("High North", "Twin Near", "Last"), PeakRim.labelled(peaks).map { it.peak.name })
+        assertEquals(listOf("High North", "Edge", "Twin Near", "Last"), PeakRim.labelled(peaks, minGapDeg = 0.0).map { it.peak.name }, "one per sector without the gap")
+        assertEquals(0.2, PeakRim.apart(359.9, 0.1), 1e-9)
+        assertEquals(180.0, PeakRim.apart(90.0, 270.0), 1e-9)
         assertEquals(listOf("Low North", "High North", "Edge", "Twin Far", "Twin Near", "Last"), PeakRim.skyline(peaks).map { it.peak.name }, "every skyline peak listed, clockwise")
     }
 }

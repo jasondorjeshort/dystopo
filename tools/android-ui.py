@@ -22,8 +22,9 @@ Parts:
                (sync with --server when given), the Share screen (a 16-character code), the Settings sheet; T288: the
                `drive` step (drive_step): Settings > Navigation and tracking at Plan drives for and its help pop-up, then a
                drive planned under each value with its card, on --drive-osm/--drive-dem (the montblanc pair, where the
-               least-fuel card's fuel line shows; rainier without it); T307: the `gps` step (gps_step): Settings > Navigation
-               and tracking > GPS status opens the GPS view (frames `gps` and `gps-plot`), Close takes it away; no crash.
+               least-fuel card's fuel line shows; rainier without it); T307, T308: the `horizon` step (horizon_step, `gps`
+               before T308): Settings > Navigation and tracking > Horizon view opens the Horizon view (frames `horizon`
+               and `horizon-scrolled`, `gps` and `gps-plot` before), Close takes it away; no crash.
                --feature-steps runs only the steps named.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
@@ -1784,51 +1785,51 @@ def drive_body(dev, pack, dem, osm, drive, out, st, errors):
     clear_route(dev)
 
 
-# --- features: the GPS view (T307) --------------------------------------------------------------------------------
+# --- features: the Horizon view (T307, T308) ----------------------------------------------------------------------
 
-GPS_ROW = "^GPS status ›$"  # settings/SettingsPages.kt: the row's link (the row's heading is "GPS status")
-GPS_TITLE = "^GPS status$"
-GPS_CHECK = "^Check my GPS$|^Check again$|^Checking: "
+HORIZON_ROW = "^Horizon view ›$"  # settings/SettingsPages.kt: the row's link (the row's heading is "Horizon view"; "GPS status" before T308)
+HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun)$"
 
 
-def gps_step(dev):
-    """T307: Settings > Navigation and tracking, scrolled to the GPS status row, its link tapped: the GPS view opens over the
-    map with its summary, Check my GPS and the sky plot (the frame `gps`); scrolled once (the frame `gps-plot`: the plot with
-    the terrain's skyline, the legend and the list); Close takes it away. The emulator's fix at Paradise (inside the pushed
-    Rainier pack) gives the view its satellites and the terrain horizon; their count is reported (`satellitesLine`), never
-    failed, since an emulator's GNSS may report none at first."""
+def horizon_step(dev):
+    """T307, T308: Settings > Navigation and tracking, scrolled to the Horizon view row, its link tapped: the Horizon view
+    opens over the map with the square sky plot fixed at the top and, below it, the heading with Close, the layer toggles
+    (Satellites, Peaks, Sun), the plot's orientation and each layer's content (the frame `horizon`); the area under the
+    heading scrolled once (the frame `horizon-scrolled`: the plot unmoved, the lists below); Close takes it away. The
+    emulator's fix at Paradise (inside the pushed Rainier pack) gives the view its terrain horizon, the peaks and the
+    sun's path; the satellites' count and the peaks' line are reported (`satellitesLine`, `peaksLine`), never failed,
+    since an emulator's GNSS may report none at first and the first sweep on a just-booted emulator can take minutes."""
     t0 = time.time()
-    open_settings(dev, "Navigation and tracking", "^Route snap$|" + GPS_ROW)
-    _n, nodes = scroll_to(dev, GPS_ROW)
-    dev.tap(dev.find(GPS_ROW, nodes))
-    n, nodes = dev.wait_for(GPS_CHECK, 15)
+    open_settings(dev, "Navigation and tracking", "^Route snap$|" + HORIZON_ROW)
+    _n, nodes = scroll_to(dev, HORIZON_ROW)
+    dev.tap(dev.find(HORIZON_ROW, nodes))
+    n, nodes = dev.wait_for(HORIZON_TOGGLES, 15)
     if not n:
-        return {"ok": False, "error": f"no Check my GPS after the GPS status row (texts: {dev.texts(nodes)[:25]})"}
-    time.sleep(3)  # a few seconds of the GNSS status and the horizon's sweep
+        return {"ok": False, "error": f"no layer toggles after the Horizon view row (texts: {dev.texts(nodes)[:25]})"}
+    time.sleep(4)  # a few seconds of the GNSS status, the horizon's sweep and the peaks
     nodes = dev.nodes()
     texts = dev.texts(nodes)
-    png = dev.screencap("gps")[0]
-    sats = next((t for t in texts if re.search(r"used of \d+ in view|^No satellites heard", t)), None)
+    png = dev.screencap("horizon")[0]
+    toggles = sorted({re.sub(r"^✓ ", "", t) for t in texts if re.match(HORIZON_TOGGLES, t)})
     w, h, _d = screen(dev)
-    dev.shell("input", "swipe", str(w // 2), str(h * 5 // 6), str(w // 2), str(h * 2 // 6), "700")
+    # Scroll inside the area under the heading (the lower fifth of the screen), never on the plot.
+    dev.shell("input", "swipe", str(w // 2), str(h * 9 // 10), str(w // 2), str(h * 6 // 10), "700")
     time.sleep(1.5)
-    plot_texts = dev.texts(dev.nodes())
-    plot = dev.screencap("gps-plot")[0]
-    terrain = next((t for t in plot_texts if t.startswith("Terrain: ") or "terrain horizon" in t), None)
-    # Back to the top, where Close is, and tap it: the view must leave the tree.
-    dev.shell("input", "swipe", str(w // 2), str(h * 2 // 6), str(w // 2), str(h * 5 // 6), "300")
-    dev.shell("input", "swipe", str(w // 2), str(h * 2 // 6), str(w // 2), str(h * 5 // 6), "300")
-    time.sleep(1)
+    after_texts = dev.texts(dev.nodes())
+    scrolled = dev.screencap("horizon-scrolled")[0]
+    sats = next((t for t in texts + after_texts if re.search(r"^\d+ used of \d+ in view|^No satellites heard", t)), None)  # the summary's, not the plot's description
+    peaks = next((t for t in texts + after_texts if re.search(r"on the skyline within|^No named peak|^No offline map with peak|^Finding the peaks", t)), None)
     close = top_close(dev.nodes())
     if close:
         dev.tap(close)
     time.sleep(1)
     after = dev.texts(dev.nodes())
-    still = close is None or any(t in after for t in ("Sky plot:", "Follow the phone")) or any(re.match(GPS_CHECK, t) for t in after)
-    missing = [w for w in ("Sky plot:", "Follow the phone", "North up") if w not in texts + plot_texts]
-    errors = ([f"missing {missing}"] if missing else []) + (["the GPS view did not close"] if still else [])
-    return {"ok": not errors, "png": png, "frames": {"gps": png, "plot": plot}, "satellitesLine": sats, "terrainLine": terrain,
-            "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
+    still = close is None or "Horizon view" in after or any(re.match(HORIZON_TOGGLES, t) for t in after)
+    missing = [x for x in ("Show:", "Sky plot:", "Follow the phone", "North up") if x not in texts + after_texts]
+    missing += [x for x in ("Peaks", "Satellites", "Sun") if x not in toggles]
+    errors = ([f"missing {missing}"] if missing else []) + (["the Horizon view did not close"] if still else [])
+    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled}, "toggles": toggles,
+            "satellitesLine": sats, "peaksLine": peaks, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
 
 
 # --- features (a) -----------------------------------------------------------------------------------------------
@@ -2001,7 +2002,7 @@ def part_features(args):
 
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
-                     ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("gps", lambda: gps_step(dev))):
+                     ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev))):
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
             continue
         run.step(name, fn)

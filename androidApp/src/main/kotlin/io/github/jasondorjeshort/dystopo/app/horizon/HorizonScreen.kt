@@ -111,6 +111,9 @@ object HorizonUi {
 
     @Volatile var drawn: Map<String, Any?>? = null
 
+    /** The rim's names as last drawn (the plot's taps read them). */
+    @Volatile var names: List<PlacedName> = emptyList()
+
     /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
     fun prepare() {
         open; selected; date; scrollTo
@@ -236,7 +239,6 @@ fun HorizonScreen() {
         BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding()) {
             val landscape = maxWidth > maxHeight
             val side = minOf(maxWidth, maxHeight)
-            val sidePx = with(density) { side.toPx() }
             val sunDrawn = layers.sun && sunNow != null && sunNow.apparentAltitudeDeg >= -0.5
             val description = HorizonText.plotLabel(
                 listOfNotNull(
@@ -250,18 +252,18 @@ fun HorizonScreen() {
                 Box(Modifier.size(side)) {
                     SkyPlot(
                         plotted, horizon, rotation, sunNow?.azimuthDeg?.takeIf { layers.sun }, sunNow?.apparentAltitudeDeg?.takeIf { layers.sun }, pal, description,
-                        Modifier.fillMaxSize().pointerInput(peaks, rotation, sidePx) {
+                        Modifier.fillMaxSize().pointerInput(Unit) {
                             detectTapGestures { tap ->
-                                val g = PlotGeometry.of(sidePx, sidePx, density.density, rotation)
-                                val near = peaks?.labelled?.minByOrNull { p -> labelAnchor(g, p, peaks.labelled.indexOf(p), density.density).let { a -> hypot((a.x - tap.x).toDouble(), (a.y - tap.y).toDouble()) } }
-                                val d = near?.let { p -> labelAnchor(g, p, peaks.labelled.indexOf(p), density.density).let { a -> hypot((a.x - tap.x).toDouble(), (a.y - tap.y).toDouble()) } }
-                                HorizonUi.selected = if (near != null && d != null && d < 40 * density.density) HorizonUi.keyOf(near).takeIf { it != HorizonUi.selected } else null
+                                // The nearest name drawn (its box, or within 24 dp of it) picks its peak; a tap elsewhere lets it go.
+                                val hit = HorizonUi.names.minByOrNull { n -> hypot((n.box.center.x - tap.x).toDouble(), (n.box.center.y - tap.y).toDouble()) }
+                                    ?.takeIf { n -> n.box.inflate(24 * density.density).contains(tap) }
+                                HorizonUi.selected = hit?.let { HorizonUi.keyOf(it.peak) }?.takeIf { it != HorizonUi.selected }
                             }
                         },
-                    ) { g ->
-                        sunDay?.let { drawSunPath(g, it, pal, night) }
-                        peaks?.labelled?.let { drawPeaks(g, it, selected, pal) }
-                    }
+                        extra = { g -> sunDay?.let { drawSunPath(g, it, pal, night) } },
+                        // The picked peak is drawn too when the rim does not name it (a row of the list picked it).
+                        over = { g -> peaks?.labelled?.let { drawPeaks(g, it + listOfNotNull(picked?.takeIf { p -> p !in it }), selected, pal) } },
+                    )
                 }
             }
             val pane: @Composable (Modifier) -> Unit = { m ->
@@ -313,7 +315,7 @@ fun HorizonScreen() {
                     "windowDp" to listOf(Math.round(maxWidth.value), Math.round(maxHeight.value)), "fontScale" to density.fontScale,
                     "rotationDeg" to Math.round(rotation * 10) / 10.0, "orientation" to orientation.key, "night" to night,
                     "horizonDrawn" to (horizon != null), "satellitesDrawn" to plotted.size, "gnssHeld" to Gnss.held,
-                    "peaksDrawn" to (peaks?.labelled?.map { it.peak.name } ?: emptyList<String>()), "peaksListed" to (peaks?.skyline?.size ?: 0),
+                    "peaksDrawn" to (peaks?.labelled?.map { it.peak.name } ?: emptyList<String>()), "namesDrawn" to HorizonUi.names.size, "peaksListed" to (peaks?.skyline?.size ?: 0),
                     "sunPathDrawn" to (sunDay?.sun?.path?.size ?: 0), "sunHourMarks" to (sunDay?.marks?.size ?: 0), "sunNowDrawn" to sunDrawn,
                     "selected" to picked?.peak?.name, "scrollPx" to scroll.value, "scrollMaxPx" to scroll.maxValue,
                 )
@@ -322,32 +324,55 @@ fun HorizonScreen() {
     }
 }
 
-/** Where a rim name is drawn: inward from its peak, every other one a line farther in, so neighbours do not touch. */
-private fun labelAnchor(g: PlotGeometry, p: PeakView, index: Int, density: Float): Offset {
-    val at = g.at(p.angleDeg.coerceAtLeast(0.0), p.bearingDeg)
-    val dx = g.c.x - at.x
-    val dy = g.c.y - at.y
-    val len = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
-    val inward = (16 + (index % 2) * 15) * density
-    return Offset(at.x + dx / len * inward, at.y + dy / len * inward)
+/** A rim name as last drawn: the peak, the text's baseline centre and its box (px), for the tap and `drawn`. */
+class PlacedName(val peak: PeakView, val anchor: Offset, val box: androidx.compose.ui.geometry.Rect)
+
+/**
+ * Where the rim names go: each inward from its peak along the radius, the picked one first, then the highest, at the first of four steps
+ * inward (16 dp, then 15 dp more each) where its box touches no name placed before; a name with no free step is left
+ * to the list.
+ */
+private fun DrawScope.placeNames(g: PlotGeometry, labelled: List<PeakView>, selected: String?, paint: android.graphics.Paint): List<PlacedName> {
+    val placed = ArrayList<PlacedName>()
+    val pad = 2.dp.toPx()
+    val fm = paint.fontMetrics
+    for (p in labelled.sortedWith(compareByDescending<PeakView> { HorizonUi.keyOf(it) == selected }.thenByDescending { it.eleM })) {
+        val at = g.at(p.angleDeg.coerceAtLeast(0.0), p.bearingDeg)
+        val dx = g.c.x - at.x
+        val dy = g.c.y - at.y
+        val len = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
+        val w = paint.measureText(p.peak.name)
+        for (step in 0 until 4) {
+            val inward = (16 + 15 * step).dp.toPx()
+            val c = Offset(at.x + dx / len * inward, at.y + dy / len * inward + 4.dp.toPx())
+            val box = androidx.compose.ui.geometry.Rect(c.x - w / 2 - pad, c.y + fm.ascent - pad, c.x + w / 2 + pad, c.y + fm.descent + pad)
+            if (placed.none { it.box.overlaps(box) }) {
+                placed += PlacedName(p, c, box)
+                break
+            }
+        }
+    }
+    return placed
 }
 
 private fun DrawScope.drawPeaks(g: PlotGeometry, labelled: List<PeakView>, selected: String?, pal: GnssPalette) {
     val text = android.graphics.Paint().apply { isAntiAlias = true; textSize = 12.dp.toPx(); color = pal.ink.toArgb(); textAlign = android.graphics.Paint.Align.CENTER }
     val halo = android.graphics.Paint(text).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 3.dp.toPx(); color = pal.sky.toArgb() }
-    labelled.forEachIndexed { i, p ->
+    for (p in labelled) {
         val at = g.at(p.angleDeg.coerceAtLeast(0.0), p.bearingDeg)
         val s = 5.dp.toPx()
         val tri = Path().apply { moveTo(at.x, at.y - s); lineTo(at.x + s, at.y + s * 0.7f); lineTo(at.x - s, at.y + s * 0.7f); close() }
-        val chosen = HorizonUi.keyOf(p) == selected
-        drawPath(tri, if (chosen) pal.link else pal.ink)
-        val a = labelAnchor(g, p, i, density)
+        drawPath(tri, if (HorizonUi.keyOf(p) == selected) pal.link else pal.ink)
+    }
+    val names = placeNames(g, labelled, selected, text)
+    HorizonUi.names = names
+    for (n in names) {
+        val chosen = HorizonUi.keyOf(n.peak) == selected
         text.isFakeBoldText = chosen
         halo.isFakeBoldText = chosen
         text.color = (if (chosen) pal.link else pal.ink).toArgb()
-        val y = a.y + 4.dp.toPx()
-        drawContext.canvas.nativeCanvas.drawText(p.peak.name, a.x, y, halo)
-        drawContext.canvas.nativeCanvas.drawText(p.peak.name, a.x, y, text)
+        drawContext.canvas.nativeCanvas.drawText(n.peak.peak.name, n.anchor.x, n.anchor.y, halo)
+        drawContext.canvas.nativeCanvas.drawText(n.peak.peak.name, n.anchor.x, n.anchor.y, text)
     }
 }
 

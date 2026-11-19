@@ -6,7 +6,7 @@
 
 Drives the debug build through its debug routes (the tour's own steps: no taps to get anywhere) to each screen of SCREENS
 (the map with each card up, a track's profile, the Activity and Record-as pickers, the recording panel, the Tracks and routes
-screen, Offline maps, Settings and each of its pages, the GPS view, the share screen, the first-run card), at each font scale (the system's,
+screen, Offline maps, Settings and each of its pages, the Horizon view, the share screen, the first-run card), at each font scale (the system's,
 `settings put system font_scale`, put back at the end), and at each screen takes a raw screencap, `uiautomator dump` and the
 app's own semantics (`GET /semantics`, `debug/SemanticsRoutes.kt`: Compose's merged and unmerged trees with each node's
 bounds and touch bounds; no outside tool reads the touch bounds, and Compose stretches a small `clickable` to a 48 dp touch
@@ -717,15 +717,16 @@ def scr_help_drive(c):
     c.srv.ok("POST", "/help/open?key=settings.drivePreference")
 
 
-def scr_gps(c):
-    """T307: the GPS view (Settings > Navigation and tracking > GPS status), over the map, with the emulator's satellites
-    and the terrain's skyline at Paradise."""
-    c.srv.ok("POST", "/gnss/ui?open=1")
-    time.sleep(2.0)  # the first status and the horizon's sweep
+def scr_horizon(c):
+    """T307, T308: the Horizon view (Settings > Navigation and tracking > Horizon view; the GPS view, screen `gps`, before
+    T308), over the map, with its layers as set (all on by default): the emulator's satellites, the terrain's skyline, the
+    peaks on it and the sun's path at Paradise."""
+    c.srv.ok("POST", "/horizon/ui?open=1")
+    time.sleep(3.0)  # the first status, the horizon's sweep and the peaks
 
 
-def end_gps(c):
-    c.srv.call("POST", "/gnss/ui?open=0")
+def end_horizon(c):
+    c.srv.call("POST", "/horizon/ui?open=0")
 
 
 def scr_share(c):
@@ -796,7 +797,7 @@ SCREENS = [
     ("settings", settings_page("list"), None, "screen"),
 ] + [(f"settings-{g}", settings_page(g), None, "screen") for g in ("data", "map", "display", "navigation", "sync", "about")] + [
     ("help-drive", scr_help_drive, None, "screen"),
-    ("gps", scr_gps, end_gps, "screen"),
+    ("horizon", scr_horizon, end_horizon, "screen"),
     ("share", scr_share, end_share, "screen"),
     ("first-run", scr_first_run, end_first_run, "map"),
 ]
