@@ -25,8 +25,16 @@ standing still; gaps between fixes; GNSS height against the barometer and the DE
 - **Check my GPS** on that screen: the user stands outdoors and taps it; 2 minutes, standing still; a verdict of
   healthy, weak signal (check the sky, the case, a hand over the antenna) or likely hardware fault, with the figures
   behind it. The verdict rule lives in `shared` as a pure function so it has unit tests.
-- Later, not in the first pass: a passive note while recording ("GPS signal unusually weak") when many satellites
-  stay weak for minutes.
+- **The terrain's horizon** (the owner, 2026-11-19: "more than just a debugging tool; this is its own horizon view
+  that folds naturally into the GPS satellite display"): the skyline of the land around the phone, from the DEM,
+  drawn on the sky plot as a filled band from the rim inwards, each azimuth up to the terrain's elevation angle.
+  A satellite behind it is expected to be weak; one above it and weak counts against the phone. It is also a view
+  of its own: which way the sky is open, where the sun and the ridges are. `dem/Horizon.kt` already casts these
+  rays for the sun and shade (`Horizon.terrainAround`, `options/ShadeService.kt` on the phone).
+- The check's result rides in Send diagnostics (`reports/DiagnosticDump.kt`), and the summary says whether the
+  phone has a second band ("L1 + L5" or "L1 only", from the carrier frequencies seen).
+- Recorded as their own ideas (2026-11-19): the note while recording, the signal with each track point, a compass
+  check, a coverage forecast along a route, raw measurements as RINEX.
 
 Where it fits: in Settings › Navigation and tracking, a "GPS status ›" row beside the recording rows (they are the
 rows a bad GPS affects), and a tap on the accuracy or fix-age entry in the glance view opens it as well. It is not in
@@ -70,8 +78,8 @@ next fix may take a few minutes", and says when the phone refused it.
 The verdict (the project's own; no app gives one): over 2 minutes standing still, each satellite's median C/N0;
 T4 the mean of the four strongest of the best constellation. Healthy: T4 at least 35 dB-Hz and 4 or more used.
 Weak signal: T4 25 to 35 or under 4 used: "move to open sky, away from buildings, out of the case". Likely
-hardware fault: T4 under 25 with nothing over 30 in any direction or height, while many satellites are in view
-(indoors sees few). The 35 rests on the two published figures; the 25 is unsourced, and both are checked against
+hardware fault: T4 under 25 with nothing over 30 in any direction or height above the terrain horizon, while many
+satellites are in view (indoors sees few); satellites behind the horizon do not count against the phone. The 35 rests on the two published figures; the 25 is unsourced, and both are checked against
 the owner's phone and a known-good one before the fault verdict ships. Time to first fix is shown, not judged.
 
 ## Open
@@ -85,11 +93,14 @@ Plan: one pass, on the survey and the layout above. In
 `androidApp`: a `GnssStatus` listener registered only while the GPS view is open (and during the check), a GPS view
 screen with the layout above, reached from Settings › Navigation and tracking › "GPS status ›" and from the glance
 view's accuracy and fix-age entries; "Check my GPS" with the 2-minute run and its verdict; the sky plot's setting (synced key, row, help text, debug
-route); "Reset assistance data" in the screen's menu. In `shared`: the verdict
-rule (`GnssHealth`, pure Kotlin) with unit tests over synthetic satellite sets (open sky, indoors, all-weak, one
-constellation missing, a slow first fix). Debug routes: `GET /gnss` (the satellites, the summary, the check's
+route); "Reset assistance data" in the screen's menu; the terrain horizon on the plot from the active pack's DEM
+(none drawn, and said so, outside a pack); the check's result in Send diagnostics; the band line. In `shared`: the
+verdict rule (`GnssHealth`, pure Kotlin) with unit tests over synthetic satellite sets (open sky, indoors,
+all-weak, one constellation missing, a slow first fix, weak only behind a synthetic ridge: weak signal, not a
+fault), and the horizon profile (elevation angle per azimuth) on `dem/Horizon.kt`'s rays with a test against a
+synthetic ridge. Debug routes: `GET /gnss` (the satellites, the summary, the check's
 state and verdict), `POST /gnss` to inject a synthetic status for screenshots, `POST /gnss/check` to start the
 check. Done when: `check` green; the screen captured on the emulator with real emulator satellites and with each
 injected case, and the screenshots viewed; strings listed (ADR 0031) with the survey cited; `android-app.md`,
-`android-debug-routes.md` and the routes' KDoc updated. Out of scope: the passive warning while recording, raw GNSS
-measurements, the release self-test of the related idea.
+`android-debug-routes.md` and the routes' KDoc updated. Out of scope: the five ideas recorded beside this one, the
+release self-test of the related idea.
