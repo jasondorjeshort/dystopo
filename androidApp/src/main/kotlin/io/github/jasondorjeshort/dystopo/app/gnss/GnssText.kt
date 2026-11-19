@@ -20,8 +20,12 @@ object GnssText {
 
     fun checking(left: Int) = "Checking: stand still, $left s left"
 
+    /** "…more than 20 m" or "…more than 65 ft" (the 20 m limit in feet, rounded down to 5 ft). */
     fun moved(units: ContourUnits) =
-        "The check stopped: the phone moved more than ${UnitFormat.distance(GnssHealth.MAX_MOVE_M, units)}. Stand still and try again."
+        "The check stopped: the phone moved more than ${movedLimit(units)}. Stand still and try again."
+
+    fun movedLimit(units: ContourUnits): String =
+        if (units == ContourUnits.FEET) "${(GnssHealth.MAX_MOVE_M / 0.3048 / 5).toInt() * 5} ft" else "${Math.round(GnssHealth.MAX_MOVE_M)} m"
 
     const val NO_PERMISSION = "Location permission is off: allow it in the phone's settings to see the satellites."
     const val NONE_YET = "No satellites heard yet. Indoors the phone may hear none."

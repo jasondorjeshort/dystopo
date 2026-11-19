@@ -223,8 +223,10 @@ fun GnssScreen() {
             GnssUi.message?.let { BasicText(it, style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium)) }
             if (!Gnss.permitted()) BasicText(GnssText.NO_PERMISSION, style = TextStyle(color = pal.ink, fontSize = 14.sp))
 
-            Summary(summary, pal, units)
-            CheckSection(pal)
+            // T307's verifier: the GNSS and the check are plain fields, not Compose state, so the children that read them take the
+            // tick as a parameter (an unchanged stable argument list skips a child); a tap bumps it at once.
+            Summary(summary, pal, units, tick)
+            CheckSection(pal, tick) { tick++ }
 
             OrientationRow(orientation, pal)
             SkyPlot(
@@ -249,7 +251,8 @@ fun GnssScreen() {
 }
 
 @Composable
-private fun Summary(s: GnssHealth.Summary, pal: GnssPalette, units: io.github.jasondorjeshort.dystopo.render.ContourUnits) {
+private fun Summary(s: GnssHealth.Summary, pal: GnssPalette, units: io.github.jasondorjeshort.dystopo.render.ContourUnits, tick: Int) {
+    @Suppress("UNUSED_VARIABLE") val t = tick // the fix's age, height and time are read again each second
     val f = Gnss.fix()
     val now = SystemClock.elapsedRealtimeNanos()
     val rows = listOf(
@@ -286,16 +289,17 @@ private fun Summary(s: GnssHealth.Summary, pal: GnssPalette, units: io.github.ja
 }
 
 @Composable
-private fun CheckSection(pal: GnssPalette) {
+private fun CheckSection(pal: GnssPalette, tick: Int, changed: () -> Unit) {
+    @Suppress("UNUSED_VARIABLE") val t = tick // the check's state, countdown and verdict are read again each second
     val state = GnssCheck.state
     val last = GnssCheck.last
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (state == GnssCheck.State.RUNNING) {
                 BasicText(GnssText.checking(GnssCheck.secondsLeft), Modifier.weight(1f, fill = false), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-                Button(GnssText.STOP, pal) { GnssCheck.stop() }
+                Button(GnssText.STOP, pal) { GnssCheck.stop(); changed() }
             } else {
-                Button(if (last == null) GnssText.CHECK else GnssText.CHECK_AGAIN, pal, filled = true) { GnssCheck.start() }
+                Button(if (last == null) GnssText.CHECK else GnssText.CHECK_AGAIN, pal, filled = true) { GnssCheck.start(); changed() }
             }
             HelpIcon("gnss.check")
         }
