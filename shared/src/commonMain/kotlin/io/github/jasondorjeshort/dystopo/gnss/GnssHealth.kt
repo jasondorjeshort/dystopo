@@ -69,7 +69,7 @@ data class Satellite(
  * T307: what the GPS view's summary and "Check my GPS" read from the phone's GNSS status: the counts, the four best
  * signals, the systems and bands heard ([summarize]), and the check's verdict over a run of samples ([judge]). Pure.
  *
- * The verdict (the idea `2026-11-19-a-gps-view-and-a-gnss-health-check`, its two surveys; no app the survey found gives
+ * The verdict (the GPS view's idea of 2026-11-19 and its two surveys, deleted with T307, in git; no app the survey found gives
  * one): each satellite's median C/N0 over the run; T4 the mean of the four strongest of the best constellation, over the
  * satellites above the terrain horizon (all of them where fewer than four are). Healthy: T4 at least [HEALTHY_T4] and at
  * least [MIN_USED] used. A hardware fault is suspected when T4 is under [FAULT_T4], no satellite above the terrain

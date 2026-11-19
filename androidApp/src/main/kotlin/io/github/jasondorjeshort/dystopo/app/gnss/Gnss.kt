@@ -194,14 +194,29 @@ object Gnss {
         injected = null
     }
 
-    /**
-     * The position the view describes: the map's (an injected fix there too), else the view's own last fix. Never written
-     * to a report.
-     */
-    fun position(): Location? = app.map.lastLocation ?: lastFix
+    /** The map's last fix, never its terrain estimate (T203), which drifts while the GPS is poor and is not a fix. */
+    private fun mapFix(): Location? = app.map.lastLocation?.takeIf { it.provider != io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE }
+        ?: if (app.map.injectedLocation) injectedFix() else null
 
-    /** The newest fix the view can describe (accuracy, age, height, speed, course): the view's own, else the map's. */
-    fun fix(): Location? = listOfNotNull(lastFix, app.map.lastLocation).maxByOrNull { it.elapsedRealtimeNanos }
+    /** While fixes are injected (debug), the last one ([io.github.jasondorjeshort.dystopo.app.LastFix]) once the estimate holds the puck. */
+    private fun injectedFix(): Location? = io.github.jasondorjeshort.dystopo.app.LastFix.get()?.let { f ->
+        Location("dystopo-debug").apply {
+            latitude = f.lat
+            longitude = f.lon
+            f.accuracyM?.let { accuracy = it.toFloat() }
+            time = f.at
+            elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos() - (System.currentTimeMillis() - f.at) * 1_000_000
+        }
+    }
+
+    /**
+     * The position the view describes and the check holds still: while fixes are injected (debug) the injected one, else
+     * the view's own GPS fix, else the map's. Never the terrain estimate; never written to a report.
+     */
+    fun position(): Location? = if (app.map.injectedLocation) mapFix() else lastFix ?: mapFix()
+
+    /** The fix the summary describes (accuracy, age, height, speed, course): as [position]. */
+    fun fix(): Location? = position()
 
     // ---- the terrain's horizon ----
 

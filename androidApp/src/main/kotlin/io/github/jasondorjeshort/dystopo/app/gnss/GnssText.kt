@@ -85,7 +85,10 @@ object GnssText {
     const val H_BAND = "Band"
     const val H_USED = "Used"
     const val USED = "Used"
-    const val EPHEMERIS = "E"
+    const val EPHEMERIS = "ephemeris"
+
+    /** A satellite's place at large text, where the list has no columns: "43° up, 261°". */
+    fun place(elevationDeg: Double, azimuthDeg: Double) = "${Math.round(elevationDeg)}° up, ${Math.round(azimuthDeg)}°"
     const val BEHIND = "behind terrain"
 
     // The menu.

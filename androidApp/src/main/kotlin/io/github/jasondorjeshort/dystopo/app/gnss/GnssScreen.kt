@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -150,6 +151,15 @@ fun GnssScreen() {
     @Suppress("UNUSED_VARIABLE") val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision
     val night = AppSettings.mapOptions.night
     val pal = remember(night) { GnssPalette(night) }
+    // Light status-bar icons over the night paper while the view is open (the activity keeps dark ones for the light map).
+    val view = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(night) {
+        val window = (view.context as? android.app.Activity)?.window
+        val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+        val was = bars?.isAppearanceLightStatusBars
+        bars?.isAppearanceLightStatusBars = !night
+        onDispose { if (was != null) bars.isAppearanceLightStatusBars = was }
+    }
     val units = AppSettings.units
     val orientation = AppSettings.skyPlot
     val sats = Gnss.satellites
@@ -253,9 +263,15 @@ private fun Summary(s: GnssHealth.Summary, pal: GnssPalette, units: io.github.ja
         Modifier.fillMaxWidth().background(pal.card, RoundedCornerShape(10.dp)).border(1.dp, pal.line, RoundedCornerShape(10.dp)).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        // The label column is as wide as its widest label at the user's font scale, so no label breaks inside a word.
+        val labelStyle = TextStyle(color = pal.muted, fontSize = 14.sp)
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val labelWidth = with(density) { rows.maxOf { measurer.measure(it.first, labelStyle).size.width }.toDp() } + 10.dp
         for ((label, value) in rows) Row(Modifier.fillMaxWidth()) {
-            BasicText(label, Modifier.width(96.dp), style = TextStyle(color = pal.muted, fontSize = 14.sp))
-            BasicText(value, Modifier.weight(1f), style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+            BasicText(label, Modifier.width(labelWidth), style = labelStyle)
+            // Wrapped to its text, so a lone dash's node is the dash (the a11y part reads a node's own pixels).
+            BasicText(value, Modifier.weight(1f).wrapContentWidth(Alignment.Start), style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
         }
     }
 }
@@ -369,32 +385,39 @@ private fun RampBar(pal: GnssPalette) {
 private fun SatelliteList(sats: List<io.github.jasondorjeshort.dystopo.gnss.Satellite>, horizon: ((Double) -> Double)?, pal: GnssPalette) {
     val rows = GnssHealth.listOrder(sats.filter { it.tracked })
     if (rows.isEmpty()) return
+    // At large text the five columns do not fit: each satellite takes two lines, its place and band under its name.
+    val wide = androidx.compose.ui.platform.LocalDensity.current.fontScale <= 1.3f
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(Modifier.fillMaxWidth()) {
-            Head(GnssText.H_SATELLITE, Modifier.width(104.dp), pal)
+            Head(GnssText.H_SATELLITE, Modifier.width(if (wide) 104.dp else 150.dp), pal)
             Head(GnssText.H_SIGNAL, Modifier.weight(1f), pal)
-            Head(GnssText.H_ELEVATION, Modifier.width(42.dp), pal)
-            Head(GnssText.H_AZIMUTH, Modifier.width(46.dp), pal)
-            Head(GnssText.H_BAND, Modifier.width(36.dp), pal)
+            if (wide) {
+                Head(GnssText.H_ELEVATION, Modifier.width(42.dp), pal)
+                Head(GnssText.H_AZIMUTH, Modifier.width(46.dp), pal)
+                Head(GnssText.H_BAND, Modifier.width(36.dp), pal)
+            }
         }
         for (s in rows) {
             val behind = GnssHealth.behind(s.elevationDeg, s.azimuthDeg, horizon)
             Row(Modifier.fillMaxWidth().heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.width(104.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.width(if (wide) 104.dp else 150.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     MarkIcon(markOf(s.constellation), Cn0Ramp.of(s.cn0), pal.ink, thick = s.used, size = 20.dp)
                     BasicText("${s.constellation.label} ${s.svid}", style = TextStyle(color = pal.ink, fontSize = 13.sp, fontWeight = if (s.used) FontWeight.Bold else FontWeight.Normal))
                 }
                 Box(Modifier.weight(1f).padding(end = 6.dp)) {
-                    val share = ((s.cn0 - 0) / Cn0Ramp.RAMP_TO).coerceIn(0.08, 1.0).toFloat()
-                    Box(Modifier.fillMaxWidth(share).height(20.dp).background(Cn0Ramp.of(s.cn0), RoundedCornerShape(3.dp)), contentAlignment = Alignment.CenterStart) {
+                    val share = (s.cn0 / Cn0Ramp.RAMP_TO).coerceIn(0.08, 1.0).toFloat()
+                    Box(Modifier.fillMaxWidth(share).heightIn(min = 20.dp).background(Cn0Ramp.of(s.cn0), RoundedCornerShape(3.dp)), contentAlignment = Alignment.CenterStart) {
                         BasicText(String.format(Locale.US, "%.1f", s.cn0), Modifier.padding(start = 4.dp), style = TextStyle(color = Cn0Ramp.textOn(s.cn0), fontSize = 12.sp, fontWeight = FontWeight.Bold))
                     }
                 }
-                BasicText("${Math.round(s.elevationDeg)}°", Modifier.width(42.dp), style = TextStyle(color = if (behind) pal.muted else pal.ink, fontSize = 13.sp))
-                BasicText("${Math.round(s.azimuthDeg)}°", Modifier.width(46.dp), style = TextStyle(color = pal.ink, fontSize = 13.sp))
-                BasicText(s.band?.label ?: GnssText.DASH, Modifier.width(36.dp), style = TextStyle(color = pal.ink, fontSize = 13.sp))
+                if (wide) {
+                    BasicText("${Math.round(s.elevationDeg)}°", Modifier.width(42.dp), style = TextStyle(color = if (behind) pal.muted else pal.ink, fontSize = 13.sp))
+                    BasicText("${Math.round(s.azimuthDeg)}°", Modifier.width(46.dp), style = TextStyle(color = pal.ink, fontSize = 13.sp))
+                    BasicText(s.band?.label ?: GnssText.DASH, Modifier.width(36.dp), style = TextStyle(color = pal.ink, fontSize = 13.sp))
+                }
             }
-            val flags = listOfNotNull(GnssText.USED.takeIf { s.used }, "ephemeris".takeIf { s.ephemeris }, GnssText.BEHIND.takeIf { behind })
+            val flags = (if (wide) emptyList() else listOf(GnssText.place(s.elevationDeg, s.azimuthDeg), s.band?.label ?: GnssText.BAND_UNKNOWN)) +
+                listOfNotNull(GnssText.USED.takeIf { s.used }, GnssText.EPHEMERIS.takeIf { s.ephemeris }, GnssText.BEHIND.takeIf { behind })
             if (flags.isNotEmpty()) BasicText(flags.joinToString(" · "), Modifier.padding(start = 28.dp), style = TextStyle(color = pal.muted, fontSize = 12.sp))
         }
     }
