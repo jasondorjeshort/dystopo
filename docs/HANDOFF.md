@@ -9,7 +9,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 ## Now
 
 - **No wave is open.** Wave 38 (T307, the GPS view: satellites, the terrain's horizon, "Check my GPS") is closed and recorded in `docs/tasks/wave-38.md`; its follow-ups are in the board's Later. Its sweep `out/sweep-20261119-1231` was green but `a11y` (a launch crash after the guard's reboot, idea `2026-11-19-launch-crash-rootdir-after-the-guards-reboot.md`), green on the rerun `-rerun`. **v0.1.33-alpha** is published (2026-11-19 19:53 UTC); `out/sweep-20261119-1231` is the next release's `-Prev`.
-- **Cost:** the 7-day meter read 91 at wave 38's close (89 at its planning; the wave cost about 2 against 8.5 figured; T307 1.6M fresh tokens); the per-task figure stays 3.0, a sweep about 2 to 3, a release 2.5. The hold is 97; the 7-day reset is 2026-11-20 04:00 UTC (`resets_at` in the session's usage file).
+- **Cost:** the 7-day meter read 91 at wave 38's close (89 at its planning; the wave cost about 2 against 8.5 figured; T307 1.6M fresh tokens); the per-task figure revised to 1.5, a wave's fixed cost 1.5, a release 1 (the `wave` skill, Plan and launch step 3). The hold is 97; the 7-day reset is 2026-11-20 04:00 UTC (`resets_at` in the session's usage file).
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
