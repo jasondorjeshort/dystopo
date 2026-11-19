@@ -81,8 +81,9 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.routing.TRIP_DETAILS_HELP +
             // end T278
             // T263: the activity chip's picker.
-            io.github.jasondorjeshort.dystopo.app.tracking.ACTIVITY_HELP
+            io.github.jasondorjeshort.dystopo.app.tracking.ACTIVITY_HELP +
             // end T263
+            io.github.jasondorjeshort.dystopo.app.gnss.GNSS_HELP // T307: the GPS view
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

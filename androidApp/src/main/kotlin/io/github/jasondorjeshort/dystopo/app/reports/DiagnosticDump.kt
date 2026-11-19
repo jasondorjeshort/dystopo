@@ -80,6 +80,7 @@ object DiagnosticDump {
             DumpFormat.S_SAMPLES to clean(samples),
             DumpFormat.S_STARTS to clean(starts),
             DumpFormat.S_DIAGNOSTICS to clean(diagnostics),
+            DumpFormat.S_GNSS to clean(runCatching { io.github.jasondorjeshort.dystopo.app.gnss.GnssCheck.dumpLines() }.getOrElse { listOf("gnss unavailable: ${it.javaClass.simpleName}") }), // T307
             DumpFormat.S_LOGCAT to clean(log),
         )
         val text = DumpFormat.format(header.mapValues { maskToken(Scrub.text(it.value, prepared)) }, sections)

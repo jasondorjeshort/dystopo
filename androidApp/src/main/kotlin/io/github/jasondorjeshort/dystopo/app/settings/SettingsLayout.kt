@@ -12,7 +12,7 @@ enum class SettingsGroup(val id: String, val title: String, val summary: String)
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage"), // T115: titles from Screens
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements"), // T223: names what the page holds
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
-    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning"), // T223: names what the page holds
+    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning, GPS status"), // T223: names what the page holds
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
     ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, technical details, problem reports, contour warm-up, credits"),
     ;
@@ -100,6 +100,10 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T282: how a drive is planned (Navigation and tracking, last: the controls manifest's next free order)
     DRIVE_PREFERENCE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_DRIVE_PREFERENCE, SettingsGroup.NAVIGATION, "Plan drives for", "SettingsPages", "T282"),
     // end T282
+    // T307: the GPS view and its sky plot's orientation (Navigation and tracking, last: the controls manifest's next free orders)
+    GNSS_STATUS("gnssStatus", SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.app.gnss.GnssText.TITLE, "SettingsPages", "T307"),
+    SKY_PLOT(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SKY_PLOT, SettingsGroup.NAVIGATION, "Sky plot", "SettingsPages", "T307"),
+    // end T307
     // T213: the trail disagreements' layer switch (the Map page, last)
     SHOW_DIVERGENCE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SHOW_DIVERGENCE, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.routing.DivergenceText.SETTING, "SettingsPages", "T213"),
     // end T213

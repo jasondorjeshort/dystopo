@@ -122,6 +122,21 @@ class DumpFormatTest {
         assertEquals(1, DumpScan.places("lat=46.85\n").size)
     }
 
+    /** T307: the GPS check's section reads back as written, and its lines (whole numbers and words) carry nothing the scanner reads as a place. */
+    @Test
+    fun theGnssSectionRoundTripsWithoutAPlace() {
+        val lines = listOf(
+            "state open=1 held=1 engine=started source=device permission=1",
+            "status inView=14 used=9 best4=41 constellations=gps,glonass,galileo bands=L1+L5 ttffMs=4200 engineTtffMs=3900 callbacks=120",
+            "check atMs=1762779940000 seconds=120 source=injected:ridge verdict=weak t4=29 t4c=gps used=2 inView=14 above=4 behind=10 strongest=32 samples=120 horizon=1 notes=lowSignal,fewUsed,behindTerrain",
+            "reset none",
+        )
+        val text = DumpFormat.format(linkedMapOf("kind" to "diagnostics"), listOf(DumpFormat.S_GNSS to lines))
+        assertEquals("gnss", DumpFormat.S_GNSS)
+        assertEquals(lines, DumpFormat.parse(text).section(DumpFormat.S_GNSS))
+        assertEquals(emptyList(), DumpScan.places(text))
+    }
+
     @Test
     fun fixed() {
         assertEquals("1.50", DumpScan.fixed(1.5, 2))

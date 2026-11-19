@@ -62,6 +62,7 @@ class SettingsRegistryTest {
         "tripDetailsOpen" to true, // T278
         "recordAskActivity" to false, // T263
         "drivePreference" to "quick", // T282
+        "skyPlot" to "north", // T307
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -92,7 +93,8 @@ class SettingsRegistryTest {
     // T278 (ADR 0033: one key added, per device): `tripDetailsOpen` in `GET /settings` is taken out too, checked on its own.
     // T263 (ADR 0033: one key added, synced): `recordAskActivity` and `app.recordAskActivity` too.
     // T282 (ADR 0033: one key added, synced): `drivePreference` and `app.drivePreference` too.
-    private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference")
+    // T307 (ADR 0033: one key added, synced): `skyPlot` and `app.skyPlot` too.
+    private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot")
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -103,9 +105,10 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one")
-        assertEquals(18 + 1 + 1, t257Synced().size)
-        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one")
+        assertEquals(18 + 1 + 1 + 1, t257Synced().size)
+        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals("north", SettingsSync.current()["app.skyPlot"], "T307: the seeded north syncs as north")
         assertEquals("quick", SettingsSync.current()["app.drivePreference"], "T282: the seeded quick syncs as quick")
         assertEquals("off", SettingsSync.current()["app.recordAskActivity"], "T263: the seeded off syncs as off")
         assertEquals(SEEDED_JSON, canon(beforeT257(AppSettings.json())))
@@ -170,9 +173,35 @@ class SettingsRegistryTest {
         assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.QUICK, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[AppSettings.DRIVE_PREFERENCE])
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("drivePreference" to "shortest")))
         val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
-        assertEquals(rows.last(), io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE, "the page's last row")
+        assertEquals(rows[rows.size - 3], io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE, "the page's last row before T307's two")
         assertEquals("Plan drives for", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE.label)
         assertEquals(listOf("Least time", "Least fuel", "Quicker planning"), io.github.jasondorjeshort.dystopo.app.settings.DRIVE_PREFERENCE_CHOICES.map { it.second })
+    }
+
+    /**
+     * T307: "Sky plot" (ADR 0044): Follow the phone by default, synced, posted and read back; a stored value this build does
+     * not know reads as the default; the GPS status link and the setting are the Navigation page's last two rows.
+     */
+    @Test
+    fun skyPlotFollowsThePhoneByDefault() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.PHONE, AppSettings.skyPlot)
+        assertEquals("phone", AppSettings.json()["skyPlot"])
+        assertEquals("phone", SettingsSync.current()["app.skyPlot"])
+        assertTrue(AppSettings.SKY_PLOT.synced)
+        val later = FakePrefs(mapOf("server" to "", "skyPlot" to "south"))
+        AppSettings.load(later)
+        assertEquals(io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.PHONE, AppSettings.skyPlot)
+        assertTrue(later.writes.none { it.first == "skyPlot" })
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("skyPlot" to "north")))
+        assertEquals(io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.NORTH, posted[AppSettings.SKY_PLOT])
+        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("skyPlot" to "south")))
+        val synced = SettingsSync.plan(mapOf("app.skyPlot" to "north"), emptyMap(), SettingsRoutes.KEYS)
+        assertEquals(io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.NORTH, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))[AppSettings.SKY_PLOT])
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
+        assertEquals(listOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS, io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.SKY_PLOT), rows.takeLast(2))
+        assertEquals("GPS status", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS.label)
+        assertEquals(listOf("Follow the phone", "North up"), io.github.jasondorjeshort.dystopo.app.gnss.SKY_PLOT_CHOICES.map { it.second })
     }
 
     /** T285: Least fuel is stored, read back, synced and posted (the guard of T284 is gone). */

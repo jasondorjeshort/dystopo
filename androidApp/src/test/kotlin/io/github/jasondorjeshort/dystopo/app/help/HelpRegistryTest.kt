@@ -175,6 +175,9 @@ class HelpRegistryTest {
             // T282: Plan drives for.
             "settings.drivePreference",
             // end T282
+            // T307: the GPS view, its check and its sky plot, and the two settings rows.
+            "settings.gnssStatus", "settings.skyPlot", "gnss.view", "gnss.check", "gnss.skyPlot",
+            // end T307
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
