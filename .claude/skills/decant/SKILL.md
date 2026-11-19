@@ -22,7 +22,7 @@ ideas, findings and reference. Everything below runs in the new project's clone.
    The second remote is always named `hatchery`; the `update-from-hatchery` skill relies on it.
    After the rename run `git branch --unset-upstream` (step 11 checks it): the rename carries the branch's upstream
    to `hatchery`, and a bare `git push` would then go to Hatchery. The first push sets `origin`
-   (the pusher's `git push -u origin <branch>`). Then `git fetch --prune hatchery`, before any
+   (the pusher's `git push -u origin <checked-sha>:refs/heads/<branch>`, then `git branch --set-upstream-to=origin/<branch>`, since `-u` sets none from a sha). Then `git fetch --prune hatchery`, before any
    other step (ADR 0018).
 3. `README.md`: replace with the project's README, keeping the License section. Keep nothing about
    decanting; that lives here.

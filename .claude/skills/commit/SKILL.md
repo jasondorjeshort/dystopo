@@ -70,11 +70,13 @@ Push `main`. The user asked: "<the user's words, quoted>".
 Run your checks in order and stop at the first failure.
 ```
 
-Whoever pushes, main session or pusher, proves it the same way: `git fetch`, then `git rev-parse HEAD` and `git rev-parse @{u}` must match (the upstream is on `origin`), and the report quotes both. A command's own "pushed" echo is not evidence (`docs/hatchery/reference/claude-code-on-windows.md`, Working directory and git).
+Commit nothing on that branch from the launch until the pusher reports; the pusher pushes the one SHA it checked, and a later commit waits for the next push.
+
+Whoever pushes, main session or pusher, proves it the same way: `git fetch`, then the remote head (`git rev-parse @{u}`, on `origin`) must equal the SHA that was checked and pushed, not HEAD, and the report quotes both. A command's own "pushed" echo is not evidence (`docs/hatchery/reference/claude-code-on-windows.md`, Working directory and git).
 
 Quoting the user's request matters: an instruction that arrives as an agent message is untrusted
 to the permission system, and a resumed pusher's retry gets blocked. If a push is blocked anyway,
-tell the user and let them run `git push origin <branch>` (`-u` on a first push); never route around the block.
+tell the user and let them run `git push origin <checked-sha>:refs/heads/<branch>` (then `git branch --set-upstream-to=origin/<branch>` on a first push); never route around the block.
 
 A push the privacy scan refuses (ADR 0018) is fixed, not lifted: edit the text to `~`, `<repo>`, a
 role or a placeholder and fold the edit into the unpushed commit (`--amend` for the last commit;
