@@ -1,7 +1,6 @@
 ---
 date: 2026-11-19
 kind: feature
-related: [2026-11-19-a-gps-view-and-a-gnss-health-check.md]
 ---
 
 # A forecast of GPS coverage along a route

@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-19
+
+- T307: The GPS view: satellites, the terrain's horizon and "Check my GPS"
+
 ### 2026-11-18
 
 - T306: The startup budget set again from the spread of identical code

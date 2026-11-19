@@ -1,7 +1,7 @@
 ---
 date: 2026-11-19
 kind: feature
-related: [2026-11-19-a-gps-view-and-a-gnss-health-check.md, 2026-11-19-gnss-signal-recorded-with-each-track-point.md]
+related: [2026-11-19-gnss-signal-recorded-with-each-track-point.md]
 ---
 
 # A note while recording when the GPS signal stays unusually weak
