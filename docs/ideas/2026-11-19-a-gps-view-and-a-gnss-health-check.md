@@ -33,6 +33,25 @@ rows a bad GPS affects), and a tap on the accuracy or fix-age entry in the glanc
 About and advanced › Diagnostics: that screen is about the app's memory, and this is about the phone's GPS, which
 the user checks in the field.
 
+## Survey (2026-11-19, preliminary)
+
+A read-only survey (public pages only; GPSTest's source not yet read, a follow-up is running) found: GPSTest has
+tabs with a status table ("U" for used, "CF" for carrier frequency) and a sky view, and "Clear Aiding Data" with
+re-inject; Locus has a sky plot alone (shape per constellation: circle GPS, square GLONASS, triangle BeiDou, diamond
+Galileo; colour red to green by signal; a bar per dot; an asterisk for L1+L5) with a summary, on a tab beside the
+compass; GPS Status & Toolbox has bars grouped by constellation and an assistance-data reset; SatStat has a plot
+that can follow the compass; Garmin handhelds have a sky page and a bar page (hollow tracking, solid used). OsmAnd,
+Organic Maps, Gaia and CalTopo have no satellite screen found. No app gives a verdict: all show raw data. Phone C/N0
+tops out near 48 dB-Hz, one study's outdoor mean was about 36; first fix 1 to 3 s assisted, 30 to 90 s cold outdoors.
+
+The layout taken from it: one scrolling portrait screen, top to bottom: the summary (used / in view, accuracy, fix
+age, height, speed, course, time to first fix, the time) with "Check my GPS" under it; the sky plot full width,
+north up, horizon and 30° and 60° rings, a shape per constellation, colour by C/N0 with a legend (not colour
+alone), filled when used and hollow when not, the svid beside the dot, a mark for a second band; the list sorted
+used first then by C/N0, with the constellation's shape, svid, a bar with its dB-Hz, elevation, azimuth, band (L1,
+L5), used and ephemeris. No setting (no split found). The verdict is the project's own and its thresholds are
+calibrated against the owner's phone and a known-good one before it says "hardware fault".
+
 ## Open
 
 - Thresholds from published practice (the benchmark's technical variant, ADR 0044) rather than the figures above,
@@ -40,10 +59,9 @@ the user checks in the field.
 - The emulator's GNSS reports a fixed set of satellites; a debug route that injects a synthetic status is what makes
   the weak and faulty cases testable.
 
-Plan: one pass, after a short survey (`benchmark.md`, both variants: where established topo and navigation apps put
-a satellite view and what it shows; published C/N0 and time-to-first-fix figures for a healthy phone). In
+Plan: one pass, on the survey above (and its follow-up's drawing rules and thresholds once in). In
 `androidApp`: a `GnssStatus` listener registered only while the GPS view is open (and during the check), a GPS view
-screen as the body describes, reached from Settings › Navigation and tracking › "GPS status ›" and from the glance
+screen with the layout above, reached from Settings › Navigation and tracking › "GPS status ›" and from the glance
 view's accuracy and fix-age entries; "Check my GPS" with the 2-minute run and its verdict. In `shared`: the verdict
 rule (`GnssHealth`, pure Kotlin) with unit tests over synthetic satellite sets (open sky, indoors, all-weak, one
 constellation missing, a slow first fix). Debug routes: `GET /gnss` (the satellites, the summary, the check's
