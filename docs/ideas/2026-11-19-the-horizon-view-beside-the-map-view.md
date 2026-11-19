@@ -44,3 +44,16 @@ satellites layer plus its summary and check. Layers that fit, from what the app 
 - Benchmark first (ADR 0039): how apps switch between a map and a sky or peak view, where the switch sits, and how
   they present layer toggles there.
 - The point it is drawn for: here by default, a long-pressed point (`2026-11-19-the-sky-from-a-long-pressed-point.md`).
+
+2026-11-19, the survey of the switch (read-only, search snippets and store listings only, so low confidence): no app
+found puts a circular sky plot beside the map as a top-level switch, and none combines the terrain's skyline, the sun,
+peaks and satellites in one view. Apps built around a sky or panorama make it their full-screen home (PeakFinder,
+GPSTest, the sun planners, Garmin's page ring); map-first apps open it as a tool (Locus Map's skyplot window from its
+GPS button, PhotoPills' AR inside a section). PeakVisor is nearest: its panorama and 3D map are peers, and a
+double-tap on its 3D compass opens the 3D map, a precedent for the compass as an entry. Layers in these views are a
+settings sheet or a filter, not a row of chips. Most allow any chosen point, not only the user's. Its recommendation:
+the switch at the bottom (the top row holds Search and Settings), a two-segment "Map | Horizon" control just above
+the readout bar first and a chip by the compass second, with a tap on the compass as a shortcut; toggles named with
+plain nouns ("Skyline", "Sun", "Peaks", "Satellites"), no "AR"; check that the toggles under a square plot do not
+shrink it on a short phone. The owner, 2026-11-19: "Up top or down bottom are both possible but we may just need
+trial and error."
