@@ -1,0 +1,350 @@
+package io.github.jasondorjeshort.dystopo.app.gnss
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.GnssStatus
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Build
+import android.os.Handler
+import android.os.SystemClock
+import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.tracking.GpsLocationSource
+import io.github.jasondorjeshort.dystopo.dem.Horizon
+import io.github.jasondorjeshort.dystopo.dem.HorizonProfile
+import io.github.jasondorjeshort.dystopo.gnss.Constellation
+import io.github.jasondorjeshort.dystopo.gnss.GnssCases
+import io.github.jasondorjeshort.dystopo.gnss.GnssHealth
+import io.github.jasondorjeshort.dystopo.gnss.Satellite
+import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * T307: the phone's GNSS for the GPS view and "Check my GPS". Nothing here runs until something [hold]s it: the view
+ * while it is open ([GnssUi]) and the check while it runs ([GnssCheck]). While held it registers a [GnssStatus.Callback]
+ * (the satellites: system, number, C/N0, elevation, azimuth, used in the fix, ephemeris, almanac, carrier frequency) and
+ * its own GPS `requestLocationUpdates` (the [GpsLocationSource] pattern, on its looper), so the status flows whatever the
+ * map's own listener does (an injected fix stops that one); both are removed when the last holder lets go.
+ *
+ * - **Time to first fix** ([ttffMs]) is the app's own: from the first time `MapController` started its device fixes in
+ *   this process to the first GPS fix its listener heard ([onDeviceStart], [onDeviceFix]); null (a dash) before that.
+ *   The engine's own figure from [GnssStatus.Callback.onFirstFix] is kept beside it ([engineTtffMs], JSON only).
+ * - **Injection** (debug, `POST /gnss?case=`): a synthetic status from [GnssCases] replaces the real one in [satellites]
+ *   until [clear]; the emulator's GNSS reports one fixed set, so the weak and faulty cases are testable only this way.
+ * - **The terrain's horizon** ([horizonAt]): `Horizon.sweep`'s [HorizonProfile] (1 degree bearings from true north, eye
+ *   height [Horizon.EYE_HEIGHT_M]) at the phone's position, over the DEM pyramid under it (`ShadeService.pyramidAt`: the
+ *   offline map's, else the online DEM, as the sun and shade's point answer reads it), worked out on its own thread and
+ *   kept until the position moves [HORIZON_MOVE_M]; [HorizonState.reason] says why there is none.
+ */
+object Gnss {
+    /** The horizon is worked out again once the phone is this far from where it was, metres. */
+    const val HORIZON_MOVE_M = 100.0
+
+    private val app get() = DystopoApp.instance
+    private val holders = LinkedHashSet<String>()
+    private var callback: GnssStatus.Callback? = null
+    private var listener: LocationListener? = null
+
+    @Volatile var real: List<Satellite> = emptyList()
+        private set
+    @Volatile var realAt = 0L
+        private set
+    @Volatile var injected: Pair<String, List<Satellite>>? = null
+        private set
+    @Volatile var engine: String = "off"
+        private set
+    @Volatile var error: String? = null
+        private set
+    val statusCallbacks = AtomicLong()
+    val fixes = AtomicLong()
+
+    /** The newest fix of the view's own GPS listener. */
+    @Volatile var lastFix: Location? = null
+        private set
+
+    // ---- time to first fix ----
+    @Volatile private var deviceStartAt = 0L
+    @Volatile var ttffMs: Long? = null
+        private set
+    @Volatile var engineTtffMs: Long? = null
+        private set
+
+    /** `MapController.startDeviceLocation` registered its listener (the first time counts). */
+    fun onDeviceStart() {
+        if (deviceStartAt == 0L) deviceStartAt = SystemClock.elapsedRealtime()
+    }
+
+    /** The map's listener heard a GPS fix. */
+    fun onDeviceFix() {
+        if (ttffMs == null && deviceStartAt > 0) ttffMs = SystemClock.elapsedRealtime() - deviceStartAt
+    }
+
+    // ---- holding ----
+    val held: Boolean get() = synchronized(holders) { holders.isNotEmpty() }
+    fun holders(): List<String> = synchronized(holders) { holders.toList() }
+
+    /** [who] wants the GNSS status (true) or no longer (false); the callback and the listener follow the set of holders. */
+    fun hold(who: String, on: Boolean) {
+        val change = synchronized(holders) {
+            val before = holders.isNotEmpty()
+            if (on) holders += who else holders -= who
+            before != holders.isNotEmpty()
+        }
+        if (change) {
+            if (on) start() else stop()
+        }
+    }
+
+    fun permitted(context: Context = app): Boolean = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private val manager: LocationManager get() = app.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+    @SuppressLint("MissingPermission") // permitted() first
+    @Synchronized
+    private fun start() {
+        if (callback != null) return
+        if (!permitted()) {
+            error = "no location permission"
+            return
+        }
+        val cb = object : GnssStatus.Callback() {
+            override fun onStarted() { engine = "started" }
+            override fun onStopped() { engine = "stopped" }
+            override fun onFirstFix(ttffMillis: Int) { engineTtffMs = ttffMillis.toLong() }
+            override fun onSatelliteStatusChanged(status: GnssStatus) {
+                statusCallbacks.incrementAndGet()
+                real = convert(status)
+                realAt = SystemClock.elapsedRealtime()
+            }
+        }
+        val l = io.github.jasondorjeshort.dystopo.app.tracking.locationListener { loc ->
+            fixes.incrementAndGet()
+            lastFix = loc
+        }
+        try {
+            val m = manager
+            if (Build.VERSION.SDK_INT >= 30) m.registerGnssStatusCallback(executor, cb)
+            else @Suppress("DEPRECATION") m.registerGnssStatusCallback(cb, Handler(GpsLocationSource.looper))
+            if (m.allProviders.contains(LocationManager.GPS_PROVIDER)) m.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, l, GpsLocationSource.looper)
+            callback = cb
+            listener = l
+            engine = "registered"
+            error = null
+        } catch (e: SecurityException) {
+            error = "location: ${e.message}"
+        } catch (e: RuntimeException) {
+            error = "${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    @Synchronized
+    private fun stop() {
+        callback?.let { runCatching { manager.unregisterGnssStatusCallback(it) } }
+        listener?.let { runCatching { manager.removeUpdates(it) } }
+        callback = null
+        listener = null
+        engine = "off"
+    }
+
+    private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-gnss").apply { isDaemon = true } }
+
+    fun convert(s: GnssStatus): List<Satellite> = (0 until s.satelliteCount).map { i ->
+        Satellite(
+            constellation(s.getConstellationType(i)), s.getSvid(i), s.getCn0DbHz(i).toDouble(),
+            s.getElevationDegrees(i).toDouble(), s.getAzimuthDegrees(i).toDouble(), s.usedInFix(i),
+            s.hasEphemerisData(i), s.hasAlmanacData(i),
+            if (s.hasCarrierFrequencyHz(i)) s.getCarrierFrequencyHz(i).toDouble() else null,
+        )
+    }
+
+    private fun constellation(type: Int): Constellation = when (type) {
+        GnssStatus.CONSTELLATION_GPS -> Constellation.GPS
+        GnssStatus.CONSTELLATION_GLONASS -> Constellation.GLONASS
+        GnssStatus.CONSTELLATION_GALILEO -> Constellation.GALILEO
+        GnssStatus.CONSTELLATION_BEIDOU -> Constellation.BEIDOU
+        GnssStatus.CONSTELLATION_QZSS -> Constellation.QZSS
+        GnssStatus.CONSTELLATION_IRNSS -> Constellation.IRNSS
+        GnssStatus.CONSTELLATION_SBAS -> Constellation.SBAS
+        else -> Constellation.UNKNOWN
+    }
+
+    // ---- what the view shows ----
+
+    /** The satellites now: the injected case's, else the phone's. */
+    val satellites: List<Satellite> get() = injected?.second ?: real
+
+    /** `device` or `injected:<case>`. */
+    val source: String get() = injected?.let { "injected:${it.first}" } ?: "device"
+
+    /** Replaces the phone's status with [case]'s ([GnssCases]); false for a name it does not know. */
+    fun inject(case: String): Boolean {
+        val h = horizonAtPhone()?.profile
+        val sats = GnssCases.of(case, h?.let { p -> { az: Double -> p.angleAt(az) } }) ?: return false
+        injected = case.trim().lowercase() to sats
+        return true
+    }
+
+    fun clear() {
+        injected = null
+    }
+
+    /** The map's last fix, never its terrain estimate (T203), which drifts while the GPS is poor and is not a fix. */
+    private fun mapFix(): Location? = app.map.lastLocation?.takeIf { it.provider != io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.SOURCE }
+        ?: if (app.map.injectedLocation) injectedFix() else null
+
+    /** While fixes are injected (debug), the last one ([io.github.jasondorjeshort.dystopo.app.LastFix]) once the estimate holds the puck. */
+    private fun injectedFix(): Location? = io.github.jasondorjeshort.dystopo.app.LastFix.get()?.let { f ->
+        Location("dystopo-debug").apply {
+            latitude = f.lat
+            longitude = f.lon
+            f.accuracyM?.let { accuracy = it.toFloat() }
+            time = f.at
+            elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos() - (System.currentTimeMillis() - f.at) * 1_000_000
+        }
+    }
+
+    /**
+     * The position the view describes and the check holds still: while fixes are injected (debug) the injected one, else
+     * the view's own GPS fix, else the map's. Never the terrain estimate; never written to a report.
+     */
+    fun position(): Location? = if (app.map.injectedLocation) mapFix() else lastFix ?: mapFix()
+
+    /** The fix the summary describes (accuracy, age, height, speed, course): as [position]. */
+    fun fix(): Location? = position()
+
+    // ---- the terrain's horizon ----
+
+    /** A horizon at a point, or why there is none ([reason]); [source] `offline map` or `online`. */
+    class HorizonState(val lat: Double, val lon: Double, val profile: HorizonProfile?, val reason: String?, val source: String?, val zoom: Int?, val ms: Long)
+
+    @Volatile var horizon: HorizonState? = null
+        private set
+    @Volatile private var horizonPending = false
+    private val horizonThread = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-gnss-horizon").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+    val horizonSweeps = AtomicLong()
+
+    /** The horizon at the phone's position (starting its sweep when none is near), or null while it is worked out. */
+    fun horizonAtPhone(): HorizonState? {
+        val p = position() ?: return null
+        return horizonAt(p.latitude, p.longitude)
+    }
+
+    fun horizonAt(lat: Double, lon: Double): HorizonState? {
+        val h = horizon
+        if (h != null && TrackStats.distanceM(h.lat, h.lon, lat, lon) < HORIZON_MOVE_M) return h
+        if (!horizonPending) {
+            horizonPending = true
+            horizonThread.execute {
+                try {
+                    horizon = sweep(lat, lon)
+                } finally {
+                    horizonPending = false
+                }
+            }
+        }
+        return null
+    }
+
+    /** Waits up to [ms] for the horizon at the phone's position (the debug routes). */
+    fun awaitHorizon(ms: Long): HorizonState? {
+        val until = SystemClock.elapsedRealtime() + ms
+        while (true) {
+            horizonAtPhone()?.let { return it }
+            if (SystemClock.elapsedRealtime() > until || position() == null) return null
+            Thread.sleep(100)
+        }
+    }
+
+    private fun sweep(lat: Double, lon: Double): HorizonState {
+        val t0 = SystemClock.elapsedRealtime()
+        horizonSweeps.incrementAndGet()
+        fun none(why: String) = HorizonState(lat, lon, null, why, null, null, SystemClock.elapsedRealtime() - t0)
+        return try {
+            val tiles = app.tiles
+            val p = tiles.shade.pyramidAt(lat, lon) ?: return none(GnssText.NO_TERRAIN)
+            val zoom = minOf(p.maxZoom, ShadeTiles.POINT_ZOOM)
+            val inPack = tiles.packs.demFor(zoom, WebMercator.lonToX(lon, zoom).toInt(), WebMercator.latToY(lat, zoom).toInt()) != null
+            val terrain = Horizon.terrainAround(lat, lon, zoom, tileSize = p.tileSize) { w -> p.window(w.zoom, w.x0, w.y0, w.width, w.height) }
+            val profile = Horizon.sweep(terrain, lat, lon, observerHeightM = Horizon.EYE_HEIGHT_M)
+            HorizonState(lat, lon, profile, null, if (inPack) "offline map" else "online", zoom, SystemClock.elapsedRealtime() - t0)
+        } catch (e: IllegalArgumentException) {
+            none(GnssText.NO_TERRAIN_HERE)
+        } catch (e: Exception) {
+            none("${GnssText.NO_TERRAIN_ERROR} (${e.javaClass.simpleName})")
+        }
+    }
+
+    // ---- reset assistance data ----
+
+    /** The last reset's answer: true when the phone took it, false when it refused; null before any. */
+    @Volatile var lastReset: Boolean? = null
+        private set
+
+    /** Asks the GPS to forget its assistance data and fetch it again (the phone may refuse). */
+    fun resetAssistance(): Boolean {
+        val ok = try {
+            val m = manager
+            val deleted = m.sendExtraCommand(LocationManager.GPS_PROVIDER, "delete_aiding_data", null)
+            runCatching { m.sendExtraCommand(LocationManager.GPS_PROVIDER, "force_time_injection", null) }
+            runCatching { m.sendExtraCommand(LocationManager.GPS_PROVIDER, if (Build.VERSION.SDK_INT >= 33) "force_psds_injection" else "force_xtra_injection", null) }
+            deleted
+        } catch (e: SecurityException) {
+            false
+        } catch (e: RuntimeException) {
+            false
+        }
+        lastReset = ok
+        return ok
+    }
+
+    // ---- JSON ----
+
+    fun horizonJson(h: HorizonState? = horizon): Map<String, Any?>? = h?.profile?.let { p ->
+        val top = p.highest
+        linkedMapOf(
+            "source" to h.source, "zoom" to h.zoom, "ms" to h.ms, "stepDeg" to p.stepDeg, "eyeHeightM" to p.observerHeightM,
+            "groundM" to Math.round(p.groundM), "highestDeg" to r1(p.angleDeg[top]), "highestBearingDeg" to r1(p.bearingDeg(top)),
+            "highestDistanceM" to Math.round(p.distanceM[top]), "bearingsWithoutData" to p.bearingsWithoutData,
+            "angleDeg" to p.angleDeg.map(::r1),
+        )
+    }
+
+    /** `GET /gnss`: the status, the summary, the band line, the horizon and the check (no position). */
+    fun json(): Map<String, Any?> {
+        val sats = satellites
+        val h = horizonAtPhone()
+        val fn = h?.profile?.let { p -> { az: Double -> p.angleAt(az) } }
+        val s = GnssHealth.summarize(sats)
+        val f = fix()
+        return linkedMapOf(
+            "open" to GnssUi.open, "holders" to holders(), "engine" to engine, "error" to error, "permission" to permitted(),
+            "source" to source, "statusCallbacks" to statusCallbacks.get(), "fixes" to fixes.get(),
+            "statusAgeMs" to if (realAt == 0L) null else SystemClock.elapsedRealtime() - realAt,
+            "summary" to linkedMapOf(
+                "inView" to s.inView, "used" to s.used, "best4" to s.best4.map(::r1), "best4Mean" to s.best4Mean?.let(::r1),
+                "constellations" to s.constellations.map { it.code }, "bands" to s.bands.map { it.label }, "bandLine" to s.bandLine,
+                "accuracyM" to f?.takeIf { it.hasAccuracy() }?.accuracy?.toDouble()?.let(::r1),
+                "fixAgeMs" to f?.let { (SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos) / 1_000_000 },
+                "ttffMs" to ttffMs, "engineTtffMs" to engineTtffMs,
+            ),
+            "bandLine" to (s.bandLine ?: GnssText.BAND_UNKNOWN),
+            "satellites" to GnssHealth.listOrder(sats).map { GnssHealth.json(it, fn) },
+            "horizon" to horizonJson(h),
+            "horizonReason" to if (h == null) (if (position() == null) GnssText.NO_POSITION else GnssText.HORIZON_WORKING) else h.reason,
+            "horizonSweeps" to horizonSweeps.get(),
+            "orientation" to io.github.jasondorjeshort.dystopo.app.AppSettings.skyPlot.key,
+            "headingDeg" to GnssUi.headingDeg()?.let(::r1),
+            "drawn" to GnssUi.drawn,
+            "check" to GnssCheck.json(),
+            "lastReset" to lastReset,
+        )
+    }
+
+    private fun r1(v: Double) = Math.round(v * 10) / 10.0
+}

@@ -174,6 +174,15 @@ help_screens[0][1](type("C", (), {"srv": FakeSrv()})())
 assert calls == [("POST", "/help/open?key=settings.drivePreference")], calls
 assert len({s[0] for s in a11y.SCREENS}) == len(a11y.SCREENS), "screen names are unique (the baseline keys on them)"
 
+# T307: the GPS view is a screen of its own, opened and closed by its debug route.
+gps = [s for s in a11y.SCREENS if s[0] == "gps"]
+assert len(gps) == 1 and gps[0][3] == "screen" and gps[0][2] is not None, gps
+calls.clear()
+a11y.time.sleep, _sleep = (lambda s: None), a11y.time.sleep
+gps[0][1](type("C", (), {"srv": FakeSrv()})())
+a11y.time.sleep = _sleep
+assert calls == [("POST", "/gnss/ui?open=1")], calls
+
 # T300: the navigation screen pins what earlier parts leave (a heading, the orientation) before it starts, and is skipped
 # with the reason when the started navigation still has a heading or the map is not north-up.
 import math

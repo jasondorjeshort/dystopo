@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-10
+verified: 2026-11-19
 source: observed (T258, on an API 35 emulator); the code in `shared/.../reports/DumpFormat.kt` and `androidApp/.../app/reports/`
 ---
 
@@ -22,7 +22,8 @@ On this side `devtool dump-scan` reads one dump or a folder of them.
   cost is small (below).
 - **The dump** (`reports/DiagnosticDump.kt`), made on a worker when the button is tapped: the header, the ring
   (`samples`), `files/reports/.startup-history` (`starts`: the last twenty starts), the Technical details snapshot as
-  Copy report writes it (`diagnostics`) and this process's own log, `logcat -d -v threadtime --pid=<pid> -t 4000`, the
+  Copy report writes it (`diagnostics`), T307's GPS section (`gnss`: the GPS view's state, the GNSS status now and the
+  last "Check my GPS", whole numbers and words, no position: `state`, `status`, `check`, `reset` lines) and this process's own log, `logcat -d -v threadtime --pid=<pid> -t 4000`, the
   newest lines within 768 kB (`logcat`). The file name is `dystopo-diagnostics-<yyyyMMdd-HHmm>.txt` (local time).
 - **The scrub**: every header value and every line of every section goes through the report scrubber
   (`shared/.../reports/Scrub.kt`, prepared once per dump with `Scrub.prepare`) with the phone's pack, area and search

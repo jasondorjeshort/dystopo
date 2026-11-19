@@ -138,12 +138,19 @@ object Heading {
         apply()
     }
 
+    /** T307: the GPS view's sky plot follows the phone: the compass runs while the view is open. */
+    @Volatile private var gnssWanted = false
+    fun setGnssWanted(on: Boolean) {
+        gnssWanted = on
+        apply()
+    }
+
     private fun apply() {
-        runCatching { if ((wanted && foreground) || terrainWanted) sensor.start() else sensor.stop() }
+        runCatching { if ((wanted && foreground) || terrainWanted || gnssWanted) sensor.start() else sensor.stop() }
     }
 
     fun compassJson(): Map<String, Any?> = runCatching { sensor.json() }.getOrElse { mapOf("error" to it.message) } +
-        mapOf("wanted" to wanted, "foreground" to foreground, "terrainWanted" to terrainWanted) +
+        mapOf("wanted" to wanted, "foreground" to foreground, "terrainWanted" to terrainWanted, "gnssWanted" to gnssWanted) +
         mapOf("boundsPx" to io.github.jasondorjeshort.dystopo.app.readout.CompassView.json()) // T212: MapLibre's compass on the map, px (null when not drawn)
 
     fun json(): Map<String, Any?> {

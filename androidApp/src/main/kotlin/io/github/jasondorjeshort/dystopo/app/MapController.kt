@@ -765,7 +765,10 @@ class MapController {
     private fun startDeviceLocation() {
         if (injectedLocation || deviceListener != null || !Foreground.started || !hasLocationPermission()) return
         val lm = activity?.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
-        val listener = io.github.jasondorjeshort.dystopo.app.tracking.locationListener { if (!injectedLocation) onFix(it) }
+        val listener = io.github.jasondorjeshort.dystopo.app.tracking.locationListener {
+            if (it.provider == LocationManager.GPS_PROVIDER) io.github.jasondorjeshort.dystopo.app.gnss.Gnss.onDeviceFix() // T307: time to first fix
+            if (!injectedLocation) onFix(it)
+        }
         // T114: every provider the phone has, enabled or not (Android delivers once it is enabled): with the location
         // setting off at start, the map never heard a fix after it was turned on until the app restarted.
         val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).filter {
@@ -775,6 +778,7 @@ class MapController {
             for (p in providers) lm.requestLocationUpdates(p, 1000L, 0f, listener, Looper.getMainLooper())
             deviceListener = listener
             deviceProviders = providers
+            io.github.jasondorjeshort.dystopo.app.gnss.Gnss.onDeviceStart() // T307
         } catch (e: SecurityException) {
             styleError = "location: ${e.message}"
         }

@@ -33,6 +33,9 @@ object DumpFormat {
     const val S_DIAGNOSTICS = "diagnostics"
     const val S_LOGCAT = "logcat"
 
+    /** T307: the GPS view's state, the GNSS status and the last "Check my GPS" (whole numbers and words; no position). */
+    const val S_GNSS = "gnss"
+
     /** A parsed dump: its first line, the header, the sections in order. */
     data class Dump(val format: String, val header: Map<String, String>, val sections: List<Pair<String, List<String>>>) {
         fun section(name: String): List<String> = sections.firstOrNull { it.first == name }?.second.orEmpty()

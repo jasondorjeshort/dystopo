@@ -619,6 +619,15 @@ object AppSettings {
         { io.github.jasondorjeshort.dystopo.routing.DrivePreference.of(it.toString()) },
         { "$KEY_DRIVE_PREFERENCE must be one of ${io.github.jasondorjeshort.dystopo.routing.DrivePreference.entries.joinToString(", ") { p -> p.key }} (got $it)" }))
     // end T282
+    // T307: "Sky plot" in the GPS view (ADR 0044: the apps split; the survey of 2026-11-19 in the GPS view's idea): `phone`
+    // (Follow the phone, the default) or `north` (North up); a stored value this build does not know reads as the default. Synced.
+    const val KEY_SKY_PLOT = "skyPlot"
+    val SKY_PLOT = add(Setting(KEY_SKY_PLOT, io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.of(it) }),
+        { io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.of(it.toString()) },
+        { "$KEY_SKY_PLOT must be phone or north (got $it)" }))
+    val skyPlot: io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation get() = SKY_PLOT.value
+    // end T307
 }
 
 /**
