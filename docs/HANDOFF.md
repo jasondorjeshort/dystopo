@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-18, by main session (wave 36 closed, no release)
+Updated: 2026-11-18, by main session (wave 37's tasks merged; its closing sweep running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-36.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **No wave is open.** Wave 36 (T303 and T304, the owner's phone in the sweep) is closed and recorded in `docs/tasks/wave-36.md`; its follow-ups are in the board's Later. The phone parts ran green on the owner's phone over wireless debugging (sweep `out/sweep-20261118-1301`: startup median fully loaded 2,000 ms, the release unchanged); "Dystopo debug" stays installed there. **v0.1.32-alpha** is still the published release; no release this wave (the release build is unchanged).
-- The full sweep of 2026-11-18 (`out/sweep-20261118-0901`) was red on four emulator parts: `device-tour`, `startup` (7,127 ms against 6,680, the third reading over), `diagnostics`, `update`; not yet looked into (Later). `out/sweep-20261116-2212` stays the next close's `-Prev`.
-- **Cost:** the 7-day meter read 87 at the close (86 at planning); the per-task figure stays 3.0. The hold is 97, so about three tasks fit before the 7-day reset (`resets_at` in the session's usage file).
+- **Wave 37 is open, its tasks merged:** T305 (89d888af: three red sweep parts were tooling faults, fixed; two findings) and T306 (b2f5b498: the startup part takes 1 warm-up and 9 launches; the budget set again from nine reports). Wave 36 is closed (`docs/tasks/wave-36.md`); "Dystopo debug" stays installed on the owner's phone. **v0.1.32-alpha** is still the published release.
+- **The closing full sweep is running** (a Sonnet agent, from the main checkout, `-Prev out/sweep-20261116-2212`); if it is lost, relaunch it by the `sweep` skill. Green: close wave 37, then a release if the meter allows. Red: read its parts against T305's two findings first.
+- **Cost:** the 7-day meter read 88 after T305; the per-task figure stays 3.0, a sweep about 2 to 3, a release 2.5. The hold is 97 (`resets_at` in the session's usage file).
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
 
-1. **The red emulator parts of the 2026-11-18 sweep** (Later): a debugging task before the next release. Ideas untriaged: six of 2026-11-17 and Java 25 of 2026-11-18 ("We'll prioritize later").
+1. **Close wave 37** after its sweep (record, costs with `tools/agent-cost.py T305` and `T306`, follow-ups to Later), then v0.1.33-alpha if green and the meter allows. Ideas untriaged: six of 2026-11-17 and Java 25 of 2026-11-18 ("We'll prioritize later").
 2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
 3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
 4. Tooling follow-ups from wave 35 (Later): the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
