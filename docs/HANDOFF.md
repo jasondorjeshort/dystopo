@@ -1,24 +1,23 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-18, by main session (wave 37's tasks merged; its closing sweep running)
+Updated: 2026-11-18, by main session (wave 37 closed, no release)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
-`docs/tasks/wave-36.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
+`docs/tasks/wave-37.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 37 is open, its tasks merged:** T305 (89d888af: three red sweep parts were tooling faults, fixed; two findings) and T306 (b2f5b498: the startup part takes 1 warm-up and 9 launches; the budget set again from nine reports). Wave 36 is closed (`docs/tasks/wave-36.md`); "Dystopo debug" stays installed on the owner's phone. **v0.1.32-alpha** is still the published release.
-- **The closing full sweep is running** (a Sonnet agent, from the main checkout, `-Prev out/sweep-20261116-2212`); if it is lost, relaunch it by the `sweep` skill. Green: close wave 37, then a release if the meter allows. Red: read its parts against T305's two findings first.
-- **Cost:** the 7-day meter read 88 after T305; the per-task figure stays 3.0, a sweep about 2 to 3, a release 2.5. The hold is 97 (`resets_at` in the session's usage file).
+- **No wave is open.** Wave 37 (T305 and T306: three red sweep parts were tooling faults, fixed; the startup budget set again with a warm-up and nine launches) is closed and recorded in `docs/tasks/wave-37.md`; its follow-ups are in the board's Later. Its closing sweep `out/sweep-20261118-2139` was red on `startup`, `a11y` and `features`, all green on the `-Only` rerun `out/sweep-20261118-2139-rerun`. **v0.1.32-alpha** is still the published release: waves 36 and 37 changed only tooling and the debug build's id, so no release. `out/sweep-20261116-2212` stays the next release's `-Prev`.
+- **Cost:** the 7-day meter read 89 at the close; the per-task figure stays 3.0, a sweep about 2 to 3, a release 2.5. The hold is 97; the 7-day reset is 2026-11-20 04:00 UTC (`resets_at` in the session's usage file).
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
 
-1. **Close wave 37** after its sweep (record, costs with `tools/agent-cost.py T305` and `T306`, follow-ups to Later), then v0.1.33-alpha if green and the meter allows. Ideas untriaged: six of 2026-11-17 and Java 25 of 2026-11-18 ("We'll prioritize later").
-2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
-3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
-4. Tooling follow-ups from wave 35 (Later): the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
+1. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
+2. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
+3. Tooling follow-ups (Later): save logcat on a launch crash (wave 37); the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
+4. Ideas untriaged: six of 2026-11-17 and Java 25 of 2026-11-18 (the owner: "We'll prioritize later").
 
 ## Waiting on user
 
