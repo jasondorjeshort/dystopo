@@ -1,14 +1,14 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-19, by main session (wave 38 closed, v0.1.33-alpha published)
+Updated: 2026-11-19, by main session (wave 39 open: T308 implementing)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-38.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **No wave is open.** Wave 38 (T307, the GPS view: satellites, the terrain's horizon, "Check my GPS") is closed and recorded in `docs/tasks/wave-38.md`; its follow-ups are in the board's Later. Its sweep `out/sweep-20261119-1231` was green but `a11y` (a launch crash after the guard's reboot, idea `2026-11-19-launch-crash-rootdir-after-the-guards-reboot.md`), green on the rerun `-rerun`. **v0.1.33-alpha** is published (2026-11-19 19:53 UTC); `out/sweep-20261119-1231` is the next release's `-Prev`.
+- **Wave 39 is open** (`docs/TASKS.md`, one task): T308, the Horizon view (T307's GPS view reshaped: a square sky plot fixed at the top or left, toggles for Satellites, Peaks and Sun), critic's edits made, implementer launched 2026-11-19 on `task/T308` (worktree `dystopo-wt/T308`, AVD `dystopo35-T308`, ports 8694/5570). Then a verifier, the merge, a sweep (`-Prev out/sweep-20261119-1231`) and a release. The map's switch into the view is the next pass: the survey is in `docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md` (try Map | Horizon at the bottom, a compass tap as a shortcut). Wave 38 is in `docs/tasks/wave-38.md`; **v0.1.33-alpha** is the published release.
 - **Cost:** the 7-day meter read 91 at wave 38's close (89 at its planning; the wave cost about 2 against 8.5 figured; T307 1.6M fresh tokens); the per-task figure revised to 1.5, a wave's fixed cost 1.5, a release 1 (the `wave` skill, Plan and launch step 3). The hold is 97; the 7-day reset is 2026-11-20 04:00 UTC (`resets_at` in the session's usage file).
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
