@@ -79,6 +79,11 @@ object GnssUi {
 
     @Volatile var drawn: Map<String, Any?>? = null
 
+    /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
+    fun prepare() {
+        open; menuOpen; confirmReset; message
+    }
+
     fun open() {
         menuOpen = false
         confirmReset = false
@@ -100,7 +105,11 @@ object GnssUi {
     fun rotationDeg(o: SkyPlotOrientation = AppSettings.skyPlot): Double = if (o == SkyPlotOrientation.PHONE) headingDeg() ?: 0.0 else 0.0
 
     fun reset(say: (String) -> Unit) {
-        Thread({ say(if (Gnss.resetAssistance()) GnssText.RESET_DONE else GnssText.RESET_REFUSED) }, "dystopo-gnss-reset").start()
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        Thread({
+            val line = if (Gnss.resetAssistance()) GnssText.RESET_DONE else GnssText.RESET_REFUSED
+            main.post { say(line) }
+        }, "dystopo-gnss-reset").start()
     }
 }
 

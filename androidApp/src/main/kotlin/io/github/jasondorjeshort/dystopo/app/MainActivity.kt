@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
             StartupTrace.mark("map.attach")
             app.map.activity = this
             io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
+            io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.prepare() // T307: the GPS view's Compose state, on the main thread
             app.map.attach(mapView, styleJson = { app.tiles.style() })
         }
         launch.run(Launch.ACTIVITY) { links() }
