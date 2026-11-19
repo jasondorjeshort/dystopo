@@ -1,7 +1,7 @@
 ---
 date: 2026-11-19
 kind: feature
-related: [2026-10-29-viewshed-and-peak-labels.md, 2026-11-19-todays-sun-path-across-the-skyline.md]
+related: [2026-10-29-viewshed-and-peak-labels.md, 2026-11-19-todays-sun-path-across-the-skyline.md, 2026-11-19-the-horizon-view-beside-the-map-view.md]
 ---
 
 # Peak names on the sky plot's skyline

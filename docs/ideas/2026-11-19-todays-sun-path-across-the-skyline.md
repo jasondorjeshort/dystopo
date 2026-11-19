@@ -1,7 +1,7 @@
 ---
 date: 2026-11-19
 kind: feature
-related: [2026-11-19-peak-names-on-the-sky-plots-skyline.md, 2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md]
+related: [2026-11-19-peak-names-on-the-sky-plots-skyline.md, 2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md, 2026-11-19-the-horizon-view-beside-the-map-view.md]
 ---
 
 # Today's sun path across the skyline

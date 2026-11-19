@@ -1,7 +1,7 @@
 ---
 date: 2026-11-19
 kind: feature
-related: [2026-11-19-todays-sun-path-across-the-skyline.md, 2026-11-19-a-front-page-way-into-the-sky-view.md]
+related: [2026-11-19-todays-sun-path-across-the-skyline.md, 2026-11-19-the-horizon-view-beside-the-map-view.md]
 ---
 
 # The sky from a long-pressed point
