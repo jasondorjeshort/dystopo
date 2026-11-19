@@ -6,7 +6,7 @@ kind: feature
 # The GNSS signal recorded with each track point
 
 A recorded track keeps each fix's accuracy but not why it was poor. With the GPS view's `GnssStatus` listener
-(the related idea) running while a track records, each kept fix could carry the mean C/N0 of the four strongest
+(T307) running while a track records, each kept fix could carry the mean C/N0 of the four strongest
 satellites and the number used. Afterwards a wobbly stretch shows its cause (signal fell under the canyon wall,
 or the phone went into a pocket), and the track can be coloured by signal. It changes the track database
 (`.claude/rules/trackdb.md`: a migration) and the GPX export (an extension element).

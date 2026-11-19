@@ -1,15 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-19, by main session (wave 38 open: T307 implementing)
+Updated: 2026-11-19, by main session (wave 38 open: T307 merged, sweep running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-37.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 38 is open** (`docs/TASKS.md`, one task): T307, the GPS view (satellites, the terrain's horizon, "Check my GPS"), critic's edits made, implementer launched 2026-11-19 on `task/T307` (worktree `dystopo-wt/T307`, AVD `dystopo35-T307`, ports 8694/5570). Then a verifier, the merge, a sweep and a release; the owner: stop at the hold and wait out the reset. Wave 37 is recorded in `docs/tasks/wave-37.md`. **v0.1.32-alpha** is the published release; `out/sweep-20261116-2212` stays the next release's `-Prev`.
-- **Cost:** the 7-day meter read 90 at T307's launch (89 at wave 37's close); the per-task figure stays 3.0, a sweep about 2 to 3, a release 2.5. The hold is 97; the 7-day reset is 2026-11-20 04:00 UTC (`resets_at` in the session's usage file).
+- **Wave 38 is open** (`docs/TASKS.md`): T307, the GPS view, merged 2026-11-19 as cfa3cf73 (FIX, one fix round, MERGE); its cleanup chore and the post-wave sweep (`-Prev out/sweep-20261116-2212 -First gps`, from the main checkout) are running. Next: read the sweep, publish v0.1.33-alpha on green (`release` skill), close the wave; the owner: stop at the hold and wait out the reset. **v0.1.32-alpha** is the published release.
+- **Cost:** the 7-day meter read 91 after T307's merge (90 at its launch, 89 at wave 37's close); the per-task figure stays 3.0, a sweep about 2 to 3, a release 2.5. The hold is 97; the 7-day reset is 2026-11-20 04:00 UTC (`resets_at` in the session's usage file).
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
