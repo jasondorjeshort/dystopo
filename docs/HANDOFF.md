@@ -1,15 +1,15 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-20, by main session (wave 40 open: T309 implementing)
+Updated: 2026-11-20, by main session (wave 40 open: sweep red, T310 added for its two causes; the machine rebooted, the shell works again)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-39.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 40 is open** (`docs/TASKS.md`, one task): T309, a Map | Horizon button on the map and the closest peaks first on the Horizon view's rim (the owner's words of 2026-11-20), critic's edits made, implementer launched on `task/T309` (worktree `dystopo-wt/T309`, AVD `dystopo35-T309`, ports 8694/5570). Then a verifier, the merge, a full sweep (`-Prev out/sweep-20261119-1925-rerun`) and a release. Wave 39 is in `docs/tasks/wave-39.md`; **v0.1.34-alpha** is the published release.
-- **Cost:** the 7-day meter read 91 at wave 39's close; its reset moved to 2026-11-21 03:00 UTC (re-read `resets_at` at each stall). Figures: 1.5 a task, 1.5 a wave's fixed cost, 1 a release (the `wave` skill, Plan and launch step 3). The hold is 97.
+- **Wave 40 is open** (`docs/TASKS.md`, one task): T309 merged (2c714e31, log 26b934ef pushed). The full sweep `out/sweep-20261120-0131` is **red, not released**: (1) `features`: `horizon_step` in `tools/android-ui.py` (~line 1796) opens with `close_overlays(dev, 1)`, whose Back exits the app when the map is already bare (frame `30-horizon-failed.png` is the home screen); fix: press Back only when something is open. (2) `a11y`: the known launch crash, then in the rerun `out/sweep-20261120-0131-rerun` 4 new findings, the Map | Horizon switch overlapping the first-run card at font 1.0 (screen 23): a T309 layout fix (hide the switch under the first-run card) or a baseline line. T310 fixes both; then a sweep rerun of `features,a11y` and v0.1.35-alpha. Every shell call failed from 03:26 until the owner's reboot (the `git-guard` hook with no stderr; cause unknown, likely memory). Wave 39 is in `docs/tasks/wave-39.md`; **v0.1.34-alpha** is the published release.
+- **Cost:** the 7-day meter reset: it read 1 on 2026-11-20 after the reboot (re-read `resets_at` at each stall). Figures: 1.5 a task, 1.5 a wave's fixed cost, 1 a release (the `wave` skill, Plan and launch step 3). The hold is 97.
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
