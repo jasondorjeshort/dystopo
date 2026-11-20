@@ -128,9 +128,15 @@ object HorizonUi {
     /** T309: the keys of the names last drawn, as Compose state (the list's bold rows read it; written from the draw only on a change). */
     var namedKeys by mutableStateOf<Set<String>>(emptySet())
 
+    /** T312: the flight a tap on its dot, its name or its row picked (its hex code), whose card shows; or null. */
+    var selectedFlight by mutableStateOf<String?>(null)
+
+    /** T312: the flights as last drawn: each dot, its name's box when named (the plot's taps and `drawn` read them). */
+    @Volatile var flightMarks: List<FlightMark> = emptyList()
+
     /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
     fun prepare() {
-        open; selected; date; scrollTo; namedKeys
+        open; selected; date; scrollTo; namedKeys; selectedFlight
     }
 
     fun open() {
@@ -142,6 +148,9 @@ object HorizonUi {
     fun close() {
         open = false
         selected = null
+        selectedFlight = null // T312
+        flightMarks = emptyList()
+        io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.release(HorizonData.FLIGHTS_OWNER)
         scrollTo = null
         GnssUi.resetUi()
         drawn = null
@@ -190,7 +199,10 @@ fun HorizonScreen() {
     }
     var tick by remember { mutableStateOf(0) }
     @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
-    val layers = AppSettings.horizonLayers
+    // T312: the Flights layer and its button only while Flight tracking (T311's setting) is on.
+    val tracking = AppSettings.AIRCRAFT.value
+    val layers = AppSettings.horizonLayers.effective(tracking)
+    val skyRange = AppSettings.skyRange
     DisposableEffect(started) {
         Heading.setGnssWanted(started)
         onDispose { Heading.setGnssWanted(false) }
@@ -203,6 +215,7 @@ fun HorizonScreen() {
         when {
             GnssUi.confirmReset -> GnssUi.confirmReset = false
             GnssUi.menuOpen -> GnssUi.menuOpen = false
+            HorizonUi.selectedFlight != null -> HorizonUi.selectedFlight = null
             HorizonUi.selected != null -> HorizonUi.selected = null
             else -> HorizonUi.close()
         }
@@ -240,6 +253,16 @@ fun HorizonScreen() {
     val sunNow = pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.latitude, it.longitude, now) }
     val sunDay = if (layers.sun && pos != null) HorizonData.sunFor(h?.takeIf { it.profile != null }, pos.latitude, pos.longitude, HorizonUi.date, now) else null
     val peaks = if (layers.peaks && h != null) HorizonData.peaksFor(h) else null
+    // T312: the poll's centre is the phone's position rounded to 0.1 degree (the poller rounds; a new key only when it moves that far).
+    val centre = pos?.let { Math.round(it.latitude * 10) to Math.round(it.longitude * 10) }
+    DisposableEffect(started, layers.flights, centre, skyRange) {
+        if (started && layers.flights && pos != null) {
+            io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.request(HorizonData.FLIGHTS_OWNER, pos.latitude, pos.longitude, HorizonData.radiusNm(skyRange))
+        }
+        onDispose { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.release(HorizonData.FLIGHTS_OWNER) }
+    }
+    val flights = if (layers.flights) HorizonData.flightsFor(h, pos, skyRange, now) else null
+    val pickedFlight = HorizonUi.selectedFlight?.let { hex -> io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.view.value.aircraft.firstOrNull { it.hex == hex } }
     val selected = HorizonUi.selected
     val picked = peaks?.candidates?.firstOrNull { HorizonUi.keyOf(it) == selected }
     val scroll = rememberScrollState()
@@ -260,6 +283,7 @@ fun HorizonScreen() {
                     horizon?.let { p -> GnssText.horizonLine(p.angleDeg[p.highest], p.bearingDeg(p.highest), p.distanceM[p.highest], h.source, units) },
                     peaks?.ranked?.takeIf { it.isNotEmpty() }?.let { l -> "${HorizonText.PEAKS}: " + l.take(5).joinToString(", ") { it.label.name } },
                     sunNow?.takeIf { layers.sun }?.let { s -> HorizonText.sunNow(s.apparentAltitudeDeg, s.azimuthDeg, fn?.let { f -> s.apparentAltitudeDeg < f(s.azimuthDeg) } ?: false) },
+                    flights?.let { f -> "${HorizonText.FLIGHTS}: " + (f.list.take(5).joinToString(", ") { it.label }.ifEmpty { "0" }) },
                     if (layers.satellites) "${GnssText.SATELLITES}: ${GnssText.usedOf(summary.used, summary.inView)}" else null,
                 ),
             )
@@ -272,13 +296,30 @@ fun HorizonScreen() {
                                 // The nearest name drawn (its box, or within 24 dp of it) picks its peak; a tap elsewhere lets it go.
                                 val hit = HorizonUi.names.minByOrNull { n -> hypot((n.box.center.x - tap.x).toDouble(), (n.box.center.y - tap.y).toDouble()) }
                                     ?.takeIf { n -> n.box.inflate(24 * density.density).contains(tap) }
-                                HorizonUi.selected = hit?.let { HorizonUi.keyOf(it.peak) }?.takeIf { it != HorizonUi.selected }
+                                // T312: a flight's dot (within 24 dp) or its name; the nearer of a flight and a peak name wins.
+                                val reach = 24 * density.density
+                                val flight = HorizonUi.flightMarks.map { m -> m to m.distanceTo(tap) }.filter { (m, d) -> d <= reach || m.box?.contains(tap) == true }.minByOrNull { it.second }
+                                val peakD = hit?.let { n -> hypot((n.box.center.x - tap.x).toDouble(), (n.box.center.y - tap.y).toDouble()).toFloat() }
+                                if (flight != null && (peakD == null || flight.second <= peakD)) {
+                                    HorizonUi.selectedFlight = flight.first.hex.takeIf { it != HorizonUi.selectedFlight }
+                                } else {
+                                    HorizonUi.selected = hit?.let { HorizonUi.keyOf(it.peak) }?.takeIf { it != HorizonUi.selected }
+                                    if (hit == null) HorizonUi.selectedFlight = null
+                                }
                             }
                         },
                         extra = { g -> sunDay?.let { drawSunPath(g, it, pal, night) } },
                         // T309: the names placed by rank and density, the picked peak first (a row of the list may pick one the plot did not name).
-                        over = { g -> peaks?.let { drawPeaks(g, it, picked, selected, sunDay, pal) } },
+                        // T312: the flights' tails and dots, then the names in two passes (peaks as before, flights around them).
+                        over = { g -> drawNames(g, peaks, picked, selected, sunDay, flights, HorizonUi.selectedFlight, pal) },
                     )
+                    // T312: the feed's credit while the Flights layer draws, in the square's lower left corner (outside the circle).
+                    flights?.let { f ->
+                        BasicText(
+                            f.credit, Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 4.dp).fillMaxWidth(0.45f).testTag("horizonFlightsCredit"),
+                            style = TextStyle(color = pal.muted, fontSize = 10.sp),
+                        )
+                    }
                 }
             }
             val pane: @Composable (Modifier) -> Unit = { m ->
@@ -296,7 +337,7 @@ fun HorizonScreen() {
                         Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Toggles(layers, pal)
+                        Toggles(layers, HorizonLayers.buttons(tracking), pal)
                         OrientationRow(orientation, pal)
                         if (orientation == SkyPlotOrientation.PHONE && heading == null) BasicText(GnssText.NORTH_UP_NO_COMPASS, style = TextStyle(color = pal.muted, fontSize = 13.sp))
                         BasicText(
@@ -310,6 +351,7 @@ fun HorizonScreen() {
                         )
                         if (horizon != null) LegendItem(pal, GnssText.LEGEND_TERRAIN) { MarkIcon(Mark.CIRCLE, null, pal.ink, band = pal.band) }
                         if (layers.peaks) PeaksSection(h, peaks, selected, pal, units)
+                        flights?.let { FlightsSection(it, pos != null, HorizonUi.selectedFlight, pal, units) }
                         if (layers.sun) SunSection(pos != null, sunDay, sunNow, fn, pal, night, tick)
                         if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { tick++ }
                         if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
@@ -330,6 +372,15 @@ fun HorizonScreen() {
                 plot()
                 pane(Modifier.weight(1f).fillMaxWidth())
             }
+            // T312: T311's flight card, hosted here (the view is drawn above the map, so the map's card would open underneath):
+            // over the content pane's lower part, beside or under the square, so the dot it names stays in view.
+            pickedFlight?.let { a ->
+                io.github.jasondorjeshort.dystopo.app.aircraft.FlightCard(
+                    a, { HorizonUi.selectedFlight = null },
+                    (if (landscape) Modifier.align(Alignment.BottomEnd).width(maxWidth - side) else Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+                        .heightIn(max = (if (landscape) maxHeight else maxHeight - side) * 0.9f).padding(8.dp).testTag("horizonFlightCard"),
+                )
+            }
             SideEffect {
                 GnssUi.noteDrawn(plotted, fn, rotation, orientation, heading, horizon != null, sunDrawn, night, layers.satellites)
                 HorizonUi.drawn = linkedMapOf(
@@ -343,6 +394,12 @@ fun HorizonScreen() {
                     "sunPathDrawn" to (sunDay?.sun?.path?.size ?: 0), "sunHourMarks" to (sunDay?.marks?.size ?: 0), "sunNowDrawn" to sunDrawn,
                     "selected" to picked?.peak?.name, "scrollPx" to scroll.value, "scrollMaxPx" to scroll.maxValue,
                     "switchPx" to HorizonUi.switchPx, "switchSelected" to "horizon",
+                    // T312
+                    "flightTracking" to tracking, "buttons" to HorizonLayers.buttons(tracking).map { it.key }, "skyRange" to skyRange.key,
+                    "flightsDrawn" to HorizonUi.flightMarks.map { it.hex }, "flightNames" to HorizonUi.flightMarks.filter { it.box != null }.map { it.label },
+                    "flightsHollow" to HorizonUi.flightMarks.filter { it.hollow }.map { it.hex }, "flightsEmergency" to HorizonUi.flightMarks.filter { it.emergency }.map { it.hex },
+                    "flightTailPoints" to HorizonUi.flightMarks.sumOf { it.tailPoints }, "flightsListed" to (flights?.list?.size ?: 0),
+                    "selectedFlight" to pickedFlight?.hex, "flightCard" to (pickedFlight != null), "creditShown" to flights?.credit,
                 )
             }
         }
@@ -359,7 +416,10 @@ class PlacedName(val peak: PeakView, val anchor: Offset, val box: androidx.compo
  * thin leader line to it (the ink at reduced alpha, 1 dp); each name sits on a plate of the sky's colour (T309: the stroke
  * halo before it showed as a ghost "M" where "Mount Rainier" crossed the skyline band's edge).
  */
-private fun DrawScope.drawPeaks(g: PlotGeometry, peaks: HorizonData.Peaks, picked: PeakView?, selected: String?, sunDay: HorizonData.SunDay?, pal: GnssPalette) {
+private fun DrawScope.drawNames(
+    g: PlotGeometry, peaks: HorizonData.Peaks?, picked: PeakView?, selected: String?, sunDay: HorizonData.SunDay?,
+    flights: HorizonData.Flights?, pickedFlight: String?, pal: GnssPalette,
+) {
     val text = android.graphics.Paint().apply { isAntiAlias = true; textSize = 12.dp.toPx(); color = pal.ink.toArgb(); textAlign = android.graphics.Paint.Align.CENTER }
     val rim = RimGeometry(g.c.x.toDouble(), g.c.y.toDouble(), g.radius.toDouble(), g.rotationDeg, density.toDouble())
     // What the names keep off: the ring labels (SkyPlot's, 12 dp) and, with the Sun layer, its hour labels (10 dp) and arc.
@@ -379,8 +439,14 @@ private fun DrawScope.drawPeaks(g: PlotGeometry, peaks: HorizonData.Peaks, picke
         lines += day.sun.path.map { rim.at(it.altitudeDeg, it.azimuthDeg) }
     }
     val fm = text.fontMetrics
-    val first = picked?.let { p -> peaks.scoreOf(p)?.label }
-    val placed = HorizonLabels.place(rim, peaks.ranked, { text.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble(), blocked, lines, first)
+    val first = picked?.let { p -> peaks?.scoreOf(p)?.label }
+    // T312: the flights first under everything: their tails and dots; then the names in two passes (HorizonLabels.placeLayers).
+    val flightList = flights?.list.orEmpty()
+    val flightRanked = HorizonLabels.rank(io.github.jasondorjeshort.dystopo.horizon.HorizonFlights.labels(flightList))
+    val firstFlight = flightRanked.firstOrNull { (it.label.ref as io.github.jasondorjeshort.dystopo.horizon.SkyFlight).hex == pickedFlight }?.label
+    val layers = HorizonLabels.placeLayers(rim, peaks?.ranked.orEmpty(), flightRanked, { text.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble(), blocked, lines, first, firstFlight)
+    drawFlights(g, flightList, layers.aircraft, pickedFlight, text, pal)
+    val placed = layers.peaks
     val names = placed.map { n ->
         PlacedName(
             n.label.ref as PeakView, Offset(n.x.toFloat(), n.y.toFloat()),
@@ -449,15 +515,98 @@ private fun DrawScope.drawSunPath(g: PlotGeometry, day: HorizonData.SunDay, pal:
     }
 }
 
-/** The layer toggles: one row of toggle buttons (the owner's words), wrapping at large text. */
+/**
+ * T312: a flight as last drawn: its [hex], its dot's centre, its name's [box] when named, whether [hollow] or an
+ * [emergency], its [tailPoints] (for the tap and `GET /horizon` `drawn`).
+ */
+class FlightMark(val hex: String, val label: String, val dot: Offset, val box: androidx.compose.ui.geometry.Rect?, val hollow: Boolean, val emergency: Boolean, val tailPoints: Int) {
+    fun distanceTo(p: Offset): Float = minOf(
+        (dot - p).getDistance(),
+        box?.let { b -> if (b.contains(p)) 0f else Float.MAX_VALUE } ?: Float.MAX_VALUE,
+    )
+}
+
+/** T312: T311's one altitude colour scale (metres above EGM2008), linear between its stops, as the map's trails. */
+internal fun altitudeColour(m: Double?): Color {
+    val stops = io.github.jasondorjeshort.dystopo.aircraft.AircraftText.ALTITUDE_COLOURS
+    fun c(hex: String) = Color(android.graphics.Color.parseColor(hex))
+    m ?: return c(io.github.jasondorjeshort.dystopo.aircraft.AircraftText.UNKNOWN_COLOUR)
+    if (m <= stops.first().first) return c(stops.first().second)
+    for (i in 0 until stops.size - 1) {
+        val (a, ca) = stops[i]
+        val (b, cb) = stops[i + 1]
+        if (m <= b) return androidx.compose.ui.graphics.lerp(c(ca), c(cb), ((m - a) / (b - a)).toFloat())
+    }
+    return c(stops.last().second)
+}
+
+/** T312: the emergency ring's colour (the shape carries the meaning; the red adds to it). */
+private val EMERGENCY = Color(0xFFD0021B)
+
+/**
+ * T312: the Flights layer on the plot: each flight's tail (its last 90 s, thin, in its altitude colour; dashed while
+ * hollow), its dot (filled in the altitude colour with an ink edge; hollow, the sky's colour inside an altitude-coloured
+ * ring, when hidden by the terrain or stale), a red ring around an emergency's dot, a link-coloured ring around the picked
+ * one, then the names [named] placed (on a plate, muted when hollow). Writes [HorizonUi.flightMarks].
+ */
+private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondorjeshort.dystopo.horizon.SkyFlight>, named: List<HorizonLabels.Placed>, picked: String?, text: android.graphics.Paint, pal: GnssPalette) {
+    val r = 4.5.dp.toPx()
+    val boxes = named.associate { n -> (n.label.ref as io.github.jasondorjeshort.dystopo.horizon.SkyFlight).hex to n }
+    val marks = ArrayList<FlightMark>()
+    for (f in list) {
+        if (f.tail.size < 2) continue
+        val colour = altitudeColour(f.aircraft.altitudeM)
+        val path = Path()
+        for ((i, p) in f.tail.withIndex()) {
+            val at = g.at(p.elevationDeg, p.bearingDeg)
+            if (i == 0) path.moveTo(at.x, at.y) else path.lineTo(at.x, at.y)
+        }
+        drawPath(
+            path, colour.copy(alpha = 0.7f),
+            style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, pathEffect = if (f.hollow) PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx())) else null),
+        )
+    }
+    for (f in list) {
+        val at = g.at(f.elevationDeg, f.bearingDeg)
+        val colour = altitudeColour(f.aircraft.altitudeM)
+        val emergency = f.aircraft.report.emergency != null
+        if (f.hollow) {
+            drawCircle(pal.sky, r, at)
+            drawCircle(colour, r - 1.dp.toPx(), at, style = Stroke(2.dp.toPx()))
+        } else {
+            drawCircle(colour, r, at)
+            drawCircle(pal.ink, r, at, style = Stroke(1.dp.toPx()))
+        }
+        if (emergency) drawCircle(EMERGENCY, r + 4.dp.toPx(), at, style = Stroke(2.dp.toPx()))
+        if (f.hex == picked) drawCircle(pal.link, r + 7.5.dp.toPx(), at, style = Stroke(2.dp.toPx()))
+        val n = boxes[f.hex]
+        marks += FlightMark(
+            f.hex, f.label, at, n?.let { androidx.compose.ui.geometry.Rect(it.box.left.toFloat(), it.box.top.toFloat(), it.box.right.toFloat(), it.box.bottom.toFloat()) },
+            f.hollow, emergency, f.tail.size,
+        )
+    }
+    for (n in named) {
+        val f = n.label.ref as io.github.jasondorjeshort.dystopo.horizon.SkyFlight
+        n.leader?.let { l -> drawLine(pal.ink.copy(alpha = 0.45f), Offset(l[0].x.toFloat(), l[0].y.toFloat()), Offset(l[1].x.toFloat(), l[1].y.toFloat()), 1.dp.toPx()) }
+        drawRoundRect(pal.sky.copy(alpha = 0.85f), Offset(n.box.left.toFloat(), n.box.top.toFloat()), androidx.compose.ui.geometry.Size((n.box.right - n.box.left).toFloat(), (n.box.bottom - n.box.top).toFloat()), androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()))
+        text.isFakeBoldText = f.hex == picked
+        text.color = (if (f.hex == picked) pal.link else if (f.hollow) pal.muted else pal.ink).toArgb()
+        drawContext.canvas.nativeCanvas.drawText(n.label.name, n.x.toFloat(), n.y.toFloat(), text)
+    }
+    text.isFakeBoldText = false
+    text.color = pal.ink.toArgb()
+    HorizonUi.flightMarks = marks
+}
+
+/** The layer toggles: one row of toggle buttons (the owner's words), wrapping at large text; T312: [buttons] those shown. */
 @Composable
-private fun Toggles(layers: HorizonLayers, pal: GnssPalette) {
+private fun Toggles(layers: HorizonLayers, buttons: List<HorizonLayer>, pal: GnssPalette) {
     @OptIn(ExperimentalLayoutApi::class)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
             BasicText("${HorizonText.LAYERS}:", style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
         }
-        for (l in HorizonLayer.entries) {
+        for (l in buttons) {
             val on = layers[l]
             Box(
                 Modifier.heightIn(min = 48.dp).semantics { this.selected = on }.clickable(role = Role.Switch) { HorizonUi.setLayer(l, !on) },
@@ -526,6 +675,63 @@ private fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selec
                         if (PeakRim.inSight(p)) "" else " · ${HorizonText.JUST_OUT_OF_SIGHT}",
                     style = TextStyle(color = pal.muted, fontSize = 13.sp),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * T312: the flights on the plot, closest first (as the Peaks list): how many, or the feed's state; then each: a dot as the
+ * plot draws it (an emergency's ring too), the label (bold when picked), and distance, bearing, angle, altitude in the
+ * user's units, the kind and an emergency's line; a tap opens its card.
+ */
+@Composable
+private fun FlightsSection(f: HorizonData.Flights, havePosition: Boolean, selected: String?, pal: GnssPalette, units: ContourUnits) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SectionHead(HorizonText.FLIGHTS, pal) { HelpIcon("horizon.flights") }
+        val line = when {
+            !havePosition -> HorizonText.FLIGHTS_NO_POSITION
+            f.list.isNotEmpty() -> HorizonText.flightsCount(f.list.size, f.range, units)
+            f.message != null -> f.message
+            else -> HorizonText.flightsNone(f.range, units)
+        }
+        BasicText(line, style = TextStyle(color = pal.ink, fontSize = 14.sp))
+        // A feed that is offline, stopped or limited says so above the rows it still holds.
+        if (f.list.isNotEmpty() && f.message != null) BasicText(f.message, style = TextStyle(color = pal.muted, fontSize = 13.sp))
+        for (s in f.list) {
+            val chosen = s.hex == selected
+            val emergency = s.aircraft.report.emergency
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { this.selected = chosen }
+                    .clickable(role = Role.Button) { HorizonUi.selectedFlight = if (chosen) null else s.hex }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.foundation.Canvas(Modifier.size(24.dp)) {
+                    val c = Offset(size.width / 2, size.height / 2)
+                    val r = 4.5.dp.toPx()
+                    val colour = altitudeColour(s.aircraft.altitudeM)
+                    if (s.hollow) {
+                        drawCircle(pal.sky, r, c)
+                        drawCircle(colour, r - 1.dp.toPx(), c, style = Stroke(2.dp.toPx()))
+                    } else {
+                        drawCircle(colour, r, c)
+                        drawCircle(pal.ink, r, c, style = Stroke(1.dp.toPx()))
+                    }
+                    if (emergency != null) drawCircle(EMERGENCY, r + 4.dp.toPx(), c, style = Stroke(2.dp.toPx()))
+                }
+                Column(Modifier.weight(1f).padding(start = 6.dp)) {
+                    BasicText(
+                        s.label + (emergency?.let { " · ${it.line} (${it.squawk})" } ?: ""),
+                        style = TextStyle(color = if (chosen) pal.link else pal.ink, fontSize = 15.sp, fontWeight = if (chosen || emergency != null) FontWeight.Bold else FontWeight.Normal),
+                    )
+                    BasicText(
+                        listOfNotNull(
+                            HorizonText.kind(s.aircraft.report.kind),
+                            HorizonText.flightLine(s.distanceM, s.bearingDeg, s.elevationDeg, HorizonData.altitudeText(s, units), s.hidden, s.aircraft.ageS.takeIf { s.stale }, units),
+                        ).joinToString(" · "),
+                        style = TextStyle(color = pal.muted, fontSize = 13.sp),
+                    )
+                }
             }
         }
     }

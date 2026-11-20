@@ -118,6 +118,18 @@ object HorizonText {
         ).joinToString(" · ")
     }
 
+    /** The kind a row names, from the emitter category ("Helicopter"); null when the feed says nothing. */
+    fun kind(k: io.github.jasondorjeshort.dystopo.aircraft.AircraftKind): String? = when (k) {
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.LIGHT -> "Light aircraft"
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.AIRLINER -> "Airliner"
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.HEAVY -> "Heavy jet"
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.ROTORCRAFT -> "Helicopter"
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.GLIDER -> "Glider"
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.BALLOON -> "Balloon"
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.UAV -> "Drone"
+        io.github.jasondorjeshort.dystopo.aircraft.AircraftKind.GENERIC -> null
+    }
+
     private fun angle(d: Double) = if (d < 10) UnitFormat.fixed(d, 1) else Math.round(d).toString()
 
     // The plot's description for screen readers.
