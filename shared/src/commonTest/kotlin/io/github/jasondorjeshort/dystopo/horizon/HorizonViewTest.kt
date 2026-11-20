@@ -115,27 +115,137 @@ class HorizonViewTest {
         assertTrue(views[1].skyline)
         assertEquals(270.0, views[1].bearingDeg, 0.5)
         assertEquals(listOf("West Dome"), PeakRim.skyline(views).map { it.peak.name })
-        assertEquals(listOf("West Dome"), PeakRim.labelled(views).map { it.peak.name })
+        assertEquals(listOf("West Dome"), PeakRim.candidates(views).map { it.peak.name }, "the knob, hidden far more than 60 m, is no candidate")
+        assertEquals(listOf("West Dome"), PeakRim.labels(views).map { it.name })
     }
 
-    private fun view(name: String, bearing: Double, ele: Double, skyline: Boolean = true, distance: Double = 5000.0) =
-        PeakView(Peak(name, "peak", 0.0, 0.0, ele), distance, bearing, "", ele, false, 5.0, skyline, 1.0, skyline)
+    /** A peak [distance] m out at [bearing], [hiddenM] metres out of sight (0: in sight), on the skyline or not. */
+    private fun view(name: String, bearing: Double, ele: Double, distance: Double = 5000.0, hiddenM: Double = 0.0, skyline: Boolean = hiddenM == 0.0, angle: Double = 3.0, clear: Double = 1.0): PeakView {
+        val clearance = if (hiddenM == 0.0) clear else -kotlin.math.atan(hiddenM / distance) * 180 / kotlin.math.PI
+        return PeakView(Peak(name, "peak", 0.0, 0.0, ele), distance, bearing, "", ele, false, angle, hiddenM == 0.0, clearance, skyline)
+    }
+
+    // A 400 px plot at 1 px per dp, north up; names 6 px a letter, 9 px above the baseline and 3 below.
+    private val g = RimGeometry.of(400.0, 400.0, 1.0, 0.0)
+    private val width = { s: String -> 6.0 * s.length }
+    private fun placed(peaks: List<PeakView>, geom: RimGeometry = g, blocked: List<RimBox> = emptyList(), lines: List<List<RimPt>> = emptyList()) =
+        HorizonLabels.place(geom, HorizonLabels.rank(PeakRim.labels(peaks)), width, -9.0, 3.0, blocked, lines)
+    private fun names(peaks: List<PeakView>, geom: RimGeometry = g) = placed(peaks, geom).map { it.label.name }
 
     @Test
-    fun theRimNamesTheHighestSkylinePeakOfEachThirtyDegreeSectorTenDegreesApart() {
-        val peaks = listOf(
-            view("Low North", 5.0, 2000.0), view("High North", 25.0, 2500.0), view("Hidden Giant", 15.0, 4000.0, skyline = false),
-            view("Edge", 30.0, 1800.0), view("Last", 359.9, 1500.0), view("Twin Far", 200.0, 2200.0, distance = 9000.0),
-            view("Twin Near", 205.0, 2200.0, distance = 3000.0),
-        )
-        assertEquals(listOf(0, 1, 11, 6), listOf(0.0, 30.0, 359.9, 200.0).map { PeakRim.sector(it) })
-        assertEquals(0, PeakRim.sector(360.0))
-        // Edge wins its sector but stands 5 degrees from High North, which is higher: one name there. Last, at 359.9, is
-        // 25.1 degrees from High North the short way round, so it stays.
-        assertEquals(listOf("High North", "Twin Near", "Last"), PeakRim.labelled(peaks).map { it.peak.name })
-        assertEquals(listOf("High North", "Edge", "Twin Near", "Last"), PeakRim.labelled(peaks, minGapDeg = 0.0).map { it.peak.name }, "one per sector without the gap")
-        assertEquals(0.2, PeakRim.apart(359.9, 0.1), 1e-9)
-        assertEquals(180.0, PeakRim.apart(90.0, 270.0), 1e-9)
-        assertEquals(listOf("Low North", "High North", "Edge", "Twin Far", "Twin Near", "Last"), PeakRim.skyline(peaks).map { it.peak.name }, "every skyline peak listed, clockwise")
+    fun justOutOfSightIsSixtyMetresOfHeightNotAnAngle() {
+        assertEquals(-45.0, PeakRim.hiddenLimitDeg(60.0), 1e-9)
+        assertEquals(-0.1375, PeakRim.hiddenLimitDeg(25_000.0), 1e-3)
+        val near = view("Near Knob", 10.0, 1900.0, distance = 800.0, hiddenM = 40.0)
+        val deep = view("Deep Knob", 100.0, 1900.0, distance = 800.0, hiddenM = 200.0)
+        val far = view("Far Hidden", 200.0, 1900.0, distance = 25_000.0, hiddenM = 59.0)
+        val open = PeakView(Peak("No Blocker", "peak", 0.0, 0.0, 10.0), 50.0, 0.0, "", 10.0, false, 1.0, false, 90.0, false)
+        assertEquals(listOf("No Blocker", "Near Knob", "Far Hidden"), PeakRim.candidates(listOf(far, deep, near, open)).map { it.peak.name }, "closest first; 200 m hidden left out")
+        assertTrue(PeakRim.inSight(open))
+        assertFalse(PeakRim.inSight(near))
+        val labels = PeakRim.labels(listOf(near, far))
+        assertTrue(labels.all { it.outOfSight && it.kind == LabelKind.PEAK })
+    }
+
+    @Test
+    fun aClosePeakJustOutOfSightOutranksAFartherLowerOne() {
+        val summit = view("The Summit", 200.0, 4000.0, distance = 15_000.0, angle = 12.0)
+        val farLow = view("Far Low", 12.0, 1800.0, distance = 20_000.0, angle = 2.0, clear = 0.3)
+        val near = view("Near Knob", 10.0, 1900.0, distance = 800.0, hiddenM = 40.0, angle = 2.0)
+        val deep = view("Deep Knob", 11.0, 1950.0, distance = 600.0, hiddenM = 200.0)
+        val ranked = HorizonLabels.rank(PeakRim.labels(listOf(summit, farLow, near, deep)))
+        assertEquals(listOf("The Summit", "Near Knob", "Far Low"), ranked.map { it.label.name }, "the summit first, then the near knob; 200 m hidden left out")
+        assertTrue(ranked[0].score > HorizonLabels.DOMINANT_BONUS)
+        // Two degrees apart, the knob holds the stretch: the far one is inside its density gap and goes to the list.
+        assertEquals(listOf("The Summit", "Near Knob"), names(listOf(summit, farLow, near, deep)))
+    }
+
+    @Test
+    fun theScoreFavoursCloserHigherAboveTheHorizonAndProminent() {
+        val ctx = HorizonLabels.Context(1000.0, 3000.0)
+        fun l(d: Double = 5000.0, h: Double = 1.0, a: Double = 3.0, ele: Double = 2000.0, prom: Double = 100.0) =
+            HorizonLabel("x", LabelKind.PEAK, 0.0, a, d, h, ele, prom)
+        val base = HorizonLabels.score(l(), ctx).score
+        assertTrue(HorizonLabels.score(l(d = 1000.0), ctx).score > base)
+        assertTrue(HorizonLabels.score(l(h = 1.4), ctx).score > base)
+        assertTrue(HorizonLabels.score(l(a = 5.0), ctx).score > base)
+        assertTrue(HorizonLabels.score(l(prom = 500.0), ctx).score > base)
+        assertTrue(HorizonLabels.score(l(ele = 2900.0), ctx).score > base)
+        assertTrue(HorizonLabels.score(l(h = -0.2), ctx).score < HorizonLabels.score(l(h = 0.0), ctx).score, "out of sight counts less than level")
+        assertEquals(100.0, HorizonLabels.prominence(2100.0, listOf(1900.0, 2000.0, 2500.0)), 1e-9)
+        assertEquals(0.0, HorizonLabels.prominence(1800.0, listOf(1900.0, 2000.0)), 1e-9)
+    }
+
+    @Test
+    fun theHighestSkylinePeakIsNamedEvenWithACloserCandidateBesideIt() {
+        val giant = view("Mount Giant", 20.0, 4300.0, distance = 14_000.0, angle = 14.0)
+        val close = view("Close Hill", 21.0, 1800.0, distance = 900.0, skyline = false, angle = 14.0)
+        assertEquals(listOf("Mount Giant"), names(listOf(close, giant)), "the summit keeps its own; the hill is inside its gap")
+        // Even where every place is taken by a ring or hour label, the summit is drawn.
+        val everywhere = listOf(RimBox(-1e4, -1e4, 1e4, 1e4))
+        assertEquals(listOf("Mount Giant"), placed(listOf(close, giant), blocked = everywhere).map { it.label.name })
+    }
+
+    @Test
+    fun aCrowdedStretchOfTheRimGetsWiderGapsThanASparseOne() {
+        // A big plot, so the boxes leave the density gap to decide: twenty peaks over 30 degrees in the north, three in the south.
+        val big = RimGeometry.of(4000.0, 4000.0, 1.0, 0.0)
+        val crowd = (0 until 20).map { view("C$it", 345.0 + it * 1.5, 1500.0, distance = 3000.0 + it * 10) }
+        val sparse = (0 until 3).map { view("S$it", 175.0 + it * 3.5, 1500.0, distance = 3000.0 + it * 10) }
+        val p = placed(crowd + sparse, big)
+        val inCrowd = p.filter { it.label.name.startsWith("C") }
+        val inSparse = p.filter { it.label.name.startsWith("S") }
+        assertEquals(3, inSparse.size, "an empty stretch takes close neighbours")
+        assertTrue(inCrowd.size in 2..10, "${inCrowd.size} of 20 named in the crowd")
+        assertTrue(inCrowd.minOf { it.gapDeg } > inSparse.maxOf { it.gapDeg })
+        fun minApart(ps: List<HorizonLabels.Placed>) = ps.flatMap { a -> ps.filter { it !== a }.map { HorizonLabels.apart(a.label.bearingDeg, it.label.bearingDeg) } }.min()
+        assertTrue(minApart(inCrowd) > minApart(inSparse), "${minApart(inCrowd)} against ${minApart(inSparse)}")
+        assertEquals(HorizonLabels.GAP_MIN_DEG, HorizonLabels.gapDeg(1))
+    }
+
+    @Test
+    fun namesSpreadAroundTheRim() {
+        // A crowd of close peaks in the first sector and a far one in every other: the crowd may not take the plot.
+        val crowd = (0 until 12).map { view("Crowd $it", 2.0 + it * 2.3, 1500.0, distance = 1000.0 + it * 50) }
+        val spread = (1 until 12 step 2).map { view("Far $it", it * 30.0 + 15, 2000.0, distance = 20_000.0) }
+        val placed = names(crowd + spread)
+        for (s in spread) assertTrue(s.peak.name in placed, "${s.peak.name} named: $placed")
+        assertTrue(placed.count { it.startsWith("Crowd") } in 2..6, "the crowd thinned, not emptied: $placed")
+    }
+
+    @Test
+    fun noNameCrossesARingLabelAnHourLabelOrTheSunsArc() {
+        // Names all round the rim, and a winter sun low in the south with hour labels on its dots.
+        val peaks = (0 until 36).map { view("Peak number $it", it * 10.0 + 3, 1500.0 + it, distance = 1000.0 + it * 300) }
+        val arc = (100..260 step 5).map { az -> g.at(18 * kotlin.math.sin((az - 100) * kotlin.math.PI / 160), az.toDouble()) }
+        val hours = (110..250 step 20).map { az -> g.hourLabel(18 * kotlin.math.sin((az - 100) * kotlin.math.PI / 160), az.toDouble(), 12.0, -8.0, 2.0) }
+        val rings = listOf(0.0, 30.0, 60.0).map { el -> g.ringLabel(el, 18.0, -9.0, 3.0) }
+        val free = placed(peaks)
+        assertTrue(free.any { n -> (rings + hours).any { it.overlaps(n.box) } || n.box.crosses(arc) }, "without them some name would sit on one")
+        val ps = placed(peaks, blocked = rings + hours, lines = listOf(arc))
+        assertTrue(ps.size >= 6, "${ps.size} named")
+        for (n in ps) {
+            assertTrue((rings + hours).none { it.overlaps(n.box) } || n.label.dominant, "${n.label.name} over a label")
+            assertTrue(!n.box.crosses(arc) || n.label.dominant, "${n.label.name} on the sun's arc")
+            assertTrue(ps.none { it !== n && it.box.overlaps(n.box) }, "${n.label.name} over another name")
+        }
+    }
+
+    @Test
+    fun aBoxCrossesALineThroughItButNotOneBeside() {
+        val b = RimBox(0.0, 0.0, 10.0, 10.0)
+        assertTrue(b.crosses(listOf(RimPt(-5.0, 5.0), RimPt(15.0, 5.0))), "straight through")
+        assertTrue(b.crosses(listOf(RimPt(-5.0, -4.0), RimPt(15.0, 14.0))), "corner to corner")
+        assertFalse(b.crosses(listOf(RimPt(-5.0, 12.0), RimPt(15.0, 30.0))), "below it")
+        assertFalse(b.crosses(listOf(RimPt(12.0, -5.0), RimPt(30.0, 5.0))), "beside it")
+        assertTrue(b.crosses(listOf(RimPt(5.0, 5.0))), "a point inside")
+    }
+
+    @Test
+    fun apartAndSkyline() {
+        assertEquals(0.2, HorizonLabels.apart(359.9, 0.1), 1e-9)
+        assertEquals(180.0, HorizonLabels.apart(90.0, 270.0), 1e-9)
+        val peaks = listOf(view("B", 90.0, 1.0), view("A", 10.0, 1.0), view("Off", 50.0, 1.0, skyline = false))
+        assertEquals(listOf("A", "B"), PeakRim.skyline(peaks).map { it.peak.name })
     }
 }

@@ -61,7 +61,7 @@ object HorizonRoutes {
                 app.map.onMain {
                     if (q.containsKey("date")) HorizonUi.date = date
                     q["select"]?.let { name ->
-                        HorizonUi.selected = if (name == "none") null else HorizonData.peaks?.skyline?.firstOrNull { it.peak.name.equals(name, ignoreCase = true) }?.let { HorizonUi.keyOf(it) }
+                        HorizonUi.selected = if (name == "none") null else HorizonData.peaks?.candidates?.firstOrNull { it.peak.name.equals(name, ignoreCase = true) }?.let { HorizonUi.keyOf(it) }
                     }
                     scroll?.let { HorizonUi.scrollTo = it }
                 }
@@ -100,7 +100,7 @@ object HorizonRoutes {
             "position" to (pos != null), "drawn" to HorizonUi.drawn,
             "horizon" to Gnss.horizonJson(h)?.filterKeys { it != "angleDeg" },
             "horizonReason" to if (h == null) (if (pos == null) io.github.jasondorjeshort.dystopo.app.gnss.GnssText.NO_POSITION else io.github.jasondorjeshort.dystopo.app.gnss.GnssText.HORIZON_WORKING) else h.reason,
-            "peaks" to HorizonData.peaksJson(peaks), "peakRuns" to HorizonData.peakRuns.get(),
+            "peaks" to HorizonData.peaksJson(peaks, HorizonUi.drawn?.let { HorizonUi.names.map { n -> HorizonUi.keyOf(n.peak) }.toSet() }), "peakRuns" to HorizonData.peakRuns.get(),
             "sun" to sun?.let { HorizonData.sunJson(it) + mapOf("nowAltitudeDeg" to sunNow?.apparentAltitudeDeg?.let { a -> Math.round(a * 10) / 10.0 }, "nowAzimuthDeg" to sunNow?.azimuthDeg?.let { a -> Math.round(a * 10) / 10.0 }) },
         )
         if (q["compare"] == "1" && sun != null) out["turnaround"] = compare(app, h, pos.latitude, pos.longitude, sun)
