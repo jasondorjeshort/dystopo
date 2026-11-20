@@ -17,7 +17,8 @@ The owner, 2026-11-20: "Yeah, I want this as a real button." A two-segment "Map 
 the survey in `docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md` put it at the bottom): on the map, Map
 selected, in the left lower column over the scale bar's line, an element of the layout rule (`OverlayIds.HORIZON_SWITCH`,
 `horizonSwitch` in `GET /layout`, map chrome's capped font scale, 48 dp tall). It yields after the scale bar and before the
-readout's core entries; hidden, it says why (`yieldOrder`, `noRoom`). The route card's cap keeps its height free above
+readout's core entries; hidden, it says why (`yieldOrder`, `noRoom`, and T310's `firstRunCard` while the first-run card is up,
+which covers its place). The route card's cap keeps its height free above
 the card (`BottomPanels.mapRowDp`). On the Horizon view the same control is fixed at the bottom of the content pane (under
 the square in portrait, in the right pane in landscape), Horizon selected, under the scrolling area. "Horizon" opens the
 view, "Map" closes it as Close and Back do. Each segment is a tab (`selectable`, `Role.Tab`), tags `horizonSwitch.map`
