@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-20
+
+- T311: Flights on the map: live aircraft with origin and destination
+
 ## v0.1.35-alpha (2026-11-20)
 
 ### 2026-11-20
