@@ -2105,7 +2105,7 @@ def horizon_flights_step(dev):
     turned_on = False
     try:
         close_sheet(dev)
-        open_settings(dev, "Navigation and tracking", "^Route snap$|^Navigation and tracking$")
+        open_settings(dev, "Navigation and tracking", "^Route snap$")
         row, nodes = scroll_to(dev, SKY_RANGE_ROW, swipes=30)
         if not row:
             raise RuntimeError(f"no Sky range row (texts: {dev.texts(nodes)[-20:]})")
@@ -2113,7 +2113,7 @@ def horizon_flights_step(dev):
         out["frames"]["skyRange"] = dev.screencap("sky-range-row")[0]
         close_sheet(dev)
         airplane(dev, True)
-        open_settings(dev, "Map options", "^Hillshade$|^Map options$")
+        open_settings(dev, "Map options", "^Hillshade$")
         row, nodes = scroll_to(dev, FLIGHTS_ROW)
         on = row_on(dev, row, nodes, "^Flight tracking: Refresh$") if row else None
         if not on:
@@ -2157,7 +2157,7 @@ def horizon_flights_step(dev):
         if turned_on:
             try:
                 close_sheet(dev)
-                open_settings(dev, "Map options", "^Hillshade$|^Map options$")
+                open_settings(dev, "Map options", "^Hillshade$")
                 row, nodes = scroll_to(dev, FLIGHTS_ROW)
                 stop = dev.find("^Flight tracking: Refresh$", nodes) if row else None
                 offs = [x for x in nodes if row and x["text"] == "Off" and x["bounds"] and row["bounds"][1] < x["bounds"][1] < (stop["bounds"][1] if stop else 10 ** 6)]
@@ -2192,21 +2192,23 @@ def part_horizonflights(args):
         return srv.call("GET", "/horizon")[1] or {}
 
     def to_list():
-        # From the top of the scrolling area, small swipes until the Flights heading stands in the screen's middle band
-        # (its list below it); the heading is "Flights" exactly (the toggle reads "✓ Flights").
+        # From the top of the scrolling area, small slow swipes until the Flights section's count line stands high in it.
         srv.call("POST", "/horizon?scroll=0")
         time.sleep(1.0)
-        w, h, _d = screen(dev)
         for _ in range(12):
             nodes = dev.nodes()
-            heads = [x for x in nodes if x["text"] == "Flights" and x["bounds"]]
-            top = max((x["bounds"][1] for x in heads), default=None)
+            # The screen as laid out now (screen() reads the unrotated size; landscape turns it).
+            w = max((x["bounds"][2] for x in nodes if x["bounds"]), default=1080)
+            h = max((x["bounds"][3] for x in nodes if x["bounds"]), default=2400)
             close = [x for x in nodes if x["text"] == "Close" and x["bounds"]]
             under = min((x["bounds"][3] for x in close), default=int(h * 0.5))  # the heading's bottom: the scroll area starts there
-            counted = any(re.match(r"^\d+ flights? |^No flight", x["text"] or "") and x["bounds"] and x["bounds"][1] < h * 0.8 for x in nodes)
-            if counted or (top is not None and top < under + h * 0.1):
+            # The count line high in the scroll area, so rows show under it (landscape's pane is short above the switch).
+            counted = any(re.match(r"^\d+ flights? |^No flight", x["text"] or "") and x["bounds"] and x["bounds"][1] < under + h * 0.25 for x in nodes)
+            if counted:
                 return
-            dev.shell("input", "swipe", str(w * 3 // 4), str(h * 85 // 100), str(w * 3 // 4), str(h * 72 // 100), "1200")  # slow: no fling
+            # Inside the scroll area, above the switch fixed at the pane's bottom (landscape's pane is short); slow: no fling.
+            y0 = int(under + (h * 0.78 - under) * 0.8)
+            dev.shell("input", "swipe", str(w * 3 // 4), str(y0), str(w * 3 // 4), str(y0 - h * 13 // 100), "1200")
             time.sleep(1.0)
 
     def setup():
