@@ -588,5 +588,13 @@ internal val HORIZON_HELP: List<HelpText> = run {
             "Today's path of the sun, with the hours, dashed where the terrain hides it. The times are when the top of the " +
                 "sun clears the terrain and goes behind it, as the turn-back time uses; the flat horizon's are for comparison."
         },
+        // T312
+        HelpText("horizon.flights", HorizonText.FLIGHTS, "$placed › ${HorizonText.FLIGHTS}", show = show) { _ ->
+            "Each flight in the air is a dot where it is in the sky, with a tail of its last 90 s. Hollow: hidden by the " +
+                "terrain or its position over ${Math.round(io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.STALE_S)} s old. " +
+                "A ring marks an emergency code. The list has all, closest first; tap a dot or a row for its card. " +
+                "${HorizonText.SKY_RANGE} in Settings picks overhead, near or all."
+        },
+        // end T312
     )
 }

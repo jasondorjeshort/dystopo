@@ -77,6 +77,49 @@ object HorizonText {
         return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
     }
 
+    // T312: the Flights layer (user-visible text says flights; code says aircraft).
+    const val FLIGHTS = io.github.jasondorjeshort.dystopo.aircraft.AircraftText.LAYER
+    const val SKY_RANGE = "Sky range"
+    const val SKY_RANGE_LINE = "which flights the Horizon view shows: overhead, near or all"
+    const val BEHIND_TERRAIN = "behind the terrain"
+    const val FLIGHTS_NO_POSITION = "No position yet, so no flights."
+
+    /** The "Near" sky range in the user's units: "31.1 mi" or "50 km". */
+    fun near(units: ContourUnits) = UnitFormat.distance(io.github.jasondorjeshort.dystopo.horizon.HorizonFlights.NEAR_M, units)
+
+    private val overheadDeg get() = Math.round(io.github.jasondorjeshort.dystopo.horizon.HorizonFlights.OVERHEAD_DEG)
+
+    fun skyRangeHelp(units: ContourUnits) =
+        "Which flights the Horizon view shows while Flight tracking is on. Overhead: only those more than ${overheadDeg}° up. " +
+            "Near: those within ${near(units)} of you. All: every flight the feed reports around you."
+
+    /** "3 flights in the air around you, closest first."; with Overhead or Near the range in place of "in the air around you". */
+    fun flightsCount(n: Int, range: io.github.jasondorjeshort.dystopo.horizon.SkyRange, units: ContourUnits): String {
+        val what = "$n ${if (n == 1) "flight" else "flights"}"
+        return when (range) {
+            io.github.jasondorjeshort.dystopo.horizon.SkyRange.OVERHEAD -> "$what overhead (above ${overheadDeg}°), closest first."
+            io.github.jasondorjeshort.dystopo.horizon.SkyRange.NEAR -> "$what within ${near(units)}, closest first."
+            io.github.jasondorjeshort.dystopo.horizon.SkyRange.ALL -> "$what in the air around you, closest first."
+        }
+    }
+
+    fun flightsNone(range: io.github.jasondorjeshort.dystopo.horizon.SkyRange, units: ContourUnits): String = when (range) {
+        io.github.jasondorjeshort.dystopo.horizon.SkyRange.OVERHEAD -> "No flight overhead now (above ${overheadDeg}°)."
+        io.github.jasondorjeshort.dystopo.horizon.SkyRange.NEAR -> "No flight within ${near(units)} now."
+        io.github.jasondorjeshort.dystopo.horizon.SkyRange.ALL -> "No flight in the air around you now."
+    }
+
+    /** A row's second line: "12.4 mi · NE 45° · 11° up · 35,000 ft", then "behind the terrain" or the stale age. */
+    fun flightLine(distanceM: Double, bearingDeg: Double, elevationDeg: Double, altitude: String?, hidden: Boolean, staleAgeS: Double?, units: ContourUnits): String {
+        val up = if (elevationDeg >= 0) "${angle(elevationDeg)}° up" else "${angle(-elevationDeg)}° below level"
+        return listOfNotNull(
+            UnitFormat.distance(distanceM, units), "${GnssText.compassPoint(bearingDeg)} ${Math.round(bearingDeg) % 360}°", up, altitude,
+            if (hidden) BEHIND_TERRAIN else null, staleAgeS?.let { "${Math.round(it)} s ago" },
+        ).joinToString(" · ")
+    }
+
+    private fun angle(d: Double) = if (d < 10) UnitFormat.fixed(d, 1) else Math.round(d).toString()
+
     // The plot's description for screen readers.
     const val PLOT_LABEL = "Horizon plot"
     fun plotLabel(parts: List<String>) = (listOf(PLOT_LABEL) + parts).joinToString("; ")

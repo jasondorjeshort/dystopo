@@ -642,9 +642,10 @@ object AppSettings {
         io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.SATELLITES -> HORIZON_SATELLITES
         io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.PEAKS -> HORIZON_PEAKS
         io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.SUN -> HORIZON_SUN
+        io.github.jasondorjeshort.dystopo.horizon.HorizonLayer.FLIGHTS -> HORIZON_FLIGHTS // T312
     }
     val horizonLayers: io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
-        get() = io.github.jasondorjeshort.dystopo.horizon.HorizonLayers(HORIZON_SATELLITES.value, HORIZON_PEAKS.value, HORIZON_SUN.value)
+        get() = io.github.jasondorjeshort.dystopo.horizon.HorizonLayers(HORIZON_SATELLITES.value, HORIZON_PEAKS.value, HORIZON_SUN.value, HORIZON_FLIGHTS.value)
     // end T308
     // T311: Flight tracking (the Flights layer, off by default: a new data flow), its refresh interval (20 s; 10, 20, 30 or
     // 60) and how airports read (codes on labels and both on the card; codes; cities). Each synced, ADR 0044 (the research
@@ -662,6 +663,19 @@ object AppSettings {
         { io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.of(it.toString()) },
         { "$KEY_AIRCRAFT_AIRPORTS must be both, codes or cities (got $it)" }))
     // end T311
+    // T312: the Horizon view's Flights toggle (on by default; its button shows only while Flight tracking is on), synced as
+    // the other toggles; and "Sky range" (ADR 0044: the apps split, the finding of 2026-11-20): which aircraft the layer
+    // draws, `overhead` (above 45°), `near` (within 50 km) or `all` (the default); a stored value this build does not know
+    // reads as the default. Synced (ADR 0033: two keys added).
+    const val KEY_HORIZON_FLIGHTS = "horizonFlights"
+    val HORIZON_FLIGHTS = flag(KEY_HORIZON_FLIGHTS, true, synced = true)
+    const val KEY_SKY_RANGE = "skyRange"
+    val SKY_RANGE = add(Setting(KEY_SKY_RANGE, io.github.jasondorjeshort.dystopo.horizon.SkyRange.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.horizon.SkyRange.of(it) }),
+        { io.github.jasondorjeshort.dystopo.horizon.SkyRange.of(it.toString()) },
+        { "$KEY_SKY_RANGE must be overhead, near or all (got $it)" }))
+    val skyRange: io.github.jasondorjeshort.dystopo.horizon.SkyRange get() = SKY_RANGE.value
+    // end T312
 }
 
 /**
