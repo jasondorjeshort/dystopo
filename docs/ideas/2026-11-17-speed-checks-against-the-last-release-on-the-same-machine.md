@@ -21,3 +21,12 @@ part's download of the previous release by `gh`.
   package name.
 - The margin: from the run-to-run spread of each figure, which the alternation itself measures.
 - Recorded from conversation, not triaged or checked against the code.
+
+Plan: the `startup` part of `tools/sweep.ps1` and `tools/android-startup.py` get an A/B mode. The last published
+release's APK is fetched as the `upgrade` part already does (`gh release download`); the part then alternates, five
+rounds: uninstall, install the old APK, push the pack, N cold launches; uninstall, install the new build, push the
+pack, N cold launches (uninstall each time, so no downgrade flag and no package rename). It reports both medians, the
+ratio per stage, and the run-to-run spread within each build, and fails when the new median is over the old by more
+than max(5 %, twice the larger spread); `tools/launch-budget.json`'s absolute ceilings stay as a backstop. Verify: one
+`-Only startup` run, its JSON and timings in the report (expect the part to take about twice as long). Out of scope:
+render times, memory and route planning (the same mode later), the margin's tuning beyond the first run.
