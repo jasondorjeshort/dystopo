@@ -12,3 +12,13 @@ Wanted: git-guard catches its own errors and prints the reason to stderr (the ex
 The same day a chore saw git-guard refuse an awk line that contained backticks inside quotes ("unexpanded argument"), likely a false positive of the rule in `docs/reference/windows-and-shells.md`; check it with a hook test while here.
 
 The owner, 2026-11-20: "Record them all. We'll triage and sanity check later."
+
+Plan: the first half is already in the tree: `git-guard.js` installs an `uncaughtException` handler before any
+`require` and exits 2 with "git-guard: internal error (...)" on stderr, and `test-hooks.js` (line ~229) tests that
+path. So the morning's "no stderr" means node never ran the script (process start failing, the memory guess), which
+no hook code can report; the sweep's memory floor idea is the prevention. What is left for one pass: (1) a hook test
+of an awk line with backticks inside single quotes in the same call as a git command; if the guard refuses it, teach
+`shell-parse.js` that backticks inside single quotes are not a substitution (POSIX), keeping the refusal for double
+quotes and heredocs, and correct `docs/reference/windows-and-shells.md`'s line; (2) the handler adds the free physical
+memory (`os.freemem()`) to its message. Verify: `node .claude/hooks/test-hooks.js` green with the new cases. These are
+base-owned hook files: a departure row in ADR 0038 and a carry-back, as the agreement says.
