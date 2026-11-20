@@ -46,9 +46,11 @@ object MapInsets {
      */
     var tripCardTop by mutableStateOf(0.dp)
     var updateCardTop by mutableStateOf(0.dp)
+    /** T311: the flight card's top edge (`aircraft/AircraftCard.kt`), 0 while no aircraft is tapped. */
+    var aircraftCardTop by mutableStateOf(0.dp)
 
     /** T106: the highest of those edges (0 when none shows). */
-    val bottomCardsTop: Dp get() = maxOf(tripCardTop, updateCardTop)
+    val bottomCardsTop: Dp get() = maxOf(tripCardTop, updateCardTop, aircraftCardTop)
 
     /** T106: the distance of [c]'s top edge from the bottom of the window. */
     fun topFromWindowBottom(c: LayoutCoordinates, density: Density): Dp {

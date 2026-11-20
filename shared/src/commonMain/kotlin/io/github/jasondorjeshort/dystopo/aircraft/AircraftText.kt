@@ -50,9 +50,21 @@ object AircraftText {
         return if (route != null) "$name $route$age" else "$name$age"
     }
 
-    /** "Boeing 737-800 · N12345": the description (else the type code) and the registration. */
+    /** "Airliner · BOEING 737-800 · N12345": the kind, the description (else the type code) and the registration. */
     fun typeLine(r: AircraftReport): String =
-        listOfNotNull(r.description ?: r.type, r.registration).joinToString(" · ").ifEmpty { "Type unknown" }
+        listOfNotNull(kindName(r.kind), r.description ?: r.type, r.registration).joinToString(" · ").ifEmpty { "Type unknown" }
+
+    /** The kind's name from the emitter category ("Helicopter"); null when the feed says nothing (the Horizon view's words). */
+    fun kindName(k: AircraftKind): String? = when (k) {
+        AircraftKind.LIGHT -> "Light aircraft"
+        AircraftKind.AIRLINER -> "Airliner"
+        AircraftKind.HEAVY -> "Heavy jet"
+        AircraftKind.ROTORCRAFT -> "Helicopter"
+        AircraftKind.GLIDER -> "Glider"
+        AircraftKind.BALLOON -> "Balloon"
+        AircraftKind.UAV -> "Drone"
+        AircraftKind.GENERIC -> null
+    }
 
     /** The flight level from a pressure altitude in feet ("FL370"), above [transitionFt] only; else null. */
     fun flightLevel(baroFt: Double?, transitionFt: Double = AircraftRules.TRANSITION_FT): String? {
