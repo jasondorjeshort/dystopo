@@ -4,8 +4,11 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.36-alpha (2026-11-20, preliminary)
+
 ### 2026-11-20
 
+- T312: Flights in the Horizon view: aircraft at their bearing and elevation angle
 - T311: Flights on the map: live aircraft with origin and destination
 
 ## v0.1.35-alpha (2026-11-20)
