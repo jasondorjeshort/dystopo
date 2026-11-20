@@ -67,6 +67,11 @@ data class OverlayInput(
     val scaleBar: OverlaySize? = null,
     val strip: List<OverlaySize> = emptyList(),
     /**
+     * T309: the two-segment "Map | Horizon" switch, in the left lower column above the scale bar's line; it yields after
+     * the scale bar and before the readout's core entries ([OverlayLayout]'s ladder).
+     */
+    val horizonSwitch: OverlaySize? = null,
+    /**
      * T257: how many of [strip]'s first entries outrank the scale bar (the readout's own four, the course by its point);
      * the rest (the pressure, the extended readout's, the course's degrees) are left out before the scale bar yields,
      * and never come back once it has. Past [strip]'s size: every entry outranks it, as before T257.
@@ -148,6 +153,9 @@ object OverlayIds {
     /** T263: the activity chip; added after the inventory was drawn up, so it has no M-number and keeps a name of its own. */
     const val ACTIVITY = "activityChip"
 
+    /** T309: the "Map | Horizon" switch; added after the inventory, so it has no M-number and keeps a name of its own. */
+    const val HORIZON_SWITCH = "horizonSwitch"
+
     /** The inventory's rows each element holds, and the name `GET /layout` prints beside the id. */
     val CONTROLS: Map<String, List<String>> = mapOf(
         SETTINGS_ROW to listOf("M1", "M2"), SEARCH to (3..7).map { "M$it" }, ONLINE to (8..10).map { "M$it" },
@@ -162,6 +170,7 @@ object OverlayIds {
         WARNING_CARD to "warningCard", LOCK to "lockButton", ORIENTATION to "orientationButton", POSITION to "positionButton",
         STRIP to "readoutStrip", CREDIT to "creditLine", UPDATE_CARD to "updateCard", SCALE_BAR to "scaleBar", COMPASS to "compass",
         ACTIVITY to "activityChip", // T263
+        HORIZON_SWITCH to "horizonSwitch", // T309
     )
 }
 
@@ -177,8 +186,8 @@ object OverlayIds {
  * - Cards scroll and collapse, down to their least, before anything is hidden.
  * - Then hidden in this order, one rung at a time ([rungs]): the lock button, the orientation button, (T257) the
  *   readout's extra entries past [OverlayInput.stripCore] from the end (the course's degrees, the fix age, the accuracy,
- *   the pressure), the scale bar, the readout's entries from the end of their drawn order with the elevation last, and
- *   (centred only) the position button.
+ *   the pressure), the scale bar, (T309) the "Map | Horizon" switch, the readout's entries from the end of their drawn
+ *   order with the elevation last, and (centred only) the position button.
  *   The ladder is global: a rung is taken for the whole screen, so the order holds where the two sides are short apart too.
  * - The Waypoint and Tracks bar, the Routes chip, (T263) the activity chip, the compass and the online indicator keep their size while they fit
  *   and hide rather than sit under a card or the credit line; they do not wait for the ladder.
@@ -229,15 +238,18 @@ object OverlayLayout {
     const val REASON_ENTRIES = "entriesLeftOut"
     const val REASON_NAVIGATING = "navigating"
 
-    /** One step of the ladder: the buttons drawn, whether the scale bar is, how many of the readout's entries are. */
-    private data class Rung(val buttons: Int, val bar: Boolean, val entries: Int)
+    /** One step of the ladder: the buttons drawn, whether the scale bar is, how many of the readout's entries are, (T309) whether the switch is. */
+    private data class Rung(val buttons: Int, val bar: Boolean, val entries: Int, val switch: Boolean = false)
 
     private fun rungs(i: OverlayInput): List<Rung> {
         val out = ArrayList<Rung>()
-        for (b in i.buttons.coerceIn(1, 3) downTo 1) out += Rung(b, i.scaleBar != null, i.strip.size)
+        val sw = i.horizonSwitch != null
+        for (b in i.buttons.coerceIn(1, 3) downTo 1) out += Rung(b, i.scaleBar != null, i.strip.size, sw)
         // T257: the strip's extra entries go before the scale bar does; the bar never yields to them.
         val core = if (i.scaleBar == null) i.strip.size else i.stripCore.coerceIn(0, i.strip.size)
-        if (i.scaleBar != null) for (e in i.strip.size - 1 downTo core) out += Rung(1, true, e)
+        if (i.scaleBar != null) for (e in i.strip.size - 1 downTo core) out += Rung(1, true, e, sw)
+        // T309: the switch goes after the scale bar and before the core entries.
+        out += Rung(1, false, core, sw)
         for (e in core downTo 0) out += Rung(1, false, e)
         if (!i.offCentre) out += Rung(0, false, 0)
         return out.distinct()
@@ -262,8 +274,17 @@ object OverlayLayout {
         var height = 0f
     }
 
-    /** The scale bar's line at a rung: the bar, the strip's plate, and whether the plate goes [beside] (at that x) or above the bar. */
-    private class Line(val height: Float, val bar: OverlaySize?, val strip: OverlaySize?, val beside: Float?, val stripWidth: Float = 0f)
+    /**
+     * The scale bar's line at a rung: the bar, the strip's plate, and whether the plate goes [beside] (at that x) or above the
+     * bar; T309: the [switch] above them all, its bottom [switchUp] above the line's bottom.
+     */
+    private class Line(
+        val height: Float, val bar: OverlaySize?, val strip: OverlaySize?, val beside: Float?, val stripWidth: Float = 0f,
+        val switch: OverlaySize? = null, val switchUp: Float = 0f,
+    ) {
+        val empty: Boolean get() = bar == null && strip == null && switch == null
+        fun reach(): Float = max(max(bar?.width ?: 0f, (beside ?: 0f) + (strip?.width ?: 0f)), switch?.width ?: 0f)
+    }
 
     private fun stripPlate(entries: List<OverlaySize>, width: Float): OverlaySize? {
         if (entries.isEmpty()) return null
@@ -285,7 +306,16 @@ object OverlayLayout {
         return OverlaySize(min(max(widest, rowW) + PLATE_X, width), rows + rowH + PLATE_Y)
     }
 
+    /** T309: the line with the switch on top when the rung keeps it and it fits the width (else the line without it). */
     private fun line(i: OverlayInput, r: Rung, width: Float): Line {
+        val base = barLine(i, r, width)
+        val sw = i.horizonSwitch?.takeIf { r.switch && it.width <= width } ?: return base
+        if (base.height >= NO_FIT) return base
+        val up = if (base.height > 0f) base.height + GAP else 0f
+        return Line(up + sw.height, base.bar, base.strip, base.beside, base.stripWidth, sw, up)
+    }
+
+    private fun barLine(i: OverlayInput, r: Rung, width: Float): Line {
         val bar = if (r.bar) i.scaleBar else null
         if (bar != null && bar.width > width) return Line(NO_FIT, null, null, null)
         val entries = i.strip.take(r.entries)
@@ -511,6 +541,8 @@ object OverlayLayout {
         }
         ln.bar?.let { b -> shown(OverlayIds.SCALE_BAR, OverlayRect(xA, yb - b.height, xA + b.width, yb)) }
         if (i.scaleBar != null && ln.bar == null) hidden(OverlayIds.SCALE_BAR, REASON_ORDER)
+        ln.switch?.let { s -> shown(OverlayIds.HORIZON_SWITCH, OverlayRect(xA, yb - ln.switchUp - s.height, xA + s.width, yb - ln.switchUp)) }
+        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, REASON_ORDER)
         var entries = 0
         ln.strip?.let { s ->
             val x = xA + (ln.beside ?: 0f)
@@ -630,7 +662,7 @@ object OverlayLayout {
 
         // The lower columns at each rung.
         val lineW = if (side) columnLeft - safeL - EDGE * 2 else safeR - safeL - EDGE - STRIP_RESERVE
-        fun reach(ln: Line) = xA + max(ln.bar?.width ?: 0f, (ln.beside ?: 0f) + (ln.strip?.width ?: 0f))
+        fun reach(ln: Line) = xA + ln.reach()
         fun leftTop(ln: Line): Float {
             val right = reach(ln)
             var t = max(topY + (online?.let { it.height + GAP } ?: 0f), warning?.takeIf { it.left < right && it.right > xA }?.let { it.bottom + GAP } ?: 0f)
@@ -639,7 +671,7 @@ object OverlayLayout {
         }
         fun lineAt(r: Rung): Choice? {
             val full = line(i, r, lineW)
-            if (full.bar == null && full.strip == null && full.height < NO_FIT) return Choice(r, full, yb)
+            if (full.empty && full.height < NO_FIT) return Choice(r, full, yb)
             if (full.height < NO_FIT) leftTop(full).let { t -> if (yb - full.height >= t) return Choice(r, full, t) }
             // Upright with the chips in the way: short of their edge, beside them.
             val shortW = chipsLeft - GAP - xA
@@ -656,9 +688,11 @@ object OverlayLayout {
         fun rightFits(r: Rung) = r.buttons <= 0 || BUTTON * r.buttons + BUTTON_GAP * (r.buttons - 1) <= by - rightTop
         val rightPossible = rightFits(Rung(1, false, 0))
         // The left column at its least: the elevation alone; where not even that fits, the scale bar alone, which the ladder
-        // would take first but whose going frees nothing there.
+        // would take first but whose going frees nothing there. T309: with the switch over it, else the switch alone.
         val stripPossible = i.strip.isNotEmpty() && rungs.any { it.entries > 0 && lineAt(it) != null }
-        val barAlone = if (!stripPossible && i.scaleBar != null) lineAt(Rung(1, true, 0)) else null
+        val barAlone = if (!stripPossible && (i.scaleBar != null || i.horizonSwitch != null)) {
+            listOf(Rung(1, true, 0, true), Rung(1, true, 0, false), Rung(1, false, 0, true)).firstNotNullOfOrNull { r -> lineAt(r)?.takeIf { !it.line.empty } }
+        } else null
         val leftPossible = stripPossible || barAlone != null
         val none = Choice(Rung(0, false, 0), Line(0f, null, null, null), yb)
         val (buttons, pick) = when {
@@ -688,6 +722,8 @@ object OverlayLayout {
         val leftWhy = if (stripPossible) REASON_ORDER else REASON_NO_ROOM
         ln.bar?.let { b -> shown(OverlayIds.SCALE_BAR, OverlayRect(xA, yb - b.height, xA + b.width, yb)) }
         if (i.scaleBar != null && ln.bar == null) hidden(OverlayIds.SCALE_BAR, leftWhy)
+        ln.switch?.let { s -> shown(OverlayIds.HORIZON_SWITCH, OverlayRect(xA, yb - ln.switchUp - s.height, xA + s.width, yb - ln.switchUp)) }
+        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, leftWhy)
         var entries = 0
         ln.strip?.let { s ->
             val x = xA + (ln.beside ?: 0f)

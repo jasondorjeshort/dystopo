@@ -3,6 +3,8 @@ verified: 2026-11-19
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
+[length: reference; one paragraph per part of the app, each read on its own from the index of `docs/reference/README.md`]
+
 # The Android app: build, emulator scripts, device tour, loopback token
 
 How the app serves the map and how agents drive it. Emulator setup and several emulators side by side: `android-emulator.md`. Every debug route: `android-debug-routes.md`.
@@ -264,9 +266,9 @@ Crashes, freezes and kills are kept on the phone in `files/reports/`, every buil
 
 The viewshed from a point (`app/viewshed/`, the shared core `shared/.../dem/Viewshed.kt`): the long-press card's "What can I see from here" (`ViewshedSession.start`, before Cancel) and Map options' "What can I see from here" row with its "From where I am" chip (`startAtPosition`, from the last fix; the settings sheet closes so the map shows) run the sweep on one background thread at background priority, never the UI thread, then `ViewshedOverlay` draws one translucent image per distance band (an `ImageSource` on the band's Mercator window, under the style's first label layer, nearest-cell resampling): visible ground green (`#12a150`) at 35 percent, hidden ground clear, ground without elevation data hatched grey (where the data stopped: past the offline packs nothing is known), the range as a dashed circle and the observer as a green dot. The sweep: rays from an eye height of 1.7 m every few hundredths of a degree, curvature and refraction (k 0.13), over the DEM at about 15 m cells out to 5 km, 60 m to 30 km and 240 m beyond, read from every DEM pack that overlaps each window (the first with data wins per cell; no online fetch). `ViewshedSheet` (in the track panel's column, with the long-press card) lists the named peaks and volcanoes of the vector packs' `mountain_peak` layer that are in view, sorted by distance (Elevation and Bearing sorts), each with its elevation, distance, true bearing with its compass letters and "on the skyline" when nothing beyond it rises above it; a tap marks the peak and moves the camera onto it. The range is the synced `viewRange` setting (Settings › Map options › View range: 10, 30 (default) or 100 km; ADR 0044: the apps split and the phone's cost differs). Debug routes: `/viewshed` (`android-debug-routes.md`). Map options also carries the View range chips (the same setting). The sheet's list scrolls within 150 dp so the map above keeps most of the screen, and a tapped peak lands in the middle of the map above the sheet. Measured on an API 35 emulator (4 cores, 3 GB) from Paradise with the Rainier pack: the sweep 1.3 to 1.6 s at 10 km, 3.2 to 3.4 s at 30 km, 5.0 s at 100 km, plus 0.25 to 0.5 s reading the DEM and under 0.3 s for the peaks. Not yet: the online DEM past the packs.
 
-## The Horizon view (T307, T308)
+## The Horizon view (T307, T308, T309)
 
-Settings › Navigation and tracking › "Horizon view ›" opens the Horizon view (T308; T307's GPS view, now its Satellites layer): the sky plot with the land's skyline, the peaks on it, the sun's path and the satellites, each a layer with a toggle. Everything about it: `android-horizon-view.md`.
+The map's "Map | Horizon" switch (T309, `controls/ViewSwitch.kt`: two segments, Map selected, in the left lower column over the scale bar's line, placed by the layout rule as `horizonSwitch`; it yields after the scale bar and before the readout's core entries) and Settings › Navigation and tracking › "Horizon view ›" open the Horizon view (T308; T307's GPS view, now its Satellites layer): the sky plot with the land's skyline, the peaks in view, the sun's path and the satellites, each a layer with a toggle. Everything about it: `android-horizon-view.md`.
 
 ## The world overview (T264)
 

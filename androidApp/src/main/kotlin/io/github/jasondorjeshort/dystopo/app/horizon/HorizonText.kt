@@ -15,23 +15,28 @@ object HorizonText {
 
     // Peaks.
     const val PEAKS = "Peaks"
-    const val PEAKS_WORKING = "Finding the peaks on the skyline..."
+    const val PEAKS_WORKING = "Finding the peaks in view..."
     const val PEAKS_NO_MAP = "No offline map with peak names here, so no peaks."
     const val PEAKS_NO_TERRAIN = "No terrain horizon here, so no peaks on it."
-    /** The reason code for no peak on the skyline; shown as [peaksNone] in the user's units. */
-    const val PEAKS_NONE = "none on the skyline"
+    /** The reason code for no peak in view or just out of sight; shown as [peaksNone] in the user's units. */
+    const val PEAKS_NONE = "none in view"
 
     /** The plot's reach (`Horizon.DEFAULT_RANGE_M`, 30 km) in the user's units: "30 km" or "18.6 mi". */
     fun range(units: ContourUnits): String = UnitFormat.distance(io.github.jasondorjeshort.dystopo.dem.Horizon.DEFAULT_RANGE_M, units)
 
-    fun peaksNone(units: ContourUnits) = "No named peak stands on the skyline within ${range(units)}."
+    fun peaksNone(units: ContourUnits) = "No named peak in view or just out of sight within ${range(units)}."
 
-    fun peaksCount(skyline: Int, named: Int, units: ContourUnits) =
-        if (skyline == named) "$skyline on the skyline within ${range(units)}." else "$skyline on the skyline within ${range(units)}; the highest of each 30° of the rim is named on the plot."
+    /** T309: "12 peaks in view or just out of sight within 30 km, closest first." */
+    fun peaksCount(n: Int, units: ContourUnits) =
+        "$n ${if (n == 1) "peak" else "peaks"} in view or just out of sight within ${range(units)}, closest first."
+
+    /** T309: a peak hidden by less than [io.github.jasondorjeshort.dystopo.horizon.PeakRim.HIDDEN_M]: its row and its pick say so. */
+    const val JUST_OUT_OF_SIGHT = "just out of sight"
 
     /** One peak: "Little Tahoma, 3,410 m, 7.2 km, ESE 112°". */
-    fun peakLine(name: String, eleM: Double, distanceM: Double, bearingDeg: Double, units: ContourUnits): String =
-        "$name, ${UnitFormat.elevation(eleM, units)}, ${UnitFormat.distance(distanceM, units)}, ${GnssText.compassPoint(bearingDeg)} ${Math.round(bearingDeg) % 360}°"
+    fun peakLine(name: String, eleM: Double, distanceM: Double, bearingDeg: Double, units: ContourUnits, outOfSight: Boolean = false): String =
+        "$name, ${UnitFormat.elevation(eleM, units)}, ${UnitFormat.distance(distanceM, units)}, ${GnssText.compassPoint(bearingDeg)} ${Math.round(bearingDeg) % 360}°" +
+            if (outOfSight) ", $JUST_OUT_OF_SIGHT" else ""
 
     const val PEAK_CLEAR = "Clear the peak"
 

@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.dem.PeakView
 import io.github.jasondorjeshort.dystopo.dem.Viewshed
 import io.github.jasondorjeshort.dystopo.horizon.HorizonSun
+import io.github.jasondorjeshort.dystopo.horizon.HorizonLabels
 import io.github.jasondorjeshort.dystopo.horizon.PeakRim
 import io.github.jasondorjeshort.dystopo.horizon.SunPath
 import io.github.jasondorjeshort.dystopo.horizon.SunSample
@@ -22,7 +23,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * - **Peaks** ([peaksFor]): the named peaks of the active pack's `mountain_peak` layer within the profile's range
  *   ([Viewshed.readPeaks], as `ViewshedSession` reads them), each tested against that terrain and profile
- *   ([Viewshed.peaks]'s overload on a `HorizonProfile`); the skyline ones listed and the rim's names chosen by [PeakRim].
+ *   ([Viewshed.peaks]'s overload on a `HorizonProfile`); T309: the candidates (in sight or just out of sight, [PeakRim])
+ *   listed closest first and ranked for the plot's names ([HorizonLabels.rank]; the screen places them).
  *   Worked out once per horizon on a thread of its own.
  * - **Sun** ([sunFor]): [SunPath.of] on the profile's `angleAt` for the day shown (today at the point, or [HorizonUi.date]),
  *   so the terrain times are `Sun.onTerrain`'s on the same profile the turn-around clock reaches through
@@ -32,7 +34,10 @@ object HorizonData {
     private val app get() = DystopoApp.instance
 
     /** The peaks for one horizon: [reason] when there are none to show. */
-    class Peaks(val horizon: Gnss.HorizonState, val all: List<PeakView>, val skyline: List<PeakView>, val labelled: List<PeakView>, val tiles: Int, val reason: String?, val ms: Long)
+    class Peaks(val horizon: Gnss.HorizonState, val all: List<PeakView>, val candidates: List<PeakView>, val ranked: List<HorizonLabels.Scored>, val tiles: Int, val reason: String?, val ms: Long) {
+        /** A candidate's score entry (null when not a candidate). */
+        fun scoreOf(p: PeakView): HorizonLabels.Scored? = ranked.firstOrNull { it.label.ref === p }
+    }
 
     @Volatile var peaks: Peaks? = null
         private set
@@ -77,8 +82,9 @@ object HorizonData {
             }, h.lat, h.lon, profile.rangeM)
             if (tiles == 0) return none(HorizonText.PEAKS_NO_MAP)
             val all = Viewshed.peaks(terrain, profile, found)
-            val skyline = PeakRim.skyline(all)
-            Peaks(h, all, skyline, PeakRim.labelled(all), tiles, if (skyline.isEmpty()) HorizonText.PEAKS_NONE else null, SystemClock.elapsedRealtime() - t0)
+            val labels = PeakRim.labels(all)
+            val candidates = labels.map { it.ref as PeakView }
+            Peaks(h, all, candidates, HorizonLabels.rank(labels), tiles, if (candidates.isEmpty()) HorizonText.PEAKS_NONE else null, SystemClock.elapsedRealtime() - t0)
         } catch (e: Exception) {
             android.util.Log.w("Dystopo", "horizon peaks failed", e)
             none("${HorizonText.PEAKS_NO_MAP} (${e.javaClass.simpleName})")
@@ -115,15 +121,20 @@ object HorizonData {
     private fun r2(v: Double) = Math.round(v * 100) / 100.0
     private fun iso(ms: Long?): String? = ms?.let { java.time.Instant.ofEpochMilli(it).toString() }
 
-    fun peaksJson(p: Peaks?): Map<String, Any?>? = p?.let {
-        val named = it.labelled.map { v -> v.peak.name }.toSet()
+    /** T309: [named] the keys of the peaks the plot last named ([HorizonUi.names]); null when it has not drawn them. */
+    fun peaksJson(p: Peaks?, named: Set<String>?): Map<String, Any?>? = p?.let {
+        val rank = it.ranked.withIndex().associate { (i, s) -> s.label.ref to i + 1 }
         linkedMapOf(
             "reason" to it.reason, "ms" to it.ms, "tilesRead" to it.tiles, "tested" to it.all.size, "visible" to it.all.count { v -> v.visible },
-            "skyline" to it.skyline.size, "named" to it.labelled.size, "sectorDeg" to PeakRim.SECTOR_DEG,
-            "peaks" to it.skyline.map { v ->
+            "skyline" to it.all.count { v -> v.skyline }, "candidates" to it.candidates.size, "outOfSight" to it.candidates.count { v -> !PeakRim.inSight(v) },
+            "hiddenM" to PeakRim.HIDDEN_M, "named" to named?.size,
+            "peaks" to it.candidates.map { v ->
+                val s = it.scoreOf(v)
                 linkedMapOf(
                     "name" to v.peak.name, "eleM" to Math.round(v.eleM), "distanceM" to Math.round(v.distanceM), "bearingDeg" to r1(v.bearingDeg),
-                    "compass" to v.compass, "angleDeg" to r2(v.angleDeg), "sector" to PeakRim.sector(v.bearingDeg), "onRim" to (v.peak.name in named),
+                    "compass" to v.compass, "angleDeg" to r2(v.angleDeg), "clearanceDeg" to r2(v.clearanceDeg), "inSight" to PeakRim.inSight(v),
+                    "skyline" to v.skyline, "dominant" to (s?.label?.dominant == true), "promM" to s?.label?.promM?.let { m -> Math.round(m) },
+                    "score" to s?.let { x -> r2(x.score) }, "rank" to rank[v], "named" to named?.let { n -> HorizonUi.keyOf(v) in n },
                 )
             },
         )

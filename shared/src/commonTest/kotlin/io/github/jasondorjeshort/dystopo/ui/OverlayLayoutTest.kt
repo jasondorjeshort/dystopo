@@ -38,6 +38,7 @@ class OverlayLayoutTest {
             trackBar = OverlaySize(170f * chip, 36f * chip),
             routes = OverlaySize(70f * chip, 36f * chip),
             activity = OverlaySize(78f * chip, 36f * chip), // T263
+            horizonSwitch = OverlaySize(150f * chip, 48f * chip), // T309: map chrome, capped as the chips are
             scaleBar = OverlaySize(112f, 36f * k),
             strip = listOf(OverlaySize(84f * k, 40f * k), OverlaySize(70f * k, 40f * k), OverlaySize(70f * k, 40f * k), OverlaySize(60f * k, 40f * k)),
             buttons = buttons, offCentre = offCentre,
@@ -157,6 +158,10 @@ class OverlayLayoutTest {
             if (i.buttons >= 3) assertTrue(lockGone, at)
         }
         if (entriesLeftOut) assertTrue(barGone, "$at: the scale bar before the entries")
+        // T309: the switch goes after the scale bar and before the core entries.
+        val switchGone = !o.isShown(OverlayIds.HORIZON_SWITCH)
+        if (switchGone) assertTrue(barGone, "$at: the scale bar before the switch")
+        if (entriesLeftOut) assertTrue(switchGone, "$at: the switch before the entries")
         if (stripGone) assertEquals(0, o.entriesDrawn, at)
         if (!o.isShown(OverlayIds.POSITION)) {
             assertFalse(i.offCentre, at)
@@ -195,7 +200,8 @@ class OverlayLayoutTest {
     fun cardsYieldBeforeAnythingIsHidden() {
         // A warning that would take the whole band scrolls, and the buttons and the scale bar stay.
         // T263: without the activity chip, which as a chip keeps its room before the ladder walks (here it costs the lock).
-        val i = input(393f, 851f, false, 2f, 2, 3, false, true).let { it.copy(warning = it.warning!!.copy(natural = 2000f), activity = null) }
+        // T309: and without the switch, which the ladder takes after the scale bar (here it would cost the lock too).
+        val i = input(393f, 851f, false, 2f, 2, 3, false, true).let { it.copy(warning = it.warning!!.copy(natural = 2000f), activity = null, horizonSwitch = null) }
         val o = OverlayLayout.place(i)
         assertEquals(OverlayState.COMPACT, o[OverlayIds.WARNING_CARD]?.state)
         assertEquals(OverlayLayout.REASON_SCROLLS, o[OverlayIds.WARNING_CARD]?.reason)
@@ -262,6 +268,31 @@ class OverlayLayoutTest {
         val row = assertNotNull(small[OverlayIds.SETTINGS_ROW]?.rect)
         assertTrue(row.top >= small[OverlayIds.SEARCH]!!.rect!!.bottom)
         assertEquals(emptyList(), small.overlaps())
+    }
+
+    @Test
+    fun theSwitchStandsOverTheScaleBarsLineAtTheLeft() { // T309
+        for (scale in listOf(1f, 2f)) {
+            val i = input(411f, 914f, false, scale, 0, 1, false, true)
+            val o = OverlayLayout.place(i)
+            val sw = assertNotNull(o[OverlayIds.HORIZON_SWITCH]?.rect, "shown at $scale")
+            val bar = o[OverlayIds.SCALE_BAR]!!.rect!!
+            val strip = o[OverlayIds.STRIP]!!.rect!!
+            assertTrue(sw.bottom <= minOf(bar.top, strip.top) && sw.left == bar.left, "$sw over $bar and $strip at $scale")
+            assertEquals(emptyList(), o.overlaps())
+            val drawn = OverlayLayout.place(drawnFrom(i))
+            assertEquals(sw, drawn[OverlayIds.HORIZON_SWITCH]?.rect, "the live placer puts it in the same place at $scale")
+        }
+        // Squeezed: the scale bar goes first, then the switch, then the entries; each says why.
+        val base = input(360f, 640f, false, 2f, 2 or 4, 1, false, false)
+        var barFirst = false
+        for (h in 1600 downTo 400 step 2) {
+            val o = OverlayLayout.place(base.copy(windowHeight = h.toFloat()))
+            val sw = o[OverlayIds.HORIZON_SWITCH]!!
+            if (sw.rect == null) assertEquals(OverlayLayout.REASON_ORDER, sw.reason, "at $h")
+            if (sw.rect != null && o[OverlayIds.SCALE_BAR]?.rect == null) barFirst = true
+        }
+        assertTrue(barFirst, "some height keeps the switch with the scale bar gone")
     }
 
     @Test

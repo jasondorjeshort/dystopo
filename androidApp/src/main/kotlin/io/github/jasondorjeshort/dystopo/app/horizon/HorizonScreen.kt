@@ -58,6 +58,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.testTag
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.ClockFormat
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
@@ -85,7 +88,12 @@ import io.github.jasondorjeshort.dystopo.dem.PeakView
 import io.github.jasondorjeshort.dystopo.gnss.GnssHealth
 import io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayer
+import io.github.jasondorjeshort.dystopo.horizon.HorizonLabels
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
+import io.github.jasondorjeshort.dystopo.horizon.PeakRim
+import io.github.jasondorjeshort.dystopo.horizon.RimBox
+import io.github.jasondorjeshort.dystopo.horizon.RimGeometry
+import io.github.jasondorjeshort.dystopo.horizon.RimPt
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import java.time.LocalDate
@@ -111,12 +119,18 @@ object HorizonUi {
 
     @Volatile var drawn: Map<String, Any?>? = null
 
+    /** T309: where the view's "Map | Horizon" switch was last laid out, px in the window (left, top, right, bottom), or null. */
+    @Volatile var switchPx: List<Int>? = null
+
     /** The rim's names as last drawn (the plot's taps read them). */
     @Volatile var names: List<PlacedName> = emptyList()
 
+    /** T309: the keys of the names last drawn, as Compose state (the list's bold rows read it; written from the draw only on a change). */
+    var namedKeys by mutableStateOf<Set<String>>(emptySet())
+
     /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
     fun prepare() {
-        open; selected; date; scrollTo
+        open; selected; date; scrollTo; namedKeys
     }
 
     fun open() {
@@ -131,6 +145,7 @@ object HorizonUi {
         scrollTo = null
         GnssUi.resetUi()
         drawn = null
+        switchPx = null
     }
 
     /** Turns [layer] [on] (stored and synced as a setting, off the main thread), then redraws. */
@@ -226,7 +241,7 @@ fun HorizonScreen() {
     val sunDay = if (layers.sun && pos != null) HorizonData.sunFor(h?.takeIf { it.profile != null }, pos.latitude, pos.longitude, HorizonUi.date, now) else null
     val peaks = if (layers.peaks && h != null) HorizonData.peaksFor(h) else null
     val selected = HorizonUi.selected
-    val picked = peaks?.skyline?.firstOrNull { HorizonUi.keyOf(it) == selected }
+    val picked = peaks?.candidates?.firstOrNull { HorizonUi.keyOf(it) == selected }
     val scroll = rememberScrollState()
     HorizonUi.scrollTo?.let { px ->
         LaunchedEffect(px) {
@@ -243,7 +258,7 @@ fun HorizonScreen() {
             val description = HorizonText.plotLabel(
                 listOfNotNull(
                     horizon?.let { p -> GnssText.horizonLine(p.angleDeg[p.highest], p.bearingDeg(p.highest), p.distanceM[p.highest], h.source, units) },
-                    peaks?.labelled?.takeIf { it.isNotEmpty() }?.let { l -> "${HorizonText.PEAKS}: " + l.joinToString(", ") { it.peak.name } },
+                    peaks?.ranked?.takeIf { it.isNotEmpty() }?.let { l -> "${HorizonText.PEAKS}: " + l.take(5).joinToString(", ") { it.label.name } },
                     sunNow?.takeIf { layers.sun }?.let { s -> HorizonText.sunNow(s.apparentAltitudeDeg, s.azimuthDeg, fn?.let { f -> s.apparentAltitudeDeg < f(s.azimuthDeg) } ?: false) },
                     if (layers.satellites) "${GnssText.SATELLITES}: ${GnssText.usedOf(summary.used, summary.inView)}" else null,
                 ),
@@ -261,8 +276,8 @@ fun HorizonScreen() {
                             }
                         },
                         extra = { g -> sunDay?.let { drawSunPath(g, it, pal, night) } },
-                        // The picked peak is drawn too when the rim does not name it (a row of the list picked it).
-                        over = { g -> peaks?.labelled?.let { drawPeaks(g, it + listOfNotNull(picked?.takeIf { p -> p !in it }), selected, pal) } },
+                        // T309: the names placed by rank and density, the picked peak first (a row of the list may pick one the plot did not name).
+                        over = { g -> peaks?.let { drawPeaks(g, it, picked, selected, sunDay, pal) } },
                     )
                 }
             }
@@ -299,6 +314,13 @@ fun HorizonScreen() {
                         if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { tick++ }
                         if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
                     }
+                    // T309: the "Map | Horizon" switch, fixed at the pane's bottom under the scroll area (which so ends above it).
+                    io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchRow(
+                        true, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchColours(pal.card, pal.ink, pal.line),
+                        Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp)
+                            .onGloballyPositioned { c -> c.boundsInWindow().let { b -> HorizonUi.switchPx = listOf(b.left, b.top, b.right, b.bottom).map { Math.round(it) } } }
+                            .testTag(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.TAG_ON_VIEW),
+                    )
                 }
             }
             if (landscape) Row(Modifier.fillMaxSize()) {
@@ -315,63 +337,83 @@ fun HorizonScreen() {
                     "windowDp" to listOf(Math.round(maxWidth.value), Math.round(maxHeight.value)), "fontScale" to density.fontScale,
                     "rotationDeg" to Math.round(rotation * 10) / 10.0, "orientation" to orientation.key, "night" to night,
                     "horizonDrawn" to (horizon != null), "satellitesDrawn" to plotted.size, "gnssHeld" to Gnss.held,
-                    "peaksDrawn" to (peaks?.labelled?.map { it.peak.name } ?: emptyList<String>()), "namesDrawn" to HorizonUi.names.size, "peaksListed" to (peaks?.skyline?.size ?: 0),
+                    "peaksDrawn" to HorizonUi.names.map { it.peak.peak.name }, "namesDrawn" to HorizonUi.names.size, "peaksListed" to (peaks?.candidates?.size ?: 0),
+                    "hollowDrawn" to HorizonUi.names.filter { !PeakRim.inSight(it.peak) }.map { it.peak.peak.name },
+                    "leadersDrawn" to HorizonUi.names.filter { it.leader != null }.map { it.peak.peak.name },
                     "sunPathDrawn" to (sunDay?.sun?.path?.size ?: 0), "sunHourMarks" to (sunDay?.marks?.size ?: 0), "sunNowDrawn" to sunDrawn,
                     "selected" to picked?.peak?.name, "scrollPx" to scroll.value, "scrollMaxPx" to scroll.maxValue,
+                    "switchPx" to HorizonUi.switchPx, "switchSelected" to "horizon",
                 )
             }
         }
     }
 }
 
-/** A rim name as last drawn: the peak, the text's baseline centre and its box (px), for the tap and `drawn`. */
-class PlacedName(val peak: PeakView, val anchor: Offset, val box: androidx.compose.ui.geometry.Rect)
+/** A rim name as last drawn: the peak, the text's baseline centre and its box (px), for the tap and `drawn`; T309: its leader line. */
+class PlacedName(val peak: PeakView, val anchor: Offset, val box: androidx.compose.ui.geometry.Rect, val leader: Pair<Offset, Offset>? = null)
 
 /**
- * Where the rim names go: each inward from its peak along the radius, the picked one first, then the highest, at the first of four steps
- * inward (16 dp, then 15 dp more each) where its box touches no name placed before; a name with no free step is left
- * to the list.
+ * T309: the rim's names, placed by [HorizonLabels.place] (rank first, the density gap, no name over another, a ring label,
+ * an hour label or the sun's arc), each with its triangle at its peak's apparent angle: solid in sight, hollow just out of
+ * sight. The picked peak goes first, so a row picked in the list is named too. A name set away from its triangle has a
+ * thin leader line to it (the ink at reduced alpha, 1 dp); each name sits on a plate of the sky's colour (T309: the stroke
+ * halo before it showed as a ghost "M" where "Mount Rainier" crossed the skyline band's edge).
  */
-private fun DrawScope.placeNames(g: PlotGeometry, labelled: List<PeakView>, selected: String?, paint: android.graphics.Paint): List<PlacedName> {
-    val placed = ArrayList<PlacedName>()
-    val pad = 2.dp.toPx()
-    val fm = paint.fontMetrics
-    for (p in labelled.sortedWith(compareByDescending<PeakView> { HorizonUi.keyOf(it) == selected }.thenByDescending { it.eleM })) {
+private fun DrawScope.drawPeaks(g: PlotGeometry, peaks: HorizonData.Peaks, picked: PeakView?, selected: String?, sunDay: HorizonData.SunDay?, pal: GnssPalette) {
+    val text = android.graphics.Paint().apply { isAntiAlias = true; textSize = 12.dp.toPx(); color = pal.ink.toArgb(); textAlign = android.graphics.Paint.Align.CENTER }
+    val rim = RimGeometry(g.c.x.toDouble(), g.c.y.toDouble(), g.radius.toDouble(), g.rotationDeg, density.toDouble())
+    // What the names keep off: the ring labels (SkyPlot's, 12 dp) and, with the Sun layer, its hour labels (10 dp) and arc.
+    val ringPaint = android.graphics.Paint().apply { textSize = 12.dp.toPx() }
+    val rfm = ringPaint.fontMetrics
+    val blocked = ArrayList<RimBox>()
+    for ((el, label) in listOf(0.0 to "0°", 30.0 to "30°", 60.0 to "60°")) blocked += rim.ringLabel(el, ringPaint.measureText(label).toDouble(), rfm.ascent.toDouble(), rfm.descent.toDouble())
+    val lines = ArrayList<List<RimPt>>()
+    sunDay?.let { day ->
+        val hourPaint = android.graphics.Paint().apply { textSize = 10.dp.toPx() }
+        val hfm = hourPaint.fontMetrics
+        val cal = java.util.Calendar.getInstance()
+        for (m in day.marks) {
+            cal.timeInMillis = m.timeMs
+            blocked += rim.hourLabel(m.altitudeDeg, m.azimuthDeg, hourPaint.measureText(cal.get(java.util.Calendar.HOUR_OF_DAY).toString()).toDouble(), hfm.ascent.toDouble(), hfm.descent.toDouble())
+        }
+        lines += day.sun.path.map { rim.at(it.altitudeDeg, it.azimuthDeg) }
+    }
+    val fm = text.fontMetrics
+    val first = picked?.let { p -> peaks.scoreOf(p)?.label }
+    val placed = HorizonLabels.place(rim, peaks.ranked, { text.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble(), blocked, lines, first)
+    val names = placed.map { n ->
+        PlacedName(
+            n.label.ref as PeakView, Offset(n.x.toFloat(), n.y.toFloat()),
+            androidx.compose.ui.geometry.Rect(n.box.left.toFloat(), n.box.top.toFloat(), n.box.right.toFloat(), n.box.bottom.toFloat()),
+            n.leader?.let { l -> Offset(l[0].x.toFloat(), l[0].y.toFloat()) to Offset(l[1].x.toFloat(), l[1].y.toFloat()) },
+        )
+    }
+    HorizonUi.names = names
+    val keys = names.map { HorizonUi.keyOf(it.peak) }.toSet()
+    if (keys != HorizonUi.namedKeys) HorizonUi.namedKeys = keys
+    val s = 5.dp.toPx()
+    // The leader lines first, from just past the triangle to the name's box.
+    for (n in names) n.leader?.let { (a, b) ->
+        val len = kotlin.math.hypot((b.x - a.x).toDouble(), (b.y - a.y).toDouble()).toFloat().coerceAtLeast(1f)
+        val from = Offset(a.x + (b.x - a.x) / len * s * 1.3f, a.y + (b.y - a.y) / len * s * 1.3f)
+        drawLine(pal.ink.copy(alpha = 0.55f), from, b, 1.dp.toPx())
+    }
+    for (n in names) {
+        val p = n.peak
         val at = g.at(p.angleDeg.coerceAtLeast(0.0), p.bearingDeg)
-        val dx = g.c.x - at.x
-        val dy = g.c.y - at.y
-        val len = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
-        val w = paint.measureText(p.peak.name)
-        for (step in 0 until 4) {
-            val inward = (16 + 15 * step).dp.toPx()
-            val c = Offset(at.x + dx / len * inward, at.y + dy / len * inward + 4.dp.toPx())
-            val box = androidx.compose.ui.geometry.Rect(c.x - w / 2 - pad, c.y + fm.ascent - pad, c.x + w / 2 + pad, c.y + fm.descent + pad)
-            if (placed.none { it.box.overlaps(box) }) {
-                placed += PlacedName(p, c, box)
-                break
-            }
+        val tri = Path().apply { moveTo(at.x, at.y - s); lineTo(at.x + s, at.y + s * 0.7f); lineTo(at.x - s, at.y + s * 0.7f); close() }
+        val colour = if (HorizonUi.keyOf(p) == selected) pal.link else pal.ink
+        if (PeakRim.inSight(p)) drawPath(tri, colour)
+        else {
+            drawPath(tri, pal.sky)
+            drawPath(tri, colour, style = Stroke(1.5.dp.toPx()))
         }
     }
-    return placed
-}
-
-private fun DrawScope.drawPeaks(g: PlotGeometry, labelled: List<PeakView>, selected: String?, pal: GnssPalette) {
-    val text = android.graphics.Paint().apply { isAntiAlias = true; textSize = 12.dp.toPx(); color = pal.ink.toArgb(); textAlign = android.graphics.Paint.Align.CENTER }
-    val halo = android.graphics.Paint(text).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 3.dp.toPx(); color = pal.sky.toArgb() }
-    for (p in labelled) {
-        val at = g.at(p.angleDeg.coerceAtLeast(0.0), p.bearingDeg)
-        val s = 5.dp.toPx()
-        val tri = Path().apply { moveTo(at.x, at.y - s); lineTo(at.x + s, at.y + s * 0.7f); lineTo(at.x - s, at.y + s * 0.7f); close() }
-        drawPath(tri, if (HorizonUi.keyOf(p) == selected) pal.link else pal.ink)
-    }
-    val names = placeNames(g, labelled, selected, text)
-    HorizonUi.names = names
     for (n in names) {
         val chosen = HorizonUi.keyOf(n.peak) == selected
         text.isFakeBoldText = chosen
-        halo.isFakeBoldText = chosen
         text.color = (if (chosen) pal.link else pal.ink).toArgb()
-        drawContext.canvas.nativeCanvas.drawText(n.peak.peak.name, n.anchor.x, n.anchor.y, halo)
+        drawRoundRect(pal.sky.copy(alpha = 0.85f), n.box.topLeft, n.box.size, androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()))
         drawContext.canvas.nativeCanvas.drawText(n.peak.peak.name, n.anchor.x, n.anchor.y, text)
     }
 }
@@ -440,7 +482,7 @@ private fun PickedPeak(p: PeakView, pal: GnssPalette, units: ContourUnits) {
             .clickable(role = Role.Button) { HorizonUi.selected = null }.padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BasicText(HorizonText.peakLine(p.peak.name, p.eleM, p.distanceM, p.bearingDeg, units), Modifier.weight(1f), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+        BasicText(HorizonText.peakLine(p.peak.name, p.eleM, p.distanceM, p.bearingDeg, units, !PeakRim.inSight(p)), Modifier.weight(1f), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
         BasicText("×", Modifier.padding(start = 8.dp).semantics { contentDescription = HorizonText.PEAK_CLEAR }, style = TextStyle(color = pal.ink, fontSize = 20.sp))
     }
 }
@@ -454,7 +496,7 @@ private fun SectionHead(title: String, pal: GnssPalette, extra: String? = null, 
     }
 }
 
-/** The peaks on the skyline: how many, then each (name, height, distance, bearing) clockwise from north; a tap picks one. */
+/** T309: the peaks in view or just out of sight: how many, then each (name, height, distance, bearing) closest first; a tap picks one. */
 @Composable
 private fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: String?, pal: GnssPalette, units: ContourUnits) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -465,11 +507,11 @@ private fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selec
             peaks == null -> HorizonText.PEAKS_WORKING
             peaks.reason == HorizonText.PEAKS_NONE -> HorizonText.peaksNone(units)
             peaks.reason != null -> peaks.reason
-            else -> HorizonText.peaksCount(peaks.skyline.size, peaks.labelled.size, units)
+            else -> HorizonText.peaksCount(peaks.candidates.size, units)
         }
         BasicText(line, style = TextStyle(color = pal.ink, fontSize = 14.sp))
-        val named = peaks?.labelled?.map { HorizonUi.keyOf(it) }?.toSet() ?: emptySet()
-        for (p in peaks?.skyline.orEmpty()) {
+        val named = HorizonUi.namedKeys
+        for (p in peaks?.candidates.orEmpty()) {
             val key = HorizonUi.keyOf(p)
             val chosen = key == selected
             Column(
@@ -480,7 +522,8 @@ private fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selec
                     p.peak.name, style = TextStyle(color = if (chosen) pal.link else pal.ink, fontSize = 15.sp, fontWeight = if (key in named || chosen) FontWeight.Bold else FontWeight.Normal),
                 )
                 BasicText(
-                    "${UnitFormat.elevation(p.eleM, units)} · ${UnitFormat.distance(p.distanceM, units)} · ${GnssText.compassPoint(p.bearingDeg)} ${Math.round(p.bearingDeg) % 360}°",
+                    "${UnitFormat.elevation(p.eleM, units)} · ${UnitFormat.distance(p.distanceM, units)} · ${GnssText.compassPoint(p.bearingDeg)} ${Math.round(p.bearingDeg) % 360}°" +
+                        if (PeakRim.inSight(p)) "" else " · ${HorizonText.JUST_OUT_OF_SIGHT}",
                     style = TextStyle(color = pal.muted, fontSize = 13.sp),
                 )
             }
@@ -534,11 +577,12 @@ internal val HORIZON_HELP: List<HelpText> = run {
     listOf(
         HelpText("horizon.view", HorizonText.TITLE, placed, show = show) { units ->
             "The sky around you as a circle: its edge the horizon, its centre overhead, the shaded band the land's skyline " +
-                "within ${HorizonText.range(units)}. Show turns the layers on and off: the satellites, the peaks on the skyline and the sun's path."
+                "within ${HorizonText.range(units)}. Show turns the layers on and off: the satellites, the peaks in view and the sun's path."
         },
         HelpText("horizon.peaks", HorizonText.PEAKS, "$placed › ${HorizonText.PEAKS}", show = show) { units ->
-            "The named peaks of your offline map that stand on the skyline within ${HorizonText.range(units)}. The plot names the highest in each " +
-                "30 degrees of the rim; the list has them all. Tap a name or a row for its height, distance and bearing."
+            "Named peaks within ${HorizonText.range(units)} in view, or just out of sight (hidden by under " +
+                "${UnitFormat.elevation(PeakRim.HIDDEN_M, units)}: a hollow triangle). The plot names the highest on the skyline, then the closest " +
+                "and most in view, spaced out where crowded; the list has all, closest first. Tap one for its height, distance and bearing."
         },
         HelpText("horizon.sun", HorizonText.SUN, "$placed › ${HorizonText.SUN}", show = show) { _ ->
             "Today's path of the sun, with the hours, dashed where the terrain hides it. The times are when the top of the " +

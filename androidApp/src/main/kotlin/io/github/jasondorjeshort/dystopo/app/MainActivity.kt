@@ -258,6 +258,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         StartupTrace.composing("compose RecenterButton and ScaleBar")
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
+        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.MapViewSwitch() // T309: "Map | Horizon", over the scale bar's line (the layout rule places it)
         StartupTrace.composing("compose FirstRunCard")
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         StartupTrace.composing("compose UpdateOverlay")

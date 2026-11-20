@@ -16,10 +16,13 @@ import java.time.LocalDate
  * - `GET /horizon`: `open`, `layers` (`satellites`, `peaks`, `sun`: the three synced settings), `gnss` (`held`,
  *   `holders`, `engine`: Satellites off releases the GNSS), `drawn` (what the screen last drew: `landscape`, `squareDp`,
  *   `windowDp`, `fontScale`, `rotationDeg`, `orientation`, `night`, `horizonDrawn`, `satellitesDrawn`, `peaksDrawn`
- *   (the rim's names), `peaksListed`, `sunPathDrawn` (samples), `sunHourMarks`, `sunNowDrawn`, `selected`, `scrollPx`,
- *   `scrollMaxPx`), `horizon` (as `GET /gnss`'s, without the per-degree angles) or null with `horizonReason`, `peaks`
- *   (`reason`, `ms`, `tilesRead`, `tested`, `visible`, `skyline`, `named`, `sectorDeg`, and each skyline peak's `name`,
- *   `eleM`, `distanceM`, `bearingDeg`, `compass`, `angleDeg`, `sector`, `onRim`), `sun` (`date`, `onTerrain`, the terrain
+ *   (the rim's names), `namesDrawn`, `peaksListed`, `hollowDrawn` (T309: the names whose peak is just out of sight), `leadersDrawn` (the names with a leader line),
+ *   `sunPathDrawn` (samples), `sunHourMarks`, `sunNowDrawn`, `selected`, `scrollPx`, `scrollMaxPx`, `switchPx` and
+ *   `switchSelected` (T309: the view's "Map | Horizon" switch)), `horizon` (as `GET /gnss`'s, without the per-degree
+ *   angles) or null with `horizonReason`, `peaks` (T309: `reason`, `ms`, `tilesRead`, `tested`, `visible`, `skyline`,
+ *   `candidates` (in sight or out of sight by no more than `hiddenM`), `outOfSight`, `hiddenM`, `named` (null before the
+ *   plot drew), and each candidate, closest first: `name`, `eleM`, `distanceM`, `bearingDeg`, `compass`, `angleDeg`,
+ *   `clearanceDeg`, `inSight`, `skyline`, `dominant`, `promM`, `score` and `rank` (`HorizonLabels`), `named`), `sun` (`date`, `onTerrain`, the terrain
  *   and flat `…SunriseMs`/`…SunsetMs` with their clock times and UTC, `noonMs`, `sunMinutes`, `alwaysUp`, `sunlit`,
  *   `gaps`, `pathSamples`, `pathClear`, `highestDeg`, `hourMarks`; `nowAltitudeDeg`, `nowAzimuthDeg`). No position.
  *   `date=YYYY-MM-DD` answers for that day (the screen keeps its own); `wait=<ms>` waits that long for the horizon and the
@@ -27,8 +30,11 @@ import java.time.LocalDate
  *   (`ShadeService.terrainAt`, waited up to 90 s) with `sunsetAgrees` and `sunriseAgrees`.
  * - `POST /horizon?layers=satellites,peaks,sun|all|none` or `satellites=1|0`, `peaks=`, `sun=`: the toggles, as a tap
  *   sets them (stored, synced); `date=YYYY-MM-DD|today`: the day the Sun layer shows; `select=<peak name>|none`: picks a
- *   skyline peak as a tap does; `scroll=<px>`: scrolls the control area. Answers `GET /horizon` (with `wait`).
+ *   candidate peak as a tap does; `scroll=<px>`: scrolls the control area. Answers `GET /horizon` (with `wait`).
  * - `POST /horizon/ui?open=1|0`: opens or closes the Horizon view, as the settings row and Close do; answers `GET /horizon`.
+ * - `POST /horizon/switch?to=map|horizon` (T309): selects a segment of the "Map | Horizon" switch, as a tap on it does (on the
+ *   map or on the view); answers `{to, open}` and the switch's place: `map` (the map's switch as `GET /layout` reads it:
+ *   `rectPx`, `state`, `reason`) and `view` (the view's own, `drawn.switchPx`).
  */
 object HorizonRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -61,12 +67,22 @@ object HorizonRoutes {
                 app.map.onMain {
                     if (q.containsKey("date")) HorizonUi.date = date
                     q["select"]?.let { name ->
-                        HorizonUi.selected = if (name == "none") null else HorizonData.peaks?.skyline?.firstOrNull { it.peak.name.equals(name, ignoreCase = true) }?.let { HorizonUi.keyOf(it) }
+                        HorizonUi.selected = if (name == "none") null else HorizonData.peaks?.candidates?.firstOrNull { it.peak.name.equals(name, ignoreCase = true) }?.let { HorizonUi.keyOf(it) }
                     }
                     scroll?.let { HorizonUi.scrollTo = it }
                 }
                 Thread.sleep(700) // the composition and the GNSS hold following the toggles
                 answer(app, r)
+            }
+            "POST" to "/horizon/switch" -> {
+                val horizon = when (r.query["to"]) {
+                    "horizon" -> true
+                    "map" -> false
+                    else -> return Response.json(mapOf("error" to "to=map or to=horizon"), 400)
+                }
+                app.map.onMain { io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.select(horizon) }
+                Thread.sleep(800)
+                Response.json(switchJson(app, r.query["to"]!!))
             }
             "POST" to "/horizon/ui" -> {
                 when (r.query["open"]) {
@@ -79,6 +95,17 @@ object HorizonRoutes {
             }
             else -> null
         }
+    }
+
+    /** T309: the switch's two places after a selection: the map's (by its layout id) and the view's own. */
+    private fun switchJson(app: DystopoApp, to: String): Map<String, Any?> = app.map.onMain {
+        val id = io.github.jasondorjeshort.dystopo.ui.OverlayIds.HORIZON_SWITCH
+        val map = io.github.jasondorjeshort.dystopo.app.MapLayout.observed().firstOrNull { it.id == id }
+        linkedMapOf(
+            "to" to to, "open" to HorizonUi.open,
+            "map" to map?.let { s -> linkedMapOf("rectPx" to s.rectPx?.map { Math.round(it) }, "state" to s.state, "reason" to s.reason) },
+            "view" to if (HorizonUi.open) HorizonUi.switchPx else null,
+        )
     }
 
     private fun answer(app: DystopoApp, r: Request): Response {
@@ -100,7 +127,7 @@ object HorizonRoutes {
             "position" to (pos != null), "drawn" to HorizonUi.drawn,
             "horizon" to Gnss.horizonJson(h)?.filterKeys { it != "angleDeg" },
             "horizonReason" to if (h == null) (if (pos == null) io.github.jasondorjeshort.dystopo.app.gnss.GnssText.NO_POSITION else io.github.jasondorjeshort.dystopo.app.gnss.GnssText.HORIZON_WORKING) else h.reason,
-            "peaks" to HorizonData.peaksJson(peaks), "peakRuns" to HorizonData.peakRuns.get(),
+            "peaks" to HorizonData.peaksJson(peaks, HorizonUi.drawn?.let { HorizonUi.names.map { n -> HorizonUi.keyOf(n.peak) }.toSet() }), "peakRuns" to HorizonData.peakRuns.get(),
             "sun" to sun?.let { HorizonData.sunJson(it) + mapOf("nowAltitudeDeg" to sunNow?.apparentAltitudeDeg?.let { a -> Math.round(a * 10) / 10.0 }, "nowAzimuthDeg" to sunNow?.azimuthDeg?.let { a -> Math.round(a * 10) / 10.0 }) },
         )
         if (q["compare"] == "1" && sun != null) out["turnaround"] = compare(app, h, pos.latitude, pos.longitude, sun)

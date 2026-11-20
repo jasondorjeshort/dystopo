@@ -97,6 +97,7 @@ object AndroidControls {
         element(OverlayIds.NAV_CARD, ControlKind.DISPLAY, "navigation", 32, "card"),
         element(OverlayIds.WARNING_CARD, ControlKind.DISPLAY, "navigation", 33, "card"),
         element(OverlayIds.STRIP, ControlKind.DISPLAY, "navigation", 34, "map-lower-left"),
+        element(OverlayIds.HORIZON_SWITCH, ControlKind.ACTION, "map", 27, "map-lower-left"), // T309: "Map | Horizon", over the scale bar's line
         element(OverlayIds.UPDATE_CARD, ControlKind.DISPLAY, "about", 7, "card"),
     )
 
