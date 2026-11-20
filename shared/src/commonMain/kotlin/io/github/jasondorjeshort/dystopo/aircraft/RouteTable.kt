@@ -46,28 +46,36 @@ class RouteTable private constructor(
     val sequenceCount: Int get() = sequences.size
 
     /** The route of [callSign], or null when the table has none. */
-    fun lookup(callSign: String): FlightRoute? {
+    fun lookup(callSign: String): FlightRoute? = lookup(callSign, normalise = true)
+
+    /** [lookup], or without round 3's variants of the number ([normalise] false: the devtool's before-and-after). */
+    fun lookup(callSign: String, normalise: Boolean): FlightRoute? {
         val cs = callSign.trim().uppercase()
         if (cs.length < 3) return null
-        synchronized(cache) { if (cache.containsKey(cs)) return cache[cs] }
+        if (normalise) synchronized(cache) { if (cache.containsKey(cs)) return cache[cs] }
         var found: FlightRoute? = null
-        for (n in 3 downTo 2) {
+        // Round 3: on a miss, the number without its leading zeros (SJX032 as SJX32), then without one trailing letter
+        // (UAL719C as UAL719): the feed's call sign and the table's row differ so.
+        search@ for (variant in 0..(if (normalise) 2 else 0)) for (n in intArrayOf(3, 2, 4)) {
             if (cs.length <= n) continue
-            val code = cs.substring(0, n)
-            val range = lines[code] ?: continue
-            val seq = find(range, cs.substring(n)) ?: continue
+            val range = lines[cs.substring(0, n)] ?: continue
+            val number = numberVariant(cs.substring(n), variant) ?: continue
+            val seq = find(range, number) ?: continue
             found = FlightRoute(cs, sequences[seq].map { airports[it] })
-            break
+            break@search
         }
-        if (found == null && cs.length > 4) {
-            val range = lines[cs.substring(0, 4)]
-            if (range != null) find(range, cs.substring(4))?.let { found = FlightRoute(cs, sequences[it].map { a -> airports[a] }) }
-        }
-        synchronized(cache) {
+        if (normalise) synchronized(cache) {
             if (cache.size > 2000) cache.remove(cache.keys.first())
             cache[cs] = found
         }
         return found
+    }
+
+    /** [number] as asked (0), without leading zeros (1), without one trailing letter and leading zeros (2); null when no different. */
+    private fun numberVariant(number: String, variant: Int): String? = when (variant) {
+        0 -> number
+        1 -> number.trimStart('0').takeIf { it.isNotEmpty() && it != number }
+        else -> if (number.length > 1 && number.last().isLetter() && number[number.length - 2].isDigit()) number.dropLast(1).trimStart('0').ifEmpty { null } else null
     }
 
     /** The sequence index of [number] on the line [range] (after the code and the tab), or null. */

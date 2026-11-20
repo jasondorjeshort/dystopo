@@ -256,6 +256,8 @@ class AircraftCommand : CliktCommand(name = "aircraft") {
     private val naming by option("--naming", help = "both, codes or cities").default("both")
     private val live by option("--live", help = "poll adsb.lol once around --from").flag()
     private val radius by option("--radius", help = "nautical miles for --live").int().default(50)
+    private val polls by option("--polls", help = "saved readsb answers (files or a folder of *.json): route lookups and plausibility before and after round 3, counts only")
+    private val airline by option("--airline", help = "with --polls: also the counts for call signs starting so (e.g. UAL)")
 
     override fun run() {
         val t0 = System.nanoTime()
@@ -263,6 +265,7 @@ class AircraftCommand : CliktCommand(name = "aircraft") {
         if (p.size != 2) throw UsageError("--from takes lat,lon")
         val (lat, lon) = p
         if (live) return printReport(this, livePoll(lat, lon) + ("ms" to (System.nanoTime() - t0) / 1_000_000))
+        polls?.let { return printReport(this, pollsReport(it) + ("ms" to (System.nanoTime() - t0) / 1_000_000)) }
         val names = AirportNaming.of(naming) ?: throw UsageError("--naming takes both, codes or cities")
         val tTable = System.nanoTime()
         val table = File(routes).takeIf { it.isFile }?.let { readRouteTable(it) }
@@ -288,6 +291,39 @@ class AircraftCommand : CliktCommand(name = "aircraft") {
             "aircraft" to view.map { AircraftJson.now(it) + ("history" to tracker.history(it.hex).size) },
             "ms" to (System.nanoTime() - t0) / 1_000_000,
         ))
+    }
+
+    /**
+     * Round 3: every aircraft with a call sign in the saved answers (deduplicated by call sign, the last seen kept), looked
+     * up and checked as the phone does now (lookup variants, the terminal exemption) and as it did before (neither):
+     * found, plausible, and the rejections by reason. Counts only; the answers are not printed.
+     */
+    private fun pollsReport(spec: String): Map<String, Any?> {
+        val table = readRouteTable(File(routes))
+        val files = spec.split(',').map { File(it.trim()) }.flatMap { f -> if (f.isDirectory) f.listFiles { x -> x.name.endsWith(".json") }!!.sorted() else listOf(f) }
+        val byCs = LinkedHashMap<String, io.github.jasondorjeshort.dystopo.aircraft.AircraftReport>()
+        for (f in files) for (a in io.github.jasondorjeshort.dystopo.aircraft.ReadsbParser.parse(f.readText(), 0).aircraft) a.callSign?.let { byCs[it] = a }
+        fun tally(list: Collection<io.github.jasondorjeshort.dystopo.aircraft.AircraftReport>, after: Boolean): Map<String, Any?> {
+            var found = 0; var plausible = 0
+            val reasons = java.util.TreeMap<String, Int>()
+            for (a in list) {
+                val r = table.lookup(a.callSign!!, normalise = after) ?: continue
+                found++
+                val m = io.github.jasondorjeshort.dystopo.aircraft.RoutePlausibility.check(r, a.lat, a.lon, a.trackDeg, a.groundSpeedKt, a.onGround, a.verticalRateFpm, terminal = after)
+                if (m.plausible) plausible++ else {
+                    val k = when { "heading away" in m.reason -> "heading"; "off the leg" in m.reason -> "offLeg"; "beyond its ends" in m.reason -> "beyondEnds"; "ground" in m.reason -> "ground"; else -> "other" }
+                    reasons[k] = (reasons[k] ?: 0) + 1
+                }
+            }
+            return linkedMapOf("withCallSign" to list.size, "found" to found, "plausible" to plausible, "rejected" to reasons)
+        }
+        val sel = airline?.uppercase()?.let { p -> byCs.values.filter { it.callSign!!.startsWith(p) } }
+        return linkedMapOf(
+            "files" to files.size, "aircraft" to byCs.size, "routeTable" to table.json(),
+            "before" to tally(byCs.values, false), "after" to tally(byCs.values, true),
+            "airline" to airline, "airlineBefore" to sel?.let { tally(it, false) }, "airlineAfter" to sel?.let { tally(it, true) },
+            "kept" to "nothing: counts only",
+        )
     }
 
     private fun livePoll(lat: Double, lon: Double): Map<String, Any?> {
