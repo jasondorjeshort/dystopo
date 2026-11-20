@@ -1,20 +1,20 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-20, by main session (wave 39 closed, v0.1.34-alpha published)
+Updated: 2026-11-20, by main session (wave 40 open: T309 implementing)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-39.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **No wave is open.** Wave 39 (T308, the Horizon view: the square sky plot with toggles for Satellites, Peaks and Sun) is closed and recorded in `docs/tasks/wave-39.md`; follow-ups in the board's Later. Its sweep `out/sweep-20261119-1925` was cut off by a session's end after `first-run` (`a11y` red: the launch crash after the guard's reboot, two sweeps out of two) and finished by `out/sweep-20261119-1925-rerun`, all green. **v0.1.34-alpha** is published (2026-11-20 02:55 UTC); `out/sweep-20261119-1925-rerun` with `out/sweep-20261119-1925` is the next release's `-Prev` (a full sweep next time gives a whole sheet).
+- **Wave 40 is open** (`docs/TASKS.md`, one task): T309, a Map | Horizon button on the map and the closest peaks first on the Horizon view's rim (the owner's words of 2026-11-20), critic's edits made, implementer launched on `task/T309` (worktree `dystopo-wt/T309`, AVD `dystopo35-T309`, ports 8694/5570). Then a verifier, the merge, a full sweep (`-Prev out/sweep-20261119-1925-rerun`) and a release. Wave 39 is in `docs/tasks/wave-39.md`; **v0.1.34-alpha** is the published release.
 - **Cost:** the 7-day meter read 91 at wave 39's close; its reset moved to 2026-11-21 03:00 UTC (re-read `resets_at` at each stall). Figures: 1.5 a task, 1.5 a wave's fixed cost, 1 a release (the `wave` skill, Plan and launch step 3). The hold is 97.
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
 
-1. The Horizon view's way in from the map (`docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md`, its survey: try "Map | Horizon" at the bottom, a compass tap as a shortcut; the owner: "we may just need trial and error"), then the launch crash after the guard's reboot (`docs/ideas/2026-11-19-launch-crash-rootdir-after-the-guards-reboot.md`, reproducible).
+1. The launch crash after the guard's reboot (`docs/ideas/2026-11-19-launch-crash-rootdir-after-the-guards-reboot.md`, reproducible: two sweeps out of two).
 2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
 3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
 4. Tooling follow-ups (Later): save logcat on a launch crash (wave 37); the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
