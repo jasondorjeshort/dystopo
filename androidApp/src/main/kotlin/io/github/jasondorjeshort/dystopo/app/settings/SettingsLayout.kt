@@ -10,7 +10,7 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
  */
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage"), // T115: titles from Screens
-    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements"), // T223: names what the page holds
+    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements, flight tracking"), // T223: names what the page holds; T311: flight tracking
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning, Horizon view"), // T223: names what the page holds; T308: Horizon view
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
@@ -108,6 +108,11 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T213: the trail disagreements' layer switch (the Map page, last)
     SHOW_DIVERGENCE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SHOW_DIVERGENCE, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.routing.DivergenceText.SETTING, "SettingsPages", "T213"),
     // end T213
+    // T311: the Flights layer: Flight tracking, its refresh interval and airport names (the Map page, last)
+    AIRCRAFT(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING, "SettingsPages", "T311"),
+    AIRCRAFT_REFRESH(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_REFRESH, SettingsGroup.MAP, "Flight tracking: Refresh", "SettingsPages", "T311"),
+    AIRCRAFT_AIRPORTS(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_AIRPORTS, SettingsGroup.MAP, "Flight tracking: Airport names", "SettingsPages", "T311"),
+    // end T311
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

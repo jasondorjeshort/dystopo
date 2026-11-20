@@ -13,7 +13,10 @@ enum class SourceKind(val json: String) {
     FONT("font"),
 
     /** T160: live readings the app uses, not map data (weather station pressure for the readout's barometer). */
-    WEATHER("weather");
+    WEATHER("weather"),
+
+    /** T311: the Flights layer's data: live aircraft positions, call-sign routes and airports. */
+    AIRCRAFT("aircraft");
 
     companion object {
         fun parse(s: String): SourceKind? = entries.firstOrNull { it.json == s }

@@ -749,6 +749,7 @@ object MapLayout {
             ?: gone(OverlayIds.COMPASS, if (turned && compass?.hidden == true) compass.reason ?: OverlayLayout.REASON_NO_ROOM else "mapFacingNorth")
         out += seen(OverlayIds.TRIP_CARD, "notUp")
         out += seen(OverlayIds.UPDATE_CARD, "notUp")
+        out += seen(OverlayIds.AIRCRAFT_CARD, "notUp") // T311: the tapped aircraft's card, placed by its own code
         out += card(OverlayIds.PLANNING_CARD, read(OverlayIds.PLANNING_CARD), BottomPanels.routeCard, null)
         out += card(OverlayIds.NAV_CARD, read(OverlayIds.NAV_CARD), NavCardBand.layout, null)
         val warning = WarningCardLayout

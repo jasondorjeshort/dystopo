@@ -1,5 +1,5 @@
 {
-  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay | font (fonts the app draws labels with) | weather (live readings the app uses, such as weather station pressure). license is an SPDX id or expression (ids joined with AND / OR / WITH), or LicenseRef-* where SPDX has none.",
+  "comment": "Dystopo data source registry (docs/PLANNING.md > Licensing, hard rule 4). Every data source used to build anything we ship is listed here with its license and required attribution. Outputs compose their attribution from this file through SourceRegistry; don't hard-code credits elsewhere. kind: dem | geoid | osm (inputs to the OSM vector tile build) | overlay | font (fonts the app draws labels with) | weather (live readings the app uses, such as weather station pressure) | aircraft (the Flights layer: live aircraft positions, call-sign routes and airports). license is an SPDX id or expression (ids joined with AND / OR / WITH), or LicenseRef-* where SPDX has none.",
   "version": 1,
   "sources": [
     {
@@ -574,6 +574,66 @@
       "url": "https://aviationweather.gov/api/data/metar",
       "updateCadence": "Live: a new report per station about every hour; the readout reads one only while it is in use (T173).",
       "notes": "Used as a prior on the readout's barometer offset (T160): the altimeter group of the raw report (A in hundredths of inHg, Q in hPa), parsed by readout/MetarAltimeter, not the remark's sea-level pressure; the JSON form's altim is rounded to whole hPa, so the raw report (rawOb) is parsed; lat, lon and obsTime come with it. The data API allows 100 requests a minute (aviationweather.gov/data/api). NWS web information is public domain unless noted (weather.gov/disclaimer). User-facing text says weather station pressure."
+    },
+    {
+      "id": "adsblol-live",
+      "name": "ADSB.lol live aircraft positions",
+      "kind": "aircraft",
+      "provider": "ADSB.lol, a community network of ADS-B and MLAT receivers (its contributors)",
+      "coverage": {
+        "summary": "Wherever a contributor's receiver hears aircraft: dense over North America and Europe, thin over oceans and remote land.",
+        "bbox": [-180, -90, 180, 90]
+      },
+      "resolution": "Point observations; positions a few seconds old, read every 20 s by default while the Flights layer is on",
+      "license": "ODbL-1.0",
+      "licenseName": "Open Database License 1.0",
+      "licenseUrl": "https://opendatacommons.org/licenses/odbl/1-0/",
+      "attribution": "Flights: ADSB.lol contributors (ODbL)",
+      "attributionHtml": "Flights: <a href=\"https://www.adsb.lol\" target=\"_blank\">ADSB.lol</a> contributors (<a href=\"https://opendatacommons.org/licenses/odbl/1-0/\" target=\"_blank\">ODbL</a>)",
+      "allowedUses": "Use, commercial use included, with the credit; a derived database made public must be ODbL too (the app keeps the feed in memory only and publishes none).",
+      "url": "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}",
+      "updateCadence": "Live. 500 requests a UTC day per IP address without a key; over that HTTP 429 with Retry-After (2026).",
+      "notes": "T311: the Flights layer (off by default) asks for the map view's centre rounded to 0.1 degree and a radius reaching the view's corners, at most 250 nm, with a generic User-Agent and no key or device id. readsb JSON; alt_geom is above the WGS84 ellipsoid. Credited on the map's line while the layer draws. The adsblol/api repository was archived on 2026-11-19 (docs/findings/2026-11-20-aircraft-layer-sources-and-display.md)."
+    },
+    {
+      "id": "vrs-standing-data",
+      "name": "VRS standing data: call-sign routes",
+      "kind": "aircraft",
+      "provider": "The Virtual Radar Server standing data project (routes from ACARS logs and user entries)",
+      "coverage": {
+        "summary": "Scheduled and charter flights worldwide, by airline call sign; thin for general aviation.",
+        "bbox": [-180, -90, 180, 90]
+      },
+      "resolution": "One route (the airports in the order flown) per call sign",
+      "license": "CC0-1.0",
+      "licenseName": "Creative Commons Zero 1.0 (public domain dedication)",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "attribution": "Flight routes: VRS standing data (CC0)",
+      "attributionHtml": "Flight routes: <a href=\"https://github.com/vradarserver/standing-data\" target=\"_blank\">VRS standing data</a> (CC0)",
+      "allowedUses": "Any use; no credit required.",
+      "url": "https://github.com/vradarserver/standing-data",
+      "updateCadence": "Committed daily; the app ships a copy made by devtool aircraft-routes, refreshed by hand.",
+      "notes": "T311: routes/schema-01 (Callsign, Code, Number, AirlineCode, AirportCodes in ICAO codes, hyphenated, in the order flown), joined with the airports and compacted into androidApp/src/main/assets/aircraft/routes.gzip. Looked up on the phone, so no call sign leaves it; a route is shown only when the aircraft fits one of its legs (aircraft/RoutePlausibility.kt)."
+    },
+    {
+      "id": "ourairports",
+      "name": "OurAirports airports",
+      "kind": "aircraft",
+      "provider": "OurAirports (David Megginson and contributors)",
+      "coverage": {
+        "summary": "Airports worldwide; the app keeps the ones its route table names.",
+        "bbox": [-180, -90, 180, 90]
+      },
+      "resolution": "One point per airport: ICAO and IATA codes, name, city, position",
+      "license": "LicenseRef-PublicDomain",
+      "licenseName": "Public domain (released by OurAirports)",
+      "licenseUrl": "https://ourairports.com/data/",
+      "attribution": "Airports: OurAirports (public domain)",
+      "attributionHtml": "Airports: <a href=\"https://ourairports.com/\" target=\"_blank\">OurAirports</a> (public domain)",
+      "allowedUses": "Any use; the data is in the public domain.",
+      "url": "https://davidmegginson.github.io/ourairports-data/airports.csv",
+      "updateCadence": "Nightly; the app ships the copy devtool aircraft-routes read.",
+      "notes": "T311: airports.csv, matched to the route table's ICAO codes by ident, icao_code or gps_code; name, municipality, iata_code, latitude_deg and longitude_deg kept."
     }
   ]
 }

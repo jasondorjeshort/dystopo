@@ -646,6 +646,22 @@ object AppSettings {
     val horizonLayers: io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
         get() = io.github.jasondorjeshort.dystopo.horizon.HorizonLayers(HORIZON_SATELLITES.value, HORIZON_PEAKS.value, HORIZON_SUN.value)
     // end T308
+    // T311: Flight tracking (the Flights layer, off by default: a new data flow), its refresh interval (20 s; 10, 20, 30 or
+    // 60) and how airports read (codes on labels and both on the card; codes; cities). Each synced, ADR 0044 (the research
+    // finding of 2026-11-20 and the owner's answer in its idea); ADR 0033: three keys added. Rows: Settings › Map options.
+    const val KEY_AIRCRAFT = "aircraft"
+    const val KEY_AIRCRAFT_REFRESH = "aircraftRefreshS"
+    const val KEY_AIRCRAFT_AIRPORTS = "aircraftAirports"
+    val AIRCRAFT = flag(KEY_AIRCRAFT, false, synced = true)
+    val AIRCRAFT_REFRESH_S = add(Setting(KEY_AIRCRAFT_REFRESH, io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.REFRESH_DEFAULT_S, true, Setting.Type.INT,
+        { raw -> ((raw as? Number)?.toDouble() ?: raw.toString().trim().removeSuffix("s").trim().toDoubleOrNull())?.takeIf { it.isFinite() && it.toInt().toDouble() == it && it.toInt() in io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.REFRESH_CHOICES_S }?.toInt() },
+        { "$KEY_AIRCRAFT_REFRESH must be one of ${io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.REFRESH_CHOICES_S.joinToString(", ")} seconds (got $it)" },
+        { it.takeIf { s -> s in io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.REFRESH_CHOICES_S } }))
+    val AIRCRAFT_AIRPORTS = add(Setting(KEY_AIRCRAFT_AIRPORTS, io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.of(it) }),
+        { io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.of(it.toString()) },
+        { "$KEY_AIRCRAFT_AIRPORTS must be both, codes or cities (got $it)" }))
+    // end T311
 }
 
 /**

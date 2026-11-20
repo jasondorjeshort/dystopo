@@ -456,6 +456,31 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             }
         }
         // end T213
+        // T311: the Flights layer (ADR 0044: off by default as a new data flow; the refresh and the names are settings
+        // because the surveyed apps split; the research finding of 2026-11-20).
+        SettingsRow.AIRCRAFT -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val on = AppSettings.AIRCRAFT.value
+            Setting(row.label, AIRCRAFT_LINE, help = "settings.aircraft") {
+                OnOff(on) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.AIRCRAFT, it)) }
+            }
+        }
+        SettingsRow.AIRCRAFT_REFRESH -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            @Suppress("UNUSED_VARIABLE") val tick = io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.revision
+            val s = AppSettings.AIRCRAFT_REFRESH_S.value
+            Setting(row.label, io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.quotaLine(), help = "settings.aircraftRefresh") {
+                for (c in io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.REFRESH_CHOICES_S) Option("$c s", s == c) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.AIRCRAFT_REFRESH_S, c)) }
+            }
+        }
+        SettingsRow.AIRCRAFT_AIRPORTS -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.AIRCRAFT_AIRPORTS.value
+            Setting(row.label, AIRCRAFT_AIRPORTS_LINE, help = "settings.aircraftAirports") {
+                for (n in io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.entries) Option(n.label, v == n) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.AIRCRAFT_AIRPORTS, n)) }
+            }
+        }
+        // end T311
     }
 }
 
@@ -474,6 +499,10 @@ internal const val TRACK_ACTIVITY_LINE = "what you are doing now, shown on the m
 internal const val RECORD_ASK_ACTIVITY_LINE = "Record shows the activities first; off, it starts at once with the current activity"
 // end T263
 internal const val SHOW_DIVERGENCE_LINE = "where your recorded tracks keep leaving the mapped trail, worked out on this phone"
+// T311: the Flights rows' lines under their titles (ADR 0031 strings).
+internal const val AIRCRAFT_LINE = "live aircraft around the map you are viewing; needs a connection"
+internal const val AIRCRAFT_AIRPORTS_LINE = "on the map's labels and the flight card"
+// end T311
 
 /** T203: the Estimate position row's line under its title (ADR 0031 string). */
 /** T250: the Barometer row's line under its title. */
@@ -884,6 +913,22 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "dismiss it. It is worked out on this phone and sends nothing."
         },
         // end T213
+        // T311: the Flights layer's three rows.
+        HelpText("settings.aircraft", io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING, at(SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING), show = page(SettingsGroup.MAP)) { units ->
+            "Shows aircraft near the map you are viewing; tap one for its card. While it is on, the map's centre, rounded to " +
+                "about ${io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(11_000.0, units)}, goes to the flight data source named in the credits; in the Horizon view, your position rounded the " +
+                "same way. Nothing is asked while the app is in the background."
+        },
+        HelpText("settings.aircraftRefresh", "Flight tracking: Refresh", at(SettingsGroup.MAP, "Flight tracking: Refresh"), show = page(SettingsGroup.MAP)) {
+            "How often the flight positions are asked for while the map shows. The source allows about 500 requests a day from " +
+                "one internet address, counted in UTC days; the line under the title counts this phone's. Between requests the " +
+                "aircraft move on along their tracks."
+        },
+        HelpText("settings.aircraftAirports", "Flight tracking: Airport names", at(SettingsGroup.MAP, "Flight tracking: Airport names"), show = page(SettingsGroup.MAP)) {
+            "How airports read. Codes and cities puts codes on the map's labels (SEA > DEN) and both on the flight card " +
+                "(SEA Seattle > DEN Denver). Codes puts codes on both; Cities, city names on both."
+        },
+        // end T311
     )
 }
 

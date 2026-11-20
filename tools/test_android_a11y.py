@@ -227,4 +227,32 @@ try:
 finally:
     a11y.time.sleep, a11y.NAV_PIN_S = sleep, pin_s
 
+# T311: the flight card is a map screen; it plays the replay fixture (a body), selects one aircraft, and its end puts
+# Flight tracking, the replay and the selection back.
+flights = [s for s in a11y.SCREENS if s[0] == "flights-card"]
+assert len(flights) == 1 and flights[0][3] == "map" and flights[0][2] is not None, flights
+assert os.path.isfile(a11y.FLIGHTS_REPLAY), a11y.FLIGHTS_REPLAY
+
+
+class BodySrv:
+    def __init__(self):
+        self.calls = []
+
+    def ok(self, method, path, body=None, **kw):
+        self.calls.append((method, path.split("?")[0], body is not None))
+        return {}
+
+    def call(self, method, path, body=None, **kw):
+        self.calls.append((method, path, body is not None))
+        return 200, {}
+
+
+bs = BodySrv()
+flights[0][1](type("C", (), {"srv": bs})())
+assert [c[1] for c in bs.calls] == ["/camera", "/aircraft/replay", "/aircraft"] and bs.calls[1][2], bs.calls
+bs.calls.clear()
+flights[0][2](type("C", (), {"srv": bs})())
+assert ("POST", "/settings?aircraft=0", False) in bs.calls and any(p.startswith("/aircraft/replay?stop=1") for _m, p, _b in bs.calls), bs.calls
+# end T311
+
 print("test_android_a11y: ok")

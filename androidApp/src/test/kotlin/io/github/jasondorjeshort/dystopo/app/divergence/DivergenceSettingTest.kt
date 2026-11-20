@@ -25,7 +25,7 @@ class DivergenceSettingTest {
     fun theSwitchIsAMapRowOnByDefaultAndSynced() {
         assertEquals(SettingsGroup.MAP, SettingsRow.SHOW_DIVERGENCE.group)
         assertEquals("Show trail disagreements", SettingsRow.SHOW_DIVERGENCE.label)
-        assertEquals(SettingsRow.SHOW_DIVERGENCE, SettingsLayout.rows(SettingsGroup.MAP).last())
+        assertEquals(SettingsRow.SHOW_DIVERGENCE, SettingsLayout.rows(SettingsGroup.MAP).last { it.since != "T311" }) // T311: the Flights rows come after it
         assertTrue(AppSettings.showDivergence, "on by default (the survey: a layer switch, default on)")
         assertEquals(true, AppSettings.json()["showDivergence"])
         assertTrue(AppSettings.KEY_SHOW_DIVERGENCE in SettingsRoutes.KEYS)

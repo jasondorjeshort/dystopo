@@ -6,7 +6,7 @@
 
 Drives the debug build through its debug routes (the tour's own steps: no taps to get anywhere) to each screen of SCREENS
 (the map with each card up, a track's profile, the Activity and Record-as pickers, the recording panel, the Tracks and routes
-screen, Offline maps, Settings and each of its pages, the Horizon view, the share screen, the first-run card), at each font scale (the system's,
+screen, Offline maps, Settings and each of its pages, the Horizon view, the share screen, the first-run card, T311 the flight card), at each font scale (the system's,
 `settings put system font_scale`, put back at the end), and at each screen takes a raw screencap, `uiautomator dump` and the
 app's own semantics (`GET /semantics`, `debug/SemanticsRoutes.kt`: Compose's merged and unmerged trees with each node's
 bounds and touch bounds; no outside tool reads the touch bounds, and Compose stretches a small `clickable` to a 48 dp touch
@@ -729,6 +729,26 @@ def end_horizon(c):
     c.srv.call("POST", "/horizon/ui?open=0")
 
 
+# T311
+FLIGHTS_REPLAY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared", "src", "commonTest", "resources", "aircraft", "rainier-replay.json")
+
+
+def scr_flights(c):
+    """T311: the Flights layer on the replay fixture with the nearest aircraft's card up (its title, Close and help icon,
+    its lines), over the map at the Rainier pack."""
+    c.srv.ok("POST", "/camera?lat=46.86&lon=-121.45&zoom=8.6&bearing=0")
+    with open(FLIGHTS_REPLAY, "rb") as f:
+        c.srv.ok("POST", "/aircraft/replay?name=a11y&undulationM=-18.4&wait=3500", body=f.read())
+    c.srv.ok("POST", "/aircraft?select=c0ffe1&wait=1500")
+
+
+def end_flights(c):
+    c.srv.call("POST", "/aircraft?select=none&wait=0")
+    c.srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
+    c.srv.call("POST", "/settings?aircraft=0")
+# end T311
+
+
 def scr_share(c):
     c.srv.ok("POST", "/share/start")
 
@@ -800,6 +820,9 @@ SCREENS = [
     ("horizon", scr_horizon, end_horizon, "screen"),
     ("share", scr_share, end_share, "screen"),
     ("first-run", scr_first_run, end_first_run, "map"),
+    # T311
+    ("flights-card", scr_flights, end_flights, "map"),
+    # end T311
 ]
 
 

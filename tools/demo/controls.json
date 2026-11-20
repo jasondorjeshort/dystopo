@@ -1137,6 +1137,45 @@
       }
     },
     {
+      "id": "aircraft",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 28,
+          "zone": "settings",
+          "row": "aircraft"
+        }
+      }
+    },
+    {
+      "id": "aircraftRefreshS",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 29,
+          "zone": "settings",
+          "row": "aircraftRefreshS"
+        }
+      }
+    },
+    {
+      "id": "aircraftAirports",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 30,
+          "zone": "settings",
+          "row": "aircraftAirports"
+        }
+      }
+    },
+    {
       "id": "settingsAndPacks",
       "kind": "link",
       "platforms": ["android"],
@@ -1324,6 +1363,30 @@
           "order": 7,
           "zone": "card",
           "inventory": ["M108", "M109", "M110", "M111", "M112"]
+        }
+      }
+    },
+    {
+      "id": "aircraftCard",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 31,
+          "zone": "card"
+        }
+      }
+    },
+    {
+      "id": "flightsStatus",
+      "kind": "display",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 32,
+          "zone": "map-top"
         }
       }
     },

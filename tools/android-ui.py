@@ -25,8 +25,18 @@ Parts:
                least-fuel card's fuel line shows; rainier without it); T307, T308: the `horizon` step (horizon_step, `gps`
                before T308): T309: the map's "Map | Horizon" switch opens the Horizon view (Settings > Navigation and
                tracking > Horizon view before; frames `horizon` and `horizon-scrolled`, `gps` and `gps-plot` before T308),
-               the view's "Map" segment takes it away; no crash.
+               the view's "Map" segment takes it away; no crash. T311: the `flights` step (flights_step): Settings > Map
+               options at Flight tracking (frame `flights-row`, the refresh row's "about N requests left today (UTC)"),
+               its help pop-up (frame `flights-help`), then with airplane mode on, Flight tracking On and the map's
+               "Flights: No flight data: offline" (frame `flights-offline`); airplane mode and the setting put back.
                --feature-steps runs only the steps named.
+  flights      (T311, debug build: --serial, --port) the Flights layer on the replay fixture
+               (shared/src/commonTest/resources/aircraft/rainier-replay.json, POST /aircraft/replay with an undulation
+               for the emulator's fix): the map at Rainier z9 with silhouettes, trails and labels (frame `flights-map`),
+               the nearest aircraft tapped (`select`) with its solid track, its dashed route and the card
+               (`flights-card`), the hollow stale one's label read from GET /aircraft, the card at font scale 2.0
+               (`flights-card-font2`) and in landscape (`flights-card-landscape`), then the live feed with airplane mode
+               on (`flights-offline`); every setting, the font scale, the rotation and the network put back.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
                pack (no first-run card, contours drawn) and the setting survived. The new APK must carry a higher
@@ -122,7 +132,7 @@ debug = _load("android_debug", "android_debug.py")
 firstrun = _load("android_firstrun", "android-firstrun.py")  # Device, settle_map, contour_share, fresh_install
 # T303: the release parts drive the release build (its own id); routes, search and bothunits drive the debug build, whose
 # id carries the .debug suffix. main() calls use_package for those. The ids live in android_debug.py.
-DEBUG_PARTS = ("routes", "search", "bothunits")
+DEBUG_PARTS = ("routes", "search", "bothunits", "flights")  # T311: flights
 PACKAGE = debug.RELEASE_PACKAGE
 ACTIVITY = debug.activity(PACKAGE)
 EXTERNAL = f"/sdcard/Android/data/{PACKAGE}/files"
@@ -477,9 +487,9 @@ class DebugServer:
         self.port = port
         _, self.token = debug.bootstrap(self.exe, serial, port)
 
-    def call(self, method, path, timeout=180):
+    def call(self, method, path, timeout=180, body=None):
         for attempt in (0, 1):
-            req = urllib.request.Request(self.base + path, method=method, headers={"X-Dystopo-Token": self.token})
+            req = urllib.request.Request(self.base + path, method=method, headers={"X-Dystopo-Token": self.token}, data=body)  # T311: a body
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     return r.status, json.loads(r.read().decode("utf-8") or "null")
@@ -1855,6 +1865,219 @@ def horizon_step(dev):
             "satellitesLine": sats, "peaksLine": peaks, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
 
 
+# --- features: Flight tracking (T311) ----------------------------------------------------------------------------
+# T311
+
+FLIGHTS_ROW = "^Flight tracking$"
+FLIGHTS_OFFLINE = "^Flights: No flight data: offline$"
+FLIGHTS_QUOTA = r"^about \d+ requests left today \(UTC\)$"
+
+
+def airplane(dev, on):
+    dev.shell("cmd", "connectivity", "airplane-mode", "enable" if on else "disable", check_ok=False)
+    time.sleep(3)
+
+
+def scroll_to(dev, pattern, swipes=14):
+    """Swipes the open settings page up until [pattern] shows, its node and the screen's nodes."""
+    n, nodes = dev.wait_for(pattern, 3)
+    w, h, _d = screen(dev)
+    for _ in range(swipes):
+        if n and n["bounds"][3] < h * 0.85:
+            return n, nodes
+        dev.shell("input", "swipe", str(w // 2), str(h * 4 // 5), str(w // 2), str(h * 2 // 5), "600")
+        time.sleep(1)
+        n, nodes = dev.wait_for(pattern, 2)
+    return n, nodes
+
+
+def row_on(dev, row, nodes, below_pattern):
+    """The "On" choice between [row]'s label and the next row's label."""
+    stop = dev.find(below_pattern, nodes)
+    top = row["bounds"][1]
+    bottom = stop["bounds"][1] if stop else 10 ** 6
+    ons = [n for n in nodes if n["text"] == "On" and n["bounds"] and top < n["bounds"][1] < bottom]
+    return ons[0] if ons else None
+
+
+def flights_step(dev):
+    """T311, in the release build by taps: Settings > Map options scrolled to Flight tracking (the frame `flights-row`,
+    with the refresh row's requests-left line), its help pop-up (`flights-help`), then airplane mode on before Flight
+    tracking is turned On, so no request leaves, and the map's status line "Flights: No flight data: offline"
+    (`flights-offline`). Airplane mode off and Flight tracking Off again in a `finally`."""
+    t0 = time.time()
+    out = {"frames": {}}
+    errors = []
+    turned_on = False
+    try:
+        close_sheet(dev)
+        open_settings(dev, "Map options", "^Hillshade$|^Map options$")
+        row, nodes = scroll_to(dev, FLIGHTS_ROW)
+        if not row:
+            raise RuntimeError(f"no Flight tracking row on Map options (texts: {dev.texts(nodes)[-20:]})")
+        _q, nodes = scroll_to(dev, FLIGHTS_QUOTA, swipes=3)
+        out["quotaLine"] = next((t for t in dev.texts(nodes) if re.match(FLIGHTS_QUOTA, t)), None)
+        out["frames"]["row"] = dev.screencap("flights-row")[0]
+        row, nodes = dev.wait_for(FLIGHTS_ROW, 5)
+        helpn = dev.find("^Help: Flight tracking$", nodes)
+        if not helpn:
+            raise RuntimeError("no help icon on the Flight tracking row")
+        dev.tap(helpn)
+        time.sleep(1)
+        hn = dev.nodes()
+        out["help"] = next((t for t in dev.texts(hn) if "flight data source" in t), None)
+        out["frames"]["help"] = dev.screencap("flights-help")[0]
+        if not out["help"]:
+            errors.append("the help pop-up did not show its text")
+        ok = dev.find("^OK$", hn)
+        if ok:
+            dev.tap(ok)
+        else:
+            dev.shell("input", "keyevent", "KEYCODE_BACK")
+        time.sleep(1)
+        airplane(dev, True)
+        row, nodes = dev.wait_for(FLIGHTS_ROW, 5)
+        on = row_on(dev, row, nodes, "^Flight tracking: Refresh$") if row else None
+        if not on:
+            raise RuntimeError("no On choice on the Flight tracking row")
+        dev.tap(on)
+        turned_on = True
+        close_sheet(dev)
+        n, nodes = dev.wait_for(FLIGHTS_OFFLINE, 15)
+        out["frames"]["offline"] = dev.screencap("flights-offline")[0]
+        out["offlineLine"] = n["text"] if n else None
+        if not n:
+            errors.append(f"no '{FLIGHTS_OFFLINE}' on the map (texts: {dev.texts(nodes)[:20]})")
+    except Exception as e:
+        errors.append(f"{type(e).__name__}: {e}")
+    finally:
+        airplane(dev, False)
+        if turned_on:
+            try:
+                open_settings(dev, "Map options", "^Hillshade$|^Map options$")
+                row, nodes = scroll_to(dev, FLIGHTS_ROW)
+                off = None
+                if row:
+                    stop = dev.find("^Flight tracking: Refresh$", nodes)
+                    offs = [x for x in nodes if x["text"] == "Off" and x["bounds"] and row["bounds"][1] < x["bounds"][1] < (stop["bounds"][1] if stop else 10 ** 6)]
+                    off = offs[0] if offs else None
+                if off:
+                    dev.tap(off)
+                    out["restored"] = "Flight tracking off"
+                else:
+                    errors.append("could not turn Flight tracking off again")
+                close_sheet(dev)
+            except Exception as e:
+                errors.append(f"restore: {type(e).__name__}: {e}")
+    out["seconds"] = round(time.time() - t0, 1)
+    png = out["frames"].get("offline")
+    return {"ok": not errors, **out, **({"png": png} if png else {}), **({"error": "; ".join(errors)} if errors else {})}
+
+
+REPLAY_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared", "src", "commonTest", "resources", "aircraft", "rainier-replay.json")
+# The EGM2008 undulation at Paradise (devtool aircraft prints it), standing in for an emulator fix that has none.
+REPLAY_UNDULATION_M = -18.4
+
+
+def part_flights(args):
+    """T311 (debug build): the Flights layer on the replay; see the part's line in the module's docstring."""
+    srv = DebugServer(args.port, args.serial)
+    out_dir = os.path.abspath(args.out)
+    os.makedirs(out_dir, exist_ok=True)
+    dev = firstrun.Device(args.serial, out_dir)
+    run = Run(dev)
+    before = {}
+
+    def setup():
+        code, st = srv.call("GET", "/settings")
+        before["aircraft"] = (st or {}).get("aircraft")
+        before["font"] = dev.shell("settings", "get", "system", "font_scale", check_ok=False).strip()
+        before["accel"] = dev.shell("settings", "get", "system", "accelerometer_rotation", check_ok=False).strip()
+        before["rotation"] = dev.shell("settings", "get", "system", "user_rotation", check_ok=False).strip()
+        srv.call("POST", "/camera?lat=46.86&lon=-121.45&zoom=8.6&bearing=0")
+        with open(REPLAY_FIXTURE, "rb") as f:
+            code, r = srv.call("POST", f"/aircraft/replay?name=rainier-replay&undulationM={REPLAY_UNDULATION_M}&wait=3500", body=f.read())
+        time.sleep(4)
+        code, r = srv.call("GET", "/aircraft")
+        ok = code == 200 and (r or {}).get("count", 0) >= 5
+        return {"ok": ok, "count": (r or {}).get("count"), "source": (r or {}).get("source"), **({} if ok else {"error": f"GET /aircraft: {code} {str(r)[:300]}"})}
+
+    def mapview():
+        time.sleep(2)
+        png = dev.screencap("flights-map")[0]
+        code, r = srv.call("GET", "/aircraft")
+        a = (r or {}).get("aircraft") or []
+        stale = [x for x in a if x.get("stale")]
+        plausible = [x for x in a if (x.get("route") or {}).get("plausible")]
+        checks = {"drawn": len(a) >= 5, "staleHollow": bool(stale), "plausibleRoutes": len(plausible) >= 3,
+                  "geometric": all(x.get("altitudeKind") == "geometric" for x in a if not x.get("onGround")),
+                  "labelled": (r or {}).get("labelled") is True}
+        return {"ok": all(checks.values()), "png": png, "checks": checks, "count": len(a), "stale": [x.get("label") for x in stale],
+                "labels": [x.get("label") for x in a], "angles": [[x.get("callSign"), x.get("distanceKm"), x.get("bearingDeg"), x.get("elevationDeg")] for x in a],
+                **({} if all(checks.values()) else {"error": f"checks {checks}"})}
+
+    def card(name="flights-card"):
+        def fn():
+            code, r = srv.call("POST", "/aircraft?select=c0ffe1&wait=1500")
+            png = dev.screencap(name)[0]
+            c = (r or {}).get("card") or {}
+            nodes = dev.nodes()
+            texts = dev.texts(nodes)
+            want = ["ASA1670", "From schedule data; may be wrong"]
+            missing = [w for w in want if w not in texts]
+            onscreen = dev.find("^Close$", nodes) is not None
+            ok = code == 200 and bool(c.get("lines")) and not missing and onscreen
+            return {"ok": ok, "png": png, "lines": c.get("lines"), "heightPx": c.get("heightPx"), "missing": missing,
+                    **({} if ok else {"error": f"card {c} missing {missing} close {onscreen}"})}
+        return fn
+
+    def font2():
+        dev.shell("settings", "put", "system", "font_scale", "2.0")
+        time.sleep(3)
+        r = card("flights-card-font2")()
+        dev.shell("settings", "put", "system", "font_scale", before.get("font") or "1.0")
+        time.sleep(2)
+        return r
+
+    def landscape():
+        dev.shell("settings", "put", "system", "accelerometer_rotation", "0")
+        dev.shell("settings", "put", "system", "user_rotation", "1")
+        time.sleep(4)
+        r = card("flights-card-landscape")()
+        dev.shell("settings", "put", "system", "user_rotation", before.get("rotation") if before.get("rotation") not in ("", "null") else "0")
+        if before.get("accel") not in ("", "null", None):
+            dev.shell("settings", "put", "system", "accelerometer_rotation", before["accel"])
+        time.sleep(3)
+        return r
+
+    def offline():
+        srv.call("POST", "/aircraft?select=none")
+        _c, b = srv.call("GET", "/aircraft")
+        spent_before = (b or {}).get("requests", 0)
+        airplane(dev, True)
+        srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=4000")
+        n, nodes = dev.wait_for(FLIGHTS_OFFLINE, 20)
+        png = dev.screencap("flights-offline")[0]
+        code, r = srv.call("GET", "/aircraft")
+        airplane(dev, False)
+        spent = (r or {}).get("requests", 0) - spent_before  # offline spends no request
+        ok = n is not None and (r or {}).get("state") == "offline" and spent == 0
+        return {"ok": ok, "png": png, "state": (r or {}).get("state"), "message": (r or {}).get("message"), "requestsSpentOffline": spent,
+                **({} if ok else {"error": f"offline line {bool(n)}, state {(r or {}).get('state')}, requests spent offline {spent}"})}
+
+    try:
+        for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("font2", font2), ("landscape", landscape), ("offline", offline)):
+            run.step(name, fn)
+    finally:
+        srv.call("POST", "/aircraft?select=none")
+        srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
+        if before.get("aircraft") is not True:
+            srv.call("POST", "/settings?aircraft=0")
+    return run.report()
+
+
+# end T311
+
 # --- features (a) -----------------------------------------------------------------------------------------------
 
 def part_features(args):
@@ -2025,7 +2248,8 @@ def part_features(args):
 
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
-                     ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev))):
+                     ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev)),
+                     ("flights", lambda: flights_step(dev))):  # T311: flights
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
             continue
         run.step(name, fn)
@@ -3667,7 +3891,8 @@ def part_diagnostics(args):
 
 PARTS = {"strings": part_strings, "routes": part_routes, "search": part_search, "features": part_features,
          "upgrade": part_upgrade, "update": part_update, "network": part_network, "matrix": part_matrix, "permissions": part_permissions,
-         "background": part_background, "recenter": part_recenter, "bothunits": part_bothunits, "diagnostics": part_diagnostics}
+         "background": part_background, "recenter": part_recenter, "bothunits": part_bothunits, "diagnostics": part_diagnostics,
+         "flights": part_flights}  # T311
 
 
 def main():

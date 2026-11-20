@@ -62,7 +62,26 @@ object AppCredits {
     const val BUNDLED_USE = "bundled"
 
     fun compose(app: DystopoApp = DystopoApp.instance, view: PackBounds? = null): Credits =
-        withReadout(compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits(all = view == null) }.getOrDefault(emptyList()), view), io.github.jasondorjeshort.dystopo.app.readout.PressureSource.credited) // T80: the About screen lists every source the phone reads
+        withAircraft(withReadout(compose(app.tiles.packs, runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).credits(all = view == null) }.getOrDefault(emptyList()), view), io.github.jasondorjeshort.dystopo.app.readout.PressureSource.credited), // T80: the About screen lists every source the phone reads
+            io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing && io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.replay == null) // T311
+
+    // T311
+    /** `usedBy` of the Flights layer's sources (the live feed, the route table, the airports). */
+    const val FLIGHTS_USE = "flights"
+
+    /**
+     * T311: while the Flights layer draws the live feed ([drawing]), [credits] plus its three registry entries as used by
+     * `flights`, and the feed's notice (ODbL) on the map's line: "Flights: ADSB.lol contributors (ODbL)".
+     */
+    fun withAircraft(credits: Credits, drawing: Boolean): Credits {
+        if (!drawing) return credits
+        val ids = listOf(io.github.jasondorjeshort.dystopo.aircraft.AdsbLolSource.REGISTRY_ID, "vrs-standing-data", "ourairports")
+        val add = ids.mapNotNull { SourceRegistry.builtIn[it] }.filter { s -> credits.sources.none { it.source.id == s.id } }.map { CreditedSource(it, listOf(FLIGHTS_USE)) }
+        val feed = SourceRegistry.builtIn[ids[0]]?.attribution
+        val compact = if (feed == null || feed in credits.compact) credits.compact else listOf(credits.compact, feed).filter { it.isNotEmpty() }.joinToString(" | ")
+        return credits.copy(sources = credits.sources + add, compact = compact)
+    }
+    // end T311
 
     /** `usedBy` of the weather station pressure the live readout used (T173). */
     const val READOUT_USE = "readout"
