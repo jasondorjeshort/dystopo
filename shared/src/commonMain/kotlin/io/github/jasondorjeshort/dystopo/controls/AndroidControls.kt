@@ -76,6 +76,11 @@ object AndroidControls {
         row("reports", "about", 3, ControlKind.LINK),
         row("warmup", "about", 4, ControlKind.ACTION),
         row("credits", "about", 5, ControlKind.LINK),
+        // T311: Flight tracking, its refresh and airport names (the Map page, last)
+        row("aircraft", "map", 28),
+        row("aircraftRefreshS", "map", 29),
+        row("aircraftAirports", "map", 30),
+        // end T311
     )
 
     /**
@@ -99,6 +104,10 @@ object AndroidControls {
         element(OverlayIds.STRIP, ControlKind.DISPLAY, "navigation", 34, "map-lower-left"),
         element(OverlayIds.HORIZON_SWITCH, ControlKind.ACTION, "map", 27, "map-lower-left"), // T309: "Map | Horizon", over the scale bar's line
         element(OverlayIds.UPDATE_CARD, ControlKind.DISPLAY, "about", 7, "card"),
+        // T311: a tapped aircraft's card, and the Flights layer's status line under Search
+        element(OverlayIds.AIRCRAFT_CARD, ControlKind.DISPLAY, "map", 31, "card"),
+        element("flightsStatus", ControlKind.DISPLAY, "map", 32, "map-top", emptyList()),
+        // end T311
     )
 
     val items: List<ControlItem> = ROWS + ELEMENTS

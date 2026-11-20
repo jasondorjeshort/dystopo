@@ -54,6 +54,26 @@ object AircraftText {
     fun typeLine(r: AircraftReport): String =
         listOfNotNull(r.description ?: r.type, r.registration).joinToString(" · ").ifEmpty { "Type unknown" }
 
+    /** The flight level from a pressure altitude in feet ("FL370"), above [transitionFt] only; else null. */
+    fun flightLevel(baroFt: Double?, transitionFt: Double = AircraftRules.TRANSITION_FT): String? {
+        baroFt ?: return null
+        if (baroFt <= transitionFt) return null
+        val fl = (baroFt / 100.0).roundToLong()
+        return "FL" + fl.toString().padStart(3, '0')
+    }
+
+    /**
+     * "11,300 m · FL370, climbing" or "37,000 ft · FL370, climbing": the altitude in the units setting, the flight level
+     * (from [baroFt]) above the transition altitude.
+     */
+    fun altitudeLine(meters: Double?, kind: AltitudeKind, verticalRateFpm: Double?, units: ContourUnits, baroFt: Double?): String {
+        val base = altitudeLine(meters, kind, verticalRateFpm, units)
+        if (kind == AltitudeKind.GROUND || meters == null) return base
+        val fl = flightLevel(baroFt) ?: return base
+        val comma = base.indexOf(", ")
+        return if (comma < 0) "$base · $fl" else base.substring(0, comma) + " · $fl" + base.substring(comma)
+    }
+
     /** "35000 ft, climbing"; " (pressure altitude)" when barometric; "On the ground"; "Altitude unknown". */
     fun altitudeLine(meters: Double?, kind: AltitudeKind, verticalRateFpm: Double?, units: ContourUnits): String {
         if (kind == AltitudeKind.GROUND) return "On the ground"
@@ -108,10 +128,11 @@ object AircraftText {
 
     /** The card's lines in the finding's order (call sign is the title), [credit] last. */
     fun card(a: AircraftNow, units: ContourUnits, naming: AirportNaming, credit: String): List<String> = listOfNotNull(
+        a.report.emergency?.let { "${it.line} (squawk ${it.squawk})" },
         routeCard(a.route?.takeIf { it.plausible }, naming),
         if (a.route?.plausible == true) ROUTE_HEDGE else null,
         typeLine(a.report),
-        altitudeLine(a.altitudeM, a.altitudeKind, a.report.verticalRateFpm, units),
+        altitudeLine(a.altitudeM, a.altitudeKind, a.report.verticalRateFpm, units, a.report.altBaroFt),
         speedLine(a.report.groundSpeedKt, units),
         fromYou(a.distanceM, a.bearingDeg, a.elevationDeg, units),
         age(a.ageS),

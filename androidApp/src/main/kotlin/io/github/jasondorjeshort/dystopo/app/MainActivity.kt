@@ -245,6 +245,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         StartupTrace.composing("compose TripControls")
         io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
         io.github.jasondorjeshort.dystopo.app.activity.ActivityChipOverlay() // T263: the current activity's chip, under Routes
+        io.github.jasondorjeshort.dystopo.app.aircraft.AircraftOverlay() // T311: the Flights layer's card and status line
         StartupTrace.composing("compose AttributionLine")
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
         StartupTrace.composing("compose OnlineOverlay")

@@ -64,6 +64,9 @@ class SettingsRegistryTest {
         "drivePreference" to "quick", // T282
         "skyPlot" to "north", // T307
         "horizonSatellites" to false, "horizonPeaks" to false, "horizonSun" to false, // T308
+        // T311
+        "aircraft" to true, "aircraftRefreshS" to 30, "aircraftAirports" to "codes",
+        // end T311
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -97,8 +100,14 @@ class SettingsRegistryTest {
     // T307 (ADR 0033: one key added, synced): `skyPlot` and `app.skyPlot` too.
     // T308 (ADR 0033: three keys added, synced): the Horizon view's toggles, `horizonSatellites`, `horizonPeaks`, `horizonSun`.
     private val t308Keys = listOf("horizonSatellites", "horizonPeaks", "horizonSun")
+    // T311
+    private val t311Keys = listOf("aircraft", "aircraftRefreshS", "aircraftAirports")
+    // end T311
     private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot") +
-        t308Keys + t308Keys.map { "app.$it" }
+        t308Keys + t308Keys.map { "app.$it" } +
+        // T311 (ADR 0033: three keys added, synced): Flight tracking, its refresh and airport names.
+        t311Keys + t311Keys.map { "app.$it" }
+        // end T311
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -109,9 +118,10 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1 + 1 + 3, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three")
-        assertEquals(18 + 1 + 1 + 1 + 3, t257Synced().size)
-        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three")
+        assertEquals(18 + 1 + 1 + 1 + 3 + 3, t257Synced().size)
+        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(listOf("on", "30", "codes"), t311Keys.map { SettingsSync.current()["app.$it"] }, "T311: the seeded Flights settings sync as stored")
         assertEquals(listOf("off", "off", "off"), t308Keys.map { SettingsSync.current()["app.$it"] }, "T308: the seeded toggles sync as off")
         assertEquals("north", SettingsSync.current()["app.skyPlot"], "T307: the seeded north syncs as north")
         assertEquals("quick", SettingsSync.current()["app.drivePreference"], "T282: the seeded quick syncs as quick")
@@ -329,4 +339,33 @@ class SettingsRegistryTest {
         private const val DEFAULT_SYNCED = """{app.climbWindow=60, app.estimatePosition=on, app.map.airportGates=true, app.map.boundaries=true, app.map.contourInterval=auto, app.map.contourLabels=normal, app.map.drainage=false, app.map.hillshade=single, app.map.hillshadeIntensity=1.0, app.map.landcover=true, app.map.night=off, app.map.pois=true, app.map.slope=off, app.map.trails=true, app.map.water=true, app.mapControls=1, app.navSpeech=off, app.orientationLock=off, app.paceFit=, app.paceSince=0, app.paceStandard=off, app.pressureFallWarning=standard, app.readout.air.climb=null, app.readout.air.course=null, app.readout.air.elevation=null, app.readout.air.speed=null, app.readout.bike.climb=null, app.readout.bike.course=null, app.readout.bike.elevation=null, app.readout.bike.speed=null, app.readout.boat.climb=null, app.readout.boat.course=null, app.readout.boat.elevation=null, app.readout.boat.speed=null, app.readout.foot.climb=null, app.readout.foot.course=null, app.readout.foot.elevation=null, app.readout.foot.speed=null, app.readout.rail.climb=null, app.readout.rail.course=null, app.readout.rail.elevation=null, app.readout.rail.speed=null, app.readout.road.climb=null, app.readout.road.course=null, app.readout.road.elevation=null, app.readout.road.speed=null, app.readoutBar=on, app.readoutBarometer=on, app.recenterZoom=14, app.scaleBar.both=off, app.shadeSpoken=hot, app.showDivergence=on, app.textScale=1.0, app.timeEstimateForm=range, app.trackActivity=foot, app.trackProfile.air=null, app.trackProfile.bike=null, app.trackProfile.boat=null, app.trackProfile.foot=null, app.trackProfile.rail=null, app.trackProfile.road=null, app.tripCorridorM=1000, app.turnDeadline=sunset, app.turnMarginMin=30, app.units=null, app.viewRange=30, app.waterAlongRoute=on, app.waterSpoken=off}"""
         private const val DEFAULT_JSON = """{airportGates=true, baseTextScale=1.35, boundaries=true, cacheBudgetMb=1024, climbWindow=60, contourCacheMb=1024, contourInterval=auto, contourIntervalChoices=[auto, 10, 20, 40, 50, 80, 100, 200, 250, 500, 1000], contourIntervalUnits=ft, contourLabels=normal, debugFixedPort=false, drainage=false, estimatePosition=true, hillshade=single, hillshadeIntensity=1.0, landcover=true, mapControls=1, navSnoozeMin=10, navSpeech=false, navStaleS=30, navStartM=2000, night=off, onlineCacheMb=1024, orientationLock=false, paceFit=, paceSince=0, paceStandard=false, pinnedCacheMb=2048, pois=true, pressureFallWarning=standard, readout={climb=shown=1;pace=0;damping=medium;pm=0;knots=0, course=shown=0;pace=0;damping=medium;pm=0;knots=0, elevation=shown=1;pace=0;damping=medium;pm=0;knots=0, speed=shown=0;pace=0;damping=medium;pm=0;knots=0}, readoutBar=true, readoutBarometer=auto, readoutStored={}, recenterZoom=14, routeSnapM=300, routeSnapRange=[50, 1000], server=, shadeSpoken=hot, shadeTiles=false, showDivergence=true, slope=off, slopeChoices=[off, avalanche, steepness], textScale=1.0, textScaleRange=[0.5, 3.0], timeEstimateForm=range, trackActivity=foot, trackProfile={accuracyM=50.0, activity=foot, autoPause=false, intervalS=1.0, networkFallback=true, value=acc=50;autopause=0;net=1;interval=1000}, trackProfiles={air={accuracyM=null, activity=air, autoPause=false, intervalS=1.0, networkFallback=true, stored=null, value=acc=none;autopause=0;net=1;interval=1000}, bike={accuracyM=50.0, activity=bike, autoPause=false, intervalS=1.0, networkFallback=true, stored=null, value=acc=50;autopause=0;net=1;interval=1000}, boat={accuracyM=50.0, activity=boat, autoPause=false, intervalS=1.0, networkFallback=true, stored=null, value=acc=50;autopause=0;net=1;interval=1000}, foot={accuracyM=50.0, activity=foot, autoPause=false, intervalS=1.0, networkFallback=true, stored=null, value=acc=50;autopause=0;net=1;interval=1000}, rail={accuracyM=100.0, activity=rail, autoPause=false, intervalS=1.0, networkFallback=true, stored=null, value=acc=100;autopause=0;net=1;interval=1000}, road={accuracyM=100.0, activity=road, autoPause=false, intervalS=1.0, networkFallback=true, stored=null, value=acc=100;autopause=0;net=1;interval=1000}}, trails=true, tripCorridorM=1000, turnDeadline=sunset, turnMarginMin=30, units=ft, unitsSet=false, unitsSource=locale default (not set yet), viewRange=30, warmup=true, water=true, waterAlongRoute=true, waterSpoken=false}"""
     }
+
+    // T311
+    /**
+     * T311: Flight tracking is off by default, its refresh 20 s and airport names "both"; each synced, posted and read back;
+     * a refresh outside the choices is refused with the key named; the three rows are the Map page's last.
+     */
+    @Test
+    fun flightTrackingIsOffByDefaultAndSynced() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(false, AppSettings.AIRCRAFT.value)
+        assertEquals(20, AppSettings.AIRCRAFT_REFRESH_S.value)
+        assertEquals(io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.BOTH, AppSettings.AIRCRAFT_AIRPORTS.value)
+        assertEquals(listOf("off", "20", "both"), t311Keys.map { SettingsSync.current()["app.$it"] })
+        assertTrue(listOf(AppSettings.AIRCRAFT, AppSettings.AIRCRAFT_REFRESH_S, AppSettings.AIRCRAFT_AIRPORTS).all { it.synced })
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("aircraft" to "1", "aircraftRefreshS" to "60", "aircraftAirports" to "cities")))
+        for ((s, v) in posted.plain) @Suppress("UNCHECKED_CAST") AppSettings.set(s as Setting<Any>, v)
+        assertEquals(true, AppSettings.AIRCRAFT.value)
+        assertEquals(60, AppSettings.AIRCRAFT_REFRESH_S.value)
+        assertEquals(io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.CITIES, AppSettings.AIRCRAFT_AIRPORTS.value)
+        val refused = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("aircraftRefreshS" to "15")))
+        assertTrue("aircraftRefreshS" in refused.message, refused.message)
+        val synced = SettingsSync.plan(mapOf("app.aircraft" to "off", "app.aircraftRefreshS" to "10"), emptyMap(), SettingsRoutes.KEYS)
+        val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))
+        assertEquals(false, back[AppSettings.AIRCRAFT])
+        assertEquals(10, back[AppSettings.AIRCRAFT_REFRESH_S])
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.MAP)
+        assertEquals(listOf("Flight tracking", "Flight tracking: Refresh", "Flight tracking: Airport names"), rows.takeLast(3).map { it.label })
+    }
+    // end T311
 }

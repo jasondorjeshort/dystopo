@@ -84,7 +84,10 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.tracking.ACTIVITY_HELP +
             // end T263
             io.github.jasondorjeshort.dystopo.app.gnss.GNSS_HELP + // T307: the satellites
-            io.github.jasondorjeshort.dystopo.app.horizon.HORIZON_HELP // T308: the Horizon view
+            io.github.jasondorjeshort.dystopo.app.horizon.HORIZON_HELP + // T308: the Horizon view
+            // T311: the Flights card
+            io.github.jasondorjeshort.dystopo.app.aircraft.AIRCRAFT_HELP
+            // end T311
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

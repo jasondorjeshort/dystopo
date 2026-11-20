@@ -162,6 +162,9 @@ object OverlayIds {
     /** T309: the "Map | Horizon" switch; added after the inventory, so it has no M-number and keeps a name of its own. */
     const val HORIZON_SWITCH = "horizonSwitch"
 
+    /** T311: the Flights layer's card (a tapped aircraft); added after the inventory, so it keeps a name of its own. */
+    const val AIRCRAFT_CARD = "aircraftCard"
+
     /** The inventory's rows each element holds, and the name `GET /layout` prints beside the id. */
     val CONTROLS: Map<String, List<String>> = mapOf(
         SETTINGS_ROW to listOf("M1", "M2"), SEARCH to (3..7).map { "M$it" }, ONLINE to (8..10).map { "M$it" },
@@ -177,6 +180,7 @@ object OverlayIds {
         STRIP to "readoutStrip", CREDIT to "creditLine", UPDATE_CARD to "updateCard", SCALE_BAR to "scaleBar", COMPASS to "compass",
         ACTIVITY to "activityChip", // T263
         HORIZON_SWITCH to "horizonSwitch", // T309
+        AIRCRAFT_CARD to "aircraftCard", // T311
     )
 }
 

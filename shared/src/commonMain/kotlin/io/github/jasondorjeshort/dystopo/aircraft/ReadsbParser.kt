@@ -7,7 +7,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  * answers it (adsb.fi and airplanes.live answer the same form). Fields read (readsb's README-json): `hex`, `flight`
  * (the call sign, space-padded), `r` (registration), `t` (ICAO type), `desc`, `lat`, `lon`, `alt_geom` (feet above the
  * WGS84 ellipsoid), `alt_baro` (feet, or the word `ground`), `gs` (knots), `track` (degrees true; `true_heading` when
- * there is no track), `geom_rate` or `baro_rate` (feet a minute), `seen_pos` (seconds). An entry without a position is
+ * there is no track), `geom_rate` or `baro_rate` (feet a minute), `seen_pos` (seconds), `squawk`, `emergency` and `category` (the emitter category). An entry without a position is
  * skipped. Pure; [atMs] is when the phone received the answer.
  */
 object ReadsbParser {
@@ -44,6 +44,9 @@ object ReadsbParser {
             groundSpeedKt = num(m["gs"]),
             verticalRateFpm = num(m["geom_rate"]) ?: num(m["baro_rate"]),
             seenPosS = num(m["seen_pos"]) ?: num(m["seen"]) ?: 0.0,
+            squawk = (m["squawk"] as? String)?.trim()?.takeIf { it.isNotEmpty() },
+            emergencyField = (m["emergency"] as? String)?.trim()?.takeIf { it.isNotEmpty() },
+            category = (m["category"] as? String)?.trim()?.takeIf { it.isNotEmpty() },
         )
     }
 

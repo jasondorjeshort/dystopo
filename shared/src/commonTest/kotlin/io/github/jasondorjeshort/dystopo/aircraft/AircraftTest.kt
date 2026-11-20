@@ -326,4 +326,43 @@ class AircraftTest {
         assertEquals("ADSB.lol contributors (ODbL)", lines.last())
         assertEquals("ASA1670 SEA > DEN", a.label)
     }
+
+    // --- the owner's additions of 2026-11-20: flight level, emergencies, kinds ---
+
+    @Test
+    fun altitudeInBothUnitsWithTheFlightLevelAtCruise() {
+        val m = 37_000 * 0.3048
+        assertEquals("37,000 ft · FL370, level", AircraftText.altitudeLine(m, AltitudeKind.GEOMETRIC, 0.0, ContourUnits.FEET, 37_000.0))
+        assertEquals("11,278 m · FL370, level", AircraftText.altitudeLine(m, AltitudeKind.GEOMETRIC, 0.0, ContourUnits.METERS, 37_000.0))
+        assertEquals("11,278 m (pressure altitude) · FL370", AircraftText.altitudeLine(m, AltitudeKind.BAROMETRIC, null, ContourUnits.METERS, 37_000.0))
+        assertEquals("5,486 m, climbing", AircraftText.altitudeLine(5486.4, AltitudeKind.GEOMETRIC, 900.0, ContourUnits.METERS, 18_000.0), "at the transition altitude: no flight level")
+        assertEquals("FL185", AircraftText.flightLevel(18_490.0))
+        assertNull(AircraftText.flightLevel(null))
+        assertEquals("On the ground", AircraftText.altitudeLine(null, AltitudeKind.GROUND, null, ContourUnits.FEET, 37_000.0))
+        assertEquals("483 mph", AircraftText.speedLine(420.0, ContourUnits.FEET))
+        assertEquals("778 km/h", AircraftText.speedLine(420.0, ContourUnits.METERS))
+    }
+
+    @Test
+    fun emergencySquawksAndKindsAreRead() {
+        val poll = ReadsbParser.parse(AircraftFixtures.RESPONSE, 0)
+        val a = poll.aircraft[0]
+        assertEquals("1234", a.squawk)
+        assertEquals("A3", a.category)
+        assertEquals(AircraftKind.AIRLINER, a.kind)
+        assertNull(a.emergency)
+        assertEquals(AircraftKind.GENERIC, poll.aircraft[1].kind, "no category: the generic silhouette")
+        assertEquals(Emergency.GENERAL, Emergency.of("7700", null))
+        assertEquals(Emergency.RADIO, Emergency.of("7600", "none"))
+        assertEquals(Emergency.HIJACK, Emergency.of(null, "unlawful"))
+        assertNull(Emergency.of("1200", "none"))
+        assertEquals(mapOf("A1" to AircraftKind.LIGHT, "A5" to AircraftKind.HEAVY, "A7" to AircraftKind.ROTORCRAFT, "B1" to AircraftKind.GLIDER,
+            "B2" to AircraftKind.BALLOON, "B6" to AircraftKind.UAV, "C1" to AircraftKind.GENERIC),
+            listOf("A1", "A5", "A7", "B1", "B2", "B6", "C1").associateWith { AircraftKind.of(it) })
+        // The card's first line names the emergency.
+        val r = report().copy(squawk = "7600")
+        val t = AircraftTracker()
+        t.onFetch(AircraftFetch.Ok(AircraftPoll(0, listOf(r)), 100, null), 0, null)
+        assertEquals("Radio failure (squawk 7600)", AircraftText.card(t.view(0, null, null).single(), ContourUnits.FEET, AirportNaming.BOTH, AircraftText.CREDIT).first())
+    }
 }

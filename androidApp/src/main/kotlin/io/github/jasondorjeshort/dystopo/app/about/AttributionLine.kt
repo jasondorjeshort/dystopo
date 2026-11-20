@@ -63,8 +63,11 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val view = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds // T49: recompose when the view moves
     @Suppress("UNUSED_VARIABLE") val sources = CreditLine.revision // T110: and when the online sources in view change
+    @Suppress("UNUSED_VARIABLE") val flights = io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.revision // T311: and as the Flights layer starts or stops drawing
     val credits = runCatching { AppCredits.compose(DystopoApp.instance, view) }.getOrNull()
-    val text = credits?.takeIf { it.packs.isNotEmpty() }?.compact ?: HtmlText.toPlain(fallback)
+    val text = credits?.takeIf { it.packs.isNotEmpty() }?.compact
+        ?: credits?.takeIf { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing }?.compact // T311: the feed's notice with no pack open
+        ?: HtmlText.toPlain(fallback)
     androidx.compose.runtime.SideEffect { CreditLine.composed(text) }
     BasicText(
         text,

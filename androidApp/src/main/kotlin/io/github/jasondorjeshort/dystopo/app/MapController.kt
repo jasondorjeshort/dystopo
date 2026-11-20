@@ -174,6 +174,7 @@ class MapController {
     fun attach(view: MapView, styleJson: () -> String, onStyle: (Style) -> Unit = {}) {
         mapView = view
         runCatching { io.github.jasondorjeshort.dystopo.app.divergence.DivergenceLayer.bind(view) } // T213: the trail disagreements, on every style load
+        runCatching { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.bind(view) } // T311: the Flights layer, on every style load
         view.addOnWillStartRenderingFrameListener { mapLibreIdle = false }
         view.addOnDidFinishRenderingFrameListener { fully, _, _ ->
             framesRendered++

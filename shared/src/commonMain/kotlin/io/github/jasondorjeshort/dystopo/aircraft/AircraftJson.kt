@@ -20,5 +20,6 @@ object AircraftJson {
         "distanceKm" to a.distanceM?.let { r(it / 1000, 2) }, "bearingDeg" to a.bearingDeg?.let { r(it, 1) },
         "elevationDeg" to a.elevationDeg?.let { r(it, 2) },
         "route" to a.route?.json(), "label" to a.label, "trailPoints" to a.trail.size,
+        "kind" to a.report.kind.json, "category" to a.report.category, "squawk" to a.report.squawk, "emergency" to a.report.emergency?.json,
     )
 }
