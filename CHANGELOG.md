@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-20
+
+- T309: A Map | Horizon button on the map, and the closest peaks first on the rim
+
 ## v0.1.34-alpha (2026-11-20)
 
 ### 2026-11-19
