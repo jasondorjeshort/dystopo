@@ -21,3 +21,9 @@ would have kept it); which start-up step walks a directory; whether it reproduce
 
 - Whether the sweep should treat a launch crash right after a guard reboot as a device-class line (retry once)
   while the cause is unknown.
+
+2026-11-20: it happened again in the next sweep, `out/sweep-20261119-1925` [no-check: gitignored] (main at
+aeb4b028): the guard rebooted the emulator before `a11y` (private 6.1 GB over 6 GB; booted again in 540 s, the guest's
+storage ready 27.9 s after `sys.boot_completed`), and the debug build crashed at launch with the same
+`AssertionError` (PID 3422). Two sweeps out of two after that reboot: reproducible, so worth a pass before the
+emulator's memory line moves it to another part.
