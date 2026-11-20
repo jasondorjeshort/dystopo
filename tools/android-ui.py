@@ -2052,15 +2052,18 @@ def part_flights(args):
 
     def offline():
         srv.call("POST", "/aircraft?select=none")
+        _c, b = srv.call("GET", "/aircraft")
+        spent_before = (b or {}).get("requests", 0)
         airplane(dev, True)
         srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=4000")
         n, nodes = dev.wait_for(FLIGHTS_OFFLINE, 20)
         png = dev.screencap("flights-offline")[0]
         code, r = srv.call("GET", "/aircraft")
         airplane(dev, False)
-        ok = n is not None and (r or {}).get("state") == "offline" and (r or {}).get("requests", 1) == 0
-        return {"ok": ok, "png": png, "state": (r or {}).get("state"), "message": (r or {}).get("message"), "liveRequests": (r or {}).get("requests"),
-                **({} if ok else {"error": f"offline line {bool(n)}, state {(r or {}).get('state')}, requests {(r or {}).get('requests')}"})}
+        spent = (r or {}).get("requests", 0) - spent_before  # offline spends no request
+        ok = n is not None and (r or {}).get("state") == "offline" and spent == 0
+        return {"ok": ok, "png": png, "state": (r or {}).get("state"), "message": (r or {}).get("message"), "requestsSpentOffline": spent,
+                **({} if ok else {"error": f"offline line {bool(n)}, state {(r or {}).get('state')}, requests spent offline {spent}"})}
 
     try:
         for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("font2", font2), ("landscape", landscape), ("offline", offline)):

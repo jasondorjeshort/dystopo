@@ -72,7 +72,7 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
     BasicText(
         text,
         style = TextStyle(color = Color(0xFF3B2A1A), fontSize = 11.sp),
-        maxLines = 2,
+        maxLines = if (io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing) 3 else 2, // T311: room for the flights notice (ODbL) at the end
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
             .control("creditLine") // T238

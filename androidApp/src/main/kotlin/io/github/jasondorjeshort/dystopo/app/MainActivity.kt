@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
             app.map.activity = this
             io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
             io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.prepare() // T307, T308: the Horizon view's Compose state, on the main thread
+            io.github.jasondorjeshort.dystopo.app.aircraft.AircraftUiState.prepare() // T311: the Flights layer's Compose state (its ticker reads it)
             app.map.attach(mapView, styleJson = { app.tiles.style() })
         }
         launch.run(Launch.ACTIVITY) { links() }
@@ -245,7 +246,6 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         StartupTrace.composing("compose TripControls")
         io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
         io.github.jasondorjeshort.dystopo.app.activity.ActivityChipOverlay() // T263: the current activity's chip, under Routes
-        io.github.jasondorjeshort.dystopo.app.aircraft.AircraftOverlay() // T311: the Flights layer's card and status line
         StartupTrace.composing("compose AttributionLine")
         AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
         StartupTrace.composing("compose OnlineOverlay")
@@ -264,6 +264,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         StartupTrace.composing("compose UpdateOverlay")
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused
+        io.github.jasondorjeshort.dystopo.app.aircraft.AircraftOverlay() // T311: the Flights layer's card (over the bottom controls) and status line
         StartupTrace.composing("compose TracksScreen")
         io.github.jasondorjeshort.dystopo.app.tracks.TracksScreen() // T262: Tracks and routes, full screen over the map's own controls (T219's two sheets before)
         StartupTrace.composing("compose SettingsSheet")

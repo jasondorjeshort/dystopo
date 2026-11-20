@@ -65,7 +65,7 @@ object AircraftPoller {
     const val MAP = "map"
     private const val PREFS = "aircraft"
     private const val KEY_QUOTA = "quota"
-    const val ROUTE_ASSET = "aircraft/routes.gz"
+    const val ROUTE_ASSET = "aircraft/routes.gzip"
 
     private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-aircraft").apply { isDaemon = true } }
     private val poller = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-aircraft-poll").apply { isDaemon = true } }
@@ -360,7 +360,7 @@ object AircraftPoller {
     }
 
     fun json(now: Long = System.currentTimeMillis()): Map<String, Any?> = linkedMapOf(
-        "on" to on, "state" to state.json, "message" to message, "pausedBecause" to pausedBecause, "owners" to owners(),
+        "on" to on, "state" to state.json, "message" to message, "pausedBecause" to pausedBecause, "owners" to owners().sorted(),
         "source" to (replay?.name ?: "adsb.lol"), "credit" to credit,
         "refreshS" to AppSettings.AIRCRAFT_REFRESH_S.value, "airportNames" to AppSettings.AIRCRAFT_AIRPORTS.value.key,
         "query" to lastQuery?.json(), "queryOwner" to lastOwner, "lastUrl" to lastUrl, "lastResponseMs" to lastResponseMs, "lastCount" to lastCount,

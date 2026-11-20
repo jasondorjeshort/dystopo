@@ -12,10 +12,11 @@ data class Airport(val icao: String, val iata: String?, val lat: Double, val lon
 data class FlightRoute(val callSign: String, val airports: List<Airport>)
 
 /**
- * T311: the route table the app ships (`androidApp/src/main/assets/aircraft/routes.gz`, made by `devtool aircraft-routes`
+ * T311: the route table the app ships (`androidApp/src/main/assets/aircraft/routes.gzip`, made by `devtool aircraft-routes`
  * from the VRS standing data's routes, CC0, and OurAirports' airports, public domain). Looked up on the phone, so no call
  * sign leaves it. The format is internal to the app (the home site's refresh of it would take an ADR first); UTF-8 text,
- * gzip-compressed in the asset (the platform inflates it):
+ * gzip-compressed in the asset (the platform inflates it; named `.gzip`, since the Android build unpacks an asset named
+ * `.gz` into the APK):
  *
  * ```
  * dystopo-aircraft-routes 1

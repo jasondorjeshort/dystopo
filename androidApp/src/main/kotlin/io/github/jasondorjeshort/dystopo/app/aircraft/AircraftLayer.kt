@@ -82,7 +82,7 @@ import java.util.zip.GZIPInputStream
  *
  * Feed data stays in memory (ODbL): nothing of it is written to disk, cached or exported; turning the layer off forgets
  * it. Stored on the phone: the day's request count ([AircraftQuota], a number and a day). No call sign leaves the phone:
- * routes come from the shipped table (`assets/aircraft/routes.gz`).
+ * routes come from the shipped table (`assets/aircraft/routes.gzip`).
  */
 object AircraftLayer {
     const val SOURCE = "dystopo-aircraft"
@@ -440,4 +440,10 @@ object AircraftLayer {
 object AircraftUiState {
     var revision by mutableStateOf(0)
     var selected by mutableStateOf<String?>(null)
+
+    /** Touches the state on the main thread before the first composition (`MainActivity.onCreate`). */
+    fun prepare() {
+        revision
+        selected
+    }
 }

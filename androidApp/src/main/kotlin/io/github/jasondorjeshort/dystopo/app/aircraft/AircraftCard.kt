@@ -42,7 +42,7 @@ import io.github.jasondorjeshort.dystopo.app.help.HelpText
 /**
  * T311: what the Flights layer shows over the map: the tapped aircraft's card at the bottom, above the credit line (its
  * call sign as the title, then origin > destination, type, altitude, speed, distance, bearing and angle from the phone,
- * the position's age and the credit; the finding's order), and a one-line status under the search box while the feed
+ * the position's age and the credit; the finding's order), and a one-line status under the search box and the online column while the feed
  * has something to say ([AircraftLayer.message]: offline, stopped, the day's limit, waiting). The card's layout id is
  * `aircraftCard` (`OverlayIds.AIRCRAFT_CARD`), the status line's `flightsStatus`.
  */
@@ -57,7 +57,7 @@ fun AircraftOverlay() {
                 "${AircraftText.LAYER}: $msg",
                 style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
                 modifier = Modifier.align(Alignment.TopStart)
-                    .padding(start = 8.dp, top = TopChips.searchBottom + 6.dp)
+                    .padding(start = 8.dp, top = maxOf(TopChips.searchBottom, with(density) { TopChips.onlineBottomPx.toDp() }) + 6.dp) // under the online column
                     .widthIn(max = 320.dp)
                     .control("flightsStatus")
                     .background(Paper.copy(alpha = 0.95f), RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp))

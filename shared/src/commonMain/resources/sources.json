@@ -613,7 +613,7 @@
       "allowedUses": "Any use; no credit required.",
       "url": "https://github.com/vradarserver/standing-data",
       "updateCadence": "Committed daily; the app ships a copy made by devtool aircraft-routes, refreshed by hand.",
-      "notes": "T311: routes/schema-01 (Callsign, Code, Number, AirlineCode, AirportCodes in ICAO codes, hyphenated, in the order flown), joined with the airports and compacted into androidApp/src/main/assets/aircraft/routes.gz. Looked up on the phone, so no call sign leaves it; a route is shown only when the aircraft fits one of its legs (aircraft/RoutePlausibility.kt)."
+      "notes": "T311: routes/schema-01 (Callsign, Code, Number, AirlineCode, AirportCodes in ICAO codes, hyphenated, in the order flown), joined with the airports and compacted into androidApp/src/main/assets/aircraft/routes.gzip. Looked up on the phone, so no call sign leaves it; a route is shown only when the aircraft fits one of its legs (aircraft/RoutePlausibility.kt)."
     },
     {
       "id": "ourairports",

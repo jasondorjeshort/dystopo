@@ -39,8 +39,8 @@ import java.util.zip.ZipFile
 private fun printReport(cmd: CliktCommand, report: Map<String, Any?>) =
     cmd.echo(reportJson.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), reportJson.parseToJsonElement(JsonWriter.write(report))))
 
-/** The route table the app ships (`androidApp/src/main/assets/aircraft/routes.gz`). */
-internal const val ROUTE_ASSET = "androidApp/src/main/assets/aircraft/routes.gz"
+/** The route table the app ships (`androidApp/src/main/assets/aircraft/routes.gzip`). */
+internal const val ROUTE_ASSET = "androidApp/src/main/assets/aircraft/routes.gzip"
 
 /** Reads the shipped route table (gzip) into a [RouteTable]. */
 internal fun readRouteTable(file: File): RouteTable = RouteTable.parse(GZIPInputStream(file.inputStream()).use { it.readBytes() })
