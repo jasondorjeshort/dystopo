@@ -26,3 +26,11 @@ Notes for when it is built (nothing decided):
 - Agent-testable like the rest: a debug route that sets bearing and field of view and returns the screenshot.
 
 Not started; recorded for later.
+
+Question: build the Panorama view now as one task after a benchmark of how the peak and panorama apps present a
+scrolling ribbon (zoom, follow-the-phone, label density), or wait until the Horizon view's open items settle
+(the peak-names density setting, the moon, the long-pressed point) so the ribbon shares finished layers? Recommended:
+wait for those three, then a benchmark and one task; the ribbon is a third view on T309's switch, and building it on
+layers still moving would mean doing the label and layer work twice.
+
+Answer:
