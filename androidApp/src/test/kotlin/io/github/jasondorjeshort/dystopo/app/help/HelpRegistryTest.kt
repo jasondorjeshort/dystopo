@@ -178,6 +178,9 @@ class HelpRegistryTest {
             // T307: the GPS view, its check and its sky plot, and the two settings rows.
             "settings.gnssStatus", "settings.skyPlot", "gnss.view", "gnss.check", "gnss.skyPlot",
             // end T307
+            // T308: the Horizon view, its Peaks and its Sun.
+            "horizon.view", "horizon.peaks", "horizon.sun",
+            // end T308
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

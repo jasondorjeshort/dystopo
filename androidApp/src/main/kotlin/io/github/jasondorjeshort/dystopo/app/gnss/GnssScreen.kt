@@ -1,47 +1,32 @@
 package io.github.jasondorjeshort.dystopo.app.gnss
 
 import android.os.SystemClock
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -50,11 +35,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
+import io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi
 import io.github.jasondorjeshort.dystopo.app.controls.Heading
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
@@ -67,12 +51,11 @@ import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import java.util.Locale
 
 /**
- * T307: whether the GPS view is open (Settings › Navigation and tracking › "GPS status ›", or `POST /gnss/ui?open=1` in
- * debug builds), its menu and confirmation, and what it last drew ([drawn], `GET /gnss` `drawn`).
+ * T307: the satellites layer's menu and confirmation, and what the plot last drew of it ([drawn], `GET /gnss` `drawn`).
+ * T308: the GPS view became the Horizon view ([HorizonUi]); [open] and [close] are its, kept here for `/gnss/ui`.
  */
 object GnssUi {
-    var open by mutableStateOf(false)
-        private set
+    val open: Boolean get() = HorizonUi.open
     var menuOpen by mutableStateOf(false)
     var confirmReset by mutableStateOf(false)
     var message by mutableStateOf<String?>(null)
@@ -81,20 +64,20 @@ object GnssUi {
 
     /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
     fun prepare() {
-        open; menuOpen; confirmReset; message
+        menuOpen; confirmReset; message
+        HorizonUi.prepare()
     }
 
-    fun open() {
+    /** Opens the Horizon view (the Settings row, `POST /gnss/ui?open=1`, `POST /horizon/ui?open=1`). */
+    fun open() = HorizonUi.open()
+
+    fun close() = HorizonUi.close()
+
+    /** The satellites layer's own state, back to closed (the view opening or closing). */
+    internal fun resetUi() {
         menuOpen = false
         confirmReset = false
         message = null
-        open = true
-    }
-
-    fun close() {
-        open = false
-        menuOpen = false
-        confirmReset = false
         drawn = null
     }
 
@@ -111,142 +94,58 @@ object GnssUi {
             main.post { say(line) }
         }, "dystopo-gnss-reset").start()
     }
-}
 
-/**
- * T307: the GPS view, one scrolling portrait screen (the layout of the idea's survey of 2026-11-19): the summary
- * (satellites used and in view, the four best signals, the systems and bands, accuracy, fix age, height from the GPS and
- * the map, speed, course, time to first fix, the time) with "Check my GPS" and its verdict under it; the sky plot full
- * width ([SkyPlot]) with the terrain's skyline, its orientation choice and its legend; the satellites listed used first
- * then by signal. "Reset assistance data" is in the menu, behind a confirmation. Day or night as the map style is.
- * While open (and the activity started) it holds the GNSS ([Gnss.hold] `view`) and the compass ([Heading.setGnssWanted]);
- * a second each it reads them again.
- */
-@Composable
-fun GnssScreen() {
-    if (!GnssUi.open) return
-    val owner = LocalLifecycleOwner.current
-    DisposableEffect(owner) {
-        fun on(v: Boolean) {
-            Gnss.hold("view", v)
-            Heading.setGnssWanted(v)
-        }
-        val observer = LifecycleEventObserver { _, e ->
-            if (e == Lifecycle.Event.ON_START) on(true)
-            if (e == Lifecycle.Event.ON_STOP) on(false)
-        }
-        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) on(true)
-        owner.lifecycle.addObserver(observer)
-        onDispose {
-            owner.lifecycle.removeObserver(observer)
-            on(false)
-        }
-    }
-    BackHandler {
-        when {
-            GnssUi.confirmReset -> GnssUi.confirmReset = false
-            GnssUi.menuOpen -> GnssUi.menuOpen = false
-            else -> GnssUi.close()
-        }
-    }
-    var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            io.github.jasondorjeshort.dystopo.app.Foreground.delay(1000)
-            tick++
-        }
-    }
-    @Suppress("UNUSED_VARIABLE") val t = tick
-    @Suppress("UNUSED_VARIABLE") val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision
-    val night = AppSettings.mapOptions.night
-    val pal = remember(night) { GnssPalette(night) }
-    // Light status-bar icons over the night paper while the view is open (the activity keeps dark ones for the light map).
-    val view = androidx.compose.ui.platform.LocalView.current
-    DisposableEffect(night) {
-        val window = (view.context as? android.app.Activity)?.window
-        val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
-        val was = bars?.isAppearanceLightStatusBars
-        bars?.isAppearanceLightStatusBars = !night
-        onDispose { if (was != null) bars.isAppearanceLightStatusBars = was }
-    }
-    val units = AppSettings.units
-    val orientation = AppSettings.skyPlot
-    val sats = Gnss.satellites
-    val pos = Gnss.position()
-    val h = Gnss.horizonAtPhone()
-    val horizon = h?.profile
-    val fn = horizon?.let { p -> { az: Double -> p.angleAt(az) } }
-    val summary = GnssHealth.summarize(sats)
-    val heading = GnssUi.headingDeg()
-    val rotation = GnssUi.rotationDeg(orientation)
-    val sun = pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.latitude, it.longitude, System.currentTimeMillis()) }
-    val plotted = plotSats(sats)
-    SideEffect {
-        GnssUi.drawn = linkedMapOf(
+    /** What the plot drew of the satellites (`GET /gnss` `drawn`), written by the Horizon view after each composition. */
+    fun noteDrawn(plotted: List<PlotSat>, fn: ((Double) -> Double)?, rotation: Double, orientation: SkyPlotOrientation, heading: Double?, horizonDrawn: Boolean, sunDrawn: Boolean, night: Boolean, on: Boolean) {
+        drawn = linkedMapOf(
+            "layer" to on,
             "satellites" to plotted.size, "tracked" to plotted.count { it.sat.tracked }, "used" to plotted.count { it.sat.used },
             "behindTerrain" to plotted.count { GnssHealth.behind(it.sat.elevationDeg, it.sat.azimuthDeg, fn) },
             "secondBand" to plotted.count { it.secondBand }, "rotationDeg" to Math.round(rotation * 10) / 10.0,
             "orientation" to orientation.key, "followsHeading" to (orientation == SkyPlotOrientation.PHONE && heading != null),
-            "horizonDrawn" to (horizon != null), "sunDrawn" to (sun != null && sun.apparentAltitudeDeg >= -0.5), "night" to night,
+            "horizonDrawn" to horizonDrawn, "sunDrawn" to sunDrawn, "night" to night,
             "check" to GnssCheck.state.code,
         )
     }
-    Box(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.fillMaxSize().background(pal.paper).pointerInput(Unit) { detectTapGestures { } }.statusBarsPadding().navigationBarsPadding()
-                .verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText(GnssText.TITLE, Modifier.weight(1f, fill = false), style = TextStyle(color = pal.ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
-                    HelpIcon("gnss.view")
-                }
-                Dots(pal) { GnssUi.menuOpen = !GnssUi.menuOpen }
-                Spacer(Modifier.width(4.dp))
-                Button(GnssText.CLOSE, pal) { GnssUi.close() }
-            }
-            if (GnssUi.menuOpen) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Button(GnssText.RESET, pal) { GnssUi.menuOpen = false; GnssUi.confirmReset = true }
-            }
-            if (GnssUi.confirmReset) Column(
-                Modifier.fillMaxWidth().background(pal.card, RoundedCornerShape(10.dp)).border(1.dp, pal.line, RoundedCornerShape(10.dp)).padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                BasicText(GnssText.RESET_TITLE, style = TextStyle(color = pal.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
-                BasicText(GnssText.RESET_BODY, style = TextStyle(color = pal.ink, fontSize = 14.sp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(GnssText.RESET_CONFIRM, pal, filled = true) { GnssUi.confirmReset = false; GnssUi.reset { GnssUi.message = it } }
-                    Button(GnssText.CANCEL, pal) { GnssUi.confirmReset = false }
-                }
-            }
-            GnssUi.message?.let { BasicText(it, style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium)) }
-            if (!Gnss.permitted()) BasicText(GnssText.NO_PERMISSION, style = TextStyle(color = pal.ink, fontSize = 14.sp))
+}
 
-            // T307's verifier: the GNSS and the check are plain fields, not Compose state, so the children that read them take the
-            // tick as a parameter (an unchanged stable argument list skips a child); a tap bumps it at once.
-            Summary(summary, pal, units, tick)
-            CheckSection(pal, tick) { tick++ }
-
-            OrientationRow(orientation, pal)
-            SkyPlot(
-                plotted, horizon, rotation, sun?.azimuthDeg, sun?.apparentAltitudeDeg, pal,
-                "${GnssText.PLOT_LABEL}: ${GnssText.usedOf(summary.used, summary.inView)}" + (horizon?.let { p -> "; " + GnssText.horizonLine(p.angleDeg[p.highest], p.bearingDeg(p.highest), p.distanceM[p.highest], h.source, units) } ?: ""),
-                Modifier.fillMaxWidth().aspectRatio(1f),
-            )
-            if (orientation == SkyPlotOrientation.PHONE && heading == null) BasicText(GnssText.NORTH_UP_NO_COMPASS, style = TextStyle(color = pal.muted, fontSize = 13.sp))
-            BasicText(
-                when {
-                    horizon != null -> GnssText.horizonLine(horizon.angleDeg[horizon.highest], horizon.bearingDeg(horizon.highest), horizon.distanceM[horizon.highest], h.source, units)
-                    h != null -> h.reason ?: GnssText.NO_TERRAIN
-                    pos == null -> GnssText.NO_POSITION
-                    else -> GnssText.HORIZON_WORKING
-                },
-                style = TextStyle(color = pal.ink, fontSize = 13.sp),
-            )
-            Legend(plotted.map { it.sat.constellation }.distinct(), horizon != null, pal)
-            SatelliteList(sats, fn, pal)
+/**
+ * T307: the satellites, now the Horizon view's Satellites layer (T308) in its scrolling area: the heading with the menu
+ * ("Reset assistance data", behind a confirmation), the summary (satellites used and in view, the four best signals, the
+ * systems and bands, accuracy, fix age, height from the GPS and the map, speed, course, time to first fix, the time),
+ * "Check my GPS" and its verdict, the legend of the satellites' marks and the list, used first then by signal. The
+ * GNSS and the check are plain fields, not Compose state: the parts that read them take [tick] (T307's verifier).
+ */
+@Composable
+fun SatellitesSection(sats: List<io.github.jasondorjeshort.dystopo.gnss.Satellite>, plotted: List<PlotSat>, summary: GnssHealth.Summary, fn: ((Double) -> Double)?, pal: GnssPalette, units: io.github.jasondorjeshort.dystopo.render.ContourUnits, tick: Int, bump: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(GnssText.SATELLITES, Modifier.weight(1f, fill = false), style = TextStyle(color = pal.ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
+                HelpIcon("gnss.view")
+            }
+            Dots(pal) { GnssUi.menuOpen = !GnssUi.menuOpen }
         }
+        if (GnssUi.menuOpen) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Button(GnssText.RESET, pal) { GnssUi.menuOpen = false; GnssUi.confirmReset = true }
+        }
+        if (GnssUi.confirmReset) Column(
+            Modifier.fillMaxWidth().background(pal.card, RoundedCornerShape(10.dp)).border(1.dp, pal.line, RoundedCornerShape(10.dp)).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            BasicText(GnssText.RESET_TITLE, style = TextStyle(color = pal.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold))
+            BasicText(GnssText.RESET_BODY, style = TextStyle(color = pal.ink, fontSize = 14.sp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(GnssText.RESET_CONFIRM, pal, filled = true) { GnssUi.confirmReset = false; GnssUi.reset { GnssUi.message = it } }
+                Button(GnssText.CANCEL, pal) { GnssUi.confirmReset = false }
+            }
+        }
+        GnssUi.message?.let { BasicText(it, style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium)) }
+        if (!Gnss.permitted()) BasicText(GnssText.NO_PERMISSION, style = TextStyle(color = pal.ink, fontSize = 14.sp))
+        Summary(summary, pal, units, tick)
+        CheckSection(pal, tick, bump)
+        Legend(plotted.map { it.sat.constellation }.distinct(), pal)
+        SatelliteList(sats, fn, pal)
     }
 }
 
@@ -333,7 +232,7 @@ private fun verdictColour(k: GnssHealth.Kind, pal: GnssPalette): Color = when (k
 }
 
 @Composable
-private fun OrientationRow(o: SkyPlotOrientation, pal: GnssPalette) {
+internal fun OrientationRow(o: SkyPlotOrientation, pal: GnssPalette) {
     @OptIn(ExperimentalLayoutApi::class)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
@@ -353,7 +252,7 @@ val SKY_PLOT_CHOICES: List<Pair<SkyPlotOrientation, String>> = listOf(
 )
 
 @Composable
-private fun Legend(seen: List<Constellation>, terrain: Boolean, pal: GnssPalette) {
+private fun Legend(seen: List<Constellation>, pal: GnssPalette) {
     val systems = (listOf(Constellation.GPS) + seen).distinct().sortedBy { it.ordinal }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         @OptIn(ExperimentalLayoutApi::class)
@@ -366,14 +265,12 @@ private fun Legend(seen: List<Constellation>, terrain: Boolean, pal: GnssPalette
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             LegendItem(pal, GnssText.LEGEND_USED) { MarkIcon(Mark.CIRCLE, Cn0Ramp.of(40.0), pal.ink, thick = true) }
             LegendItem(pal, GnssText.LEGEND_SECOND_BAND) { MarkIcon(Mark.CIRCLE, Cn0Ramp.of(40.0), pal.ink, ring = true) }
-            if (terrain) LegendItem(pal, GnssText.LEGEND_TERRAIN) { MarkIcon(Mark.CIRCLE, null, pal.ink, band = pal.band) }
-            LegendItem(pal, GnssText.LEGEND_SUN) { MarkIcon(Mark.CIRCLE, null, pal.ink, sunIcon = true) }
         }
     }
 }
 
 @Composable
-private fun LegendItem(pal: GnssPalette, label: String, icon: @Composable () -> Unit) {
+internal fun LegendItem(pal: GnssPalette, label: String, icon: @Composable () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         icon()
         BasicText(label, style = TextStyle(color = pal.ink, fontSize = 13.sp))
@@ -441,7 +338,7 @@ private fun Head(text: String, modifier: Modifier, pal: GnssPalette) =
     BasicText(text, modifier, style = TextStyle(color = pal.muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
 
 @Composable
-private fun Button(label: String, pal: GnssPalette, filled: Boolean = false, onClick: () -> Unit) {
+internal fun Button(label: String, pal: GnssPalette, filled: Boolean = false, onClick: () -> Unit) {
     Box(
         Modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -456,7 +353,7 @@ private fun Button(label: String, pal: GnssPalette, filled: Boolean = false, onC
 }
 
 @Composable
-private fun Choice(label: String, selected: Boolean, pal: GnssPalette, onClick: () -> Unit) {
+internal fun Choice(label: String, selected: Boolean, pal: GnssPalette, onClick: () -> Unit) {
     Box(Modifier.heightIn(min = 48.dp).semantics { this.selected = selected }.clickable(role = Role.RadioButton, onClick = onClick), contentAlignment = Alignment.Center) {
         BasicText(
             label,
@@ -468,7 +365,7 @@ private fun Choice(label: String, selected: Boolean, pal: GnssPalette, onClick: 
 }
 
 @Composable
-private fun Dots(pal: GnssPalette, onClick: () -> Unit) {
+internal fun Dots(pal: GnssPalette, onClick: () -> Unit) {
     Box(
         Modifier.heightIn(min = 48.dp).width(48.dp).semantics { contentDescription = GnssText.MORE }.clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -479,12 +376,12 @@ private fun Dots(pal: GnssPalette, onClick: () -> Unit) {
     }
 }
 
-/** T307: the GPS view's help pop-ups (one paragraph each, no app named). */
+/** T307: the satellites layer's help pop-ups (one paragraph each, no app named); T308: in the Horizon view. */
 internal val GNSS_HELP: List<HelpText> = run {
     fun at(row: String) = "${Screens.SETTINGS} › ${SettingsGroup.NAVIGATION.title} › ${GnssText.TITLE} › $row"
     val show: () -> Unit = { GnssUi.open() }
     listOf(
-        HelpText("gnss.view", GnssText.TITLE, "${Screens.SETTINGS} › ${SettingsGroup.NAVIGATION.title} › ${GnssText.TITLE}", show = show) {
+        HelpText("gnss.view", GnssText.SATELLITES, at(GnssText.SATELLITES), show = show) {
             "The satellites your phone hears: each signal's strength in dB-Hz (above 35 is strong, under 25 weak), " +
                 "which ones the fix uses, and the systems and bands the phone receives. The time to first fix counts from the app's start."
         },

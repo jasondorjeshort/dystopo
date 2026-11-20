@@ -135,6 +135,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         }
         // end T282
         // T307: the GPS view (a link) and its sky plot's orientation (ADR 0044: the apps split, the survey of 2026-11-19).
+        // T308: the link opens the Horizon view, the GPS view's successor (its label "Horizon view").
         SettingsRow.GNSS_STATUS -> Setting(row.label, io.github.jasondorjeshort.dystopo.app.gnss.GnssText.ROW_LINE, help = "settings.gnssStatus") {
             Option("${row.label} ›", false) { leaveFor { io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.open() } }
         }
@@ -665,11 +666,11 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         // end T282
         // T307
         HelpText("settings.gnssStatus", io.github.jasondorjeshort.dystopo.app.gnss.GnssText.TITLE, at(SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.app.gnss.GnssText.TITLE), show = page(SettingsGroup.NAVIGATION)) {
-            "Shows the satellites your phone hears, how strong each one is and which the fix uses, on a sky plot with the land's " +
-                "skyline around you. Check my GPS listens for two minutes and says whether the GPS looks healthy, the sky is blocked, or the phone may be at fault."
+            "The sky around you on one plot with the land's skyline: the named peaks on it, the sun's path today with when it " +
+                "goes behind the terrain, and the satellites your phone hears. Check my GPS there says whether the GPS looks healthy."
         },
         HelpText("settings.skyPlot", "Sky plot", at(SettingsGroup.NAVIGATION, "Sky plot"), show = page(SettingsGroup.NAVIGATION)) {
-            "How the GPS status sky plot is turned. Follow the phone turns it with the compass, so the satellites ahead of you " +
+            "How the Horizon view's plot is turned. Follow the phone turns it with the compass, so the peaks ahead of you " +
                 "are at the top. North up keeps north at the top, as printed sky charts do. N marks north either way."
         },
         // end T307

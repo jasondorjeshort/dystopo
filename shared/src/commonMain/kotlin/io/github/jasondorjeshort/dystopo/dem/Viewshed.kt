@@ -529,17 +529,31 @@ object Viewshed {
      * The elevation is the tag's unless the DEM there differs by more than 150 m (a wrong tag), then the DEM's.
      * Sorted by distance.
      */
-    fun peaks(terrain: Terrain, result: ViewshedResult, peaks: List<Peak>, k: Double = Horizon.REFRACTION_K): List<PeakView> {
-        val gx = terrain.gx(result.lon)
-        val gy = terrain.gy(result.lat)
-        val refMpp = WebMercator.metersPerPixel(result.lat, terrain.zoom, terrain.tileSize)
-        val eye = result.groundM + result.eyeM
-        val march = RayMarch(terrain, result.rangeM, PEAK_STEP_GROWTH, k)
+    fun peaks(terrain: Terrain, result: ViewshedResult, peaks: List<Peak>, k: Double = Horizon.REFRACTION_K): List<PeakView> =
+        peaks(terrain, result.lat, result.lon, result.groundM, result.eyeM, result.rangeM, result.horizon, peaks, k)
+
+    /**
+     * T308: [peaks] seen from [horizon]'s observer over [terrain], the terrain that profile was swept over
+     * ([Horizon.terrainAround], [Horizon.sweep]; the Horizon view's): the same tests against that profile's own skyline
+     * and range, with no viewshed sweep.
+     */
+    fun peaks(terrain: Terrain, horizon: HorizonProfile, peaks: List<Peak>, k: Double = Horizon.REFRACTION_K): List<PeakView> =
+        peaks(terrain, horizon.lat, horizon.lon, horizon.groundM, horizon.observerHeightM, horizon.rangeM, horizon, peaks, k)
+
+    private fun peaks(
+        terrain: Terrain, lat: Double, lon: Double, groundM: Double, eyeM: Double, rangeM: Double, horizon: HorizonProfile,
+        peaks: List<Peak>, k: Double,
+    ): List<PeakView> {
+        val gx = terrain.gx(lon)
+        val gy = terrain.gy(lat)
+        val refMpp = WebMercator.metersPerPixel(lat, terrain.zoom, terrain.tileSize)
+        val eye = groundM + eyeM
+        val march = RayMarch(terrain, rangeM, PEAK_STEP_GROWTH, k)
         val out = ArrayList<PeakView>()
         for (p in peaks) {
-            val d = TrackStats.distanceM(result.lat, result.lon, p.lat, p.lon)
-            if (d < 1 || d > result.rangeM) continue
-            val bearing = TrackStats.bearingDeg(result.lat, result.lon, p.lat, p.lon)
+            val d = TrackStats.distanceM(lat, lon, p.lat, p.lon)
+            if (d < 1 || d > rangeM) continue
+            val bearing = TrackStats.bearingDeg(lat, lon, p.lat, p.lon)
             val dem = terrain.sample(terrain.gx(p.lon), terrain.gy(p.lat), d / refMpp).takeIf { it != Terrain.OUTSIDE && !it.isNaN() }
             val tag = p.eleM
             val fromDem = tag == null || (dem != null && kotlin.math.abs(tag - dem) > 150)
@@ -554,7 +568,7 @@ object Viewshed {
             val angle = atan(tp) / DEG
             val clearance = if (tb == Double.NEGATIVE_INFINITY) 90.0 else angle - atan(tb) / DEG
             val visible = tp + tolM / d >= tb
-            val skyline = visible && angle + atan(tolM / d) / DEG >= result.horizon.angleAt(bearing)
+            val skyline = visible && angle + atan(tolM / d) / DEG >= horizon.angleAt(bearing)
             out += PeakView(p, d, bearing, RejoinHint.compassWord(bearing), ele, fromDem, angle, visible, clearance, skyline)
         }
         return out.sortedBy { it.distanceM }

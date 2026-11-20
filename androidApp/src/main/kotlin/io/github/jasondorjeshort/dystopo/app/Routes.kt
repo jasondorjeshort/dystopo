@@ -187,6 +187,9 @@ class Routes(private val app: DystopoApp) {
         // T307
         io.github.jasondorjeshort.dystopo.app.gnss.GnssRoutes.handle(app, r)?.let { return it } // GET|POST /gnss, /gnss/ui, /gnss/check, /gnss/reset
         // end T307
+        // T308
+        io.github.jasondorjeshort.dystopo.app.horizon.HorizonRoutes.handle(app, r)?.let { return it } // GET|POST /horizon, POST /horizon/ui
+        // end T308
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())

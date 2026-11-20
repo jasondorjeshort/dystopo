@@ -5,11 +5,13 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 
 /**
- * T307: the GPS view's words (ADR 0031: built in alpha, the owner adjusts them). No other product is named (the owner's
+ * T307: the GPS view's words, now the Horizon view's Satellites layer (T308; the screen's own words are `HorizonText`) (ADR 0031: built in alpha, the owner adjusts them). No other product is named (the owner's
  * rule of 2026-10-13); the systems (GPS, GLONASS, Galileo, BeiDou) are the satellites' own names.
  */
 object GnssText {
-    const val TITLE = "GPS status"
+    /** T308: the screen and its Settings row ("GPS status" until T308). */
+    const val TITLE = io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.TITLE
+    const val SATELLITES = "Satellites"
     const val CLOSE = "Close"
     const val MORE = "More actions"
     const val CHECK = "Check my GPS"
@@ -135,8 +137,8 @@ object GnssText {
     fun seconds(ms: Long): String = if (ms < 10_000) String.format(java.util.Locale.US, "%.1f s", ms / 1000.0) else "${Math.round(ms / 1000.0)} s"
 
     // Settings.
-    const val ROW_LINE = "the satellites the phone hears, the sky the terrain leaves open, and a check of the GPS"
-    const val SKY_PLOT_LINE = "the GPS status sky plot turns with the phone, or keeps north at the top"
+    const val ROW_LINE = "the sky around you: the land's skyline, the peaks on it, the sun's path and the satellites the phone hears"
+    const val SKY_PLOT_LINE = "the Horizon view turns with the phone, or keeps north at the top"
     const val FOLLOW_PHONE = "Follow the phone"
     const val NORTH_UP = "North up"
 }
