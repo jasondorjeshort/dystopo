@@ -56,10 +56,10 @@ want to show it"): the **candidates** are the peaks in sight or just out of sigh
 (`PeakRim.HIDDEN_M`; a height, not an angle). The list has them all, closest first (the name, bold when the plot names
 it; height, distance, compass point and bearing; "just out of sight" on a hidden one). The plot's names come from a
 ranking and a placement meant for later layers too (`shared/.../horizon/HorizonLabels.kt`, every weight a first guess to
-tune against real rims): the score `3.0 Dn + 2.5 Hn + 1.5 An + 1.0 Pn + 0.5 En` (distance `1 / (1 + d / 5 km)`, the
-clearance over 1.5°, the apparent angle over 6°, the prominence on a log scale to 1000 m (the elevation over the median of
+tune against real rims): the score `4.0 Dn + 2.5 Hn + 1.5 An + 1.0 Pn + 0.5 En` (distance `1 / (1 + d / 2 km)`, the
+clearance over 1.5° (0.5 just out of sight), the apparent angle over 6°, the prominence on a log scale to 1000 m (the elevation over the median of
 the candidates within 5 km), the elevation in the candidates' range), +10 for the highest skyline peak (always named),
-×0.85 out of sight, × the kind's weight; then, highest first, each name inward from its triangle at the first of four
+×0.9 out of sight (the closest candidate also always named, T309's fix round for Alta Vista), × the kind's weight; then, highest first, each name inward from its triangle at the first of four
 places where its box touches no name, ring label, hour label or the sun's arc, and only where no name already placed
 stands within the density gap in bearing (`4° × sqrt(nLocal / 5)`, at least 2°, nLocal the candidates within ±15°). A
 triangle is solid in sight and hollow just out of sight, at the peak's own apparent angle; names are drawn over the

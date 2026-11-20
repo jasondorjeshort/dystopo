@@ -42,10 +42,10 @@ data class HorizonLabel(
  * a ranking by importance and a greedy placement, highest first, with collision tests, the density emerging from the room
  * left. Every weight here is a first guess, to tune against real rims.
  *
- * **Score** ([score]): `S = 3.0 Dn + 2.5 Hn + 1.5 An + 1.0 Pn + 0.5 En`, each term 0 to 1: `Dn = 1 / (1 + d / 5 km)` (distance
- * weighs most), `Hn` the clearance over 1.5° (0 out of sight), `An` the apparent angle over 6°, `Pn` the prominence on a log
- * scale to 1000 m, `En` the elevation within the candidates' range; +10 for the dominant peak, ×0.85 out of sight, × the
- * kind's weight. Ties: nearer, then by name.
+ * **Score** ([score]): `S = 4.0 Dn + 2.5 Hn + 1.5 An + 1.0 Pn + 0.5 En`, each term 0 to 1: `Dn = 1 / (1 + d / 2 km)` (distance
+ * weighs most), `Hn` the clearance over 1.5° (0.5 just out of sight: barely below the line), `An` the apparent angle over 6°, `Pn` the prominence on a log
+ * scale to 1000 m, `En` the elevation within the candidates' range; +10 for the dominant peak, ×0.9 out of sight, × the
+ * kind's weight. The dominant peak, then the closest candidate, are always placed. Ties: nearer, then by name.
  *
  * **Placement** ([place]): highest score first, each label at the first of [STEPS] places inward from its mark where its
  * box touches no label placed before, no ring label, no hour label and not the sun's arc, and only where no label already
@@ -54,16 +54,19 @@ data class HorizonLabel(
  */
 object HorizonLabels {
     // The score's weights (first guesses).
-    const val W_DISTANCE = 3.0
+    const val W_DISTANCE = 4.0 // T309's fix round: 3.0 over 5 km first; Alta Vista, 663 m off and hidden, was not named
     const val W_HEIGHT = 2.5
     const val W_ANGLE = 1.5
     const val W_PROMINENCE = 1.0
     const val W_ELEVATION = 0.5
     const val DOMINANT_BONUS = 10.0
-    const val OUT_OF_SIGHT_FACTOR = 0.85
+    const val OUT_OF_SIGHT_FACTOR = 0.9
+
+    /** A candidate just out of sight is barely below the line, not absent: half the clearance term. */
+    const val OUT_OF_SIGHT_HEIGHT = 0.5
 
     // The terms' scales.
-    const val DISTANCE_SCALE_M = 5000.0
+    const val DISTANCE_SCALE_M = 2000.0
     const val HEIGHT_FULL_DEG = 1.5
     const val ANGLE_FULL_DEG = 6.0
     const val PROMINENCE_STEP_M = 50.0
@@ -98,7 +101,7 @@ object HorizonLabels {
 
     fun score(l: HorizonLabel, ctx: Context): Scored {
         val dn = 1 / (1 + l.distanceM / DISTANCE_SCALE_M)
-        val hn = clamp01(max(l.clearanceDeg, 0.0) / HEIGHT_FULL_DEG)
+        val hn = if (l.outOfSight) OUT_OF_SIGHT_HEIGHT else clamp01(l.clearanceDeg / HEIGHT_FULL_DEG)
         val an = clamp01(l.angleDeg / ANGLE_FULL_DEG)
         val prom = l.promM ?: 0.0
         val pn = clamp01(log2(1 + max(prom, 0.0) / PROMINENCE_STEP_M) / log2(1 + PROMINENCE_FULL_M / PROMINENCE_STEP_M))
@@ -146,8 +149,9 @@ object HorizonLabels {
      * radius at the first of [STEPS] places where its box (the text [width] of its name, [ascent] above the baseline
      * (negative) and [descent] below, padded 2 dp) touches no label placed before, none of [blocked] (the ring and hour
      * labels) and no segment of [lines] (the sun's arc), and only when no label placed stands within its density gap in
-     * bearing. The dominant label is placed whatever: at its first free place, else at the first. The rest without a free
-     * place are left out (the list has them). [first] goes before everything (a picked label).
+     * bearing. The dominant label, then the closest of the view, are placed first and whatever the density: at their
+     * first free place, else at the first. The rest without a free place are left out (the list has them). [first] goes
+     * before everything (a picked label).
      */
     fun place(
         g: RimGeometry, ranked: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
@@ -156,12 +160,14 @@ object HorizonLabels {
         val placed = ArrayList<Placed>()
         val pad = 2 * g.dp
         val bearings = ranked.map { it.label.bearingDeg }
-        val order = ranked.sortedByDescending { it.label == first } // stable: the rank kept otherwise
+        val closest = ranked.minByOrNull { it.label.distanceM }?.label
+        // Stable: the picked one, the dominant, the closest, then the rank.
+        val order = ranked.sortedWith(compareByDescending<Scored> { it.label == first }.thenByDescending { it.label.dominant }.thenByDescending { it.label == closest })
         for (s in order) {
             val l = s.label
             val nLocal = bearings.count { apart(it, l.bearingDeg) <= LOCAL_DEG }
             val gap = gapDeg(nLocal)
-            val forced = l.dominant || l == first
+            val forced = l.dominant || l == first || l == closest
             if (!forced && placed.any { apart(it.label.bearingDeg, l.bearingDeg) < gap }) continue
             val at = g.at(l.angleDeg, l.bearingDeg)
             val dx = g.cx - at.x

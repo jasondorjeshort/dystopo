@@ -161,6 +161,20 @@ class HorizonViewTest {
     }
 
     @Test
+    fun aVeryClosePeakJustOutOfSightIsNamedBesideTheSummitAndVisiblePeaks() {
+        // T309's fix round (Alta Vista from Paradise): 0.7 km off and 11 m out of sight, beside a summit and visible peaks at 3 to 7 km.
+        val summit = view("The Summit", 350.0, 4300.0, distance = 7500.0, angle = 20.0)
+        val knoll = view("Close Knoll", 2.0, 1800.0, distance = 700.0, hiddenM = 11.0, angle = 13.0)
+        val visible = (0 until 6).map { view("Visible $it", 5.0 + it * 4.0, 2000.0 + it * 50, distance = 3000.0 + it * 800, angle = 12.0, clear = 1.4) }
+        val ps = placed(listOf(summit, knoll) + visible)
+        val names = ps.map { it.label.name }
+        assertTrue("Close Knoll" in names, "the close knoll named: $names")
+        assertTrue("The Summit" in names, "and the summit: $names")
+        assertTrue(ps.first { it.label.name == "Close Knoll" }.label.outOfSight)
+        for (n in ps) assertTrue(ps.none { it !== n && it.box.overlaps(n.box) } || n.label.dominant || n.label.name == "Close Knoll", "${n.label.name} over another name")
+    }
+
+    @Test
     fun theScoreFavoursCloserHigherAboveTheHorizonAndProminent() {
         val ctx = HorizonLabels.Context(1000.0, 3000.0)
         fun l(d: Double = 5000.0, h: Double = 1.0, a: Double = 3.0, ele: Double = 2000.0, prom: Double = 100.0) =
@@ -171,7 +185,7 @@ class HorizonViewTest {
         assertTrue(HorizonLabels.score(l(a = 5.0), ctx).score > base)
         assertTrue(HorizonLabels.score(l(prom = 500.0), ctx).score > base)
         assertTrue(HorizonLabels.score(l(ele = 2900.0), ctx).score > base)
-        assertTrue(HorizonLabels.score(l(h = -0.2), ctx).score < HorizonLabels.score(l(h = 0.0), ctx).score, "out of sight counts less than level")
+        assertTrue(HorizonLabels.score(l(h = -0.2), ctx).score < HorizonLabels.score(l(h = 1.4), ctx).score, "just out of sight counts less than well in view")
         assertEquals(100.0, HorizonLabels.prominence(2100.0, listOf(1900.0, 2000.0, 2500.0)), 1e-9)
         assertEquals(0.0, HorizonLabels.prominence(1800.0, listOf(1900.0, 2000.0)), 1e-9)
     }
@@ -179,11 +193,12 @@ class HorizonViewTest {
     @Test
     fun theHighestSkylinePeakIsNamedEvenWithACloserCandidateBesideIt() {
         val giant = view("Mount Giant", 20.0, 4300.0, distance = 14_000.0, angle = 14.0)
-        val close = view("Close Hill", 21.0, 1800.0, distance = 900.0, skyline = false, angle = 14.0)
-        assertEquals(listOf("Mount Giant"), names(listOf(close, giant)), "the summit keeps its own; the hill is inside its gap")
-        // Even where every place is taken by a ring or hour label, the summit is drawn.
+        val mid = view("Mid Hill", 21.0, 1800.0, distance = 3000.0, skyline = false, angle = 14.0)
+        val close = view("Close Hill", 60.0, 1500.0, distance = 900.0, angle = 4.0)
+        assertEquals(listOf("Mount Giant", "Close Hill"), names(listOf(mid, close, giant)), "the summit keeps its own; the hill beside it is inside its gap")
+        // Even where every place is taken by a ring or hour label, the summit and the closest candidate are drawn.
         val everywhere = listOf(RimBox(-1e4, -1e4, 1e4, 1e4))
-        assertEquals(listOf("Mount Giant"), placed(listOf(close, giant), blocked = everywhere).map { it.label.name })
+        assertEquals(listOf("Mount Giant", "Close Hill"), placed(listOf(mid, close, giant), blocked = everywhere).map { it.label.name })
     }
 
     @Test
