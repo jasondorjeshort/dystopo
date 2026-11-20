@@ -19,3 +19,13 @@ A major choice (a data source the app leans on): a proposal before building.
 
 - How far ahead the almanac stays good enough for "which satellites are up" (weeks for GPS; the others to check).
 - The cost along a long route: the horizon at a point every few hundred metres, not every metre.
+
+Question: is a GPS coverage forecast along a route worth a proposal now, given it needs a new downloaded data source
+(constellation almanacs or element sets, refreshed, with their terms in `sources.json`) and an orbit propagator
+written from the specification? Recommended: not yet; leave it at rest until the per-point signal idea has recorded
+real tracks, which would show whether terrain-blocked stretches are common and costly enough on your hikes to
+warrant it. The terrain horizon alone (`dem/Horizon.kt`) can already mark deep, narrow stretches of a route without
+orbits; if you want something sooner, that cheaper "sky open above N degrees" line on the route card is the step to
+ask for.
+
+Answer:
