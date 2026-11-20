@@ -25,4 +25,5 @@ commands naming `release.properties` and the keystore? Recommended: the service,
 command text and a script can still open the file by a path it builds, while file permissions hold whatever the
 agent runs; the deny rule can go in first as a stopgap. Both are changes only you may make to settings or accounts.
 
-Answer:
+Answer: (the owner, 2026-11-20) "I accept your recommendation; we'll do that later." The signing service, with the
+deny rule as a stopgap; not scheduled.
