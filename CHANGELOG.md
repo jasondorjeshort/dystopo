@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.34-alpha (2026-11-20)
+
 ### 2026-11-19
 
 - T308: The Horizon view: the square sky, layer toggles for Satellites, Peaks and Sun
