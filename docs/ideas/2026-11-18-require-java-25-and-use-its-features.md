@@ -34,3 +34,15 @@ Candidates for the features, to be confirmed in the code:
   (the live server under the demo check's load) rather than a rewrite for its own sake.
 - Both PCs' JDK installs and `docs/reference/machines.md`: this PC has Adoptium 21 only; the doc
   says the other has jdk-25 as its default `java`.
+
+Question: should the JVM modules (devtool, server, serverlib, tilebuild, the shared core's JVM target) move their
+bytecode target to 25, so anyone running the standalone server or the Docker image needs Java 25, or should the build
+run on JDK 25 with the targets left at 21? Recommended: target 25 everywhere on the JVM side, since scoped values
+(final in 25) and the unpinned virtual threads (JEP 491, Java 24) are what you asked for and a target of 21 cannot use
+the first; Android stays at `JVM_17` either way. Build it in two passes: first the toolchain (`jvmToolchain(21)` in
+the five build files, the Gradle wrapper, which is 8.14.3 and needs a release that runs on 25, the Kotlin and Android
+Gradle Plugin versions that accept it, Planetiler, the release workflow's JDK and the Dockerfile, JDK 25 installed on
+this PC, `machines.md` and the CLAUDE.md line), then virtual threads in `serverlib` where `demo-check.py`'s load
+shows a gain. Installing JDK 25 on this PC is a machine change: say whether an agent may do it.
+
+Answer:
