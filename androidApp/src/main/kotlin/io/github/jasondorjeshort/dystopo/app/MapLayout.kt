@@ -639,7 +639,7 @@ object MapLayout {
             warning = card(OverlayIds.WARNING_CARD, WarningCardLayout.layout, if (WarningCardLayout.expanded) 0f else (WarningCardLayout.detailDp ?: 0f) * d, 28f),
             planning = card(OverlayIds.PLANNING_CARD, BottomPanels.routeCard, 0f, 32f),
             trip = card(OverlayIds.TRIP_CARD, null, 0f, 0f),
-            update = card(OverlayIds.UPDATE_CARD, null, 0f, 0f),
+            update = card(OverlayIds.UPDATE_CARD, null, 0f, 0f) ?: card(OverlayIds.AIRCRAFT_CARD, null, 0f, 0f), // T311: the flight card in the offer's slot (both at the bottom, the offer first)
             panels = panels,
             cardsDrawn = true,
         )

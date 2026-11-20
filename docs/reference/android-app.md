@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-19
+verified: 2026-11-20
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
@@ -269,6 +269,10 @@ The viewshed from a point (`app/viewshed/`, the shared core `shared/.../dem/View
 ## The Horizon view (T307, T308, T309)
 
 The map's "Map | Horizon" switch (T309, `controls/ViewSwitch.kt`: two segments, Map selected, in the left lower column over the scale bar's line, placed by the layout rule as `horizonSwitch`; it yields after the scale bar and before the readout's core entries, and hides as `firstRunCard` while the first-run card is up, T310) and Settings › Navigation and tracking › "Horizon view ›" open the Horizon view (T308; T307's GPS view, now its Satellites layer): the sky plot with the land's skyline, the peaks in view, the sun's path and the satellites, each a layer with a toggle. Everything about it: `android-horizon-view.md`.
+
+## Flights on the map (T311)
+
+Settings › Map options › Flight tracking (off by default), Flight tracking: Refresh and Flight tracking: Airport names; what goes over the network, the quota and the states are `android-online.md` › Flights. `aircraft/AircraftPoller.kt` is the one poll loop: a caller asks with `request(owner, lat, lon, radiusNm)` and stops with `release(owner)` (the map, owner `map`, while it shows; the Horizon view with the phone's position while it is open) and reads `view` (a `StateFlow` of the drawn aircraft and the feed's state); one request per interval whoever asks. `aircraft/AircraftLayer.kt` draws on the map in its own GeoJSON source added on each style load: a silhouette per kind from the emitter category (airliner, heavy jet with four engines, light aircraft, helicopter as a rotor disc, glider, balloon, drone; generic as the airliner), made with `style.addImage` (filled, hollow when the position is over 30 s old, larger and orange when tapped), a double ring around an emergency squawk (7700, 7600, 7500), the last 90 s of trail coloured by altitude (one fixed scale), labels ("ASA1670 SEA > DEN", the age when stale) from z8 or while 250 or fewer are in view, aircraft on the ground only from z13 and never labelled. A tap selects one: its track since the layer first saw it solid, the remaining great circle to the destination dashed when the route is plausible, and the card (`aircraft/AircraftCard.kt`, `FlightCard`, hostable by any screen): the call sign, the emergency line, origin > destination by the airport-names setting with "From schedule data; may be wrong", the kind, type and registration, the altitude in the units setting with the flight level above 18,000 ft and climbing, descending or level, the ground speed, the distance, bearing and angle above the horizon from the phone, the position's age and the credit. The card sits above the credit line and the bottom controls ride above it (`MapInsets.aircraftCardTop`; the layout rule takes it in the update offer's slot); its id is `aircraftCard`, the status line's `flightsStatus`. Routes: `android-debug-routes.md` › Flights; the sweep's frames: `android-ui.py flights` (debug) and the `flights` step of `features` (release).
 
 ## The world overview (T264)
 

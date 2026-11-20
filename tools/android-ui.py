@@ -34,7 +34,8 @@ Parts:
                (shared/src/commonTest/resources/aircraft/rainier-replay.json, POST /aircraft/replay with an undulation
                for the emulator's fix): the map at Rainier z9 with silhouettes, trails and labels (frame `flights-map`),
                the nearest aircraft tapped (`select`) with its solid track, its dashed route and the card
-               (`flights-card`), the hollow stale one's label read from GET /aircraft, the card at font scale 2.0
+               (`flights-card`), the same with the camera moved so the track and route run clear of the card
+               (`flights-track`), the hollow stale one's label read from GET /aircraft, the card at font scale 2.0
                (`flights-card-font2`) and in landscape (`flights-card-landscape`), then the live feed with airplane mode
                on (`flights-offline`); every setting, the font scale, the rotation and the network put back.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
@@ -1911,7 +1912,7 @@ def flights_step(dev):
     turned_on = False
     try:
         close_sheet(dev)
-        open_settings(dev, "Map options", "^Hillshade$|^Map options$")
+        open_settings(dev, "Map options", "^Hillshade$")
         row, nodes = scroll_to(dev, FLIGHTS_ROW)
         if not row:
             raise RuntimeError(f"no Flight tracking row on Map options (texts: {dev.texts(nodes)[-20:]})")
@@ -1954,7 +1955,7 @@ def flights_step(dev):
         airplane(dev, False)
         if turned_on:
             try:
-                open_settings(dev, "Map options", "^Hillshade$|^Map options$")
+                open_settings(dev, "Map options", "^Hillshade$")
                 row, nodes = scroll_to(dev, FLIGHTS_ROW)
                 off = None
                 if row:
@@ -2018,7 +2019,7 @@ def part_flights(args):
 
     def card(name="flights-card"):
         def fn():
-            code, r = srv.call("POST", "/aircraft?select=c0ffe1&wait=1500")
+            code, r = srv.call("POST", "/aircraft?select=c0ffe1&wait=3000")  # the layout rule lifts the bottom controls within a second or two
             png = dev.screencap(name)[0]
             c = (r or {}).get("card") or {}
             nodes = dev.nodes()
@@ -2030,6 +2031,20 @@ def part_flights(args):
             return {"ok": ok, "png": png, "lines": c.get("lines"), "heightPx": c.get("heightPx"), "missing": missing,
                     **({} if ok else {"error": f"card {c} missing {missing} close {onscreen}"})}
         return fn
+
+    def track():
+        """Round 2: the tapped aircraft in the upper left of the map, so its solid track and dashed route run clear of the card."""
+        code, r = srv.call("POST", "/aircraft?select=c0ffe1&wait=500")
+        a = next((x for x in (r or {}).get("aircraft") or [] if x.get("hex") == "c0ffe1"), None)
+        if not a:
+            return {"ok": False, "error": "c0ffe1 not drawn"}
+        srv.call("POST", f"/camera?lat={a['lat'] - 0.12:.4f}&lon={a['lon'] + 0.22:.4f}&zoom=9.2&bearing=0")
+        time.sleep(3)
+        png = dev.screencap("flights-track")[0]
+        code, r = srv.call("GET", "/aircraft")
+        a = next((x for x in (r or {}).get("aircraft") or [] if x.get("hex") == "c0ffe1"), {})
+        ok = (r or {}).get("selected") == "c0ffe1" and (a.get("route") or {}).get("plausible") is True
+        return {"ok": ok, "png": png, "route": a.get("route"), **({} if ok else {"error": f"selected {(r or {}).get('selected')}, route {a.get('route')}"})}
 
     def font2():
         dev.shell("settings", "put", "system", "font_scale", "2.0")
@@ -2066,7 +2081,7 @@ def part_flights(args):
                 **({} if ok else {"error": f"offline line {bool(n)}, state {(r or {}).get('state')}, requests spent offline {spent}"})}
 
     try:
-        for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("font2", font2), ("landscape", landscape), ("offline", offline)):
+        for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("track", track), ("font2", font2), ("landscape", landscape), ("offline", offline)):
             run.step(name, fn)
     finally:
         srv.call("POST", "/aircraft?select=none")

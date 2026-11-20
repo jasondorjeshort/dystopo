@@ -65,18 +65,31 @@ fun AircraftOverlay() {
             )
         }
     }
-    val sel = AircraftLayer.selected ?: return
-    val a = AircraftLayer.drawn.firstOrNull { it.hex == sel } ?: return
+    val sel = AircraftLayer.selected
+    val a = sel?.let { h -> AircraftLayer.drawn.firstOrNull { it.hex == h } }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { io.github.jasondorjeshort.dystopo.app.MapInsets.aircraftCardTop = 0.dp } }
+    if (a == null) {
+        androidx.compose.runtime.SideEffect { if (io.github.jasondorjeshort.dystopo.app.MapInsets.aircraftCardTop != 0.dp) io.github.jasondorjeshort.dystopo.app.MapInsets.aircraftCardTop = 0.dp }
+        return
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val navBar = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
         val credit = io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom
         val bottom = maxOf(navBar + 34.dp, credit + 4.dp)
+        // Round 2: the card may take all but the top row's room (it scrolls past that), so a landscape window shows it whole.
+        val top = maxOf(TopChips.searchBottom, with(density) { TopChips.onlineBottomPx.toDp() }) + 8.dp
         FlightCard(
             a, onClose = { AircraftLayer.select(null) },
-            Modifier.align(Alignment.BottomCenter).padding(start = 12.dp, end = 12.dp, bottom = bottom).widthIn(max = 420.dp)
-                .heightIn(max = maxHeight * 0.6f)
+            Modifier.align(Alignment.BottomCenter).padding(start = 12.dp, end = 12.dp, bottom = bottom).widthIn(max = 520.dp)
+                .heightIn(max = (maxHeight - bottom - top).coerceAtLeast(120.dp))
                 .control("aircraftCard")
-                .onGloballyPositioned { c -> AircraftCardLayout.heightPx = c.size.height },
+                .onGloballyPositioned { c ->
+                    AircraftCardLayout.heightPx = c.size.height
+                    // The bottom controls (position buttons, scale bar, readout, the Map | Horizon switch) ride above it.
+                    io.github.jasondorjeshort.dystopo.app.MapInsets.topFromWindowBottom(c, density).let { t ->
+                        if (t != io.github.jasondorjeshort.dystopo.app.MapInsets.aircraftCardTop) io.github.jasondorjeshort.dystopo.app.MapInsets.aircraftCardTop = t
+                    }
+                },
         )
     }
 }

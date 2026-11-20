@@ -352,6 +352,8 @@ class AircraftTest {
         assertEquals(AircraftKind.AIRLINER, a.kind)
         assertNull(a.emergency)
         assertEquals(AircraftKind.GENERIC, poll.aircraft[1].kind, "no category: the generic silhouette")
+        assertEquals("Airliner · B739 · N000AA", AircraftText.typeLine(a), "round 2: the kind first on the card")
+        assertEquals("Helicopter · EC35", AircraftText.typeLine(a.copy(category = "A7", type = "EC35", registration = null)))
         assertEquals(Emergency.GENERAL, Emergency.of("7700", null))
         assertEquals(Emergency.RADIO, Emergency.of("7600", "none"))
         assertEquals(Emergency.HIJACK, Emergency.of(null, "unlawful"))
