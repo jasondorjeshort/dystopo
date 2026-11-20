@@ -45,4 +45,5 @@ Gradle Plugin versions that accept it, Planetiler, the release workflow's JDK an
 this PC, `machines.md` and the CLAUDE.md line), then virtual threads in `serverlib` where `demo-check.py`'s load
 shows a gain. Installing JDK 25 on this PC is a machine change: say whether an agent may do it.
 
-Answer:
+Answer: (the owner, 2026-11-20) "I meant yes to both Java answers": target 25 on every JVM module, built in the two
+passes above, and an agent may install JDK 25 on this PC.
