@@ -59,3 +59,11 @@ Raised in the same talk and recorded on the owner's "yes, record all that": the 
 detector (T250) says the phone is in the air, with a toggle to override (a hiker on a summit looks down too); and
 aircraft from a seat can be above or below, so a plot that spans both sides of the horizon (the Panorama ribbon does)
 serves one aircraft layer in every case. Priority (owner, 2026-11-20): the aircraft paths come first; this follows.
+
+2026-11-20: from the coordinator's review of the flights plan, at the owner's request. Your own flight with no
+on-board Wi-Fi: before takeoff (with a connection) the app caches the aircraft layer's positions and the route table
+around the departure airport; in flight it matches the phone's own GPS track (position, speed, course, altitude)
+against the cached flights to name the flight, then names the terrain below from the flipped Horizon view. It needs
+only data fetched before takeoff, so no cabin signal. Open: how many flights to cache and how soon they go stale, a
+wrong match (two aircraft on one airway), and whether cabin GPS reception limits it. Data licences as in
+`docs/findings/2026-11-20-aircraft-layer-sources-and-display.md` (positions ODbL; routes CC0).
