@@ -58,6 +58,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.testTag
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.ClockFormat
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
@@ -116,6 +119,9 @@ object HorizonUi {
 
     @Volatile var drawn: Map<String, Any?>? = null
 
+    /** T309: where the view's "Map | Horizon" switch was last laid out, px in the window (left, top, right, bottom), or null. */
+    @Volatile var switchPx: List<Int>? = null
+
     /** The rim's names as last drawn (the plot's taps read them). */
     @Volatile var names: List<PlacedName> = emptyList()
 
@@ -139,6 +145,7 @@ object HorizonUi {
         scrollTo = null
         GnssUi.resetUi()
         drawn = null
+        switchPx = null
     }
 
     /** Turns [layer] [on] (stored and synced as a setting, off the main thread), then redraws. */
@@ -307,6 +314,13 @@ fun HorizonScreen() {
                         if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { tick++ }
                         if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
                     }
+                    // T309: the "Map | Horizon" switch, fixed at the pane's bottom under the scroll area (which so ends above it).
+                    io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchRow(
+                        true, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchColours(pal.card, pal.ink, pal.line),
+                        Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp)
+                            .onGloballyPositioned { c -> c.boundsInWindow().let { b -> HorizonUi.switchPx = listOf(b.left, b.top, b.right, b.bottom).map { Math.round(it) } } }
+                            .testTag(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.TAG_ON_VIEW),
+                    )
                 }
             }
             if (landscape) Row(Modifier.fillMaxSize()) {
@@ -327,6 +341,7 @@ fun HorizonScreen() {
                     "hollowDrawn" to HorizonUi.names.filter { !PeakRim.inSight(it.peak) }.map { it.peak.peak.name },
                     "sunPathDrawn" to (sunDay?.sun?.path?.size ?: 0), "sunHourMarks" to (sunDay?.marks?.size ?: 0), "sunNowDrawn" to sunDrawn,
                     "selected" to picked?.peak?.name, "scrollPx" to scroll.value, "scrollMaxPx" to scroll.maxValue,
+                    "switchPx" to HorizonUi.switchPx, "switchSelected" to "horizon",
                 )
             }
         }
@@ -554,10 +569,9 @@ internal val HORIZON_HELP: List<HelpText> = run {
                 "within ${HorizonText.range(units)}. Show turns the layers on and off: the satellites, the peaks in view and the sun's path."
         },
         HelpText("horizon.peaks", HorizonText.PEAKS, "$placed › ${HorizonText.PEAKS}", show = show) { units ->
-            "The named peaks of your offline map within ${HorizonText.range(units)} that are in view, or just out of sight: hidden by less than " +
-                "${UnitFormat.elevation(PeakRim.HIDDEN_M, units)} (a hollow triangle). The plot names the highest peak on the skyline, then the closest " +
-                "and those standing highest above the land in front, spaced out where the rim is crowded; the list has them all, closest first. " +
-                "Tap a name or a row for its height, distance and bearing."
+            "Named peaks within ${HorizonText.range(units)} in view, or just out of sight (hidden by under " +
+                "${UnitFormat.elevation(PeakRim.HIDDEN_M, units)}: a hollow triangle). The plot names the highest on the skyline, then the closest " +
+                "and most in view, spaced out where crowded; the list has all, closest first. Tap one for its height, distance and bearing."
         },
         HelpText("horizon.sun", HorizonText.SUN, "$placed › ${HorizonText.SUN}", show = show) { _ ->
             "Today's path of the sun, with the hours, dashed where the terrain hides it. The times are when the top of the " +

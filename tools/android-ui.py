@@ -23,8 +23,9 @@ Parts:
                `drive` step (drive_step): Settings > Navigation and tracking at Plan drives for and its help pop-up, then a
                drive planned under each value with its card, on --drive-osm/--drive-dem (the montblanc pair, where the
                least-fuel card's fuel line shows; rainier without it); T307, T308: the `horizon` step (horizon_step, `gps`
-               before T308): Settings > Navigation and tracking > Horizon view opens the Horizon view (frames `horizon`
-               and `horizon-scrolled`, `gps` and `gps-plot` before), Close takes it away; no crash.
+               before T308): T309: the map's "Map | Horizon" switch opens the Horizon view (Settings > Navigation and
+               tracking > Horizon view before; frames `horizon` and `horizon-scrolled`, `gps` and `gps-plot` before T308),
+               the view's "Map" segment takes it away; no crash.
                --feature-steps runs only the steps named.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
@@ -1787,48 +1788,54 @@ def drive_body(dev, pack, dem, osm, drive, out, st, errors):
 
 # --- features: the Horizon view (T307, T308) ----------------------------------------------------------------------
 
-HORIZON_ROW = "^Horizon view ›$"  # settings/SettingsPages.kt: the row's link (the row's heading is "Horizon view"; "GPS status" before T308)
+HORIZON_SEGMENT = "^Horizon$"  # app/controls/ViewSwitch.kt: the switch's segments "Map" and "Horizon" (T309)
+MAP_SEGMENT = "^Map$"
 HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun)$"
 
 
 def horizon_step(dev):
-    """T307, T308: Settings > Navigation and tracking, scrolled to the Horizon view row, its link tapped: the Horizon view
-    opens over the map with the square sky plot fixed at the top and, below it, the heading with Close, the layer toggles
-    (Satellites, Peaks, Sun), the plot's orientation and each layer's content (the frame `horizon`); the area under the
-    heading scrolled once (the frame `horizon-scrolled`: the plot unmoved, the lists below); Close takes it away. The
-    emulator's fix at Paradise (inside the pushed Rainier pack) gives the view its terrain horizon, the peaks and the
-    sun's path; the satellites' count and the peaks' line are reported (`satellitesLine`, `peaksLine`), never failed,
-    since an emulator's GNSS may report none at first and the first sweep on a just-booted emulator can take minutes."""
+    """T307, T308, T309: from the map, the "Horizon" segment of the map's "Map | Horizon" switch tapped (T309; Settings >
+    Navigation and tracking > Horizon view before it, a path the step no longer takes): the Horizon view opens over the map
+    with the square sky plot fixed at the top and, below it, the heading with Close, the layer toggles (Satellites, Peaks,
+    Sun), the plot's orientation and each layer's content, and the switch fixed at the pane's bottom (the frame `horizon`);
+    the area under the heading scrolled once (the frame `horizon-scrolled`: the plot unmoved, the lists below); the
+    view's "Map" segment takes it away. The emulator's fix at Paradise (inside the pushed Rainier pack) gives the view its
+    terrain horizon, the peaks and the sun's path; the satellites' count and the peaks' line are reported
+    (`satellitesLine`, `peaksLine`), never failed, since an emulator's GNSS may report none at first and the first sweep
+    on a just-booted emulator can take minutes."""
     t0 = time.time()
-    open_settings(dev, "Navigation and tracking", "^Route snap$|" + HORIZON_ROW)
-    _n, nodes = scroll_to(dev, HORIZON_ROW)
-    dev.tap(dev.find(HORIZON_ROW, nodes))
+    close_overlays(dev, 1)
+    n, nodes = dev.wait_for(HORIZON_SEGMENT, 10)
+    if not n:
+        return {"ok": False, "error": f"no Horizon segment on the map (texts: {dev.texts(nodes)[:25]})"}
+    dev.tap(n)
     n, nodes = dev.wait_for(HORIZON_TOGGLES, 15)
     if not n:
-        return {"ok": False, "error": f"no layer toggles after the Horizon view row (texts: {dev.texts(nodes)[:25]})"}
+        return {"ok": False, "error": f"no layer toggles after the Horizon segment (texts: {dev.texts(nodes)[:25]})"}
     time.sleep(4)  # a few seconds of the GNSS status, the horizon's sweep and the peaks
     nodes = dev.nodes()
     texts = dev.texts(nodes)
     png = dev.screencap("horizon")[0]
     toggles = sorted({re.sub(r"^✓ ", "", t) for t in texts if re.match(HORIZON_TOGGLES, t)})
     w, h, _d = screen(dev)
-    # Scroll inside the area under the heading (the lower fifth of the screen), never on the plot.
-    dev.shell("input", "swipe", str(w // 2), str(h * 9 // 10), str(w // 2), str(h * 6 // 10), "700")
+    # Scroll inside the area under the heading (above the switch at the bottom), never on the plot.
+    dev.shell("input", "swipe", str(w // 2), str(h * 8 // 10), str(w // 2), str(h * 6 // 10), "700")
     time.sleep(1.5)
-    after_texts = dev.texts(dev.nodes())
+    after_nodes = dev.nodes()
+    after_texts = dev.texts(after_nodes)
     scrolled = dev.screencap("horizon-scrolled")[0]
     sats = next((t for t in texts + after_texts if re.search(r"^\d+ used of \d+ in view|^No satellites heard", t)), None)  # the summary's, not the plot's description
-    peaks = next((t for t in texts + after_texts if re.search(r"on the skyline within|^No named peak|^No offline map with peak|^Finding the peaks", t)), None)
-    close = top_close(dev.nodes())
-    if close:
-        dev.tap(close)
+    peaks = next((t for t in texts + after_texts if re.search(r"just out of sight within|^No named peak|^No offline map with peak|^Finding the peaks", t)), None)
+    back = dev.find(MAP_SEGMENT, after_nodes)
+    if back:
+        dev.tap(back)
     time.sleep(1)
     after = dev.texts(dev.nodes())
-    still = close is None or "Horizon view" in after or any(re.match(HORIZON_TOGGLES, t) for t in after)
+    still = back is None or "Horizon view" in after or any(re.match(HORIZON_TOGGLES, t) for t in after)
     missing = [x for x in ("Show:", "Sky plot:", "Follow the phone", "North up") if x not in texts + after_texts]
     missing += [x for x in ("Peaks", "Satellites", "Sun") if x not in toggles]
-    errors = ([f"missing {missing}"] if missing else []) + (["the Horizon view did not close"] if still else [])
-    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled}, "toggles": toggles,
+    errors = ([f"missing {missing}"] if missing else []) + (["the Map segment did not close the Horizon view"] if still else [])
+    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled}, "toggles": toggles, "openedBy": "switch",
             "satellitesLine": sats, "peaksLine": peaks, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
 
 

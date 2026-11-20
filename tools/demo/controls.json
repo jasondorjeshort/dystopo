@@ -1303,6 +1303,18 @@
       }
     },
     {
+      "id": "horizonSwitch",
+      "kind": "action",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 27,
+          "zone": "map-lower-left"
+        }
+      }
+    },
+    {
       "id": "updateCard",
       "kind": "display",
       "platforms": ["android"],

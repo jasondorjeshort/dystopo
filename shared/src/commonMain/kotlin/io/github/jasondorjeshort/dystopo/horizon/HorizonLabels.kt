@@ -79,7 +79,7 @@ object HorizonLabels {
     const val LOCAL_DEG = 15.0
 
     /** Places tried inward from a label's mark: [FIRST_STEP_DP] in, then [STEP_DP] more each. */
-    const val STEPS = 6
+    const val STEPS = 4
     const val FIRST_STEP_DP = 16.0
     const val STEP_DP = 15.0
 
