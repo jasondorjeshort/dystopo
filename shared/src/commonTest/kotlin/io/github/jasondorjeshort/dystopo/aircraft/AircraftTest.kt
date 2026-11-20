@@ -94,7 +94,7 @@ class AircraftTest {
     @Test
     fun theRouteTableRoundTrips() {
         assertEquals(5, table.airports.size)
-        assertEquals(4, table.routeCount)
+        assertEquals(7, table.routeCount)
         val r = assertNotNull(table.lookup("ASA1670"))
         assertEquals(listOf("SEA", "DEN"), r.airports.map { it.code })
         assertEquals("Seattle", r.airports[0].city)
@@ -366,5 +366,55 @@ class AircraftTest {
         val t = AircraftTracker()
         t.onFetch(AircraftFetch.Ok(AircraftPoll(0, listOf(r)), 100, null), 0, null)
         assertEquals("Radio failure (squawk 7600)", AircraftText.card(t.view(0, null, null).single(), ContourUnits.FEET, AirportNaming.BOTH, AircraftText.CREDIT).first())
+    }
+
+    // --- round 3: the owner's United flight that read "Route unknown" ---
+
+    @Test
+    fun callSignsAreNormalisedOnAMiss() {
+        assertEquals(listOf("SEA", "DEN"), table.lookup("UAL719C")?.airports?.map { it.code }, "one trailing letter dropped")
+        assertEquals(listOf("PDX", "SEA"), table.lookup("SJX032")?.airports?.map { it.code }, "leading zeros dropped")
+        assertEquals(listOf("PDX", "SEA"), table.lookup("SJX0032")?.airports?.map { it.code })
+        assertEquals("UAL719C", table.lookup("UAL719C")?.callSign, "the card keeps the call sign as sent")
+        assertNull(table.lookup("UAL71"), "a different number is not a variant")
+        assertNull(table.lookup("UAL7190"), "a trailing digit is never dropped")
+        assertNull(table.lookup("UAL0"))
+    }
+
+    private fun near(a: Airport, bearing: Double, m: Double) = AircraftGeo.move(a.lat, a.lon, bearing, m)
+
+    @Test
+    fun approachAndDepartureVectorsSkipTheHeadingTest() {
+        val r = table.lookup("UAL489")!! // SEA to DEN
+        val sea = r.airports[0]
+        val den = r.airports[1]
+        // Arriving: 5 km short of Denver on the leg's line, descending, vectored 156 degrees off the bearing to it.
+        val inbound = AircraftGeo.bearingDeg(den.lat, den.lon, sea.lat, sea.lon)
+        val (aLat, aLon) = near(den, inbound, 5_000.0)
+        val toDen = AircraftGeo.bearingDeg(aLat, aLon, den.lat, den.lon)
+        val m = RoutePlausibility.check(r, aLat, aLon, (toDen + 156) % 360, 180.0, false, -900.0)
+        assertTrue(m.plausible, m.reason)
+        assertEquals("DEN", m.destination?.code)
+        // Level counts as arriving near B; climbing fast near B does not.
+        assertTrue(RoutePlausibility.check(r, aLat, aLon, (toDen + 156) % 360, 180.0, false, 0.0).plausible)
+        assertFalse(RoutePlausibility.check(r, aLat, aLon, (toDen + 156) % 360, 180.0, false, 2500.0).plausible, "climbing away from the destination")
+        // Departing: 20 km out of Seattle on the leg, climbing, on a departure heading 140 degrees off the bearing to Denver.
+        val outbound = AircraftGeo.bearingDeg(sea.lat, sea.lon, den.lat, den.lon)
+        val (dLat, dLon) = near(sea, outbound, 20_000.0)
+        val wantDen = AircraftGeo.bearingDeg(dLat, dLon, den.lat, den.lon)
+        assertTrue(RoutePlausibility.check(r, dLat, dLon, (wantDen + 140) % 360, 250.0, false, 2200.0).plausible, "a departure vector")
+        // Level near the origin on that heading is not departing: the heading test applies, and it fails.
+        val (lLat, lLon) = near(sea, outbound, 50_000.0)
+        val wantDen2 = AircraftGeo.bearingDeg(lLat, lLon, den.lat, den.lon)
+        val level = RoutePlausibility.check(r, lLat, lLon, (wantDen2 + 150) % 360, 420.0, false, 0.0)
+        assertFalse(level.plausible, "level away from the origin on the wrong heading: a stale route")
+        assertTrue("heading away" in level.reason, level.reason)
+        // Climbing out of the origin on another heading, already 300 km off the leg (its tolerance 246 km): rejected.
+        val (cLat, cLon) = near(sea, (outbound + 90) % 360, 300_000.0)
+        val climbing = RoutePlausibility.check(r, cLat, cLon, (outbound + 90) % 360, 400.0, false, 2500.0)
+        assertFalse(climbing.plausible, climbing.reason)
+        assertTrue("off the leg" in climbing.reason, climbing.reason)
+        // Without a vertical rate an aircraft near B still counts as arriving (as the feed omits it for some).
+        assertTrue(RoutePlausibility.check(r, aLat, aLon, (toDen + 156) % 360, 180.0, false, null).plausible)
     }
 }

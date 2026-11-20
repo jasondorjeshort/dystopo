@@ -1975,6 +1975,22 @@ def flights_step(dev):
     return {"ok": not errors, **out, **({"png": png} if png else {}), **({"error": "; ".join(errors)} if errors else {})}
 
 
+def card_clear(srv, timeout=15.0):
+    """Round 3: waits until the flight card is drawn and no map element overlaps it (GET /layout `overlaps`: the bottom
+    controls have moved above it); returns (seconds waited, the overlaps left with the card)."""
+    t0 = time.time()
+    left = None
+    while time.time() - t0 < timeout:
+        _c, lay = srv.call("GET", "/layout")
+        els = {e.get("id"): e for e in (lay or {}).get("elements") or []}
+        card = els.get("aircraftCard") or {}
+        left = [o for o in (lay or {}).get("overlaps") or [] if "aircraftCard" in (o.get("a"), o.get("b"))]
+        if card.get("rectPx") and not left:
+            return round(time.time() - t0, 1), []
+        time.sleep(0.5)
+    return round(time.time() - t0, 1), left
+
+
 REPLAY_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared", "src", "commonTest", "resources", "aircraft", "rainier-replay.json")
 # The EGM2008 undulation at Paradise (devtool aircraft prints it), standing in for an emulator fix that has none.
 REPLAY_UNDULATION_M = -18.4
@@ -2019,7 +2035,9 @@ def part_flights(args):
 
     def card(name="flights-card"):
         def fn():
-            code, r = srv.call("POST", "/aircraft?select=c0ffe1&wait=3000")  # the layout rule lifts the bottom controls within a second or two
+            code, r = srv.call("POST", "/aircraft?select=c0ffe1&wait=500")
+            waited, left = card_clear(srv)  # round 3: the bottom controls above the card, however long a loaded host takes
+            code, r = srv.call("GET", "/aircraft")
             png = dev.screencap(name)[0]
             c = (r or {}).get("card") or {}
             nodes = dev.nodes()
@@ -2027,9 +2045,9 @@ def part_flights(args):
             want = ["ASA1670", "From schedule data; may be wrong"]
             missing = [w for w in want if w not in texts]
             onscreen = dev.find("^Close$", nodes) is not None
-            ok = code == 200 and bool(c.get("lines")) and not missing and onscreen
-            return {"ok": ok, "png": png, "lines": c.get("lines"), "heightPx": c.get("heightPx"), "missing": missing,
-                    **({} if ok else {"error": f"card {c} missing {missing} close {onscreen}"})}
+            ok = code == 200 and bool(c.get("lines")) and not missing and onscreen and not left
+            return {"ok": ok, "png": png, "lines": c.get("lines"), "heightPx": c.get("heightPx"), "missing": missing, "clearAfterS": waited,
+                    **({} if ok else {"error": f"card {c} missing {missing} close {onscreen} overlaps {left}"})}
         return fn
 
     def track():

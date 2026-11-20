@@ -178,7 +178,7 @@ class AircraftTracker {
         val lat = move.first
         val lon = move.second
         val moved = if (lat == r.lat && lon == r.lon) 0.0 else minOf(age, AircraftRules.MOVE_CAP_S)
-        val match = r.callSign?.let { cs -> routes?.lookup(cs) }?.let { RoutePlausibility.check(it, lat, lon, r.trackDeg, r.groundSpeedKt, r.onGround) }
+        val match = r.callSign?.let { cs -> routes?.lookup(cs) }?.let { RoutePlausibility.check(it, lat, lon, r.trackDeg, r.groundSpeedKt, r.onGround, r.verticalRateFpm) }
         var dist: Double? = null
         var bearing: Double? = null
         var elev: Double? = null

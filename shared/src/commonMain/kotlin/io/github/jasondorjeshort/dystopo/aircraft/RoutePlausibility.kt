@@ -13,7 +13,12 @@ import kotlin.math.max
  *   [TOLERANCE_SHARE] x L) of the great circle A to B, and its along-track place between A and B with a slack of
  *   10 % of L plus 30 km at each end;
  * - airborne with a track and over [HEADING_MIN_KT], its track within [HEADING_DEG] of the bearing to B (within
- *   [NEAR_END_M] of either airport, [HEADING_NEAR_DEG]: turns, patterns, holds);
+ *   [NEAR_END_M] of either airport, [HEADING_NEAR_DEG]: turns, patterns, holds); not tested at all while arriving (within
+ *   [TERMINAL_M] of B, not climbing faster than [TERMINAL_FPM]) or departing (within [TERMINAL_M] of A, climbing at least
+ *   [TERMINAL_FPM]): approach and departure vectors point anywhere (round 3, the owner's report of 2026-11-20: a United
+ *   flight overhead read "Route unknown"; on 833 live aircraft around four hubs, 12 of 15 heading rejections of UAL were
+ *   such vectors, most of them wrong; a level aircraft near its origin still takes the test, since treating it as
+ *   departing accepted a stale route);
  * - on the ground: within [GROUND_M] of A (taxiing out) or B (in);
  * - of the legs that pass, the one with the least cross-track distance for its tolerance is the current leg: its A is the
  *   origin, its B the destination.
@@ -30,6 +35,8 @@ object RoutePlausibility {
     const val NEAR_END_M = 30_000.0
     const val HEADING_MIN_KT = 80.0
     const val GROUND_M = 15_000.0
+    const val TERMINAL_M = 150_000.0
+    const val TERMINAL_FPM = 500.0
 
     /** The leg the aircraft is on, or why none is. */
     data class Match(
@@ -51,7 +58,7 @@ object RoutePlausibility {
         )
     }
 
-    fun check(route: FlightRoute, lat: Double, lon: Double, trackDeg: Double?, groundSpeedKt: Double?, onGround: Boolean): Match {
+    fun check(route: FlightRoute, lat: Double, lon: Double, trackDeg: Double?, groundSpeedKt: Double?, onGround: Boolean, verticalRateFpm: Double? = null, terminal: Boolean = true): Match {
         val a = route.airports
         if (a.size < 2) return Match(route, null, null, null, "one airport")
         var best: Int? = null
@@ -78,7 +85,9 @@ object RoutePlausibility {
             val slack = END_SLACK_SHARE * legM + END_SLACK_M
             if (abs(xt) > tol) { reasons += "leg $i: ${(abs(xt) / 1000).toInt()} km off the leg"; continue }
             if (at < -slack || at > legM + slack) { reasons += "leg $i: beyond its ends"; continue }
-            if (trackDeg != null && (groundSpeedKt ?: 0.0) >= HEADING_MIN_KT && toB > 1000.0) {
+            val arriving = terminal && toB <= TERMINAL_M && (verticalRateFpm == null || verticalRateFpm <= TERMINAL_FPM)
+            val departing = terminal && toA <= TERMINAL_M && verticalRateFpm != null && verticalRateFpm >= TERMINAL_FPM
+            if (trackDeg != null && (groundSpeedKt ?: 0.0) >= HEADING_MIN_KT && toB > 1000.0 && !arriving && !departing) {
                 val want = AircraftGeo.bearingDeg(lat, lon, q.lat, q.lon)
                 val limit = if (toA <= NEAR_END_M || toB <= NEAR_END_M) HEADING_NEAR_DEG else HEADING_DEG
                 if (AircraftGeo.turnDeg(trackDeg, want) > limit) { reasons += "leg $i: heading away from ${q.code}"; continue }

@@ -33,6 +33,8 @@ object AircraftFixtures {
             "ASA" to listOf("1670" to 0, "1409" to 1),
             "ABX" to listOf("404" to 2),
             "QXE" to listOf("2172" to 3),
+            "UAL" to listOf("719" to 0, "489" to 0), // round 3: the normalisations and the terminal cases
+            "SJX" to listOf("32" to 1),
         ),
         listOf("test table", "built 2026-11-20"),
     )
