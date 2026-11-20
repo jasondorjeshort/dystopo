@@ -15,3 +15,11 @@ format in `shared` (from the published RINEX 3 or 4 specification), a switch on 
 
 - Whether the owner wants it at all (a Question for triage).
 - File size: about 1 MB an hour at 1 Hz with 30 satellites; a cap and a note.
+
+Question: do you want raw GNSS measurements logged during a recording and exported as a RINEX observation file for
+post-processing? Recommended: no for now, leave it at rest. It serves a few surveying-minded users, needs the
+developer option for full tracking to be useful, adds about 1 MB an hour, and a RINEX writer is a format other tools
+read (a proposal first by the project's rules); the per-point signal idea covers the everyday "why was my track
+wobbly" question at a fraction of the cost.
+
+Answer:
