@@ -19,3 +19,13 @@ the `brief` skill's `implementer.md`.
 - An agent cannot read its own token count today; the budget may have to be enforced by a hook (`agent-meter.js`)
   rather than by the agent.
 - Recorded from conversation, not triaged or checked against the code.
+
+Plan: a budget from recorded costs, enforced by the agent's report, not a hook. `tools/agent-cost.py` gains
+`--by-kind`: it reads the merged tasks' cost lines (the dated log's T298 cost lines, or the `agents.tsv` files) and
+prints, per task kind (device part, script, app screen, shared core, docs; the kind read from a word the brief's
+Owns line gives, or a `kind:` the coordinator writes on the board), the median and the 80th percentile of fresh
+tokens. The `brief` skill's `implementer.md` gets one line: "Budget: about N tokens (the 80th percentile of past
+<kind> tasks); at that figure, push what you have and report instead of running on." The `wave` skill's Plan and
+launch step 3 sums the medians for a wave's forecast beside the meter figures. Verify: `tools/test_agent_cost.py`
+cases for `--by-kind`, and the table printed over the current records. Out of scope: a hook that stops an agent at
+its budget (`agent-meter.js` sees a stop, not a running count), which waits until a report shows the line ignored.
