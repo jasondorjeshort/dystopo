@@ -57,3 +57,15 @@ the readout bar first and a chip by the compass second, with a tap on the compas
 plain nouns ("Skyline", "Sun", "Peaks", "Satellites"), no "AR"; check that the toggles under a square plot do not
 shrink it on a short phone. The owner, 2026-11-19: "Up top or down bottom are both possible but we may just need
 trial and error."
+
+2026-11-20, which names go on the rim (T309; the owner: "some sort of algorithm to prioritize peaks (and more later)
+based on distance and height above horizon. Then put the highest ones up based on some sort of density function"):
+a read-only research pass (search snippets only) found no app that publishes its weights; the common practice is to
+rank by importance and place greedily highest first with collision tests, so density comes from the space left
+(map symbol placement; Töpfer's radical law for how many; view management in AR labelling for avoiding overlap;
+PeakVisor ties prominence to labelling and adds names with zoom). The first values T309 builds, to tune on real rims:
+score = 3.0 distance (1/(1 + d/5 km)) + 2.5 clearance above the skyline (to 1.5°) + 1.5 apparent angle (to 6°) +
+1.0 prominence (log) + 0.5 elevation, the dominant summit always first, a peak just out of sight (within 60 m) x0.85
+and drawn hollow; placement greedy by score with screen-space collisions against names, ring and hour labels and the
+sun's arc, and a minimum gap between names of 4° x sqrt(candidates within ±15° / 5), at least 2°. A `kind` with a
+base weight lets huts, passes and waypoints join the same ranking later.
