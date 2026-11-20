@@ -69,6 +69,9 @@ object AndroidControls {
         row("drivePreference", "navigation", 38), // T282: Plan drives for, after the elements' 36 and 37
         row("gnssStatus", "navigation", 39, ControlKind.LINK), // T307: the GPS view (T308: the Horizon view), then its sky plot's orientation
         row("skyPlot", "navigation", 40),
+        // T312
+        row("skyRange", "navigation", 41), // the Horizon view's flights: beside its other rows
+        // end T312
         row("syncStatus", "sync", 1, ControlKind.LINK),
         row("share", "sync", 2, ControlKind.LINK),
         row("updates", "about", 1),

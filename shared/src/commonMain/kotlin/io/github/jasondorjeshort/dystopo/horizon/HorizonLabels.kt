@@ -12,6 +12,9 @@ import kotlin.math.sqrt
 /** T309: what a label on the Horizon view's plot names; [weight] multiplies its score (later: huts, waypoints, the car). */
 enum class LabelKind(val key: String, val weight: Double) {
     PEAK("peak", 1.0),
+
+    /** T312: an aircraft of the Flights layer, placed in a second pass after the peaks ([HorizonLabels.placeLayers]). */
+    AIRCRAFT("aircraft", 1.0),
 }
 
 /**
@@ -170,16 +173,18 @@ object HorizonLabels {
      * bearing; a box farther than [LEADER_DP] from its mark gets a leader line, which crosses no name and which no later
      * name crosses. The dominant label, then the closest of the view, are placed first and whatever the density: at their
      * first free place, else at the first. The rest without a free place are left out (the list has them). [first] goes
-     * before everything (a picked label).
+     * before everything (a picked label). T312: [forceClosest] false places the closest by rank like the rest (the aircraft
+     * pass: no forced name over a peak's).
      */
     fun place(
         g: RimGeometry, ranked: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
         blocked: List<RimBox> = emptyList(), lines: List<List<RimPt>> = emptyList(), first: HorizonLabel? = null,
+        forceClosest: Boolean = true,
     ): List<Placed> {
         val placed = ArrayList<Placed>()
         val pad = 2 * g.dp
         val bearings = ranked.map { it.label.bearingDeg }
-        val closest = ranked.minByOrNull { it.label.distanceM }?.label
+        val closest = if (forceClosest) ranked.minByOrNull { it.label.distanceM }?.label else null
         // Stable: the picked one, the dominant, the closest, then the rank.
         val order = ranked.sortedWith(compareByDescending<Scored> { it.label == first }.thenByDescending { it.label.dominant }.thenByDescending { it.label == closest })
         for (s in order) {
@@ -235,6 +240,26 @@ object HorizonLabels {
             if (chosen != null && (forced || placed.none { it.box.overlaps(chosen.box) })) placed += chosen
         }
         return placed
+    }
+
+    /** T312: the two passes' names: [peaks] as [place] put them alone, then [aircraft] around them. */
+    class Layers(val peaks: List<Placed>, val aircraft: List<Placed>)
+
+    /**
+     * T312: the peaks and the aircraft placed in two passes. The first is [place] on [peaks] alone, unchanged (it forces the
+     * closest label and counts every bearing in its density gap, so mixing the kinds would reshuffle peak names at each
+     * poll); the second places [aircraft] (ranked among themselves) with the peaks' boxes and marks added to [blocked], the
+     * closest aircraft not forced, so no aircraft name covers a peak's; [firstAircraft] (a picked one) goes first.
+     */
+    fun placeLayers(
+        g: RimGeometry, peaks: List<Scored>, aircraft: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
+        blocked: List<RimBox> = emptyList(), lines: List<List<RimPt>> = emptyList(), firstPeak: HorizonLabel? = null, firstAircraft: HorizonLabel? = null,
+    ): Layers {
+        val p = place(g, peaks, width, ascent, descent, blocked, lines, firstPeak)
+        if (aircraft.isEmpty()) return Layers(p, emptyList())
+        val taken = blocked + p.flatMap { listOf(it.box, it.mark) }
+        val a = place(g, aircraft, width, ascent, descent, taken, lines + p.mapNotNull { it.leader }, firstAircraft, forceClosest = false)
+        return Layers(p, a)
     }
 }
 

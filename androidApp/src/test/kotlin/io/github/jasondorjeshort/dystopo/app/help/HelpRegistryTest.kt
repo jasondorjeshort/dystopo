@@ -184,6 +184,9 @@ class HelpRegistryTest {
             // T311: the Flights rows and the flight card.
             "settings.aircraft", "settings.aircraftRefresh", "settings.aircraftAirports", "flights.card",
             // end T311
+            // T312: Sky range and the Horizon view's Flights.
+            "settings.skyRange", "horizon.flights",
+            // end T312
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

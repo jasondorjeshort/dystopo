@@ -5,6 +5,7 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
+import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
 import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayer
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
@@ -25,12 +26,22 @@ import java.time.LocalDate
  *   `clearanceDeg`, `inSight`, `skyline`, `dominant`, `promM`, `score` and `rank` (`HorizonLabels`), `named`), `sun` (`date`, `onTerrain`, the terrain
  *   and flat `…SunriseMs`/`…SunsetMs` with their clock times and UTC, `noonMs`, `sunMinutes`, `alwaysUp`, `sunlit`,
  *   `gaps`, `pathSamples`, `pathClear`, `highestDeg`, `hourMarks`; `nowAltitudeDeg`, `nowAzimuthDeg`). No position.
+ *   T312: `layers` has `flights` (the stored toggle, `horizonFlights`) and `flightTracking` (T311's setting: the layer and
+ *   its button only while on); `skyRange`; `flights` (null while the layer does not draw): `state`, `message`, `range`,
+ *   `credit`, `owners` (the poller's askers: `horizon` while the view asks), `held` (the poller's aircraft), `listed`,
+ *   `onGround` and `noAltitude` (left out), `hollow`, `named` (null before the plot drew), and each flight listed, closest
+ *   first: `hex`, `label`, `kind`, `emergency`, `bearingDeg`, `elevationDeg`, `distanceM`, `altitudeM`, `altitudeKind`,
+ *   `horizonDeg` (the terrain's angle at its bearing), `hidden`, `stale`, `hollow`, `ageS`, `tailPoints`, `tailS`, `named`;
+ *   `drawn` adds `flightTracking`, `buttons`, `skyRange`, `flightsDrawn`, `flightNames`, `flightsHollow`,
+ *   `flightsEmergency`, `flightTailPoints`, `flightsListed`, `selectedFlight`, `flightCard`, `creditShown`.
  *   `date=YYYY-MM-DD` answers for that day (the screen keeps its own); `wait=<ms>` waits that long for the horizon and the
  *   peaks; `compare=1` adds `turnaround`: the turn-around clock's terrain day for the same point and day
  *   (`ShadeService.terrainAt`, waited up to 90 s) with `sunsetAgrees` and `sunriseAgrees`.
- * - `POST /horizon?layers=satellites,peaks,sun|all|none` or `satellites=1|0`, `peaks=`, `sun=`: the toggles, as a tap
- *   sets them (stored, synced); `date=YYYY-MM-DD|today`: the day the Sun layer shows; `select=<peak name>|none`: picks a
- *   candidate peak as a tap does; `scroll=<px>`: scrolls the control area. Answers `GET /horizon` (with `wait`).
+ * - `POST /horizon?layers=satellites,peaks,sun,flights|all|none` or `satellites=1|0`, `peaks=`, `sun=`, `flights=`: the
+ *   toggles, as a tap sets them (stored, synced); `date=YYYY-MM-DD|today`: the day the Sun layer shows; `select=<peak name>|none`:
+ *   picks a candidate peak as a tap does; T312: `flight=<hex or call sign>|none` picks a listed flight as a tap on its dot
+ *   or row does (its card opens), `skyRange=overhead|near|all` sets Sky range as its row does; `scroll=<px>`: scrolls the
+ *   control area. Answers `GET /horizon` (with `wait`).
  * - `POST /horizon/ui?open=1|0`: opens or closes the Horizon view, as the settings row and Close do; answers `GET /horizon`.
  * - `POST /horizon/switch?to=map|horizon` (T309): selects a segment of the "Map | Horizon" switch, as a tap on it does (on the
  *   map or on the view); answers `{to, open}` and the switch's place: `map` (the map's switch as `GET /layout` reads it:
@@ -45,7 +56,7 @@ object HorizonRoutes {
                 val q = r.query
                 val set = LinkedHashMap<HorizonLayer, Boolean>()
                 q["layers"]?.let { spec ->
-                    val l = HorizonLayers.parse(spec) ?: return Response.json(mapOf("error" to "layers must be satellites, peaks and sun, comma-separated, or all or none"), 400)
+                    val l = HorizonLayers.parse(spec) ?: return Response.json(mapOf("error" to "layers must be satellites, peaks, sun and flights, comma-separated, or all or none"), 400)
                     for (layer in HorizonLayer.entries) set[layer] = l[layer]
                 }
                 for (layer in HorizonLayer.entries) q[layer.key]?.let { v ->
@@ -58,6 +69,8 @@ object HorizonRoutes {
                 val date = q["date"]?.let { d ->
                     if (d == "today") null else runCatching { LocalDate.parse(d) }.getOrElse { return Response.json(mapOf("error" to "date must be YYYY-MM-DD or today"), 400) }
                 }
+                val range = q["skyRange"]?.let { io.github.jasondorjeshort.dystopo.horizon.SkyRange.of(it) ?: return Response.json(mapOf("error" to "skyRange must be overhead, near or all"), 400) }
+                range?.let { SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok.of(AppSettings.SKY_RANGE, it)); app.map.onMain { io.github.jasondorjeshort.dystopo.app.SettingsUi.revision++ } }
                 val scroll = q["scroll"]?.let { it.toIntOrNull()?.takeIf { px -> px >= 0 } ?: return Response.json(mapOf("error" to "scroll must be a whole number of px"), 400) }
                 for ((layer, on) in set) if (AppSettings.horizonLayer(layer).value != on) {
                     val latch = java.util.concurrent.CountDownLatch(1)
@@ -70,6 +83,12 @@ object HorizonRoutes {
                         HorizonUi.selected = if (name == "none") null else HorizonData.peaks?.candidates?.firstOrNull { it.peak.name.equals(name, ignoreCase = true) }?.let { HorizonUi.keyOf(it) }
                     }
                     scroll?.let { HorizonUi.scrollTo = it }
+                    q["flight"]?.let { want ->
+                        HorizonUi.selectedFlight = if (want == "none") null else {
+                            val f = HorizonData.flightsFor(Gnss.horizonAtPhone(), Gnss.position(), AppSettings.skyRange).list
+                            f.firstOrNull { it.hex.equals(want, true) || it.aircraft.title.equals(want, true) }?.hex
+                        }
+                    }
                 }
                 Thread.sleep(700) // the composition and the GNSS hold following the toggles
                 answer(app, r)
@@ -116,18 +135,20 @@ object HorizonRoutes {
         } ?: app.map.onMain { HorizonUi.date }
         val h = if (wait > 0) Gnss.awaitHorizon(wait) else Gnss.horizonAtPhone()
         val layers = AppSettings.horizonLayers
+        val tracking = AppSettings.AIRCRAFT.value
         val peaks = h?.let { if (wait > 0) HorizonData.awaitPeaks(it, wait) else HorizonData.peaksFor(it) }
         val pos = Gnss.position()
         val now = System.currentTimeMillis()
         val sun = pos?.let { HorizonData.sunFor(h?.takeIf { s -> s.profile != null }, it.latitude, it.longitude, date, now) }
         val sunNow = pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.latitude, it.longitude, now) }
         val out = linkedMapOf<String, Any?>(
-            "open" to HorizonUi.open, "layers" to layers.json(),
+            "open" to HorizonUi.open, "layers" to layers.json(), "flightTracking" to tracking, "skyRange" to AppSettings.skyRange.key,
             "gnss" to linkedMapOf("held" to Gnss.held, "holders" to Gnss.holders(), "engine" to Gnss.engine),
             "position" to (pos != null), "drawn" to HorizonUi.drawn,
             "horizon" to Gnss.horizonJson(h)?.filterKeys { it != "angleDeg" },
             "horizonReason" to if (h == null) (if (pos == null) io.github.jasondorjeshort.dystopo.app.gnss.GnssText.NO_POSITION else io.github.jasondorjeshort.dystopo.app.gnss.GnssText.HORIZON_WORKING) else h.reason,
             "peaks" to HorizonData.peaksJson(peaks, HorizonUi.drawn?.let { HorizonUi.names.map { n -> HorizonUi.keyOf(n.peak) }.toSet() }), "peakRuns" to HorizonData.peakRuns.get(),
+            "flights" to if (layers.effective(tracking).flights) HorizonData.flightsJson(HorizonData.flightsFor(h, pos, AppSettings.skyRange, now), HorizonUi.drawn?.let { HorizonUi.flightMarks.filter { m -> m.box != null }.map { m -> m.hex } }) else null,
             "sun" to sun?.let { HorizonData.sunJson(it) + mapOf("nowAltitudeDeg" to sunNow?.apparentAltitudeDeg?.let { a -> Math.round(a * 10) / 10.0 }, "nowAzimuthDeg" to sunNow?.azimuthDeg?.let { a -> Math.round(a * 10) / 10.0 }) },
         )
         if (q["compare"] == "1" && sun != null) out["turnaround"] = compare(app, h, pos.latitude, pos.longitude, sun)

@@ -147,6 +147,15 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             }
         }
         // end T307
+        // T312: which flights the Horizon view draws (ADR 0044: the apps split; the finding of 2026-11-20).
+        SettingsRow.SKY_RANGE -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.skyRange
+            Setting(row.label, io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.SKY_RANGE_LINE, help = "settings.skyRange") {
+                for (r in io.github.jasondorjeshort.dystopo.horizon.SkyRange.entries) Option(r.label, v == r) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.SKY_RANGE, r)) }
+            }
+        }
+        // end T312
         SettingsRow.NAV_SPEECH -> {
             // T126: spoken turn directions (nav/NavSpeech), off by default.
             val on = AppSettings.navSpeech
@@ -703,6 +712,11 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "are at the top. North up keeps north at the top, as printed sky charts do. N marks north either way."
         },
         // end T307
+        // T312
+        HelpText("settings.skyRange", io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.SKY_RANGE, at(SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.SKY_RANGE), show = page(SettingsGroup.NAVIGATION)) { units ->
+            io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.skyRangeHelp(units)
+        },
+        // end T312
         HelpText("settings.navSpeech", "Spoken directions", at(SettingsGroup.NAVIGATION, "Navigation: Spoken directions"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "While you navigate a route, the phone says each turn aloud once, as the card shows it, with the distance " +
                 "in your units: \"In ${if (units == ContourUnits.FEET) "500 ft" else "150 m"}, turn left onto the trail\". Other audio is turned down while it speaks. It " +

@@ -1,6 +1,6 @@
 ---
-verified: 2026-11-19
-source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T308); moved from android-app.md in T308
+verified: 2026-11-20
+source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T308, T312 with T311's replay); moved from android-app.md in T308
 ---
 
 # The Horizon view
@@ -32,7 +32,7 @@ the row's id is still `gnssStatus`, "GPS status" before T308) opens it over the 
 paper, ink and terrain tokens, through `NightColors` at night; light status-bar icons at night). The plot is a square
 `min(width, height)` of the window inside the system bars, fixed at the top in portrait (411 dp on a Pixel 6 AVD) and
 at the left in landscape (363 dp); the rest is a heading that stays ("Horizon view", its help, Close; a picked peak's
-line under it) over an area that scrolls: "Show:" with the three toggles (Satellites, Peaks, Sun; a tick and a filled
+line under it) over an area that scrolls: "Show:" with the toggles (Satellites, Peaks, Sun, and T312's Flights while Flight tracking is on; a tick and a filled
 button when on), "Sky plot:" (Follow the phone, North up), the terrain line and the band's legend, then the Peaks, Sun
 and Satellites sections in that order (the satellites' list is the long one, so it comes last). Back lets go of the
 menu, the confirmation and a picked peak, then closes. The plot keeps T307's rim (the horizon), rings at 30 and 60
@@ -82,6 +82,44 @@ sunrise and sunset to the millisecond (`sunsetDifferenceMs` 0). Over the flat ho
 
 The sweep opens the view in `android-ui.py features` (step `horizon`, by the map's switch since T309, the view's Map
 segment closing it; frames `horizon` and `horizon-scrolled`; `gps` and `gps-plot` before T308) and `android-a11y.py` (screen `horizon`, `gps` before T308).
+
+## Flights (T312)
+
+The fourth layer, "Flights": T311's aircraft (`app/aircraft/AircraftPoller.kt`, feed data in memory only) on the plot.
+Code: `shared/.../horizon/HorizonFlights.kt` (pure: the sky position, the terrain test, the tails, Sky range, the labels),
+`HorizonLabels.placeLayers` (the two passes), `app/horizon/` (drawing, list, card, routes).
+
+- **When:** the "Flights" button shows only while Flight tracking (T311's setting, off by default) is on; its own toggle
+  `horizonFlights` is synced and on by default (`HorizonLayers.effective` / `buttons`). While the view is open, started and
+  the layer on, it asks the poller as owner `horizon` (`AircraftPoller.request`, released on close or when the layer goes
+  off) for the phone's position, rounded to 0.1° by the poller, at a radius by Sky range: Overhead 15 nm, Near 30 nm, All
+  100 nm (185 km, where a cruising aircraft stands about 1° above a flat horizon). The map's own request is released while
+  the view is open (T311), so one query is polled.
+- **Where:** each aircraft at its bearing and elevation angle from the profile's own point and eye height (`groundM +
+  observerHeightM`; the phone's fix without a profile) by T311's `AircraftGeo.elevationAngleDeg` (the earth's curvature,
+  no refraction). Below 0° it sits on the rim. Aircraft on the ground are left out of the layer and the list (the owner,
+  2026-11-20); one with no altitude has no angle and is left out (`noAltitude`).
+- **Hollow** when hidden by the terrain, meaning below `HorizonProfile.angleAt(bearing)` **and** farther than the ridge's
+  `distanceAt(bearing)` (a helicopter below the ridge line but in front of the ridge is in sight; the profile's refraction,
+  k θ / 2, is added to the aircraft's angle for this test only), or when its position is stale (T311's 30 s). The dot is
+  filled in T311's altitude colour with an ink edge, or hollow (sky inside an altitude-coloured ring); its tail is its
+  last 90 s (T311's trail), dashed while hollow. An emergency (7700, 7600, 7500, or the feed's emergency field) gets a red
+  ring around its dot and its row's dot, a shape and not a colour alone; the row says "Emergency (7700)".
+- **Labels:** "call sign > destination code" ("ASA1409 > SEA"), the call sign alone without a plausible route
+  (`LabelKind.AIRCRAFT`). Placed in a second pass: the peaks' names are placed exactly as without flights, then the
+  flights' names around them, the peaks' boxes, triangles and leader lines blocked, the closest flight not forced; so peak
+  names never move with the aircraft, and no flight name covers a peak's. `HorizonUi.names` stays peaks-only.
+- **List:** a "Flights" section after Peaks, closest first: the count line ("3 flights in the air around you, closest
+  first.", or the range's own), the feed's message when it has one ("No flight data: offline" and T311's others), then
+  each flight: its dot as drawn, the label, and kind · distance · compass bearing · angle · altitude (T311's formatter: the
+  user's units and the flight level) · "behind the terrain" or the stale age.
+- **Card:** a tap on a dot (within 24 dp), its name or its row opens T311's `FlightCard`, hosted inside `HorizonScreen`
+  over the pane's lower part (the map's card would open under the view); its Close, a second tap or Back closes it.
+- **Credit:** while the layer draws, the feed's credit (`AircraftPoller.credit`: "ADSB.lol contributors (ODbL)", or the
+  replay's line) in the plot square's lower left corner, outside the circle.
+- **Sky range** (Settings › Navigation and tracking, after Sky plot; `skyRange`, synced; ADR 0044: the apps split, the
+  finding `docs/findings/2026-11-20-aircraft-layer-sources-and-display.md`): Overhead (above 45°), Near (within 50 km, a
+  first guess), All (the default).
 
 ## The satellites (T307)
 

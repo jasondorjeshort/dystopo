@@ -1,6 +1,16 @@
 package io.github.jasondorjeshort.dystopo.horizon
 
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftFetch
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftFixtures
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftGeo
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftNow
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftPoll
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftReport
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftRules
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftTracker
+import io.github.jasondorjeshort.dystopo.aircraft.RouteTable
 import io.github.jasondorjeshort.dystopo.dem.Horizon
+import io.github.jasondorjeshort.dystopo.dem.HorizonProfile
 import io.github.jasondorjeshort.dystopo.dem.Peak
 import io.github.jasondorjeshort.dystopo.dem.PeakView
 import io.github.jasondorjeshort.dystopo.dem.TerrainFixture
@@ -31,19 +41,25 @@ class HorizonViewTest {
     @Test
     fun theLayersAreAllOnByDefaultAndEachTurnsAlone() {
         val d = HorizonLayers.DEFAULT
-        assertEquals(listOf(HorizonLayer.SATELLITES, HorizonLayer.PEAKS, HorizonLayer.SUN), d.on)
+        assertEquals(listOf(HorizonLayer.SATELLITES, HorizonLayer.PEAKS, HorizonLayer.SUN, HorizonLayer.FLIGHTS), d.on)
         val noSats = d.with(HorizonLayer.SATELLITES, false)
         assertFalse(noSats.satellites)
         assertTrue(noSats.peaks && noSats.sun)
-        assertEquals(mapOf("satellites" to false, "peaks" to true, "sun" to true), noSats.json())
+        assertEquals(mapOf("satellites" to false, "peaks" to true, "sun" to true, "flights" to true), noSats.json())
         assertEquals(d, noSats.with(HorizonLayer.SATELLITES, true))
-        assertEquals(HorizonLayers(false, false, true), HorizonLayers.parse("sun"))
-        assertEquals(HorizonLayers(true, false, true), HorizonLayers.parse(" Satellites,sun "))
+        assertEquals(HorizonLayers(false, false, true, false), HorizonLayers.parse("sun"))
+        assertEquals(HorizonLayers(true, false, true, false), HorizonLayers.parse(" Satellites,sun "))
+        assertEquals(HorizonLayers(false, false, false, true), HorizonLayers.parse("flights"))
         assertEquals(d, HorizonLayers.parse("all"))
         assertEquals(emptyList(), HorizonLayers.parse("none")!!.on)
         assertNull(HorizonLayers.parse("satellites,moon"))
         assertEquals(HorizonLayer.PEAKS, HorizonLayer.of("PEAKS"))
-        assertEquals(listOf("Satellites", "Peaks", "Sun"), HorizonLayer.entries.map { it.label })
+        assertEquals(listOf("Satellites", "Peaks", "Sun", "Flights"), HorizonLayer.entries.map { it.label })
+        // T312: the Flights button and layer only while Flight tracking is on; the stored choice is kept while it is off.
+        assertEquals(listOf(HorizonLayer.SATELLITES, HorizonLayer.PEAKS, HorizonLayer.SUN), HorizonLayers.buttons(false))
+        assertEquals(HorizonLayer.entries, HorizonLayers.buttons(true))
+        assertFalse(d.effective(false).flights)
+        assertEquals(d, d.effective(true))
     }
 
     @Test
@@ -284,5 +300,152 @@ class HorizonViewTest {
         assertEquals(180.0, HorizonLabels.apart(90.0, 270.0), 1e-9)
         val peaks = listOf(view("B", 90.0, 1.0), view("A", 10.0, 1.0), view("Off", 50.0, 1.0, skyline = false))
         assertEquals(listOf("A", "B"), PeakRim.skyline(peaks).map { it.peak.name })
+    }
+
+    // --- T312: the Flights layer ---
+
+    /** A profile from Paradise at [groundM] (eye height 0): every bearing [angle] degrees up, its ridge [ridgeM] away. */
+    private fun profile(angle: Double, ridgeM: Double, groundM: Double = 0.0) =
+        HorizonProfile(lat, lon, groundM, 0.0, 1.0, 30_000.0, DoubleArray(360) { angle }, DoubleArray(360) { ridgeM }, DoubleArray(360) { 30_000.0 }, 0, 0)
+
+    private fun report(hex: String, bearing: Double, distanceM: Double, altM: Double, call: String? = hex.uppercase(), seenPos: Double = 0.0, ground: Boolean = false): AircraftReport {
+        val (la, lo) = AircraftGeo.move(lat, lon, bearing, distanceM)
+        return AircraftReport(hex, call, null, null, null, la, lo, altM / AircraftRules.FEET_TO_M, null, ground, 0.0, 0.0, 0.0, seenPos)
+    }
+
+    /** The tracker's view of [reports] polled at [atMs], seen [laterMs] after, the undulation 0 (geometric heights as given). */
+    private fun now(reports: List<AircraftReport>, atMs: Long = T0, laterMs: Long = 0, routes: RouteTable? = null): List<AircraftNow> {
+        val t = AircraftTracker()
+        t.onFetch(AircraftFetch.Ok(AircraftPoll(atMs, reports), 100, null), atMs, 0.0)
+        return t.view(atMs + laterMs, null, routes)
+    }
+
+    private fun flights(v: List<AircraftNow>, p: HorizonProfile?, range: SkyRange = SkyRange.ALL, at: Long = T0) =
+        HorizonFlights.of(v, p?.let { HorizonFlights.Eye.of(it) } ?: HorizonFlights.Eye(lat, lon, 0.0), p, range, at)
+
+    @Test
+    fun anAircraft10KmUp50KmAwayStandsAtItsHandComputedAngle() {
+        // Seen from sea level over a flat horizon: atan2((R+h) cos θ - R, (R+h) sin θ), θ = 50 km / R = 0.0078480 rad:
+        // (R+h) cos θ - R = 9803.5 m, (R+h) sin θ = 50078.5 m, atan(0.19576) = 11.076° (a flat earth would say 11.310°).
+        val f = flights(now(listOf(report("a1", 90.0, 50_000.0, 10_000.0))), profile(0.0, 0.0)).single()
+        assertEquals(11.076, f.elevationDeg, 2e-3)
+        assertEquals(90.0, f.bearingDeg, 0.01)
+        assertEquals(50_000.0, f.distanceM, 1.0)
+        assertFalse(f.hollow)
+        // The eye is the profile's (its ground plus eye height): from 1650 m the same aircraft stands at 9.2475° (T311's hand case).
+        assertEquals(9.2475, flights(now(listOf(report("a1", 90.0, 50_000.0, 10_000.0))), profile(0.0, 0.0, groundM = 1650.0)).single().elevationDeg, 2e-3)
+    }
+
+    @Test
+    fun belowTheSkylineBeyondTheRidgeIsHollowNearerThanTheRidgeIsSolid() {
+        // A skyline 5° up all round, its ridge 10 km out. 30 km out at 1118 m: about 2° up and behind the ridge: hidden.
+        // 5 km out at 177 m (a helicopter): also about 2° up, below the ridge line, but in front of the ridge: in sight.
+        val p = profile(5.0, 10_000.0)
+        val fs = flights(now(listOf(report("far", 0.0, 30_000.0, 1118.0), report("heli", 180.0, 5_000.0, 177.0), report("above", 90.0, 30_000.0, 4000.0))), p)
+        val far = fs.first { it.hex == "far" }
+        val heli = fs.first { it.hex == "heli" }
+        val above = fs.first { it.hex == "above" }
+        assertTrue(far.elevationDeg < 5.0 && heli.elevationDeg < 5.0, "both below the skyline: ${far.elevationDeg}, ${heli.elevationDeg}")
+        assertTrue(far.hidden && far.hollow, "below the skyline and beyond the ridge: hollow")
+        assertFalse(heli.hidden || heli.hollow, "below the ridge line but nearer than the ridge: solid")
+        assertFalse(above.hollow, "above the skyline: solid (${above.elevationDeg}°)")
+        assertEquals("heli", fs.first().hex, "closest first")
+        // The test's pieces: the refraction lifts a target 30 km out by k θ / 2 = 0.018°; the ridge's distance decides.
+        assertEquals(0.0175, HorizonFlights.refractionDeg(30_000.0), 1e-3)
+        assertTrue(HorizonFlights.hiddenByTerrain(p, 0.0, 4.9, 10_001.0))
+        assertFalse(HorizonFlights.hiddenByTerrain(p, 0.0, 4.9, 9_999.0))
+        assertFalse(HorizonFlights.hiddenByTerrain(p, 0.0, 5.1, 20_000.0))
+        // Without a profile nothing is hidden; without an eye nothing is drawn.
+        assertFalse(flights(now(listOf(report("far", 0.0, 30_000.0, 1118.0))), null).single().hollow)
+        assertEquals(emptyList(), HorizonFlights.of(now(listOf(report("far", 0.0, 30_000.0, 1118.0))), null, p, SkyRange.ALL, T0))
+    }
+
+    @Test
+    fun aStalePositionIsHollow() {
+        val p = profile(0.0, 0.0)
+        val fresh = flights(now(listOf(report("a1", 90.0, 20_000.0, 9000.0, seenPos = 2.0)), laterMs = 20_000), p, at = T0 + 20_000).single()
+        assertFalse(fresh.stale || fresh.hollow, "22 s old: solid")
+        val stale = flights(now(listOf(report("a1", 90.0, 20_000.0, 9000.0, seenPos = 2.0)), laterMs = 35_000), p, at = T0 + 35_000).single()
+        assertTrue(stale.stale && stale.hollow && !stale.hidden, "37 s old (over T311's 30 s): hollow, though in sight")
+    }
+
+    @Test
+    fun theTailIsTheLast90Seconds() {
+        // Polled every 10 s for 3 minutes, flying east at 300 kt 20 km north of the point.
+        val t = AircraftTracker()
+        val (la0, lo0) = AircraftGeo.move(lat, lon, 0.0, 20_000.0)
+        for (i in 0..18) {
+            val (la, lo) = AircraftGeo.move(la0, lo0, 90.0, 300 * AircraftRules.KNOT_TO_MPS * 10.0 * i)
+            val r = AircraftReport("a1", "ASA1", null, null, null, la, lo, 30_000.0, null, false, 90.0, 300.0, 0.0, 0.0)
+            t.onFetch(AircraftFetch.Ok(AircraftPoll(T0 + i * 10_000L, listOf(r)), 100, null), T0 + i * 10_000L, 0.0)
+        }
+        val at = T0 + 185_000L
+        val f = flights(t.view(at, null, null), profile(0.0, 0.0), at = at).single()
+        assertTrue(f.tailS in 60.0..HorizonFlights.TAIL_S, "the tail spans 60 to 90 s: ${f.tailS}")
+        assertEquals(10, f.tail.size, "nine polls within 90 s and the moved-up head")
+        assertEquals(f.bearingDeg, f.tail.last().bearingDeg, 1e-6, "the tail ends at the dot")
+        assertTrue(f.tail.first().bearingDeg < f.bearingDeg, "and trails behind it (flying east, north of the point)")
+    }
+
+    @Test
+    fun aircraftOnTheGroundAreLeftOut() {
+        val all = now(listOf(report("taxi", 0.0, 8_000.0, 120.0, ground = true), report("air", 0.0, 8_000.0, 2000.0)))
+        assertEquals(listOf("air"), flights(all, profile(0.0, 0.0)).map { it.hex })
+        assertEquals(0, HorizonFlights.unplaced(all))
+    }
+
+    @Test
+    fun theLabelIsCallSignAndDestinationCode() {
+        // ASA1409 flies PDX > SEA in the fixture's table; one between them heading north is on its route.
+        val table = RouteTable.parse(AircraftFixtures.table().encodeToByteArray())
+        val onRoute = AircraftReport("b1", "ASA1409", null, null, null, 46.52, -122.45, 20_000.0, null, false, 6.0, 400.0, 0.0, 0.0)
+        val fs = flights(now(listOf(onRoute, report("c1", 0.0, 9000.0, 3000.0, call = "N123AB")), routes = table), profile(0.0, 0.0))
+        assertEquals("ASA1409 > SEA", fs.first { it.hex == "b1" }.label)
+        assertEquals("N123AB", fs.first { it.hex == "c1" }.label, "no plausible route: the call sign alone")
+    }
+
+    @Test
+    fun theSkyRangeFilters() {
+        // Overhead: 10 km up 4 km away (68°); low and near: 30 km away at 2 km (3.5°); far: 120 km away at 11 km (4.7°).
+        val v = now(listOf(report("over", 0.0, 4_000.0, 10_000.0), report("near", 90.0, 30_000.0, 2000.0), report("far", 180.0, 120_000.0, 11_000.0)))
+        fun hexes(r: SkyRange) = flights(v, profile(0.0, 0.0), r).map { it.hex }
+        assertEquals(listOf("over"), hexes(SkyRange.OVERHEAD), "above 45°")
+        assertEquals(listOf("over", "near"), hexes(SkyRange.NEAR), "within 50 km")
+        assertEquals(listOf("over", "near", "far"), hexes(SkyRange.ALL))
+        assertEquals(SkyRange.ALL, SkyRange.DEFAULT)
+        assertEquals(SkyRange.NEAR, SkyRange.of(" Near "))
+        assertNull(SkyRange.of("far"))
+        assertEquals(listOf("Overhead", "Near", "All"), SkyRange.entries.map { it.label })
+        assertTrue(SkyRange.OVERHEAD.admits(45.0, 1e6) && !SkyRange.OVERHEAD.admits(44.9, 0.0))
+        assertTrue(SkyRange.NEAR.admits(0.0, 50_000.0) && !SkyRange.NEAR.admits(89.0, 50_001.0))
+    }
+
+    @Test
+    fun peakNamesStayPutWhileAircraftMoveAndNoAircraftNameCoversOne() {
+        val peaks = listOf(
+            view("Summit", 10.0, 4300.0, distance = 12_000.0, angle = 12.0), view("Ridge", 60.0, 2400.0, distance = 6000.0),
+            view("Knob", 100.0, 2000.0, distance = 3000.0), view("Dome", 200.0, 2600.0, distance = 9000.0), view("Spire", 300.0, 2800.0, distance = 15_000.0),
+        )
+        val ranked = HorizonLabels.rank(PeakRim.labels(peaks))
+        val alone = HorizonLabels.place(g, ranked, width, -9.0, 3.0)
+        fun pass(shiftDeg: Double): HorizonLabels.Layers {
+            // Six aircraft, two of them right by peaks, moved by [shiftDeg] of bearing between the polls.
+            val v = now(listOf(0.0, 15.0, 62.0, 140.0, 205.0, 250.0).mapIndexed { i, b -> report("f$i", b + shiftDeg, 20_000.0 + 3000.0 * i, 6000.0, call = "FLT$i") })
+            return HorizonLabels.placeLayers(g, ranked, HorizonLabels.rank(HorizonFlights.labels(flights(v, profile(0.0, 0.0)))), width, -9.0, 3.0)
+        }
+        val a = pass(0.0)
+        val b = pass(7.0)
+        fun sig(l: List<HorizonLabels.Placed>) = l.map { Triple(it.label.name, it.x, it.y) }
+        assertTrue(alone.size >= 3, "peaks named: ${alone.map { it.label.name }}")
+        assertEquals(sig(alone), sig(a.peaks), "the first pass is the peaks alone")
+        assertEquals(sig(a.peaks), sig(b.peaks), "peak names unchanged across two polls with moving aircraft")
+        assertTrue(a.aircraft.isNotEmpty() && b.aircraft.isNotEmpty(), "aircraft named too")
+        assertTrue(a.aircraft.all { it.label.kind == LabelKind.AIRCRAFT })
+        for (l in listOf(a, b)) for (x in l.aircraft) assertTrue(l.peaks.none { it.box.overlaps(x.box) || it.mark.overlaps(x.box) }, "${x.label.name} covers no peak name or triangle")
+        assertEquals(sig(alone), sig(HorizonLabels.placeLayers(g, ranked, emptyList(), width, -9.0, 3.0).peaks))
+    }
+
+    private companion object {
+        const val T0 = 1_000_000L
     }
 }

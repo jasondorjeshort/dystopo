@@ -1,7 +1,13 @@
 package io.github.jasondorjeshort.dystopo.app.horizon
 
 import android.os.SystemClock
+import io.github.jasondorjeshort.dystopo.aircraft.AircraftText
+import io.github.jasondorjeshort.dystopo.aircraft.FeedState
 import io.github.jasondorjeshort.dystopo.app.ClockFormat
+import io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller
+import io.github.jasondorjeshort.dystopo.horizon.HorizonFlights
+import io.github.jasondorjeshort.dystopo.horizon.SkyFlight
+import io.github.jasondorjeshort.dystopo.horizon.SkyRange
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.dem.PeakView
@@ -113,6 +119,65 @@ object HorizonData {
         val sun = SunPath.of(sLat, sLon, y, m, d, fn)
         val marks = SunPath.hourMarks(sun, sLat, sLon, zone.getOffset(sun.terrain.flat.noonMs).toLong(), fn)
         return SunDay(key, sun, marks, SystemClock.elapsedRealtime() - t0).also { sunDay = it }
+    }
+
+    // ---- T312: Flights ----
+
+    /** The poller's owner name while the Horizon view asks for flights. */
+    const val FLIGHTS_OWNER = "horizon"
+
+    /**
+     * The query's radius (nautical miles) for a sky range: Overhead 15 (45° up at 12 km of altitude is 12 km out), Near 30
+     * (its 50 km and a margin), All 100 (185 km: a cruising aircraft there stands about 1° above a flat horizon, near what
+     * an eye picks out; the feed allows 250).
+     */
+    fun radiusNm(range: SkyRange): Int = when (range) {
+        SkyRange.OVERHEAD -> 15
+        SkyRange.NEAR -> 30
+        SkyRange.ALL -> 100
+    }
+
+    /**
+     * The Flights layer now: [list] the poller's aircraft on the plot ([HorizonFlights.of] from the profile's eye, the
+     * phone's fix without one; closest first), [state] and [message] the feed's, [total] the aircraft the poller holds,
+     * [onGround] and [unplaced] those left out (on the ground; no altitude), [credit] the line the view carries.
+     */
+    class Flights(
+        val list: List<SkyFlight>, val state: FeedState, val message: String?, val total: Int, val onGround: Int, val unplaced: Int,
+        val range: SkyRange, val credit: String, val atMs: Long, val owners: Set<String>,
+    )
+
+    fun flightsFor(h: Gnss.HorizonState?, pos: android.location.Location?, range: SkyRange, now: Long = System.currentTimeMillis()): Flights {
+        val v = AircraftPoller.view.value
+        val profile = h?.profile
+        val eye = profile?.let { HorizonFlights.Eye.of(it) } ?: pos?.let { HorizonFlights.Eye(it.latitude, it.longitude, if (it.hasAltitude()) it.altitude else 0.0) }
+        val list = HorizonFlights.of(v.aircraft, eye, profile, range, now)
+        return Flights(
+            list, v.state, v.message, v.aircraft.size, v.aircraft.count { HorizonFlights.onGround(it) }, HorizonFlights.unplaced(v.aircraft),
+            range, AircraftPoller.credit, v.atMs, v.owners,
+        )
+    }
+
+    /** The row's altitude in the user's units, with the flight level (T311's formatter). */
+    fun altitudeText(f: SkyFlight, units: io.github.jasondorjeshort.dystopo.render.ContourUnits): String =
+        AircraftText.altitudeLine(f.aircraft.altitudeM, f.aircraft.altitudeKind, null, units, f.aircraft.report.altBaroFt)
+
+    fun flightsJson(f: Flights?, drawn: Collection<String>?): Map<String, Any?>? = f?.let {
+        linkedMapOf(
+            "state" to it.state.json, "message" to it.message, "range" to it.range.key, "credit" to it.credit, "owners" to it.owners.toList(),
+            "held" to it.total, "listed" to it.list.size, "onGround" to it.onGround, "noAltitude" to it.unplaced,
+            "hollow" to it.list.count { s -> s.hollow }, "named" to drawn?.size,
+            "aircraft" to it.list.map { s ->
+                linkedMapOf(
+                    "hex" to s.hex, "label" to s.label, "kind" to s.aircraft.report.kind.json, "emergency" to s.aircraft.report.emergency?.json,
+                    "bearingDeg" to r1(s.bearingDeg), "elevationDeg" to r2(s.elevationDeg), "distanceM" to Math.round(s.distanceM),
+                    "altitudeM" to s.aircraft.altitudeM?.let { a -> Math.round(a) }, "altitudeKind" to s.aircraft.altitudeKind.json,
+                    "horizonDeg" to s.horizonDeg?.let(::r2), "hidden" to s.hidden, "stale" to s.stale, "hollow" to s.hollow,
+                    "ageS" to r1(s.aircraft.ageS), "tailPoints" to s.tail.size, "tailS" to r1(s.tailS),
+                    "named" to drawn?.let { d -> s.hex in d },
+                )
+            },
+        )
     }
 
     // ---- JSON ----

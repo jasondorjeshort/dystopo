@@ -4,7 +4,10 @@ package io.github.jasondorjeshort.dystopo.horizon
 enum class HorizonLayer(val key: String, val label: String) {
     SATELLITES("satellites", "Satellites"),
     PEAKS("peaks", "Peaks"),
-    SUN("sun", "Sun");
+    SUN("sun", "Sun"),
+
+    /** T312: T311's aircraft at their bearing and elevation angle; its button shows only while Flight tracking is on. */
+    FLIGHTS("flights", "Flights");
 
     companion object {
         fun of(key: String): HorizonLayer? = entries.firstOrNull { it.key == key.trim().lowercase() }
@@ -12,14 +15,16 @@ enum class HorizonLayer(val key: String, val label: String) {
 }
 
 /**
- * T308: which of the Horizon view's layers are on. All three by default (the task's word); the app keeps each in a synced
- * setting of its own (`horizonSatellites`, `horizonPeaks`, `horizonSun`), the way the map keeps its layer choices.
+ * T308: which of the Horizon view's layers are on. All on by default (the task's word); the app keeps each in a synced
+ * setting of its own (`horizonSatellites`, `horizonPeaks`, `horizonSun`, T312's `horizonFlights`), the way the map keeps
+ * its layer choices. T312: [flights] draws only while Flight tracking (T311's setting, off by default) is on ([effective]).
  */
-data class HorizonLayers(val satellites: Boolean = true, val peaks: Boolean = true, val sun: Boolean = true) {
+data class HorizonLayers(val satellites: Boolean = true, val peaks: Boolean = true, val sun: Boolean = true, val flights: Boolean = true) {
     operator fun get(layer: HorizonLayer): Boolean = when (layer) {
         HorizonLayer.SATELLITES -> satellites
         HorizonLayer.PEAKS -> peaks
         HorizonLayer.SUN -> sun
+        HorizonLayer.FLIGHTS -> flights
     }
 
     /** These layers with [layer] turned [on]. */
@@ -27,6 +32,7 @@ data class HorizonLayers(val satellites: Boolean = true, val peaks: Boolean = tr
         HorizonLayer.SATELLITES -> copy(satellites = on)
         HorizonLayer.PEAKS -> copy(peaks = on)
         HorizonLayer.SUN -> copy(sun = on)
+        HorizonLayer.FLIGHTS -> copy(flights = on)
     }
 
     /** The layers on, in button order. */
@@ -34,8 +40,15 @@ data class HorizonLayers(val satellites: Boolean = true, val peaks: Boolean = tr
 
     fun json(): Map<String, Boolean> = HorizonLayer.entries.associate { it.key to this[it] }
 
+    /** T312: what the view draws with Flight tracking [flightTracking]: Flights off while tracking is off, its setting kept. */
+    fun effective(flightTracking: Boolean): HorizonLayers = if (flightTracking) this else copy(flights = false)
+
     companion object {
+        /** T312: the toggle buttons shown, in order: Flights only while Flight tracking is on. */
+        fun buttons(flightTracking: Boolean): List<HorizonLayer> = HorizonLayer.entries.filter { flightTracking || it != HorizonLayer.FLIGHTS }
+
         val DEFAULT = HorizonLayers()
+        val NONE = HorizonLayers(false, false, false, false)
 
         /**
          * The layers named in [spec], the rest off: `satellites,sun`, `all` or `none` (the debug route's `layers=`); null
@@ -44,8 +57,8 @@ data class HorizonLayers(val satellites: Boolean = true, val peaks: Boolean = tr
         fun parse(spec: String): HorizonLayers? {
             val s = spec.trim().lowercase()
             if (s == "all") return DEFAULT
-            if (s == "none" || s.isEmpty()) return HorizonLayers(false, false, false)
-            var out = HorizonLayers(false, false, false)
+            if (s == "none" || s.isEmpty()) return NONE
+            var out = NONE
             for (part in s.split(',')) out = out.with(HorizonLayer.of(part) ?: return null, true)
             return out
         }
