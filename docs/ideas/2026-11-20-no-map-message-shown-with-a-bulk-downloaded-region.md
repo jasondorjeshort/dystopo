@@ -33,3 +33,13 @@ download pitch; never show the first-run pitch to a phone that has regions. Cros
 Repro to try: bulk-download a region around a public area, force-stop, relaunch with the saved view (or the last
 fix) outside it, and read `GET /firstrun` (`noPack`, `cardVisible`) and `/startup` right after launch and a few
 seconds later; also relaunch repeatedly for the race. Add the timing to the report.
+
+Plan: reproduce first, then separate the two meanings. Repro on the emulator: download a region around Rainier by
+the bulk region-select, force-stop, relaunch with the saved view set elsewhere (Mont Blanc) and read `GET /firstrun`
+(`noPack`, `cardVisible`) and `/startup` at once and after 5 s, ten launches, timings in the report. Then in
+`app/MainActivity.kt`: `NO_PACK` is chosen today when `packs.dem == null && online == null` (line ~106 and ~113),
+which reads "no map" for a phone with regions but no DEM pack open yet; it shows only when the phone holds no region
+at all (`packs.regions.isEmpty()`, as `FirstRun.noPack`), is re-evaluated when the packs finish opening, and a new
+message "No offline map covers this view" with a "Go to my offline maps" action shows when the phone has regions but
+the view lies outside them (reusing `MapCoverage` from `app/search/PlaceSearch.kt`). Verify: the repro clean, frames of
+both messages, a unit test of the choice if it lands in `shared`. New strings in the report (ADR 0031).
