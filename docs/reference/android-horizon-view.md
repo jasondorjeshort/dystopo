@@ -108,7 +108,9 @@ Code: `shared/.../horizon/HorizonFlights.kt` (pure: the sky position, the terrai
 - **Labels:** "call sign > destination code" ("ASA1409 > SEA"), the call sign alone without a plausible route
   (`LabelKind.AIRCRAFT`). Placed in a second pass: the peaks' names are placed exactly as without flights, then the
   flights' names around them, the peaks' boxes, triangles and leader lines blocked, the closest flight not forced; so peak
-  names never move with the aircraft, and no flight name covers a peak's. `HorizonUi.names` stays peaks-only.
+  names never move with the aircraft, and no flight name covers a peak's. `HorizonUi.names` stays peaks-only. Round 2: flight
+  names also keep off N E S W and the north mark (`RimGeometry.compassBoxes`, the second pass only); the ring labels
+  (0°, 30°, 60°) are blocked in both passes.
 - **List:** a "Flights" section after Peaks, closest first: the count line ("3 flights in the air around you, closest
   first.", or the range's own), the feed's message when it has one ("No flight data: offline" and T311's others), then
   each flight: its dot as drawn, the label, and kind · distance · compass bearing · angle · altitude (T311's formatter: the
@@ -116,7 +118,13 @@ Code: `shared/.../horizon/HorizonFlights.kt` (pure: the sky position, the terrai
 - **Card:** a tap on a dot (within 24 dp), its name or its row opens T311's `FlightCard`, hosted inside `HorizonScreen`
   over the pane's lower part (the map's card would open under the view); its Close, a second tap or Back closes it.
 - **Credit:** while the layer draws, the feed's credit (`AircraftPoller.credit`: "ADSB.lol contributors (ODbL)", or the
-  replay's line) in the plot square's lower left corner, outside the circle.
+  replay's line) in the plot square's lower left corner, outside the circle (10 dp, sized like the plot's labels, so it does not grow
+  onto the plot at large text; two lines at most).
+- **Toggles:** "Show:" and the four buttons fit one row at the default font on a 411 dp phone (6 dp gaps, 10 dp padding;
+  round 2); larger text wraps.
+- **Sweep:** `android-ui.py features` step `horizonflights` (release, by taps: the Sky range row, then airplane mode and
+  Flight tracking on, the view's Flights toggle and offline line); `android-ui.py horizonflights` (debug, T311's replay:
+  plot, list, card, font scale 2.0, landscape); `android-a11y.py` screen `horizon-flights`.
 - **Sky range** (Settings › Navigation and tracking, after Sky plot; `skyRange`, synced; ADR 0044: the apps split, the
   finding `docs/findings/2026-11-20-aircraft-layer-sources-and-display.md`): Overhead (above 45°), Near (within 50 km, a
   first guess), All (the default).

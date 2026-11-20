@@ -29,6 +29,9 @@ Parts:
                options at Flight tracking (frame `flights-row`, the refresh row's "about N requests left today (UTC)"),
                its help pop-up (frame `flights-help`), then with airplane mode on, Flight tracking On and the map's
                "Flights: No flight data: offline" (frame `flights-offline`); airplane mode and the setting put back.
+               T312: the `horizonflights` step (horizon_flights_step): the Sky range row (frame `sky-range-row`), then
+               airplane mode and Flight tracking on, the Horizon view's toggles with Flights (`horizon-flights`) and its
+               Flights section offline (`horizon-flights-offline`); both put back.
                --feature-steps runs only the steps named.
   flights      (T311, debug build: --serial, --port) the Flights layer on the replay fixture
                (shared/src/commonTest/resources/aircraft/rainier-replay.json, POST /aircraft/replay with an undulation
@@ -38,6 +41,10 @@ Parts:
                (`flights-track`), the hollow stale one's label read from GET /aircraft, the card at font scale 2.0
                (`flights-card-font2`) and in landscape (`flights-card-landscape`), then the live feed with airplane mode
                on (`flights-offline`); every setting, the font scale, the rotation and the network put back.
+  horizonflights (T312, debug build: --serial, --port) the Horizon view's Flights layer on T311's replay fixture
+               from the emulator's fix at Paradise: the plot (frame `horizon-flights-plot`), the list
+               (`horizon-flights-list`), a flight's card in the view (`horizon-flights-card`), the list at font scale 2.0
+               (`horizon-flights-font2`) and in landscape (`horizon-flights-landscape`); everything put back.
   upgrade      install --prev-apk (the last published release, signed with the same key), push the pack, record a
                track, keep a trip, set units; then `adb install -r` --apk over it and check the track, the trip, the
                pack (no first-run card, contours drawn) and the setting survived. The new APK must carry a higher
@@ -133,7 +140,7 @@ debug = _load("android_debug", "android_debug.py")
 firstrun = _load("android_firstrun", "android-firstrun.py")  # Device, settle_map, contour_share, fresh_install
 # T303: the release parts drive the release build (its own id); routes, search and bothunits drive the debug build, whose
 # id carries the .debug suffix. main() calls use_package for those. The ids live in android_debug.py.
-DEBUG_PARTS = ("routes", "search", "bothunits", "flights")  # T311: flights
+DEBUG_PARTS = ("routes", "search", "bothunits", "flights", "horizonflights")  # T311: flights; T312: horizonflights
 PACKAGE = debug.RELEASE_PACKAGE
 ACTIVITY = debug.activity(PACKAGE)
 EXTERNAL = f"/sdcard/Android/data/{PACKAGE}/files"
@@ -1818,7 +1825,7 @@ def drive_body(dev, pack, dem, osm, drive, out, st, errors):
 
 HORIZON_SEGMENT = "^Horizon$"  # app/controls/ViewSwitch.kt: the switch's segments "Map" and "Horizon" (T309)
 MAP_SEGMENT = "^Map$"
-HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun)$"
+HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun|Flights)$"  # T312: Flights, shown while Flight tracking is on
 
 
 def horizon_step(dev):
@@ -2093,6 +2100,216 @@ def part_flights(args):
 
 # end T311
 
+
+# --- T312: the Horizon view's Flights layer ----------------------------------------------------------------------------
+# T312
+
+SKY_RANGE_ROW = "^Sky range$"
+FLIGHTS_TOGGLE = "^(✓ )?Flights$"
+
+
+def horizon_flights_step(dev):
+    """T312, in the release build by taps: Settings > Navigation and tracking scrolled to Sky range (the frame
+    `sky-range-row`); then airplane mode on (no request leaves) and Settings > Map options > Flight tracking On; the
+    map's "Horizon" segment opens the Horizon view, whose toggles now include Flights (the frame `horizon-flights`) and
+    whose Flights section says "No flight data: offline" (`horizon-flights-offline`, scrolled to it); the view's "Map"
+    segment closes it. Flight tracking Off and airplane mode off again in a `finally`."""
+    t0 = time.time()
+    out = {"frames": {}}
+    errors = []
+    turned_on = False
+    try:
+        close_sheet(dev)
+        open_settings(dev, "Navigation and tracking", "^Route snap$")
+        row, nodes = scroll_to(dev, SKY_RANGE_ROW, swipes=30)
+        if not row:
+            raise RuntimeError(f"no Sky range row (texts: {dev.texts(nodes)[-20:]})")
+        out["skyRangeChoices"] = [t for t in dev.texts(nodes) if t in ("Overhead", "Near", "All", "✓ Overhead", "✓ Near", "✓ All")]
+        out["frames"]["skyRange"] = dev.screencap("sky-range-row")[0]
+        close_sheet(dev)
+        airplane(dev, True)
+        open_settings(dev, "Map options", "^Hillshade$")
+        row, nodes = scroll_to(dev, FLIGHTS_ROW)
+        on = row_on(dev, row, nodes, "^Flight tracking: Refresh$") if row else None
+        if not on:
+            raise RuntimeError("no On choice on the Flight tracking row")
+        dev.tap(on)
+        turned_on = True
+        close_sheet(dev)
+        n, nodes, backs = back_until(dev, HORIZON_SEGMENT)
+        if not n:
+            raise RuntimeError(f"no Horizon segment on the map (texts: {dev.texts(nodes)[:25]})")
+        dev.tap(n)
+        n, nodes = dev.wait_for(FLIGHTS_TOGGLE, 15)
+        if not n:
+            errors.append(f"no Flights toggle with Flight tracking on (texts: {dev.texts(nodes)[:25]})")
+        time.sleep(3)
+        nodes = dev.nodes()
+        out["toggles"] = sorted({re.sub(r"^✓ ", "", t) for t in dev.texts(nodes) if re.match(HORIZON_TOGGLES, t)})
+        out["frames"]["horizon"] = dev.screencap("horizon-flights")[0]
+        w, h, _d = screen(dev)
+        line = None
+        for _ in range(6):
+            texts = dev.texts(nodes)
+            line = next((t for t in texts if t in ("No flight data: offline", "Getting flight data") or re.match(r"^\d+ flights? ", t)), None)
+            if line and dev.find("^Flights$", nodes):
+                break
+            dev.shell("input", "swipe", str(w // 2), str(h * 8 // 10), str(w // 2), str(h * 6 // 10), "700")
+            time.sleep(1.2)
+            nodes = dev.nodes()
+        out["flightsLine"] = line
+        out["frames"]["offline"] = dev.screencap("horizon-flights-offline")[0]
+        if not line:
+            errors.append("no Flights section line in the Horizon view")
+        back = dev.find(MAP_SEGMENT, dev.nodes())
+        if back:
+            dev.tap(back)
+            time.sleep(1)
+    except Exception as e:
+        errors.append(f"{type(e).__name__}: {e}")
+    finally:
+        airplane(dev, False)
+        if turned_on:
+            try:
+                close_sheet(dev)
+                open_settings(dev, "Map options", "^Hillshade$")
+                row, nodes = scroll_to(dev, FLIGHTS_ROW)
+                stop = dev.find("^Flight tracking: Refresh$", nodes) if row else None
+                offs = [x for x in nodes if row and x["text"] == "Off" and x["bounds"] and row["bounds"][1] < x["bounds"][1] < (stop["bounds"][1] if stop else 10 ** 6)]
+                if offs:
+                    dev.tap(offs[0])
+                    out["restored"] = "Flight tracking off"
+                else:
+                    errors.append("could not turn Flight tracking off again")
+                close_sheet(dev)
+            except Exception as e:
+                errors.append(f"restore: {type(e).__name__}: {e}")
+    out["seconds"] = round(time.time() - t0, 1)
+    png = out["frames"].get("horizon")
+    return {"ok": not errors, **out, **({"png": png} if png else {}), **({"error": "; ".join(errors)} if errors else {})}
+
+
+def part_horizonflights(args):
+    """T312 (debug build): the Horizon view's Flights layer on T311's replay fixture, from the emulator's fix at
+    Paradise: the plot with dots, tails and names (frame `horizon-flights-plot`), the Flights list (`horizon-flights-list`),
+    the nearest flight picked as a tap does with its card in the view (`horizon-flights-card`), the list at font scale
+    2.0 (`horizon-flights-font2`) and in landscape (`horizon-flights-landscape`). Checks from GET /horizon: at least five
+    flights listed, one hollow or more, the credit shown, the card open. Every setting, the font scale and the rotation
+    put back."""
+    srv = DebugServer(args.port, args.serial)
+    out_dir = os.path.abspath(args.out)
+    os.makedirs(out_dir, exist_ok=True)
+    dev = firstrun.Device(args.serial, out_dir)
+    run = Run(dev)
+    before = {}
+
+    def horizon():
+        return srv.call("GET", "/horizon")[1] or {}
+
+    def to_list():
+        # From the top of the scrolling area, small slow swipes until the Flights section's count line stands high in it.
+        srv.call("POST", "/horizon?scroll=0")
+        time.sleep(1.0)
+        for _ in range(12):
+            nodes = dev.nodes()
+            # The screen as laid out now (screen() reads the unrotated size; landscape turns it).
+            w = max((x["bounds"][2] for x in nodes if x["bounds"]), default=1080)
+            h = max((x["bounds"][3] for x in nodes if x["bounds"]), default=2400)
+            close = [x for x in nodes if x["text"] == "Close" and x["bounds"]]
+            under = min((x["bounds"][3] for x in close), default=int(h * 0.5))  # the heading's bottom: the scroll area starts there
+            # The count line high in the scroll area, so rows show under it (landscape's pane is short above the switch).
+            counted = any(re.match(r"^\d+ flights? |^No flight", x["text"] or "") and x["bounds"] and x["bounds"][1] < under + h * 0.25 for x in nodes)
+            if counted:
+                return
+            # Inside the scroll area, above the switch fixed at the pane's bottom (landscape's pane is short); slow: no fling.
+            y0 = int(under + (h * 0.78 - under) * 0.8)
+            dev.shell("input", "swipe", str(w * 3 // 4), str(y0), str(w * 3 // 4), str(y0 - h * 13 // 100), "1200")
+            time.sleep(1.0)
+
+    def setup():
+        code, st = srv.call("GET", "/settings")
+        before["aircraft"] = (st or {}).get("aircraft")
+        before["font"] = dev.shell("settings", "get", "system", "font_scale", check_ok=False).strip()
+        before["accel"] = dev.shell("settings", "get", "system", "accelerometer_rotation", check_ok=False).strip()
+        before["rotation"] = dev.shell("settings", "get", "system", "user_rotation", check_ok=False).strip()
+        with open(REPLAY_FIXTURE, "rb") as f:
+            srv.call("POST", f"/aircraft/replay?name=rainier-replay&undulationM={REPLAY_UNDULATION_M}&wait=3500", body=f.read())
+        srv.call("POST", "/horizon?flights=1&skyRange=all")
+        srv.call("POST", "/horizon/ui?open=1")
+        srv.call("GET", "/horizon?wait=180000")
+        time.sleep(25)  # some polls, so the tails grow
+        r = horizon()
+        f = r.get("flights") or {}
+        ok = (f.get("listed") or 0) >= 5
+        return {"ok": ok, "listed": f.get("listed"), "state": f.get("state"), **({} if ok else {"error": f"flights {str(f)[:300]}"})}
+
+    def plot():
+        r = horizon()
+        d = r.get("drawn") or {}
+        f = r.get("flights") or {}
+        png = dev.screencap("horizon-flights-plot")[0]
+        checks = {"dots": len(d.get("flightsDrawn") or []) >= 5, "hollow": (f.get("hollow") or 0) >= 1, "named": len(d.get("flightNames") or []) >= 1,
+                  "tails": (d.get("flightTailPoints") or 0) >= 10, "credit": bool(d.get("creditShown")), "button": "flights" in (d.get("buttons") or [])}
+        ok = all(checks.values())
+        return {"ok": ok, "png": png, "checks": checks, "names": d.get("flightNames"), "peaks": d.get("peaksDrawn"),
+                "flights": [[a.get("label"), a.get("elevationDeg"), a.get("hidden"), a.get("stale")] for a in f.get("aircraft") or []],
+                **({} if ok else {"error": f"checks {checks}"})}
+
+    def listing(name="horizon-flights-list"):
+        def fn():
+            to_list()
+            png = dev.screencap(name)[0]
+            texts = dev.texts(dev.nodes())
+            line = next((t for t in texts if re.match(r"^\d+ flights? ", t)), None)
+            ok = line is not None
+            return {"ok": ok, "png": png, "line": line, **({} if ok else {"error": f"no count line (texts: {texts[:25]})"})}
+        return fn
+
+    def card():
+        f = horizon().get("flights") or {}
+        a = (f.get("aircraft") or [{}])[0]
+        srv.call("POST", f"/horizon?flight={a.get('hex')}")
+        time.sleep(1.5)
+        png = dev.screencap("horizon-flights-card")[0]
+        d = horizon().get("drawn") or {}
+        nodes = dev.nodes()
+        ok = d.get("flightCard") is True and dev.find("^Close$", nodes) is not None
+        srv.call("POST", "/horizon?flight=none")
+        return {"ok": ok, "png": png, "picked": a.get("label"), **({} if ok else {"error": f"card {d.get('flightCard')}"})}
+
+    def font2():
+        dev.shell("settings", "put", "system", "font_scale", "2.0")
+        time.sleep(3)
+        r = listing("horizon-flights-font2")()
+        dev.shell("settings", "put", "system", "font_scale", before.get("font") or "1.0")
+        time.sleep(2)
+        return r
+
+    def landscape():
+        dev.shell("settings", "put", "system", "accelerometer_rotation", "0")
+        dev.shell("settings", "put", "system", "user_rotation", "1")
+        time.sleep(4)
+        r = listing("horizon-flights-landscape")()
+        dev.shell("settings", "put", "system", "user_rotation", before.get("rotation") if before.get("rotation") not in ("", "null") else "0")
+        if before.get("accel") not in ("", "null", None):
+            dev.shell("settings", "put", "system", "accelerometer_rotation", before["accel"])
+        time.sleep(3)
+        return r
+
+    try:
+        for name, fn in (("setup", setup), ("plot", plot), ("list", listing()), ("card", card), ("font2", font2), ("landscape", landscape)):
+            run.step(name, fn)
+    finally:
+        srv.call("POST", "/horizon?flight=none")
+        srv.call("POST", "/horizon/ui?open=0")
+        srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
+        if before.get("aircraft") is not True:
+            srv.call("POST", "/settings?aircraft=0")
+    return run.report()
+
+
+# end T312
+
 # --- features (a) -----------------------------------------------------------------------------------------------
 
 def part_features(args):
@@ -2264,7 +2481,8 @@ def part_features(args):
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev)),
-                     ("flights", lambda: flights_step(dev))):  # T311: flights
+                     ("flights", lambda: flights_step(dev)),  # T311: flights
+                     ("horizonflights", lambda: horizon_flights_step(dev))):  # T312
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
             continue
         run.step(name, fn)
@@ -3907,7 +4125,8 @@ def part_diagnostics(args):
 PARTS = {"strings": part_strings, "routes": part_routes, "search": part_search, "features": part_features,
          "upgrade": part_upgrade, "update": part_update, "network": part_network, "matrix": part_matrix, "permissions": part_permissions,
          "background": part_background, "recenter": part_recenter, "bothunits": part_bothunits, "diagnostics": part_diagnostics,
-         "flights": part_flights}  # T311
+         "flights": part_flights,  # T311
+         "horizonflights": part_horizonflights}  # T312
 
 
 def main():
