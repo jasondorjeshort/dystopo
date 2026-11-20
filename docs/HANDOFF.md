@@ -1,28 +1,29 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-19, by main session (wave 39 open: T308 implementing)
+Updated: 2026-11-20, by main session (wave 39 closed, v0.1.34-alpha published)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
-`docs/tasks/wave-38.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
+`docs/tasks/wave-39.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 39 is open** (`docs/TASKS.md`, one task): T308, the Horizon view (T307's GPS view reshaped: a square sky plot fixed at the top or left, toggles for Satellites, Peaks and Sun), critic's edits made, implementer launched 2026-11-19 on `task/T308` (worktree `dystopo-wt/T308`, AVD `dystopo35-T308`, ports 8694/5570). Then a verifier, the merge, a sweep (`-Prev out/sweep-20261119-1231`) and a release. The map's switch into the view is the next pass: the survey is in `docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md` (try Map | Horizon at the bottom, a compass tap as a shortcut). Wave 38 is in `docs/tasks/wave-38.md`; **v0.1.33-alpha** is the published release.
-- **Cost:** the 7-day meter read 91 at wave 38's close (89 at its planning; the wave cost about 2 against 8.5 figured; T307 1.6M fresh tokens); the per-task figure revised to 1.5, a wave's fixed cost 1.5, a release 1 (the `wave` skill, Plan and launch step 3). The hold is 97; the 7-day reset is 2026-11-20 04:00 UTC (`resets_at` in the session's usage file).
+- **No wave is open.** Wave 39 (T308, the Horizon view: the square sky plot with toggles for Satellites, Peaks and Sun) is closed and recorded in `docs/tasks/wave-39.md`; follow-ups in the board's Later. Its sweep `out/sweep-20261119-1925` was cut off by a session's end after `first-run` (`a11y` red: the launch crash after the guard's reboot, two sweeps out of two) and finished by `out/sweep-20261119-1925-rerun`, all green. **v0.1.34-alpha** is published (2026-11-20 02:55 UTC); `out/sweep-20261119-1925-rerun` with `out/sweep-20261119-1925` is the next release's `-Prev` (a full sweep next time gives a whole sheet).
+- **Cost:** the 7-day meter read 91 at wave 39's close; its reset moved to 2026-11-21 03:00 UTC (re-read `resets_at` at each stall). Figures: 1.5 a task, 1.5 a wave's fixed cost, 1 a release (the `wave` skill, Plan and launch step 3). The hold is 97.
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
 
-1. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
-2. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
-3. Tooling follow-ups (Later): save logcat on a launch crash (wave 37); the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
-4. Ideas untriaged: six of 2026-11-17, Java 25 of 2026-11-18, and of 2026-11-19 five GNSS ideas (the signal per track point, a compass check, a weak-signal note, a coverage forecast along a route, RINEX) and the launch-crash bug (the owner: "We'll prioritize later").
+1. The Horizon view's way in from the map (`docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md`, its survey: try "Map | Horizon" at the bottom, a compass tap as a shortcut; the owner: "we may just need trial and error"), then the launch crash after the guard's reboot (`docs/ideas/2026-11-19-launch-crash-rootdir-after-the-guards-reboot.md`, reproducible).
+2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
+3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
+4. Tooling follow-ups (Later): save logcat on a launch crash (wave 37); the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
+5. Ideas untriaged: six of 2026-11-17, Java 25 of 2026-11-18, and of 2026-11-19 five GNSS ideas (the signal per track point, a compass check, a weak-signal note, a coverage forecast along a route, RINEX) and the launch-crash bug (the owner: "We'll prioritize later").
 
 ## Waiting on user
 
 - **Answers in `docs/ideas/`**: two new Questions of 2026-11-16 (the sharp-bend warning, clock time and sun along a route); a Shortest drive (at rest recommended; your words of 2026-11-16 on route options are noted there, the Answer left blank); energy on a charge (is there an electric car, a hybrid or an e-bike to check against); the pace from your tracks (the hike half: is the fit in Route times what was meant); pack facts (one proposal, yes recommended).
-- **On the phone, v0.1.33-alpha** (ADR 0031): Settings > Navigation and tracking > GPS status; outdoors, Check my GPS, and send the four-best figure and used of in view (or Send diagnostics): the first real-phone figure for calibrating the verdict's 25 and 35 dB-Hz, and the answer to the suspected GPS. Strings: the merge body of T307.
+- **On the phone, v0.1.34-alpha** (ADR 0031): Settings > Navigation and tracking > Horizon view (was GPS status): the toggles, peak names (tap one), today's sun; outdoors, Check my GPS, and send the four-best figure and used of in view (or Send diagnostics): the first real-phone figure for calibrating the verdict's 25 and 35 dB-Hz, and the answer to the suspected GPS; whether "Follow the phone" turns right when held sideways. Strings: the merge bodies of T307 and T308.
 - **On the phone, v0.1.32-alpha** (ADR 0031): Settings > About and advanced > Report a problem: Send diagnostics, then Share and Open GitHub issue; Report recent stats (one sent from your phone gives its real start times). Strings: the merge bodies of T301 and T302. **The release key:** T293 found a script started by an agent can read `tools\release.properties` (the deny rule covers the Read tool only); closing it is a permission-settings change, yours.
 - **On the phone, v0.1.31-alpha** (ADR 0031; it updates over v0.1.30-alpha and looks the same): the three names of Plan drives for and their help, the card's fuel line and its wording, the owner's own bug (two left turns onto a side road). Strings: the merge bodies of T282 and T285. In Settings the Extended readout row shows Off and Pressure both filled: by design, a matter for the owner's eye.
 - Still from v0.1.29-alpha: the activity chip, Trip details; OpenFreeMap's terms (the owner emails them). Left for the owner: the empty folders `dystopo-wt/T275` (busy) and `C:\c`, a stray `msg.txt` in `dystopo-wt`.
