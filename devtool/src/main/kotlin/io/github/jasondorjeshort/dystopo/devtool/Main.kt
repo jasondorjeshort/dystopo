@@ -60,4 +60,7 @@ fun main(args: Array<String>) = useUtf8Output().let { Devtool() }
     // T258: the diagnostic dumps read together, growth per figure and the starts' medians.
     .subcommands(DumpScanCommand())
     // end T258
+    // T311: the Flights layer's route table and the layer on the replay (or one live poll).
+    .subcommands(AircraftRoutesCommand(), AircraftCommand())
+    // end T311
     .main(args)
