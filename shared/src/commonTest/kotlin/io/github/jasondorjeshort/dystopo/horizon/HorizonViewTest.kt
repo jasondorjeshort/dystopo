@@ -445,6 +445,38 @@ class HorizonViewTest {
         assertEquals(sig(alone), sig(HorizonLabels.placeLayers(g, ranked, emptyList(), width, -9.0, 3.0).peaks))
     }
 
+    @Test
+    fun flightNamesKeepOffTheRingLabelsTheCompassLettersAndTheNorthMark() {
+        // Flights right by the 60° ring label (drawn at 45° on screen), under N on the rim, by E and by S.
+        fun f(name: String, bearing: Double, angle: Double, d: Double) = HorizonLabel(name, LabelKind.AIRCRAFT, bearing, angle, d, 90.0, 9000.0, 0.0)
+        val flights = listOf(f("RING60", 45.0, 61.0, 5000.0), f("NORTH1", 0.0, 1.0, 9000.0), f("NORTH2", 4.0, 3.0, 12000.0), f("EAST1", 90.0, 1.0, 15000.0), f("SOUTH1", 180.0, 1.5, 20000.0))
+        val letter = { s: String -> 9.0 * s.length }
+        val compass = g.compassBoxes(letter, -11.0, 4.0)
+        val rings = listOf(0.0 to "0°", 30.0 to "30°", 60.0 to "60°").map { (el, l) -> g.ringLabel(el, width(l), -9.0, 3.0) }
+        val out = HorizonLabels.placeLayers(g, emptyList(), HorizonLabels.rank(flights), width, -9.0, 3.0, blocked = rings, aircraftBlocked = compass)
+        assertTrue(out.aircraft.size >= 3, "flights named: ${out.aircraft.map { it.label.name }}")
+        for (p in out.aircraft) {
+            assertTrue(rings.none { it.overlaps(p.box) }, "${p.label.name} off the ring labels")
+            assertTrue(compass.none { it.overlaps(p.box) }, "${p.label.name} off N E S W and the north mark")
+        }
+        // One flight at a time near N (bearings 3 to 30°, 0.5 to 5° up; ABX404 > CVG on the emulator stood over N so):
+        // without the compass boxes some name takes a place over N or its mark; with them none does.
+        val near = (1..10).flatMap { i -> listOf(0.5, 2.0, 4.0, 5.0).map { e -> f("ABX404 > CVG", 3.0 * i, e, 70_000.0) } }
+        fun one(l: HorizonLabel, blocks: List<RimBox>) = HorizonLabels.placeLayers(g, emptyList(), HorizonLabels.rank(listOf(l)), width, -9.0, 3.0, blocked = rings, aircraftBlocked = blocks).aircraft
+        assertTrue(near.any { l -> one(l, emptyList()).any { p -> compass.any { it.overlaps(p.box) } } }, "the case is one the blocks change")
+        assertTrue(near.none { l -> one(l, compass).any { p -> compass.any { it.overlaps(p.box) } } })
+        // The boxes stand where SkyPlot draws: N centred above the rim at the top, its mark across the rim.
+        val n = g.compassLabel(0.0, 9.0, -11.0, 4.0)
+        assertTrue(n.bottom < g.cy - g.radius + 15.0 && abs((n.left + n.right) / 2 - g.cx) < 1e-9)
+        assertTrue(g.northMark().contains(RimPt(g.cx, g.cy - g.radius)))
+        // Peaks are not affected: the compass boxes go to the second pass only.
+        val peaks = HorizonLabels.rank(PeakRim.labels(listOf(view("Top", 2.0, 3000.0, distance = 4000.0, angle = 1.0))))
+        assertEquals(
+            HorizonLabels.place(g, peaks, width, -9.0, 3.0).map { it.x to it.y },
+            HorizonLabels.placeLayers(g, peaks, HorizonLabels.rank(flights), width, -9.0, 3.0, aircraftBlocked = compass).peaks.map { it.x to it.y },
+        )
+    }
+
     private companion object {
         const val T0 = 1_000_000L
     }

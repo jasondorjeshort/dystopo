@@ -255,4 +255,21 @@ flights[0][2](type("C", (), {"srv": bs})())
 assert ("POST", "/settings?aircraft=0", False) in bs.calls and any(p.startswith("/aircraft/replay?stop=1") for _m, p, _b in bs.calls), bs.calls
 # end T311
 
+# T312: the Horizon view with Flights is a screen; it plays the replay fixture, turns the layer on, opens the view and
+# scrolls to the list; its end closes the view and puts Flight tracking and the replay back.
+hf = [s for s in a11y.SCREENS if s[0] == "horizon-flights"]
+assert len(hf) == 1 and hf[0][3] == "screen" and hf[0][2] is not None, hf
+bs = BodySrv()
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    hf[0][1](type("C", (), {"srv": bs})())
+finally:
+    a11y.time.sleep = _sleep
+assert [c[1] for c in bs.calls] == ["/aircraft/replay", "/horizon", "/horizon/ui", "/horizon"] and bs.calls[0][2], bs.calls
+bs.calls.clear()
+hf[0][2](type("C", (), {"srv": bs})())
+assert ("POST", "/horizon/ui?open=0", False) in bs.calls and ("POST", "/settings?aircraft=0", False) in bs.calls, bs.calls
+# end T312
+
 print("test_android_a11y: ok")

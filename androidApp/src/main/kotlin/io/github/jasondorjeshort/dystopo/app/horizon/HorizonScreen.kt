@@ -317,7 +317,9 @@ fun HorizonScreen() {
                     flights?.let { f ->
                         BasicText(
                             f.credit, Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 4.dp).fillMaxWidth(0.45f).testTag("horizonFlightsCredit"),
-                            style = TextStyle(color = pal.muted, fontSize = 10.sp),
+                            // Round 2: sized in dp like the plot's own labels (at font scale 2.0 a 10 sp line wrapped onto the plot), two lines at most.
+                            style = TextStyle(color = pal.muted, fontSize = with(density) { 10.dp.toSp() }, lineHeight = with(density) { 12.dp.toSp() }),
+                            maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         )
                     }
                 }
@@ -445,7 +447,14 @@ private fun DrawScope.drawNames(
     val flightList = flights?.list.orEmpty()
     val flightRanked = HorizonLabels.rank(io.github.jasondorjeshort.dystopo.horizon.HorizonFlights.labels(flightList))
     val firstFlight = flightRanked.firstOrNull { (it.label.ref as io.github.jasondorjeshort.dystopo.horizon.SkyFlight).hex == pickedFlight }?.label
-    val layers = HorizonLabels.placeLayers(rim, peaks?.ranked.orEmpty(), flightRanked, { text.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble(), blocked, lines, first, firstFlight)
+    // Round 2: flight names also keep off N E S W and the north mark (the second pass only; peak names stay where they were).
+    val compassPaint = android.graphics.Paint().apply { textSize = (RimGeometry.COMPASS_DP * density).toFloat(); isFakeBoldText = true }
+    val cfm = compassPaint.fontMetrics
+    val compass = rim.compassBoxes({ compassPaint.measureText(it).toDouble() }, cfm.ascent.toDouble(), cfm.descent.toDouble())
+    val layers = HorizonLabels.placeLayers(
+        rim, peaks?.ranked.orEmpty(), flightRanked, { text.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble(), blocked, lines, first, firstFlight,
+        aircraftBlocked = compass,
+    )
     drawFlights(g, flightList, layers.aircraft, pickedFlight, text, pal)
     val placed = layers.peaks
     val names = placed.map { n ->
@@ -603,7 +612,9 @@ private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondor
 @Composable
 private fun Toggles(layers: HorizonLayers, buttons: List<HorizonLayer>, pal: GnssPalette) {
     @OptIn(ExperimentalLayoutApi::class)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // Round 2 (T312): 6 dp gaps and 10 dp padding, so "Show:" and the four buttons fit one row at the default font on a
+    // 411 dp phone (14 dp and 8 dp wrapped Flights onto a row of its own); larger text still wraps.
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
             BasicText("${HorizonText.LAYERS}:", style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
         }
@@ -617,7 +628,7 @@ private fun Toggles(layers: HorizonLayers, buttons: List<HorizonLayer>, pal: Gns
                     (if (on) "✓ " else "") + l.label,
                     style = TextStyle(color = if (on) pal.paper else pal.ink, fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium),
                     modifier = Modifier.background(if (on) pal.ink else pal.card, RoundedCornerShape(16.dp)).border(1.dp, if (on) pal.ink else pal.line, RoundedCornerShape(16.dp))
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                 )
             }
         }

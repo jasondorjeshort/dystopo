@@ -6,7 +6,7 @@
 
 Drives the debug build through its debug routes (the tour's own steps: no taps to get anywhere) to each screen of SCREENS
 (the map with each card up, a track's profile, the Activity and Record-as pickers, the recording panel, the Tracks and routes
-screen, Offline maps, Settings and each of its pages, the Horizon view, the share screen, the first-run card, T311 the flight card), at each font scale (the system's,
+screen, Offline maps, Settings and each of its pages, the Horizon view, the share screen, the first-run card, T311 the flight card, T312 the Horizon view's Flights), at each font scale (the system's,
 `settings put system font_scale`, put back at the end), and at each screen takes a raw screencap, `uiautomator dump` and the
 app's own semantics (`GET /semantics`, `debug/SemanticsRoutes.kt`: Compose's merged and unmerged trees with each node's
 bounds and touch bounds; no outside tool reads the touch bounds, and Compose stretches a small `clickable` to a 48 dp touch
@@ -749,6 +749,26 @@ def end_flights(c):
 # end T311
 
 
+# T312
+def scr_horizon_flights(c):
+    """T312: the Horizon view with the Flights layer on T311's replay fixture (dots, tails and names on the plot, its
+    toggle) and the area under the heading scrolled to the Flights list (each row a button)."""
+    with open(FLIGHTS_REPLAY, "rb") as f:
+        c.srv.ok("POST", "/aircraft/replay?name=a11y&undulationM=-18.4&wait=3500", body=f.read())
+    c.srv.ok("POST", "/horizon?flights=1&skyRange=all")
+    c.srv.ok("POST", "/horizon/ui?open=1")
+    time.sleep(4.0)  # the horizon's sweep, the peaks and a poll
+    c.srv.ok("POST", "/horizon?scroll=450")
+
+
+def end_horizon_flights(c):
+    c.srv.call("POST", "/horizon?flight=none")
+    c.srv.call("POST", "/horizon/ui?open=0")
+    c.srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
+    c.srv.call("POST", "/settings?aircraft=0")
+# end T312
+
+
 def scr_share(c):
     c.srv.ok("POST", "/share/start")
 
@@ -823,6 +843,9 @@ SCREENS = [
     # T311
     ("flights-card", scr_flights, end_flights, "map"),
     # end T311
+    # T312
+    ("horizon-flights", scr_horizon_flights, end_horizon_flights, "screen"),
+    # end T312
 ]
 
 

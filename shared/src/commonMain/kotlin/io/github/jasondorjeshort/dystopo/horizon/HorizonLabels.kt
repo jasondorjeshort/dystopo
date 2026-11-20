@@ -250,14 +250,17 @@ object HorizonLabels {
      * closest label and counts every bearing in its density gap, so mixing the kinds would reshuffle peak names at each
      * poll); the second places [aircraft] (ranked among themselves) with the peaks' boxes and marks added to [blocked], the
      * closest aircraft not forced, so no aircraft name covers a peak's; [firstAircraft] (a picked one) goes first.
+     * [aircraftBlocked] is kept off by the second pass only (round 2: the compass letters and the north mark,
+     * [RimGeometry.compassBoxes]; the ring labels are in [blocked], which both passes keep off).
      */
     fun placeLayers(
         g: RimGeometry, peaks: List<Scored>, aircraft: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
         blocked: List<RimBox> = emptyList(), lines: List<List<RimPt>> = emptyList(), firstPeak: HorizonLabel? = null, firstAircraft: HorizonLabel? = null,
+        aircraftBlocked: List<RimBox> = emptyList(),
     ): Layers {
         val p = place(g, peaks, width, ascent, descent, blocked, lines, firstPeak)
         if (aircraft.isEmpty()) return Layers(p, emptyList())
-        val taken = blocked + p.flatMap { listOf(it.box, it.mark) }
+        val taken = blocked + aircraftBlocked + p.flatMap { listOf(it.box, it.mark) }
         val a = place(g, aircraft, width, ascent, descent, taken, lines + p.mapNotNull { it.leader }, firstAircraft, forceClosest = false)
         return Layers(p, a)
     }
@@ -314,7 +317,41 @@ class RimGeometry(val cx: Double, val cy: Double, val radius: Double, val rotati
         return RimBox(p.x - width / 2, y + ascent, p.x + width / 2, y + descent)
     }
 
+    /**
+     * T312: the box of a compass letter ("N", "E", "S", "W" at [azDeg]) as the plot draws it: [COMPASS_DP] text centred
+     * 0.85 of its size outside the rim, the baseline 0.36 of its size below that point; [width], [ascent] (negative) and
+     * [descent] measured at that size.
+     */
+    fun compassLabel(azDeg: Double, width: Double, ascent: Double, descent: Double): RimBox {
+        val size = COMPASS_DP * dp
+        val a = (azDeg - rotationDeg) * PI / 180
+        val r = radius + size * 0.85
+        val x = cx + r * sin(a)
+        val y = cy - r * cos(a) + size * 0.36
+        return RimBox(x - width / 2, y + ascent, x + width / 2, y + descent)
+    }
+
+    /** T312: the north mark's box: its triangle from 9 dp inside the rim to 2 dp outside it, padded 6 dp. */
+    fun northMark(): RimBox {
+        val a = -rotationDeg * PI / 180
+        val inner = RimPt(cx + (radius - 9 * dp) * sin(a), cy - (radius - 9 * dp) * cos(a))
+        val tip = RimPt(cx + (radius + 2 * dp) * sin(a), cy - (radius + 2 * dp) * cos(a))
+        val pad = 6 * dp
+        return RimBox(min(inner.x, tip.x) - pad, min(inner.y, tip.y) - pad, max(inner.x, tip.x) + pad, max(inner.y, tip.y) + pad)
+    }
+
+    /**
+     * T312: what flight names keep off besides what peak names keep off: the four compass letters (their [width] measured
+     * at [COMPASS_DP], the bold N included) and the north mark. Only the second pass gets these, so the peaks' names stand
+     * where T309 put them.
+     */
+    fun compassBoxes(width: (String) -> Double, ascent: Double, descent: Double): List<RimBox> =
+        listOf(0.0 to "N", 90.0 to "E", 180.0 to "S", 270.0 to "W").map { (az, l) -> compassLabel(az, width(l), ascent, descent) } + northMark()
+
     companion object {
+        /** T312: the compass letters' text size (dp), as `SkyPlot` draws them (`PlotGeometry.labelPx`). */
+        const val COMPASS_DP = 15.0
+
         /** The plot [width] by [height] px at [dp] px per dp: the rim the square's half less room for N E S W (15 dp × 1.6). */
         fun of(width: Double, height: Double, dp: Double, rotationDeg: Double): RimGeometry =
             RimGeometry(width / 2, height / 2, min(width, height) / 2 - 15 * dp * 1.6, rotationDeg, dp)
