@@ -35,3 +35,26 @@ Things this raises, for the owner:
   test needs no network and no live traffic.
 
 Not started; recorded for later.
+
+2026-11-20: the owner, "displaying airplane paths is what we'll focus on next" (the next release). Two read-only
+research passes are under way: the sources (positions, origin and destination by call sign, aircraft details,
+offline airport data; terms and licences) and how established apps show aircraft on a map and in the sky, origin
+and destination above all. Seen from a seat, the same layer draws on the Horizon view flipped to look down
+(`2026-11-10-window-seat-mode-with-the-fix-moved-up-to-now.md`).
+
+2026-11-20: the research is `docs/findings/2026-11-20-aircraft-layer-sources-and-display.md`.
+
+Question: four choices are the owner's before the build (a new data flow, `CLAUDE.md` Decisions): (1) the phone sends a
+rounded centre (about 0.1°) to adsb.lol, directly, while the layer is on, off by default; (2) origin and destination
+come from the CC0 route table shipped with the app (refreshed by the home site), so no call sign leaves the phone;
+(3) the source credit "ADSB.lol contributors (ODbL)" in the attribution line, which ODbL requires; (4) adsb.lol's
+archived API repository and 500 requests a day are accepted as the risk for the first release, with emails to two
+other community feeds asking whether a free public app may use them. Recommended yes to all four: a direct call
+keeps each phone on its own quota, the shipped table keeps offline-first and leaks nothing, the credit is a licence
+duty rather than a product mention, and nothing better is free. On a yes, the build is one Opus pass (sized 3.0):
+a source interface with the adsb.lol client and a replay source, the route table and its plausibility check in
+`shared`, the map layer (silhouette, altitude-coloured trail, dashed remaining route on tap), dots on the Horizon
+view (hollow when behind terrain or stale), the card, the settings (layer off, refresh 20 s with the day's remaining
+quota shown), `sources.json` entries, and `POST /aircraft/replay` plus `GET /aircraft` debug routes.
+
+Answer:

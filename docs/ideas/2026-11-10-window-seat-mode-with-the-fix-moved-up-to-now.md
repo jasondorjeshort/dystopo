@@ -46,3 +46,16 @@ Done when: `check` green; `devtool readout --gpx` on a replayed flight reports t
 the emulator with a flight replay the two marks are seen apart in a screenshot. Pass two, after a dump from a real
 flight has been read: "what is below" from the moved position (the viewshed at a 100 km range, the names by side
 of the course, the side asked once). Out of scope in pass one: reading `GPS_PROVIDER` directly (the dump decides).
+
+2026-11-20: the owner, "I suspect the pano or horizon views will supercede the window seat idea." Pass two ("what is
+below") would then be the Horizon and Panorama views seen from altitude: the names below the horizon need a downward
+band of elevation angles. Pass one (the fix moved up to now) stands on its own, since both views and the map's puck read
+the position.
+The owner, same day: "the window seat is an inversion of the current horizon mode: looking down instead of up. But
+it's the same view, just flipped." So pass two is the Horizon view's plot turned over: the centre is the nadir
+instead of the zenith, the rings are angles below the horizon, and the same layers draw there (peaks, lakes,
+glaciers, and other aircraft below).
+Raised in the same talk and recorded on the owner's "yes, record all that": the view flips by itself when the flying
+detector (T250) says the phone is in the air, with a toggle to override (a hiker on a summit looks down too); and
+aircraft from a seat can be above or below, so a plot that spans both sides of the horizon (the Panorama ribbon does)
+serves one aircraft layer in every case. Priority (owner, 2026-11-20): the aircraft paths come first; this follows.
