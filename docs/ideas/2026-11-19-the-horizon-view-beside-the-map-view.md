@@ -1,7 +1,7 @@
 ---
 date: 2026-11-19
 kind: question
-related: [2026-11-19-peak-names-on-the-sky-plots-skyline.md, 2026-11-19-todays-sun-path-across-the-skyline.md, 2026-11-19-the-sky-from-a-long-pressed-point.md]
+related: [2026-11-19-the-sky-from-a-long-pressed-point.md]
 ---
 
 # The Horizon view: the map view's counterpart, a sky with layers
@@ -29,8 +29,8 @@ with layers turned on and off by toggle buttons over one sky plot and its skylin
 satellites layer plus its summary and check. Layers that fit, from what the app already has or can have offline:
 
 - Satellites (T307), with the summary and Check my GPS.
-- Peaks and summits on the skyline (`2026-11-19-peak-names-on-the-sky-plots-skyline.md`; `Viewshed.peaks`).
-- The sun now and today's path, with when it goes behind the ridge and returns (`2026-11-19-todays-sun-path-across-the-skyline.md`).
+- Peaks and summits on the skyline (T308; `Viewshed.peaks`).
+- The sun now and today's path, with when it goes behind the ridge and returns (built by T308).
 - The moon, its path and phase (the same astronomy as `nav/Sun.kt`, published formulas).
 - Your own places in view: waypoints, huts, the car, the route's next pass or the end, each at its bearing with its
   distance; the way back to the start.
