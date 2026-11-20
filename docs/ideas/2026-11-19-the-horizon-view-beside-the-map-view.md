@@ -69,3 +69,13 @@ score = 3.0 distance (1/(1 + d/5 km)) + 2.5 clearance above the skyline (to 1.5�
 and drawn hollow; placement greedy by score with screen-space collisions against names, ring and hour labels and the
 sun's arc, and a minimum gap between names of 4° x sqrt(candidates within ±15° / 5), at least 2°. A `kind` with a
 base weight lets huts, passes and waypoints join the same ranking later.
+
+Question: the view, its name, the switch and three of its layers are built (T308: satellites, peaks, the sun; T309:
+the Map | Horizon switch and the rim's ranking), the moon and the long-pressed point have ideas of their own, so
+which of the remaining layers do you want next, each as an idea of its own so this file can go: your own places in
+view (waypoints, the car, the route's next pass, the way back), a bearing to a chosen point with the declination,
+bright stars and planets, satellite passes, or the camera behind the plot? Recommended: your own places in view
+first; everything it needs is on the phone already (waypoints, routes, `Viewshed` for whether each is in sight) and
+it joins the rim's ranking through T309's `kind` weights. Stars and passes need new data sources and can wait.
+
+Answer:
