@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.35-alpha (2026-11-20)
+
 ### 2026-11-20
 
 - T310: The sweep's Horizon step and the switch under the first-run card
