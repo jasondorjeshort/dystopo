@@ -350,8 +350,9 @@ fun HorizonScreen() {
                             style = TextStyle(color = pal.ink, fontSize = 13.sp),
                         )
                         if (horizon != null) LegendItem(pal, GnssText.LEGEND_TERRAIN) { MarkIcon(Mark.CIRCLE, null, pal.ink, band = pal.band) }
-                        if (layers.peaks) PeaksSection(h, peaks, selected, pal, units)
+                        // T312: Flights before Peaks: a short live list, where the Peaks list runs to dozens of rows.
                         flights?.let { FlightsSection(it, pos != null, HorizonUi.selectedFlight, pal, units) }
+                        if (layers.peaks) PeaksSection(h, peaks, selected, pal, units)
                         if (layers.sun) SunSection(pos != null, sunDay, sunNow, fn, pal, night, tick)
                         if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { tick++ }
                         if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
