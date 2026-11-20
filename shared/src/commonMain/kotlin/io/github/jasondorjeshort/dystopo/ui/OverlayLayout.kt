@@ -72,6 +72,12 @@ data class OverlayInput(
      */
     val horizonSwitch: OverlaySize? = null,
     /**
+     * T310: the first-run card is up (no map on the phone yet; `firstrun/FirstRunCard.kt`, drawn over the map's lower half by
+     * its own code): the "Map | Horizon" switch hides with [OverlayLayout.REASON_FIRST_RUN] while it is, since the card
+     * covers the switch's place and its choices are the screen's business.
+     */
+    val firstRunCard: Boolean = false,
+    /**
      * T257: how many of [strip]'s first entries outrank the scale bar (the readout's own four, the course by its point);
      * the rest (the pressure, the extended readout's, the course's degrees) are left out before the scale bar yields,
      * and never come back once it has. Past [strip]'s size: every entry outranks it, as before T257.
@@ -187,7 +193,8 @@ object OverlayIds {
  * - Then hidden in this order, one rung at a time ([rungs]): the lock button, the orientation button, (T257) the
  *   readout's extra entries past [OverlayInput.stripCore] from the end (the course's degrees, the fix age, the accuracy,
  *   the pressure), the scale bar, (T309) the "Map | Horizon" switch, the readout's entries from the end of their drawn
- *   order with the elevation last, and (centred only) the position button.
+ *   order with the elevation last, and (centred only) the position button. (T310) The switch is off the ladder while the
+ *   first-run card is up ([OverlayInput.firstRunCard], [REASON_FIRST_RUN]).
  *   The ladder is global: a rung is taken for the whole screen, so the order holds where the two sides are short apart too.
  * - The Waypoint and Tracks bar, the Routes chip, (T263) the activity chip, the compass and the online indicator keep their size while they fit
  *   and hide rather than sit under a card or the credit line; they do not wait for the ladder.
@@ -238,12 +245,15 @@ object OverlayLayout {
     const val REASON_ENTRIES = "entriesLeftOut"
     const val REASON_NAVIGATING = "navigating"
 
+    /** T310: the "Map | Horizon" switch while the first-run card is up ([OverlayInput.firstRunCard]). */
+    const val REASON_FIRST_RUN = "firstRunCard"
+
     /** One step of the ladder: the buttons drawn, whether the scale bar is, how many of the readout's entries are, (T309) whether the switch is. */
     private data class Rung(val buttons: Int, val bar: Boolean, val entries: Int, val switch: Boolean = false)
 
     private fun rungs(i: OverlayInput): List<Rung> {
         val out = ArrayList<Rung>()
-        val sw = i.horizonSwitch != null
+        val sw = i.horizonSwitch != null && !i.firstRunCard // T310
         for (b in i.buttons.coerceIn(1, 3) downTo 1) out += Rung(b, i.scaleBar != null, i.strip.size, sw)
         // T257: the strip's extra entries go before the scale bar does; the bar never yields to them.
         val core = if (i.scaleBar == null) i.strip.size else i.stripCore.coerceIn(0, i.strip.size)
@@ -309,7 +319,7 @@ object OverlayLayout {
     /** T309: the line with the switch on top when the rung keeps it and it fits the width (else the line without it). */
     private fun line(i: OverlayInput, r: Rung, width: Float): Line {
         val base = barLine(i, r, width)
-        val sw = i.horizonSwitch?.takeIf { r.switch && it.width <= width } ?: return base
+        val sw = i.horizonSwitch?.takeIf { r.switch && !i.firstRunCard && it.width <= width } ?: return base
         if (base.height >= NO_FIT) return base
         val up = if (base.height > 0f) base.height + GAP else 0f
         return Line(up + sw.height, base.bar, base.strip, base.beside, base.stripWidth, sw, up)
@@ -542,7 +552,7 @@ object OverlayLayout {
         ln.bar?.let { b -> shown(OverlayIds.SCALE_BAR, OverlayRect(xA, yb - b.height, xA + b.width, yb)) }
         if (i.scaleBar != null && ln.bar == null) hidden(OverlayIds.SCALE_BAR, REASON_ORDER)
         ln.switch?.let { s -> shown(OverlayIds.HORIZON_SWITCH, OverlayRect(xA, yb - ln.switchUp - s.height, xA + s.width, yb - ln.switchUp)) }
-        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, REASON_ORDER)
+        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, if (i.firstRunCard) REASON_FIRST_RUN else REASON_ORDER)
         var entries = 0
         ln.strip?.let { s ->
             val x = xA + (ln.beside ?: 0f)
@@ -723,7 +733,7 @@ object OverlayLayout {
         ln.bar?.let { b -> shown(OverlayIds.SCALE_BAR, OverlayRect(xA, yb - b.height, xA + b.width, yb)) }
         if (i.scaleBar != null && ln.bar == null) hidden(OverlayIds.SCALE_BAR, leftWhy)
         ln.switch?.let { s -> shown(OverlayIds.HORIZON_SWITCH, OverlayRect(xA, yb - ln.switchUp - s.height, xA + s.width, yb - ln.switchUp)) }
-        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, leftWhy)
+        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, if (i.firstRunCard) REASON_FIRST_RUN else leftWhy)
         var entries = 0
         ln.strip?.let { s ->
             val x = xA + (ln.beside ?: 0f)

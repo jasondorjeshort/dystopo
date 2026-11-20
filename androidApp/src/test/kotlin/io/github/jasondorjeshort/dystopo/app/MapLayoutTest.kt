@@ -568,4 +568,36 @@ class MapLayoutTest {
                 "landscape $scale: shown or hidden with a named reason: ${e.reason}")
         }
     }
+
+    /**
+     * T310: the first-run card up (the sweep's a11y screen `first-run`, a Pixel 6 AVD at font 1.0, where the switch lay at
+     * about 8..157 x 735..783 dp under the card): the switch hidden with its named reason, nothing overlapping, upright and
+     * on its side at font scale 1.0 and 2.0; the card gone, the switch back.
+     */
+    @Test
+    fun theHorizonSwitchHidesUnderTheFirstRunCard() {
+        val ui = io.github.jasondorjeshort.dystopo.ui.OverlayLayout
+        for (scale in listOf(1f, 2f)) for (landscape in listOf(false, true)) {
+            val k = if (scale > 1f) 1.3f else 1f
+            val t = if (scale > 1f) 1.75f else 1f
+            val (w, h) = if (landscape) 914.3f to 411.4f else 411.4f to 914.3f
+            val o = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
+                windowWidth = w, windowHeight = h, insetTop = if (landscape) 24f else 48.8f, insetRight = if (landscape) 48f else 0f, insetBottom = if (landscape) 0f else 24f, fontScale = scale,
+                search = io.github.jasondorjeshort.dystopo.ui.OverlaySize(ui.SEARCH_WIDTH, 48f * k), topRow = io.github.jasondorjeshort.dystopo.ui.OverlaySize(190f * k, 40f * k),
+                credit = io.github.jasondorjeshort.dystopo.ui.OverlaySize(380f, 30f * t), online = io.github.jasondorjeshort.dystopo.ui.OverlaySize(180f, 32f * k),
+                trackBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(160f * k, 40f * k), routes = io.github.jasondorjeshort.dystopo.ui.OverlaySize(70f * k, 36f * k), activity = io.github.jasondorjeshort.dystopo.ui.OverlaySize(78f * k, 36f * k),
+                horizonSwitch = io.github.jasondorjeshort.dystopo.ui.OverlaySize(149f * k, 48f),
+                scaleBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(80f, 28f * t), strip = List(3) { io.github.jasondorjeshort.dystopo.ui.OverlaySize(70f * t, 38f * t) }, stripCore = 2, buttons = 1,
+                cardsDrawn = true, firstRunCard = true,
+            )
+            val at = "landscape=$landscape scale=$scale"
+            val p = ui.place(o)
+            assertTrue(p.overlaps().isEmpty(), "$at: ${p.overlaps()}")
+            val e = p[OverlayIds.HORIZON_SWITCH]!!
+            assertTrue(e.rect == null && e.reason == ui.REASON_FIRST_RUN, "$at: hidden as firstRunCard: $e")
+            val back = ui.place(o.copy(firstRunCard = false))[OverlayIds.HORIZON_SWITCH]!!
+            assertTrue(back.reason != ui.REASON_FIRST_RUN, "$at: the card gone, the switch is the ladder's again: $back")
+            if (!landscape) assertTrue(back.rect != null, "$at: upright the switch is back: $back")
+        }
+    }
 }

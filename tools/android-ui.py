@@ -349,6 +349,23 @@ def close_overlays(dev, times=2):
         time.sleep(0.6)
 
 
+def back_until(dev, pattern, max_backs=3, timeout=4):
+    """T310: presses Back only while something of the app is open over what `pattern` names, checking the screen
+    before each press: returns as soon as a node matches (no Back at all on a bare map, where Back would leave the app),
+    and stops without pressing when the app is no longer in front. Returns (node or None, nodes, Backs pressed)."""
+    backs = 0
+    while True:
+        n, nodes = dev.wait_for(pattern, timeout)
+        if n:
+            return n, nodes, backs
+        in_front = any((x.get("pkg") or "").startswith(PACKAGE) for x in nodes)
+        if backs >= max_backs or not in_front:
+            return None, nodes, backs
+        dev.shell("input", "keyevent", "KEYCODE_BACK")
+        backs += 1
+        time.sleep(0.8)
+
+
 def texts_now(dev):
     return dev.texts()
 
@@ -1804,14 +1821,13 @@ def horizon_step(dev):
     (`satellitesLine`, `peaksLine`), never failed, since an emulator's GNSS may report none at first and the first sweep
     on a just-booted emulator can take minutes."""
     t0 = time.time()
-    close_overlays(dev, 1)
-    n, nodes = dev.wait_for(HORIZON_SEGMENT, 10)
+    n, nodes, backs = back_until(dev, HORIZON_SEGMENT)
     if not n:
-        return {"ok": False, "error": f"no Horizon segment on the map (texts: {dev.texts(nodes)[:25]})"}
+        return {"ok": False, "backs": backs, "error": f"no Horizon segment on the map after {backs} Back (texts: {dev.texts(nodes)[:25]})"}
     dev.tap(n)
     n, nodes = dev.wait_for(HORIZON_TOGGLES, 15)
     if not n:
-        return {"ok": False, "error": f"no layer toggles after the Horizon segment (texts: {dev.texts(nodes)[:25]})"}
+        return {"ok": False, "backs": backs, "error": f"no layer toggles after the Horizon segment (texts: {dev.texts(nodes)[:25]})"}
     time.sleep(4)  # a few seconds of the GNSS status, the horizon's sweep and the peaks
     nodes = dev.nodes()
     texts = dev.texts(nodes)
@@ -1835,7 +1851,7 @@ def horizon_step(dev):
     missing = [x for x in ("Show:", "Sky plot:", "Follow the phone", "North up") if x not in texts + after_texts]
     missing += [x for x in ("Peaks", "Satellites", "Sun") if x not in toggles]
     errors = ([f"missing {missing}"] if missing else []) + (["the Map segment did not close the Horizon view"] if still else [])
-    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled}, "toggles": toggles, "openedBy": "switch",
+    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled}, "toggles": toggles, "openedBy": "switch", "backs": backs,
             "satellitesLine": sats, "peaksLine": peaks, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
 
 

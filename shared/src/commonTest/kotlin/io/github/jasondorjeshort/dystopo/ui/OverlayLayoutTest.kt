@@ -296,6 +296,23 @@ class OverlayLayoutTest {
     }
 
     @Test
+    fun theSwitchHidesWhileTheFirstRunCardIsUp() { // T310
+        for (scale in listOf(1f, 2f)) for (w in listOf(411f to 914f, 914f to 411f)) {
+            val i = input(w.first, w.second, w.first > w.second, scale, 0, 1, false, true).copy(firstRunCard = true)
+            for (o in listOf(OverlayLayout.place(i), OverlayLayout.place(drawnFrom(i)))) {
+                val sw = assertNotNull(o[OverlayIds.HORIZON_SWITCH], "listed at $scale $w")
+                assertEquals(null, sw.rect, "hidden at $scale $w")
+                assertEquals(OverlayLayout.REASON_FIRST_RUN, sw.reason, "at $scale $w")
+                assertEquals(emptyList(), o.overlaps())
+            }
+            // Its going frees the line for the rest: the scale bar and the strip stay where the ladder keeps them.
+            val without = OverlayLayout.place(drawnFrom(i).copy(horizonSwitch = null))
+            val with = OverlayLayout.place(drawnFrom(i))
+            for (id in listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP)) assertEquals(without[id]?.rect, with[id]?.rect, "$id at $scale $w")
+        }
+    }
+
+    @Test
     fun theInventoryIdsAreNamed() {
         for (id in listOf(OverlayIds.SETTINGS_ROW, OverlayIds.SEARCH, OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.NAV_CARD, OverlayIds.WARNING_CARD, OverlayIds.PLANNING_CARD, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.LOCK, OverlayIds.STRIP, OverlayIds.CREDIT)) {
             assertTrue(id.startsWith("M"), id)

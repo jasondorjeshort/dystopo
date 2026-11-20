@@ -268,7 +268,7 @@ The viewshed from a point (`app/viewshed/`, the shared core `shared/.../dem/View
 
 ## The Horizon view (T307, T308, T309)
 
-The map's "Map | Horizon" switch (T309, `controls/ViewSwitch.kt`: two segments, Map selected, in the left lower column over the scale bar's line, placed by the layout rule as `horizonSwitch`; it yields after the scale bar and before the readout's core entries) and Settings › Navigation and tracking › "Horizon view ›" open the Horizon view (T308; T307's GPS view, now its Satellites layer): the sky plot with the land's skyline, the peaks in view, the sun's path and the satellites, each a layer with a toggle. Everything about it: `android-horizon-view.md`.
+The map's "Map | Horizon" switch (T309, `controls/ViewSwitch.kt`: two segments, Map selected, in the left lower column over the scale bar's line, placed by the layout rule as `horizonSwitch`; it yields after the scale bar and before the readout's core entries, and hides as `firstRunCard` while the first-run card is up, T310) and Settings › Navigation and tracking › "Horizon view ›" open the Horizon view (T308; T307's GPS view, now its Satellites layer): the sky plot with the land's skyline, the peaks in view, the sun's path and the satellites, each a layer with a toggle. Everything about it: `android-horizon-view.md`.
 
 ## The world overview (T264)
 
