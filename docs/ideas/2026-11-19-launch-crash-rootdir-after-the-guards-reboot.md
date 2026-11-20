@@ -27,3 +27,14 @@ aeb4b028): the guard rebooted the emulator before `a11y` (private 6.1 GB over 6 
 storage ready 27.9 s after `sys.boot_completed`), and the debug build crashed at launch with the same
 `AssertionError` (PID 3422). Two sweeps out of two after that reboot: reproducible, so worth a pass before the
 emulator's memory line moves it to another part.
+
+Plan: the message is Kotlin's own: the stdlib's `FileTreeWalk` asserts it when a directory it is about to enter is no
+longer a directory, so some `File.walk*()` in the app ran while another thread deleted or replaced that directory (or
+the guest's storage answered `isDirectory` inconsistently just after boot). Start-up walkers to check:
+`options/ShadeService.kt` (the legacy `shade` folder deleted bottom-up on its own thread), `ContourCache.kt` (garbage
+collection, walk and delete), `storage/Storage.kt` (`walk`, and the bottom-up delete), `cachebudget/BudgetEngine.kt`
+and `online/DirectSources.kt`. Reproduce: an emulator rebooted by `tools/android-emu.ps1` and the app launched at the
+storage wait's end, ten times, with logcat saved for the stack. Fix the walker the stack names (a walk over a tree
+another thread deletes catches the error or both use one lock; prefer `listFiles` loops that tolerate a vanished
+entry), and add `rootDir must be verified` to `DEVICE_LINES` in `tools/sweep-summary.py` only if the stack shows the
+guest's storage, not the app, at fault. Verify: the ten launches clean and one full `a11y` part after a guard reboot.
