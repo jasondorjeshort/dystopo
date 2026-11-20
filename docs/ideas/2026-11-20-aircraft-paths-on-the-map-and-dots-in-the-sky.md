@@ -57,4 +57,5 @@ a source interface with the adsb.lol client and a replay source, the route table
 view (hollow when behind terrain or stale), the card, the settings (layer off, refresh 20 s with the day's remaining
 quota shown), `sources.json` entries, and `POST /aircraft/replay` plus `GET /aircraft` debug routes.
 
-Answer:
+Answer: (the owner, 2026-11-20) "I accept all your recommendations on the plane plan. Let's write it up - we'll
+implement next session." Planned as T311 in `docs/TASKS.md` (wave 41).

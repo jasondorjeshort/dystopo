@@ -1,28 +1,27 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-20, by main session (wave 40 closed, v0.1.35-alpha published)
+Updated: 2026-11-20, by main session (ideas triaged; wave 41, the aircraft layer, planned, not launched)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
-`docs/tasks/wave-40.md`, the board's Later in `docs/TASKS.md`, the finding named under Now, and the ideas
+`docs/tasks/wave-40.md`, wave 41 and Later on the board in `docs/TASKS.md`, the finding named under Now, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **No wave is open.** Wave 40 (T309, the Map | Horizon switch and the closest peaks first; T310, the sweep's two red parts) is in `docs/tasks/wave-40.md`; **v0.1.35-alpha** is the published release (2026-11-20 18:17 UTC). Every shell call failed from 03:26 that day until the owner's reboot (the `git-guard` hook with no stderr, ripgrep too; cause unknown).
+- **Wave 41 is planned, not launched:** T311, the aircraft layer (`docs/TASKS.md`; research `docs/findings/2026-11-20-aircraft-layer-sources-and-display.md`; the owner accepted all four data-flow choices). Launch it first next session (the owner: "we'll implement next session"). v0.1.35-alpha is the published release.
 - **Cost:** the 7-day meter read 2 at wave 40's close; reset 2026-11-27 03:00 UTC (re-read `resets_at` at each stall). Figures: 1.5 a task, 1.5 a wave's fixed cost, 1 a release (the `wave` skill, Plan and launch step 3). The hold is 97.
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g` (the sweep's build: env `ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs`, process scope only); long-path folders go by the `\\?\` delete; at most two Gradle agents and two emulators.
 
 ## Next
 
-1. The launch crash after the guard's reboot (`docs/ideas/2026-11-19-launch-crash-rootdir-after-the-guards-reboot.md`, three full sweeps out of three; a narrow rerun did not hit it). Also from wave 40: `git-guard` refused an awk line with backticks (a chore's false positive?).
-2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
-3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
-4. Tooling follow-ups (Later): save logcat on a launch crash (wave 37); the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
-5. Ideas untriaged: six of 2026-11-17, Java 25 of 2026-11-18, and of 2026-11-19 five GNSS ideas (the signal per track point, a compass check, a weak-signal note, a coverage forecast along a route, RINEX) and the launch-crash bug (the owner: "We'll prioritize later"); of 2026-11-20 five (the moon, a failing hook says why, the sweep's memory floor, fewer or more peak names, the last peak row under the switch; the owner: "We'll triage and sanity check later").
+1. Launch T311 (Opus implementer, Sonnet verifier), then the sweep and a release. After it: the Panorama view (the owner: "soon but after the airplane tracks"), then the window-seat flip of the Horizon view (its idea).
+2. Ideas triaged 2026-11-20 (25 blocks: 16 Plans, 9 Questions). Plans ready: the launch crash after the guard's reboot (the stdlib's `FileTreeWalk` over a vanishing folder), the moon, fewer or more peak names, the sky from a long-pressed point, the compass check, the signal per track point, the no-map message, sweep tooling (memory floor, blank screenshots, `changes.json`, a state ledger, speed against the last release, a failing hook says why: the backticks-in-single-quotes false positive hit again).
+3. The reroute: an amendment to ADR 0040 for drives (past track and future route), possibly a per-route option (the owner's answer), with a short research pass; then one drive task.
+4. The routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`; the cheap phone fixes ready as Plans (late first fix, days-old recording, blue dots, gross gain, pressure unit).
 
 ## Waiting on user
 
-- **Answers in `docs/ideas/`**: two new Questions of 2026-11-16 (the sharp-bend warning, clock time and sun along a route); a Shortest drive (at rest recommended; your words of 2026-11-16 on route options are noted there, the Answer left blank); energy on a charge (is there an electric car, a hybrid or an e-bike to check against); the pace from your tracks (the hike half: is the fit in Route times what was meant); pack facts (one proposal, yes recommended).
+- **Answers in `docs/ideas/`**: Java 25 and the release key (you named both on 2026-11-20 with no answer: the recommendations are target 25, an agent may install JDK 25?, and the signing service); the next Horizon layer; two new Questions of 2026-11-16 (the sharp-bend warning, clock time and sun along a route); a Shortest drive (at rest recommended; your words of 2026-11-16 on route options are noted there, the Answer left blank); energy on a charge (is there an electric car, a hybrid or an e-bike to check against); the pace from your tracks (the hike half: is the fit in Route times what was meant); pack facts (one proposal, yes recommended).
 - **On the phone, v0.1.35-alpha** (ADR 0031): the Map | Horizon switch on the map (its place: trial and error, your words); whether the named peaks are the ones you see, closest first, a hidden close one hollow (the weights are first guesses). Strings: the merge body of T309. From v0.1.34-alpha: the Horizon view's toggles, peak names (tap one), today's sun; Check my GPS: on 2026-11-20 the owner's phone read strong (the suspected fault not seen); the four-best figure and used of in view (or Send diagnostics) would still calibrate the verdict's 25 and 35 dB-Hz; whether "Follow the phone" turns right when held sideways. Strings: the merge bodies of T307 and T308.
 - **On the phone, v0.1.32-alpha** (ADR 0031): Settings > About and advanced > Report a problem: Send diagnostics, then Share and Open GitHub issue; Report recent stats (one sent from your phone gives its real start times). Strings: the merge bodies of T301 and T302. **The release key:** T293 found a script started by an agent can read `tools\release.properties` (the deny rule covers the Read tool only); closing it is a permission-settings change, yours.
 - **On the phone, v0.1.31-alpha** (ADR 0031; it updates over v0.1.30-alpha and looks the same): the three names of Plan drives for and their help, the card's fuel line and its wording, the owner's own bug (two left turns onto a side road). Strings: the merge bodies of T282 and T285. In Settings the Extended readout row shows Off and Pressure both filled: by design, a matter for the owner's eye.

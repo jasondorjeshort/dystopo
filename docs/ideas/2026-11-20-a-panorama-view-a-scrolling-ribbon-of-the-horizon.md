@@ -33,4 +33,4 @@ scrolling ribbon (zoom, follow-the-phone, label density), or wait until the Hori
 wait for those three, then a benchmark and one task; the ribbon is a third view on T309's switch, and building it on
 layers still moving would mean doing the label and layer work twice.
 
-Answer:
+Answer: (the owner, 2026-11-20) "Panorama is soon but after the airplane tracks."

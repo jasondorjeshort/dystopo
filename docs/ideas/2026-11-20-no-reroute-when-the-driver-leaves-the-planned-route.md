@@ -58,4 +58,6 @@ must be followed closely as today; the drive graph is on the phone, the change s
 session, and the implicit track (kept through a kill, saved as a trip at the end or not) is the one design point the
 research should settle.
 
-Answer:
+Answer: (the owner, 2026-11-20) "Yeah, rerouting changes the adr. This could also be a route-time option." So an
+amendment to ADR 0040, and the replan-or-lead-back choice may be offered when the route is made (per route), not
+only fixed by mode.
