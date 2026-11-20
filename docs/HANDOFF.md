@@ -18,7 +18,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 2. The routing work, in the order of the research finding's Drive routing section (`docs/findings/2026-11-16-research-for-pending-ideas.md`): ADR 0063's amendment with the Outcomes of 0062 and 0063; a new block for the speed-profile idea and a new idea for the profile on the phone; the card offers the other route; pack facts (on the owner's yes). Size it at 3.0 a task against the meter.
 3. Cheap phone fixes ready as Plans: the first launch that ignores a late fix, the days-old recording, the blue dots, gross gain per source, the pressure unit.
 4. Tooling follow-ups (Later): save logcat on a launch crash (wave 37); the sweep step that opens Report a problem; the blank direct-view frame; `sweep-diff.py` on a truncated PNG.
-5. Ideas untriaged: six of 2026-11-17, Java 25 of 2026-11-18, and of 2026-11-19 five GNSS ideas (the signal per track point, a compass check, a weak-signal note, a coverage forecast along a route, RINEX) and the launch-crash bug (the owner: "We'll prioritize later").
+5. Ideas untriaged: six of 2026-11-17, Java 25 of 2026-11-18, and of 2026-11-19 five GNSS ideas (the signal per track point, a compass check, a weak-signal note, a coverage forecast along a route, RINEX) and the launch-crash bug (the owner: "We'll prioritize later"); of 2026-11-20 five (the moon, a failing hook says why, the sweep's memory floor, fewer or more peak names, the last peak row under the switch; the owner: "We'll triage and sanity check later").
 
 ## Waiting on user
 
