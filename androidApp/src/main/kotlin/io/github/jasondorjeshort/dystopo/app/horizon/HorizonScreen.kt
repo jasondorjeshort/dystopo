@@ -339,6 +339,7 @@ fun HorizonScreen() {
                     "horizonDrawn" to (horizon != null), "satellitesDrawn" to plotted.size, "gnssHeld" to Gnss.held,
                     "peaksDrawn" to HorizonUi.names.map { it.peak.peak.name }, "namesDrawn" to HorizonUi.names.size, "peaksListed" to (peaks?.candidates?.size ?: 0),
                     "hollowDrawn" to HorizonUi.names.filter { !PeakRim.inSight(it.peak) }.map { it.peak.peak.name },
+                    "leadersDrawn" to HorizonUi.names.filter { it.leader != null }.map { it.peak.peak.name },
                     "sunPathDrawn" to (sunDay?.sun?.path?.size ?: 0), "sunHourMarks" to (sunDay?.marks?.size ?: 0), "sunNowDrawn" to sunDrawn,
                     "selected" to picked?.peak?.name, "scrollPx" to scroll.value, "scrollMaxPx" to scroll.maxValue,
                     "switchPx" to HorizonUi.switchPx, "switchSelected" to "horizon",
@@ -348,17 +349,18 @@ fun HorizonScreen() {
     }
 }
 
-/** A rim name as last drawn: the peak, the text's baseline centre and its box (px), for the tap and `drawn`. */
-class PlacedName(val peak: PeakView, val anchor: Offset, val box: androidx.compose.ui.geometry.Rect)
+/** A rim name as last drawn: the peak, the text's baseline centre and its box (px), for the tap and `drawn`; T309: its leader line. */
+class PlacedName(val peak: PeakView, val anchor: Offset, val box: androidx.compose.ui.geometry.Rect, val leader: Pair<Offset, Offset>? = null)
 
 /**
  * T309: the rim's names, placed by [HorizonLabels.place] (rank first, the density gap, no name over another, a ring label,
  * an hour label or the sun's arc), each with its triangle at its peak's apparent angle: solid in sight, hollow just out of
- * sight. The picked peak goes first, so a row picked in the list is named too.
+ * sight. The picked peak goes first, so a row picked in the list is named too. A name set away from its triangle has a
+ * thin leader line to it (the ink at reduced alpha, 1 dp); each name sits on a plate of the sky's colour (T309: the stroke
+ * halo before it showed as a ghost "M" where "Mount Rainier" crossed the skyline band's edge).
  */
 private fun DrawScope.drawPeaks(g: PlotGeometry, peaks: HorizonData.Peaks, picked: PeakView?, selected: String?, sunDay: HorizonData.SunDay?, pal: GnssPalette) {
     val text = android.graphics.Paint().apply { isAntiAlias = true; textSize = 12.dp.toPx(); color = pal.ink.toArgb(); textAlign = android.graphics.Paint.Align.CENTER }
-    val halo = android.graphics.Paint(text).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 3.dp.toPx(); color = pal.sky.toArgb() }
     val rim = RimGeometry(g.c.x.toDouble(), g.c.y.toDouble(), g.radius.toDouble(), g.rotationDeg, density.toDouble())
     // What the names keep off: the ring labels (SkyPlot's, 12 dp) and, with the Sun layer, its hour labels (10 dp) and arc.
     val ringPaint = android.graphics.Paint().apply { textSize = 12.dp.toPx() }
@@ -380,12 +382,22 @@ private fun DrawScope.drawPeaks(g: PlotGeometry, peaks: HorizonData.Peaks, picke
     val first = picked?.let { p -> peaks.scoreOf(p)?.label }
     val placed = HorizonLabels.place(rim, peaks.ranked, { text.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble(), blocked, lines, first)
     val names = placed.map { n ->
-        PlacedName(n.label.ref as PeakView, Offset(n.x.toFloat(), n.y.toFloat()), androidx.compose.ui.geometry.Rect(n.box.left.toFloat(), n.box.top.toFloat(), n.box.right.toFloat(), n.box.bottom.toFloat()))
+        PlacedName(
+            n.label.ref as PeakView, Offset(n.x.toFloat(), n.y.toFloat()),
+            androidx.compose.ui.geometry.Rect(n.box.left.toFloat(), n.box.top.toFloat(), n.box.right.toFloat(), n.box.bottom.toFloat()),
+            n.leader?.let { l -> Offset(l[0].x.toFloat(), l[0].y.toFloat()) to Offset(l[1].x.toFloat(), l[1].y.toFloat()) },
+        )
     }
     HorizonUi.names = names
     val keys = names.map { HorizonUi.keyOf(it.peak) }.toSet()
     if (keys != HorizonUi.namedKeys) HorizonUi.namedKeys = keys
     val s = 5.dp.toPx()
+    // The leader lines first, from just past the triangle to the name's box.
+    for (n in names) n.leader?.let { (a, b) ->
+        val len = kotlin.math.hypot((b.x - a.x).toDouble(), (b.y - a.y).toDouble()).toFloat().coerceAtLeast(1f)
+        val from = Offset(a.x + (b.x - a.x) / len * s * 1.3f, a.y + (b.y - a.y) / len * s * 1.3f)
+        drawLine(pal.ink.copy(alpha = 0.55f), from, b, 1.dp.toPx())
+    }
     for (n in names) {
         val p = n.peak
         val at = g.at(p.angleDeg.coerceAtLeast(0.0), p.bearingDeg)
@@ -400,9 +412,8 @@ private fun DrawScope.drawPeaks(g: PlotGeometry, peaks: HorizonData.Peaks, picke
     for (n in names) {
         val chosen = HorizonUi.keyOf(n.peak) == selected
         text.isFakeBoldText = chosen
-        halo.isFakeBoldText = chosen
         text.color = (if (chosen) pal.link else pal.ink).toArgb()
-        drawContext.canvas.nativeCanvas.drawText(n.peak.peak.name, n.anchor.x, n.anchor.y, halo)
+        drawRoundRect(pal.sky.copy(alpha = 0.85f), n.box.topLeft, n.box.size, androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()))
         drawContext.canvas.nativeCanvas.drawText(n.peak.peak.name, n.anchor.x, n.anchor.y, text)
     }
 }

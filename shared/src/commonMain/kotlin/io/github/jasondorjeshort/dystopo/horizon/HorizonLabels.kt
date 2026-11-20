@@ -86,6 +86,13 @@ object HorizonLabels {
     const val FIRST_STEP_DP = 16.0
     const val STEP_DP = 15.0
 
+    /** T309: the places beside the mark, either side along the rim: the name's near edge this far from it, [SIDE_INWARD_DP] in. */
+    const val SIDE_GAP_DP = 9.0
+    const val SIDE_INWARD_DP = 4.0
+
+    /** T309: a name whose box is farther than this from its mark gets a leader line to it. */
+    const val LEADER_DP = 10.0
+
     private fun clamp01(v: Double) = v.coerceIn(0.0, 1.0)
     private fun log2(v: Double) = ln(v) / ln(2.0)
 
@@ -139,17 +146,29 @@ object HorizonLabels {
     /** The density gap (degrees) for a label with [nLocal] candidates within ±[LOCAL_DEG] of its bearing (itself in). */
     fun gapDeg(nLocal: Int): Double = max(GAP_MIN_DEG, GAP_DEG * sqrt(nLocal / GAP_LOCAL))
 
-    /** A label placed: its [scored] entry, the text's baseline centre ([x], [y], px), its box, and the gap it was held to. */
-    class Placed(val scored: Scored, val x: Double, val y: Double, val box: RimBox, val gapDeg: Double) {
+    /**
+     * A label placed: its [scored] entry, the text's baseline centre ([x], [y], px), its box, the gap it was held to, and
+     * (T309) its [leader] line from the mark to the box when the box stands more than [LEADER_DP] from the mark.
+     */
+    class Placed(
+        val scored: Scored, val x: Double, val y: Double, val box: RimBox, val gapDeg: Double, val leader: List<RimPt>? = null,
+        /** Its triangle's box, which later names keep off. */
+        val mark: RimBox = box,
+    ) {
         val label: HorizonLabel get() = scored.label
     }
 
+    /** The point of [b] nearest [p]. */
+    private fun nearest(b: RimBox, p: RimPt) = RimPt(p.x.coerceIn(b.left, b.right), p.y.coerceIn(b.top, b.bottom))
+
     /**
-     * [ranked] placed on [g], highest first: each inward from its mark ([RimGeometry.at] of its angle and bearing) along the
-     * radius at the first of [STEPS] places where its box (the text [width] of its name, [ascent] above the baseline
+     * [ranked] placed on [g], highest first: each by its mark ([RimGeometry.at] of its angle and bearing), at the nearest
+     * of the places around it (inward along the radius at [STEPS] steps, and beside it either side along the rim; T309)
+     * where its box (the text [width] of its name, [ascent] above the baseline
      * (negative) and [descent] below, padded 2 dp) touches no label placed before, none of [blocked] (the ring and hour
      * labels) and no segment of [lines] (the sun's arc), and only when no label placed stands within its density gap in
-     * bearing. The dominant label, then the closest of the view, are placed first and whatever the density: at their
+     * bearing; a box farther than [LEADER_DP] from its mark gets a leader line, which crosses no name and which no later
+     * name crosses. The dominant label, then the closest of the view, are placed first and whatever the density: at their
      * first free place, else at the first. The rest without a free place are left out (the list has them). [first] goes
      * before everything (a picked label).
      */
@@ -174,15 +193,41 @@ object HorizonLabels {
             val dy = g.cy - at.y
             val len = max(hypot(dx, dy), 1.0)
             val w = width(l.name)
-            var chosen: Placed? = null
-            for (step in 0 until STEPS) {
-                val inward = (FIRST_STEP_DP + STEP_DP * step) * g.dp
-                val x = at.x + dx / len * inward
-                val y = at.y + dy / len * inward + 4 * g.dp
+            val ux = dx / len
+            val uy = dy / len
+            fun placeAt(x: Double, y: Double): Placed {
                 val box = RimBox(x - w / 2 - pad, y + ascent - pad, x + w / 2 + pad, y + descent + pad)
-                val p = Placed(s, x, y, box, gap)
-                if (step == 0 && forced) chosen = p
-                if (placed.none { it.box.overlaps(box) } && blocked.none { it.overlaps(box) } && lines.none { box.crosses(it) }) {
+                val n = nearest(box, at)
+                val far = hypot(n.x - at.x, n.y - at.y) > LEADER_DP * g.dp
+                return Placed(s, x, y, box, gap, if (far) listOf(at, n) else null, RimBox(at.x - 6 * g.dp, at.y - 6 * g.dp, at.x + 6 * g.dp, at.y + 5 * g.dp))
+            }
+            // The places around the mark, nearest first: inward along the radius, and beside it either side along the rim.
+            val inward = (0 until STEPS).map { step ->
+                val d = (FIRST_STEP_DP + STEP_DP * step) * g.dp
+                placeAt(at.x + ux * d, at.y + uy * d + 4 * g.dp)
+            }
+            // Beside: the box's centre off the mark along the rim's tangent (-uy, ux) by its half extent that way and a gap.
+            val halfW = w / 2 + pad
+            val halfH = (descent - ascent) / 2 + pad
+            val side = listOf(1.0, -1.0).map { k ->
+                val off = halfW * kotlin.math.abs(uy) + halfH * kotlin.math.abs(ux) + SIDE_GAP_DP * g.dp
+                val cx = at.x + ux * SIDE_INWARD_DP * g.dp - uy * off * k
+                val cy = at.y + uy * SIDE_INWARD_DP * g.dp + ux * off * k
+                placeAt(cx, cy - (ascent + descent) / 2)
+            }
+            fun dist(p: Placed) = nearest(p.box, at).let { n -> hypot(n.x - at.x, n.y - at.y) }
+            val places = (inward + side).sortedBy(::dist)
+            // T309: a name covers no named peak's triangle, its own included, and no triangle stands under a name placed before.
+            val mark = RimBox(at.x - 6 * g.dp, at.y - 6 * g.dp, at.x + 6 * g.dp, at.y + 5 * g.dp)
+            if (!forced && placed.any { it.box.overlaps(mark) }) continue
+            // A forced name with no free place takes the nearest that is over no other name, else the first inward.
+            var chosen: Placed? = if (forced) places.firstOrNull { p -> placed.none { it.box.overlaps(p.box) } } ?: inward.first() else null
+            for (p in places) {
+                val box = p.box
+                val free = !box.overlaps(mark) && placed.none { it.box.overlaps(box) || it.mark.overlaps(box) || (it.leader != null && box.crosses(it.leader)) } &&
+                    blocked.none { it.overlaps(box) } && lines.none { box.crosses(it) } &&
+                    (p.leader == null || placed.none { it.box.crosses(p.leader) })
+                if (free) {
                     chosen = p
                     break
                 }

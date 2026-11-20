@@ -247,6 +247,28 @@ class HorizonViewTest {
     }
 
     @Test
+    fun aNameTriesTheSidesOfItsTriangleBeforeGoingFartherInAndGetsALeaderWhenFar() {
+        // A ring of labels: the inward place of one blocked, the name goes beside its triangle (close, no leader).
+        val peaks = listOf(view("Solo Peak", 90.0, 2000.0, distance = 3000.0, angle = 2.0))
+        val at = g.at(2.0, 90.0)
+        val inwardBox = RimBox(at.x - 25, at.y - 5, at.x - 10, at.y + 7)
+        val p = placed(peaks, blocked = listOf(inwardBox)).single()
+        assertNull(p.leader, "beside its triangle: ${p.box}")
+        assertTrue(p.box.top > at.y || p.box.bottom < at.y, "${p.box} beside $at")
+        // Blocked inward and beside but not farther in: placed farther in, with a leader line from the triangle.
+        val besides = listOf(RimBox(at.x - 1, at.y - 100, at.x + 50, at.y - 3), RimBox(at.x - 1, at.y + 3, at.x + 50, at.y + 100), RimBox(at.x - 16, at.y - 5, at.x + 8, at.y + 7))
+        val far = placed(peaks, blocked = besides).single()
+        val leader = assertNotNull(far.leader, "far from its triangle: ${far.box}")
+        assertEquals(at, leader[0])
+        // No name crosses another's leader, and no leader crosses another name.
+        val ring = (0 until 36).map { view("Peak number $it", it * 10.0 + 3, 1500.0 + it, distance = 1000.0 + it * 300) }
+        val ps = placed(ring, blocked = (0 until 36).map { g.at(2.0, it * 10.0 + 3).let { a -> RimBox(a.x - 1, a.y - 1, a.x + 1, a.y + 1) } })
+        for (n in ps) for (o in ps) if (n !== o) {
+            n.leader?.let { assertFalse(o.box.crosses(it), "${n.label.name}'s leader over ${o.label.name}") }
+        }
+    }
+
+    @Test
     fun aBoxCrossesALineThroughItButNotOneBeside() {
         val b = RimBox(0.0, 0.0, 10.0, 10.0)
         assertTrue(b.crosses(listOf(RimPt(-5.0, 5.0), RimPt(15.0, 5.0))), "straight through")

@@ -59,11 +59,13 @@ ranking and a placement meant for later layers too (`shared/.../horizon/HorizonL
 tune against real rims): the score `4.0 Dn + 2.5 Hn + 1.5 An + 1.0 Pn + 0.5 En` (distance `1 / (1 + d / 2 km)`, the
 clearance over 1.5° (0.5 just out of sight), the apparent angle over 6°, the prominence on a log scale to 1000 m (the elevation over the median of
 the candidates within 5 km), the elevation in the candidates' range), +10 for the highest skyline peak (always named),
-×0.9 out of sight (the closest candidate also always named, T309's fix round for Alta Vista), × the kind's weight; then, highest first, each name inward from its triangle at the first of four
-places where its box touches no name, ring label, hour label or the sun's arc, and only where no name already placed
-stands within the density gap in bearing (`4° × sqrt(nLocal / 5)`, at least 2°, nLocal the candidates within ±15°). A
-triangle is solid in sight and hollow just out of sight, at the peak's own apparent angle; names are drawn over the
-satellites with a halo. A tap on a name or a row picks the peak: its line ("Little Tahoma, 11138 ft, 4.5 mi, NNE 14°")
+×0.9 out of sight (the closest candidate also always named, T309's fix round for Alta Vista), × the kind's weight; then, highest first, each name at the nearest of the places around its triangle (four steps
+inward along the radius, and beside it either side along the rim) where its box touches no name, leader line, ring
+label, hour label or the sun's arc, and only where no name already placed
+stands within the density gap in bearing (`4° × sqrt(nLocal / 5)`, at least 2°, nLocal the candidates within ±15°). A name set more than 10 dp from its triangle gets a thin leader line to it (the ink at reduced alpha, 1 dp), which
+crosses no other name. A triangle is solid in sight and hollow just out of sight, at the peak's own apparent angle;
+names are drawn over the satellites on a plate of the sky's colour (T308's stroke halo showed as a ghost "M" where
+"Mount Rainier" crossed the skyline band's edge). A tap on a name or a row picks the peak: its line ("Little Tahoma, 11138 ft, 4.5 mi, NNE 14°")
 under the heading and its name in the link colour; a second tap, the line's × or Back lets it go. At Paradise (T308): 149
 peaks read from 47 tiles in 0.6 s, 20 on the skyline, 6 named under T308's rule (Little Tahoma, Unicorn Peak, Plummer
 Peak, Chutla Peak, Osborne Mountain, Mount Rainier); T309's figures are in its merge commit.

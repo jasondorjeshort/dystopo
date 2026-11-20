@@ -16,7 +16,7 @@ import java.time.LocalDate
  * - `GET /horizon`: `open`, `layers` (`satellites`, `peaks`, `sun`: the three synced settings), `gnss` (`held`,
  *   `holders`, `engine`: Satellites off releases the GNSS), `drawn` (what the screen last drew: `landscape`, `squareDp`,
  *   `windowDp`, `fontScale`, `rotationDeg`, `orientation`, `night`, `horizonDrawn`, `satellitesDrawn`, `peaksDrawn`
- *   (the rim's names), `namesDrawn`, `peaksListed`, `hollowDrawn` (T309: the names whose peak is just out of sight),
+ *   (the rim's names), `namesDrawn`, `peaksListed`, `hollowDrawn` (T309: the names whose peak is just out of sight), `leadersDrawn` (the names with a leader line),
  *   `sunPathDrawn` (samples), `sunHourMarks`, `sunNowDrawn`, `selected`, `scrollPx`, `scrollMaxPx`, `switchPx` and
  *   `switchSelected` (T309: the view's "Map | Horizon" switch)), `horizon` (as `GET /gnss`'s, without the per-degree
  *   angles) or null with `horizonReason`, `peaks` (T309: `reason`, `ms`, `tilesRead`, `tested`, `visible`, `skyline`,
