@@ -48,3 +48,14 @@ reverse drive, and the remaining distance can only shrink as the car nears the t
 implicit track is the same thing as a recorded track (it may be able to be saved at the end, as a trip), how it is
 kept while the app is backgrounded or killed, the two colours (and the colour-blind check the overlays already get),
 and how a walking or hiking route that must be followed closely (the line is the point) differs from a drive.
+
+Question: ADR 0040 decided "plans replan, frozen routes lead back" and its reroute build task was never run; your
+shape of 2026-11-20 (a past track kept implicitly and a future route always planned from the car) replaces the
+"lead back" half for drives, so should it go in as an amendment to ADR 0040 with a short research pass (how long off
+route before a replan, using the heading to avoid a U-turn, announced or silent) and then one build task for drives,
+or as a new proposal covering hikes too? Recommended: the amendment and one drive task, leaving a walking route that
+must be followed closely as today; the drive graph is on the phone, the change sits in `nav/Navigator.kt` and the nav
+session, and the implicit track (kept through a kill, saved as a trip at the end or not) is the one design point the
+research should settle.
+
+Answer:
