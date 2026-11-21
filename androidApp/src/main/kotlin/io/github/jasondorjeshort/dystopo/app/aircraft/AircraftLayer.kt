@@ -89,6 +89,14 @@ import java.util.zip.GZIPInputStream
  * [RouteLines.CAP] nearest the view's centre, in their own source ([FAINT_SOURCE]) set only when a poll answers, the
  * selection changes or the setting does, not every second. Nothing is fetched for any of it.
  *
+ * Threads (T314, after a verifier's SIGABRT "Scudo: corrupted chunk header" in `Layer::setProperty`): MapLibre's map,
+ * style, layer and source objects are touched on the main thread only. [push] builds the features on whichever thread
+ * calls it (the poller's tick, a selection) and posts [pushNow]; every function that calls MapLibre passes [mainOnly]
+ * first, which in a debug build counts and logs a call from another thread (`GET /aircraft` › `offMainCalls`) and
+ * reposts it to the main thread. And the layer lets go of a MapView when the activity is destroyed
+ * (`MapController.detach` calls [unbind]): before, a tick after a rotation or a font-scale change still pushed into the
+ * destroyed view's style until the new view bound.
+ *
  * Feed data stays in memory (ODbL): nothing of it is written to disk, cached or exported; turning the layer off forgets
  * it. Stored on the phone: the day's request count ([AircraftQuota], a number and a day). No call sign leaves the phone:
  * routes come from the shipped table (`assets/aircraft/routes.gzip`).
@@ -148,6 +156,7 @@ object AircraftLayer {
 
     /** Draws on [mapView] from now on (main thread); asks the poller for the view's aircraft while it may. */
     fun bind(mapView: MapView) {
+        if (!mainOnly("bind") { bind(mapView) }) return
         if (!started) {
             started = true
             AircraftPoller.onBeforeTick { askForTheView() }
@@ -167,10 +176,37 @@ object AircraftLayer {
     }
 
     fun unbind() {
+        if (!mainOnly("unbind") { unbind() }) return
         view?.removeOnDidFinishLoadingStyleListener(styleListener)
         clickMap?.removeOnMapClickListener(clickListener)
         clickMap = null
         view = null
+        installedOnStyle = false
+    }
+
+    // --- the main-thread rule (T314) ---
+
+    /** Calls to MapLibre that arrived off the main thread (each reposted there); 0 is the rule. */
+    @Volatile var offMainCalls = 0L
+        private set
+    @Volatile var lastOffMain: String? = null
+        private set
+    /** Pushes skipped because the layer's MapView is no longer the one the map controller holds (a destroyed activity's). */
+    @Volatile var skippedDetached = 0L
+        private set
+
+    /**
+     * True on the main thread. Elsewhere: counts it (with the caller's [what] and, in a debug build, the stack), logs it,
+     * posts [again] to the main thread and returns false, so the caller returns without touching MapLibre.
+     */
+    private inline fun mainOnly(what: String, crossinline again: () -> Unit): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) return true
+        offMainCalls++
+        lastOffMain = if (BuildConfig.DEBUG) "$what on ${Thread.currentThread().name}: " +
+            Throwable().stackTrace.drop(1).take(6).joinToString(" < ") { "${it.fileName}:${it.lineNumber}" } else what
+        android.util.Log.e("Dystopo", "AircraftLayer: MapLibre call off the main thread: $lastOffMain")
+        main.post { again() }
+        return false
     }
 
     /** Why the map does not ask now, or null when it does: off, in the background, no view yet, or the Horizon view over it. */
@@ -194,11 +230,14 @@ object AircraftLayer {
     // --- drawing ---
 
     private fun install() {
+        if (!mainOnly("install") { install() }) return
         val v = view ?: return
         v.getMapAsync { m -> m.getStyle { style -> addTo(style) } }
     }
 
     private fun addTo(style: Style) {
+        if (!mainOnly("addTo") { addTo(style) }) return
+        if (view == null || !style.isFullyLoaded) return
         if (style.getImage(icon(AircraftKind.GENERIC, "")) == null) {
             val d = DystopoApp.instance.resources.displayMetrics.density
             for (k in AircraftKind.entries) {
@@ -350,7 +389,12 @@ object AircraftLayer {
     @Volatile private var data: FeatureCollection = FeatureCollection.fromFeatures(emptyList())
 
     /** Builds the features from [list] and sends them to the map (any thread). */
-    private fun push(all: List<AircraftNow>) {
+    private val pushLock = Any()
+
+    private fun push(all: List<AircraftNow>) = synchronized(pushLock) { pushLocked(all) }
+
+    /** Builds the features (no MapLibre call here: any thread), then posts [pushNow] to the main thread. */
+    private fun pushLocked(all: List<AircraftNow>) {
         val sel = selected
         val box = MapViewport.current
         val zoom = zoomNow
@@ -447,8 +491,11 @@ object AircraftLayer {
     @Volatile private var faintPushes = 0L
 
     private fun pushNow() {
+        if (!mainOnly("pushNow") { pushNow() }) return
         val v = view ?: return
+        if (v !== DystopoApp.instance.map.mapView) { skippedDetached++; return } // a destroyed activity's view
         v.getMapAsync { m ->
+            if (view !== v) return@getMapAsync
             zoomNow = m.cameraPosition.zoom
             val style = m.style ?: return@getMapAsync
             if (!style.isFullyLoaded) return@getMapAsync
@@ -467,6 +514,7 @@ object AircraftLayer {
 
     /** A tap on an aircraft selects it (main thread); other taps fall through. */
     private fun onClick(latLng: LatLng): Boolean {
+        if (Looper.myLooper() != Looper.getMainLooper()) { offMainCalls++; return false }
         if (!on) return false
         val m = clickMap ?: return false
         val p = m.projection.toScreenLocation(latLng)
@@ -488,6 +536,7 @@ object AircraftLayer {
 
     /** The screen point of [hex] now (px in the map view), for the debug route's tap; null when not drawn. Main thread. */
     fun screenPoint(hex: String): PointF? {
+        if (Looper.myLooper() != Looper.getMainLooper()) { offMainCalls++; return null }
         val a = drawn.firstOrNull { it.hex == hex } ?: return null
         val m = clickMap ?: DystopoApp.instance.map.map ?: return null
         return m.projection.toScreenLocation(LatLng(a.lat, a.lon))
@@ -512,6 +561,7 @@ object AircraftLayer {
             put("faintLines", faintCount); put("faintPointsMax", faintPointsMax)
             put("faintUpdatedAtMs", faintUpdatedAtMs.takeIf { it > 0 }); put("faintPushedAtMs", faintPushedAtMs.takeIf { it > 0 })
             put("faintUpdates", faintUpdates); put("faintPushes", faintPushes)
+            put("offMainCalls", offMainCalls); put("lastOffMain", lastOffMain); put("skippedDetached", skippedDetached) // T314
             put("aircraft", list.sortedBy { it.distanceM ?: 0.0 }.map { AircraftJson.now(it) })
         }
     }
