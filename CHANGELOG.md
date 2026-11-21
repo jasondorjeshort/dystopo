@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-21
+
+- T315: The Map | Horizon switch in the same place in every view
+
 ## v0.1.38-alpha (2026-11-21)
 
 ### 2026-11-21
