@@ -1,14 +1,14 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-21, by main session (wave 43 closed, v0.1.39-alpha published; the Panorama view planned)
+Updated: 2026-11-21, by main session (wave 43 closed, v0.1.39-alpha published; wave 44 running)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-43.md`, Later on the board in `docs/TASKS.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 44 is open** (planned 2026-11-21, `docs/TASKS.md`; the critic's edits are in its paragraph): T319 the sweep's two checks, T320 the first-run card in the layout rule, T322 the Panorama's pass one, all three launched first; T321 (the peak's "View from here" and the switch carrying the selection) only after T319 and T320 are merged. The Panorama's shape and its lens projection are ADR 0064.
+- **Wave 44 is open** (planned 2026-11-21, `docs/TASKS.md`; the critic's edits are in its paragraph). Merged on `origin/main`, each with its log entry, its branch and worktree cleaned up: T319 (the sweep's two checks), T322 (the Panorama's pass one, ADR 0064) and T320 (the first-run card in the layout rule). Running: T321's implementer (the peak's "View from here" and the switch carrying the selection; AVD `dystopo35-T321`, console 5574, port 8698) and T323's (a Sonnet-class fix-up from T320's verifier: the card keeps its filled action whole and the readout yields first; AVD `dystopo35-T323`, 5576, 8700, waiting for an emulator slot). Each gets a Sonnet-class verifier with an emulator when it reports; T321's also compares the rim's names at Paradise with the build before the wave (Interacts with T322).
 - **Wave 43 is closed and v0.1.39-alpha is published** (2026-11-21). It ran T315 to T317 and the sweep fix T318, which rebaselined the a11y findings from the longer long-press card. Its record is `docs/tasks/wave-43.md`. Its branches, worktrees and task AVDs are cleaned up.
 - **For the owner:** the emulator `emulator-5554` (default AVD `dystopo35`) is still running from the v0.1.38 draft check. Stop it without `-Delete` if wanted.
 - **Cost:** the 7-day meter read 1 at wave 44's planning (reset 2026-11-28 03:00 UTC), the wave figured at 7. The figures were revised at this close to 1.0 a task, 1 a wave and 0.5 a release (the `wave` skill, step 3). The hold is 97.
