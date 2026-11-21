@@ -550,8 +550,8 @@ object MapLayout {
             // least its links scroll with it.
             limits[nameOf(OverlayIds.FIRST_RUN_CARD)] = MeasuredControls.Limit(maxWidthPx = Math.round(r.width * d), maxHeightPx = Math.floor((r.height * d).toDouble()).toInt())
             val all = input.firstRun?.let { r.height + 0.5f < it.least } ?: false
-            val state = io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState
-            if (all != state.allScroll) state.allScroll = all
+            val ui = io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardUiState
+            if (all != ui.allScroll) ui.allScroll = all
         }
         if (placed[OverlayIds.STRIP]?.rect != null && placed.stripRoom > 0f) {
             // The width the rule wrapped the entries at (a pixel more for the rounding), so the strip's rows are the rule's.
@@ -669,7 +669,7 @@ object MapLayout {
         val s = c.slot(FIRST_RUN_CARD)?.size?.takeIf { it.width > 0 && it.height > 0 } ?: return null
         val m = io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState
         val natural = (s.height + m.scrollMaxPx()) / d
-        if (!m.allScroll || m.fixedPx <= 0) m.fixedPx = (s.height - m.bodyPx).coerceAtLeast(0)
+        if (!io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardUiState.allScroll || m.fixedPx <= 0) m.fixedPx = (s.height - m.bodyPx).coerceAtLeast(0)
         val fixed = m.fixedPx / d
         return OverlayCard(natural, minOf(natural, fixed + twoLines), minOf(natural, fixed), s.width / d)
     }

@@ -130,7 +130,7 @@ fun FirstRunCard(fallback: String?) {
         ) {
             // T320: below its least (a phone on its side at a large font scale) the progress, the message and the links
             // scroll with the choices, so every action stays reachable.
-            val allScroll = FirstRunCardState.allScroll
+            val allScroll = FirstRunCardUiState.allScroll
             val footer: @Composable () -> Unit = {
                 ui.progress?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Download failed")) Red else Accent, fontSize = 13.sp)) }
                 FirstRun.message?.let { BasicText(it, style = TextStyle(color = if (it.contains("failed") || it.contains("permission")) Red else Accent, fontSize = 13.sp)) }

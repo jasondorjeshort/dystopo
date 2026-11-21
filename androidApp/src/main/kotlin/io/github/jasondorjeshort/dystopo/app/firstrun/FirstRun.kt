@@ -221,7 +221,7 @@ object FirstRun {
             "dismissed" to dismissed,
             "cardVisible" to FirstRunCardState.visible, "cardYieldedTo" to FirstRunCardState.yieldedTo, // T106
             // T320: how far the card's body scrolls in the room the layout rule gives it, and whether its links scroll with it.
-            "cardScrollMaxPx" to FirstRunCardState.scrollMaxPx(), "cardAllScroll" to FirstRunCardState.allScroll,
+            "cardScrollMaxPx" to FirstRunCardState.scrollMaxPx(), "cardAllScroll" to FirstRunCardUiState.allScroll,
             // T220: what the card draws, in its order: the state's sentence, the choices, the primary one, the way back.
             "body" to firstRunBody(AppSettings.server, online.isDirect, if (online.isDirect) online.direct.notice() else null),
             "choices" to choices.map { it.toMap() },
@@ -297,13 +297,16 @@ internal object FirstRunCardState {
 
     /**
      * T320: the card's fixed part (all but the scrolling body, px) as last measured with the links outside the scroll; the
-     * rule's least is it and two lines. Kept while [allScroll], which measures no fixed part, so the choice cannot flip back.
+     * rule's least is it and two lines. Kept while [FirstRunCardUiState.allScroll], which measures no fixed part, so the choice cannot flip back.
      */
     var fixedPx = 0
 
-    /** T320: the rule gave the card less than its least, so the links scroll with the choices (Compose state; set by `MapLayout`). */
-    var allScroll by androidx.compose.runtime.mutableStateOf(false)
-
     /** T320: how far the card's body scrolls, px (0 while it shows whole or is not up). */
     fun scrollMaxPx(): Int = scroll?.maxValue?.takeIf { it != Int.MAX_VALUE } ?: 0
+}
+
+/** T320: the first-run card's Compose state (a `*UiState` object, T240). */
+internal object FirstRunCardUiState {
+    /** The rule gave the card less than its least, so the links scroll with the choices (set by `MapLayout`). */
+    var allScroll by mutableStateOf(false)
 }

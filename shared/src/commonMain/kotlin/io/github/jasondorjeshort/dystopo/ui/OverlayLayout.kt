@@ -177,6 +177,7 @@ object OverlayIds {
         PLANNING_CARD to (59..73).map { "M$it" }, NAV_CARD to (85..91).map { "M$it" }, WARNING_CARD to listOf("M92", "M93"),
         LOCK to listOf("M94"), ORIENTATION to listOf("M95", "M97"), POSITION to listOf("M96", "M97"), STRIP to listOf("M98"),
         CREDIT to listOf("M99"), UPDATE_CARD to (108..112).map { "M$it" },
+        FIRST_RUN_CARD to (102..107).map { "M$it" }, // T320: the manifest's rows for the card (`controls/AndroidControls.kt`)
     )
     val NAMES: Map<String, String> = mapOf(
         SETTINGS_ROW to "settingsAndPacks", SEARCH to "search", ONLINE to "onlineIndicator", TRACK_BAR to "waypointAndTracks",
