@@ -106,6 +106,11 @@ object ViewSwitch {
     val anchorInsets: WindowInsets
         @Composable get() = WindowInsets.systemBars.union(WindowInsets.displayCutout).only(WindowInsetsSides.Left + WindowInsetsSides.Bottom)
 
+    /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before any composition or route reads it (T226). */
+    fun prepare() {
+        widthDp; heightDp; floorDp; creditStartDp
+    }
+
     /** Selects a segment: the Horizon view opened or closed. Main thread. */
     fun select(horizon: Boolean) {
         if (horizon == HorizonUi.open) return

@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
             app.map.activity = this
             io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
             io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.prepare() // T307, T308: the Horizon view's Compose state, on the main thread
+            io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.prepare() // T315: the switch's anchor state (both views read it)
             io.github.jasondorjeshort.dystopo.app.aircraft.AircraftUiState.prepare() // T311: the Flights layer's Compose state (its ticker reads it)
             app.map.attach(mapView, styleJson = { app.tiles.style() })
         }

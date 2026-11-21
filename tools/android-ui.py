@@ -1844,11 +1844,16 @@ def switch_rects(nodes):
 
 
 def under_switch(nodes, rect):
-    """T315: the texts of the nodes, other than the switch's own, whose bounds reach into [rect] by more than a pixel."""
+    """T315: the texts of the nodes, other than the switch's own, whose bounds reach into [rect] by more than a pixel; a
+    node that holds the whole switch is what it stands on (the map's view under the Horizon view, a pane), not a row."""
     def inter(b):
         return min(b[2], rect[2]) - max(b[0], rect[0]) > 1 and min(b[3], rect[3]) - max(b[1], rect[1]) > 1
+
+    def holds(b):
+        return b[0] <= rect[0] and b[1] <= rect[1] and b[2] >= rect[2] and b[3] >= rect[3]
     own = {SWITCH_LABEL, "Map", "Horizon"}
-    return [n["text"] or n["desc"] for n in nodes if (n["text"] or n["desc"]) and (n["text"] or n["desc"]) not in own and n["bounds"] and inter(n["bounds"])]
+    return [n["text"] or n["desc"] for n in nodes if (n["text"] or n["desc"]) and (n["text"] or n["desc"]) not in own and n["bounds"]
+            and inter(n["bounds"]) and not holds(n["bounds"])]
 
 
 def horizon_step(dev):
