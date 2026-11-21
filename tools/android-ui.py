@@ -1834,20 +1834,45 @@ MAP_SEGMENT = "^Map$"
 HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun|Flights)$"  # T312: Flights, shown while Flight tracking is on
 
 
+SWITCH_LABEL = "Map or horizon view"  # app/controls/ViewSwitch.kt: the switch's spoken label, its whole rectangle (T315)
+
+
+def switch_rects(nodes):
+    """T315: the bounds of every "Map | Horizon" switch on screen (its group node, by its spoken label): one on the bare
+    map, two on the Horizon view (the map's own, drawn under the view, and the view's), all at the same anchor."""
+    return [n["bounds"] for n in nodes if n["desc"] == SWITCH_LABEL and n["bounds"]]
+
+
+def under_switch(nodes, rect):
+    """T315: the texts of the nodes, other than the switch's own, whose bounds reach into [rect] by more than a pixel; a
+    node that holds the whole switch is what it stands on (the map's view under the Horizon view, a pane), not a row."""
+    def inter(b):
+        return min(b[2], rect[2]) - max(b[0], rect[0]) > 1 and min(b[3], rect[3]) - max(b[1], rect[1]) > 1
+
+    def holds(b):
+        return b[0] <= rect[0] and b[1] <= rect[1] and b[2] >= rect[2] and b[3] >= rect[3]
+    own = {SWITCH_LABEL, "Map", "Horizon"}
+    return [n["text"] or n["desc"] for n in nodes if (n["text"] or n["desc"]) and (n["text"] or n["desc"]) not in own and n["bounds"]
+            and inter(n["bounds"]) and not holds(n["bounds"])]
+
+
 def horizon_step(dev):
     """T307, T308, T309: from the map, the "Horizon" segment of the map's "Map | Horizon" switch tapped (T309; Settings >
     Navigation and tracking > Horizon view before it, a path the step no longer takes): the Horizon view opens over the map
-    with the square sky plot fixed at the top and, below it, the heading with Close, the layer toggles (Satellites, Peaks,
-    Sun), the plot's orientation and each layer's content, and the switch fixed at the pane's bottom (the frame `horizon`);
-    the area under the heading scrolled once (the frame `horizon-scrolled`: the plot unmoved, the lists below); the
-    view's "Map" segment takes it away. The emulator's fix at Paradise (inside the pushed Rainier pack) gives the view its
-    terrain horizon, the peaks and the sun's path; the satellites' count and the peaks' line are reported
-    (`satellitesLine`, `peaksLine`), never failed, since an emulator's GNSS may report none at first and the first sweep
-    on a just-booted emulator can take minutes."""
+    with the square sky plot at the top (at the left on a phone on its side) and, beside or below it, the heading with
+    Close, the layer toggles (Satellites, Peaks, Sun), the plot's orientation and each layer's content (the frame
+    `horizon`); the area under the heading scrolled once (`horizon-scrolled`: the plot unmoved, the lists below) and then
+    to its end (`horizon-end`); the view's "Map" segment takes it away. T315: the switch stands at one anchor in every
+    view, the window's bottom-left corner: the step asserts that the switch's rectangle on the view is the map's
+    (`switchMapPx`, `switchViewPx`), and that at the end of the scroll no text of the view lies under it (`underSwitch`).
+    The emulator's fix at Paradise (inside the pushed Rainier pack) gives the view its terrain horizon, the peaks and the
+    sun's path; the satellites' count and the peaks' line are reported (`satellitesLine`, `peaksLine`), never failed,
+    since an emulator's GNSS may report none at first and the first sweep on a just-booted emulator can take minutes."""
     t0 = time.time()
     n, nodes, backs = back_until(dev, HORIZON_SEGMENT)
     if not n:
         return {"ok": False, "backs": backs, "error": f"no Horizon segment on the map after {backs} Back (texts: {dev.texts(nodes)[:25]})"}
+    on_map = switch_rects(nodes)
     dev.tap(n)
     n, nodes = dev.wait_for(HORIZON_TOGGLES, 15)
     if not n:
@@ -1855,27 +1880,54 @@ def horizon_step(dev):
     time.sleep(4)  # a few seconds of the GNSS status, the horizon's sweep and the peaks
     nodes = dev.nodes()
     texts = dev.texts(nodes)
+    on_view = switch_rects(nodes)
     png = dev.screencap("horizon")[0]
     toggles = sorted({re.sub(r"^✓ ", "", t) for t in texts if re.match(HORIZON_TOGGLES, t)})
     w, h, _d = screen(dev)
-    # Scroll inside the area under the heading (above the switch at the bottom), never on the plot.
-    dev.shell("input", "swipe", str(w // 2), str(h * 8 // 10), str(w // 2), str(h * 6 // 10), "700")
+    sw = on_map[0] if on_map else (on_view[0] if on_view else None)
+    # Scroll inside the area under the heading, above the switch and right of the plot on a phone on its side.
+    x = (w * 3 // 4) if w > h else (w // 2)
+    y0, y1 = (h * 7 // 10, h * 4 // 10) if w > h else (h * 8 // 10, h * 6 // 10)
+    if sw and y0 > sw[1] - 10:
+        y0 = sw[1] - 10
+    dev.shell("input", "swipe", str(x), str(y0), str(x), str(y1), "700")
     time.sleep(1.5)
     after_nodes = dev.nodes()
     after_texts = dev.texts(after_nodes)
     scrolled = dev.screencap("horizon-scrolled")[0]
-    sats = next((t for t in texts + after_texts if re.search(r"^\d+ used of \d+ in view|^No satellites heard", t)), None)  # the summary's, not the plot's description
-    peaks = next((t for t in texts + after_texts if re.search(r"just out of sight within|^No named peak|^No offline map with peak|^Finding the peaks", t)), None)
-    back = dev.find(MAP_SEGMENT, after_nodes)
+    # T315: to the very end of the scroll (no text changes after a swipe), then nothing of the view under the switch.
+    end_nodes, swipes = after_nodes, 0
+    while swipes < 25:
+        dev.shell("input", "swipe", str(x), str(y0), str(x), str(y1), "300")
+        time.sleep(0.8)
+        swipes += 1
+        nxt = dev.nodes()
+        same = dev.texts(nxt) == dev.texts(end_nodes)
+        end_nodes = nxt
+        if same:
+            break
+    end_png = dev.screencap("horizon-end")[0]
+    under = under_switch(end_nodes, sw) if sw else []
+    end_texts = dev.texts(end_nodes)
+    sats = next((t for t in texts + after_texts + end_texts if re.search(r"^\d+ used of \d+ in view|^No satellites heard", t)), None)  # the summary's, not the plot's description
+    peaks = next((t for t in texts + after_texts + end_texts if re.search(r"just out of sight within|^No named peak|^No offline map with peak|^Finding the peaks", t)), None)
+    back = dev.find(MAP_SEGMENT, end_nodes)
     if back:
         dev.tap(back)
     time.sleep(1)
     after = dev.texts(dev.nodes())
     still = back is None or "Horizon view" in after or any(re.match(HORIZON_TOGGLES, t) for t in after)
-    missing = [x for x in ("Show:", "Sky plot:", "Follow the phone", "North up") if x not in texts + after_texts]
+    missing = [x for x in ("Show:", "Sky plot:", "Follow the phone", "North up") if x not in texts + after_texts + end_texts]
     missing += [x for x in ("Peaks", "Satellites", "Sun") if x not in toggles]
     errors = ([f"missing {missing}"] if missing else []) + (["the Map segment did not close the Horizon view"] if still else [])
-    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled}, "toggles": toggles, "openedBy": "switch", "backs": backs,
+    if len(on_map) != 1:
+        errors.append(f"{len(on_map)} switches on the map")
+    if not on_view or any(r != sw for r in on_view):
+        errors.append(f"the switch on the view {on_view} is not the map's {on_map}")
+    if under:
+        errors.append(f"at the end of the scroll under the switch: {under[:5]}")
+    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled, "end": end_png}, "toggles": toggles, "openedBy": "switch", "backs": backs,
+            "switchMapPx": on_map, "switchViewPx": on_view, "endSwipes": swipes, "underSwitch": under,
             "satellitesLine": sats, "peaksLine": peaks, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
 
 

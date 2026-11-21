@@ -106,8 +106,8 @@ fun FirstRunCard(fallback: String?) {
             }
             return@Box
         }
-        // T106: above the update offer when one shows (it covered the card's lower buttons).
-        val above = io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop
+        // T106: above the update offer when one shows (it covered the card's lower buttons). T315: and above the "Map | Horizon" switch.
+        val above = maxOf(io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.floorDp.dp)
         Column(
             Modifier.align(Alignment.BottomCenter)
                 // T220: at a large font scale the card reaches the top row, which is drawn over it: it stops under the search box.

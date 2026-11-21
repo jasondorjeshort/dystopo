@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-20
+verified: 2026-11-21
 source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T308, T312 with T311's replay); moved from android-app.md in T308
 ---
 
@@ -8,22 +8,37 @@ source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T3
 The map view's counterpart (the owner, 2026-11-19): the sky around the phone on one square plot, with layers turned on
 and off by toggle buttons. Code: `app/horizon/` (the screen, the peaks and the sun, the routes), `app/gnss/` (the
 satellites layer, and the plot itself in `SkyPlot.kt`), `shared/.../horizon/` (the layers, the sun's path, the rim's
-peaks). Debug routes: `android-debug-routes.md` (Horizon view, GPS view). The map's "Map | Horizon"
-switch is T309's (below).
+peaks). Debug routes: `android-debug-routes.md` (Horizon view, GPS view). The "Map | Horizon" switch is T309's, in one
+place in every view since T315 (below).
 
-## The switch (T309)
+## The switch (T309, T315)
 
 The owner, 2026-11-20: "Yeah, I want this as a real button." A two-segment "Map | Horizon" control (`app/controls/ViewSwitch.kt`;
-the survey in `docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md` put it at the bottom): on the map, Map
-selected, in the left lower column over the scale bar's line, an element of the layout rule (`OverlayIds.HORIZON_SWITCH`,
-`horizonSwitch` in `GET /layout`, map chrome's capped font scale, 48 dp tall). It yields after the scale bar and before the
-readout's core entries; hidden, it says why (`yieldOrder`, `noRoom`, and T310's `firstRunCard` while the first-run card is up,
-which covers its place). The route card's cap keeps its height free above
-the card (`BottomPanels.mapRowDp`). On the Horizon view the same control is fixed at the bottom of the content pane (under
-the square in portrait, in the right pane in landscape), Horizon selected, under the scrolling area. "Horizon" opens the
-view, "Map" closes it as Close and Back do. Each segment is a tab (`selectable`, `Role.Tab`), tags `horizonSwitch.map`
-and `horizonSwitch.horizon`. Debug: `POST /horizon/switch?to=map|horizon`. No compass shortcut: MapLibre's compass shows
-only while the map is turned, and its tap resets north. Every map frame of a sweep made before T309 differs by it.
+the survey in `docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md` put it at the bottom). T315, the owner: the
+toggle "in the same place in every view". One anchor, defined in `ViewSwitch.kt`: the window's bottom-left corner, 8 dp in
+from the left inset and 8 dp up from the bottom inset (the system bars and the display cutout), each segment at least 48 dp
+tall, its text at map chrome's capped font scale (`MapChrome`), the segments in the order `ViewSwitch.SEGMENTS` (a third,
+the Panorama view, goes at the end; the anchor grows to the right). The same rectangle on the map (Map selected) and on the
+Horizon view (Horizon selected), whatever cards are up, in both orientations and at every font scale.
+
+- **On the map** the switch is not on the layout rule's ladder and never hides: the rule reserves its rectangle in its
+  frame (`OverlayLayout.switchRect`, `horizonSwitch` in `GET /layout`), the credit line stands beside it at its right, and
+  the scale bar, the readout strip and the position buttons stand above it. The cards and panels drawn by their own code
+  (the route card, the trip card, the update offer, the flights card, the track panels, the first-run card) stand on
+  `AttributionInsets.bottom`, the higher of the credit line and the switch (`ViewSwitch.floorDp`). T309's ladder rung and
+  T310's `firstRunCard` hiding are gone; so is the switch's height in the route card's cap (`BottomPanels.mapRowDp`), which
+  hid it at font scale 2.0 when the route was planned before the font was raised.
+- **On the Horizon view** the same anchored control is drawn over the content. In portrait the scroll area runs under it
+  and ends with the switch's height and 8 dp more of room, so the last row clears it at the end of the scroll; in landscape
+  the square plot ends 8 dp above it (its side is the height less that room) and the right pane is clear of it. A flight's
+  card in portrait stands above it. `GET /horizon` `drawn`: `switchPx` (in the Compose root, as `GET /layout`'s), and
+  `paneOverSwitch`, `switchRoomDp`.
+
+"Horizon" opens the view, "Map" closes it as Close and Back do. Each segment is a tab (`selectable`, `Role.Tab`), tags
+`horizonSwitch.map` and `horizonSwitch.horizon`; the group's label "Map or horizon view". Debug: `POST /horizon/switch?to=map|horizon`
+answers both rectangles (`map`, `view`). No compass shortcut: MapLibre's compass shows only while the map is turned, and its
+tap resets north. Every map frame of a sweep made before T315 differs by it (the switch, the credit line and every lower
+control moved).
 
 ## The screen (T308)
 
@@ -81,7 +96,10 @@ it at …" with any gaps behind a peak, the hours of sun, and the flat horizon's
 sunrise and sunset to the millisecond (`sunsetDifferenceMs` 0). Over the flat horizon while there is no profile.
 
 The sweep opens the view in `android-ui.py features` (step `horizon`, by the map's switch since T309, the view's Map
-segment closing it; frames `horizon` and `horizon-scrolled`; `gps` and `gps-plot` before T308) and `android-a11y.py` (screen `horizon`, `gps` before T308).
+segment closing it; frames `horizon`, `horizon-scrolled` and, T315, `horizon-end` at the end of the scroll; `gps` and
+`gps-plot` before T308; T315: it fails unless the switch's rectangle on the view is the map's, `switchMapPx` and
+`switchViewPx`, and nothing of the view lies under it at the end of the scroll, `underSwitch`) and `android-a11y.py`
+(screen `horizon`, `gps` before T308).
 
 ## Flights (T312)
 

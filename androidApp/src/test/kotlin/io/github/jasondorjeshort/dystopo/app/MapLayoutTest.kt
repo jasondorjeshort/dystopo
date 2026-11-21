@@ -504,100 +504,101 @@ class MapLayoutTest {
     }
 
     /**
-     * T309: the "Map | Horizon" switch through the live placer (`place` with the cards drawn): upright 411 x 914 at font scale
-     * 1.0 and 2.0, with and without a route card and a warning, shown over the scale bar's line at the left with nothing
-     * overlapping; on its side 914 x 411 with a route card, shown or hidden with its named reason.
+     * T315: the "Map | Horizon" switch at its anchor through the live placer (`place` with the cards drawn by their own
+     * code): the bottom-left corner, [io.github.jasondorjeshort.dystopo.ui.OverlayLayout.SWITCH_EDGE] in from the left inset
+     * and up from the bottom inset, the same rectangle for every set of cards up (the flights card, the route card, the
+     * warning, the readout, the first-run card), upright 411 x 914 and on its side 914 x 411, at font scale 1.0 and 2.0,
+     * nothing overlapping. The cards stand where the app draws them: on the higher of the credit line and the switch
+     * (`AttributionInsets.bottom`, `ViewSwitch.floorDp`), the flights card drawn over a route card; the first-run card, which
+     * the rule does not place, 8 dp over the switch (`FirstRunCard.kt`).
      */
     @Test
-    fun theHorizonSwitchStandsOverTheScaleBarsLine() {
-        fun input(w: Float, h: Float, scale: Float, routeCard: Boolean, warning: Boolean): io.github.jasondorjeshort.dystopo.ui.OverlayInput {
-            val landscape = w > h
+    fun theHorizonSwitchKeepsItsAnchorWithEveryCard() {
+        val ui = io.github.jasondorjeshort.dystopo.ui.OverlayLayout
+        fun size(w: Float, h: Float) = io.github.jasondorjeshort.dystopo.ui.OverlaySize(w, h)
+        fun rect(l: Float, t: Float, r: Float, b: Float) = io.github.jasondorjeshort.dystopo.ui.OverlayRect(l, t, r, b)
+        for (scale in listOf(1f, 2f)) for (landscape in listOf(false, true)) for (cards in 0 until 32) {
+            val routeCard = cards and 1 != 0
+            val warning = cards and 2 != 0
+            val flights = cards and 4 != 0
+            val readout = cards and 8 != 0
+            val firstRun = cards and 16 != 0
             val k = if (scale > 1f) 1.3f else 1f // map chrome's capped font scale (the chips, the switch)
             val t = if (scale > 1f) 1.75f else 1f // the cards' and the strip's curve
-            val ins = if (landscape) floatArrayOf(0f, 24f, 48f, 0f) else floatArrayOf(0f, 49f, 0f, 24f)
-            val creditH = 30f * t
-            val creditTop = h - ins[3] - 6f - creditH
-            val cardH = if (landscape) 230f else 220f * t
+            val (w, h) = if (landscape) 914.3f to 411.4f else 411.4f to 914.3f
+            val ins = if (landscape) floatArrayOf(48f, 24f, 0f, 24f) else floatArrayOf(0f, 48.8f, 0f, 24f)
+            val sw = size(158f * k, 48f)
+            val anchor = ui.switchRect(w, h, ins[0], ins[3], sw)
+            val creditH = if (landscape) 18f * t else 30f * t
+            val floor = minOf(h - ins[3] - 6f - creditH, anchor.top) // what the app's bottom cards stand on
             val cardW = if (landscape) 420f else w - 16f
-            return io.github.jasondorjeshort.dystopo.ui.OverlayInput(
-                windowWidth = w, windowHeight = h, insetLeft = ins[0], insetTop = ins[1], insetRight = ins[2], insetBottom = ins[3], fontScale = scale,
-                search = io.github.jasondorjeshort.dystopo.ui.OverlaySize(io.github.jasondorjeshort.dystopo.ui.OverlayLayout.SEARCH_WIDTH, 48f * k), topRow = io.github.jasondorjeshort.dystopo.ui.OverlaySize(190f * k, 40f * k), credit = io.github.jasondorjeshort.dystopo.ui.OverlaySize(380f, creditH),
-                trackBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(160f * k, 40f * k), routes = io.github.jasondorjeshort.dystopo.ui.OverlaySize(70f * k, 36f * k), activity = io.github.jasondorjeshort.dystopo.ui.OverlaySize(78f * k, 36f * k),
-                horizonSwitch = io.github.jasondorjeshort.dystopo.ui.OverlaySize(150f * k, 48f),
-                scaleBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(80f, 28f * t), strip = List(4) { io.github.jasondorjeshort.dystopo.ui.OverlaySize(64f * t, 40f * t) }, stripCore = 4, buttons = 2,
-                planning = if (routeCard) io.github.jasondorjeshort.dystopo.ui.OverlayCard(cardH, cardH * 0.6f, 44f * t, cardW, drawn = io.github.jasondorjeshort.dystopo.ui.OverlayRect(8f, creditTop - 6f - cardH, 8f + cardW, creditTop - 6f)) else null,
-                warning = if (warning) io.github.jasondorjeshort.dystopo.ui.OverlayCard(120f * t, 100f * t, 80f * t, 395f, drawn = io.github.jasondorjeshort.dystopo.ui.OverlayRect(8f, ins[1] + 220f * k, 403f, ins[1] + 220f * k + 120f * t)) else null,
-                cardsDrawn = true,
-            )
-        }
-        for (scale in listOf(1f, 2f)) for (routeCard in listOf(false, true)) for (warning in listOf(false, true)) {
-            // At 2.0 the route card is the one measured on the emulator below (its cap keeps the switch's line free).
-            if (scale > 1f && routeCard) continue
-            val at = "portrait scale=$scale routeCard=$routeCard warning=$warning"
-            val p = io.github.jasondorjeshort.dystopo.ui.OverlayLayout.place(input(411f, 914f, scale, routeCard, warning))
-            assertTrue(p.overlaps().isEmpty(), "$at: ${p.overlaps()}")
-            val sw = p[OverlayIds.HORIZON_SWITCH]?.rect
-            assertTrue(sw != null, "$at: the switch is shown (${p[OverlayIds.HORIZON_SWITCH]?.reason})")
-            assertTrue(sw.left < 20f, "$at: $sw at the left")
-            for (id in listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP)) p[id]?.rect?.let { r -> assertTrue(sw.bottom <= r.top, "$at: $sw over $id $r") }
-            p[OverlayIds.PLANNING_CARD]?.rect?.let { r -> assertTrue(sw.bottom <= r.top, "$at: $sw over the route card $r") }
-        }
-        // Upright at 2.0 with the route card as `GET /layout` read it on a Pixel 6 AVD at Paradise (T309, dp): the card's cap
-        // (`BottomPanels.mapRowDp`, the switch's 48 dp and gap in it) leaves the switch over the strip and the scale bar.
-        run {
+            val routeH = if (landscape) 150f else 220f * t
+            val route = if (routeCard) rect(8f + ins[0], floor - 6f - routeH, 8f + ins[0] + cardW, floor - 6f) else null
+            val flightsBottom = floor - 4f // `aircraft/AircraftCard.kt`: on the same floor, over a route card when both are up
+            // The warning under the chips upright, under Search and the online column on its side (the chips then stand in their own column);
+            // it stops over the same floor (`readout/PressureCard.kt`).
+            val warnTop = ins[1] + (if (landscape) 110f else 220f) * k
+            val flightsH = 110f * t // T316's extra line makes it taller; any height stands on the same floor
             val o = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
-                windowWidth = 411.4f, windowHeight = 914.3f, insetTop = 48.8f, insetBottom = 24f, fontScale = 2f,
-                search = io.github.jasondorjeshort.dystopo.ui.OverlaySize(io.github.jasondorjeshort.dystopo.ui.OverlayLayout.SEARCH_WIDTH, 63.2f),
-                topRow = io.github.jasondorjeshort.dystopo.ui.OverlaySize(236.6f, 38.1f), credit = io.github.jasondorjeshort.dystopo.ui.OverlaySize(399.2f, 55.6f),
-                online = io.github.jasondorjeshort.dystopo.ui.OverlaySize(200.4f, 32.4f), trackBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(106.7f, 82.3f),
-                routes = io.github.jasondorjeshort.dystopo.ui.OverlaySize(86.9f, 38.1f), horizonSwitch = io.github.jasondorjeshort.dystopo.ui.OverlaySize(170.7f, 48f),
-                scaleBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(79.6f, 41.9f), strip = List(3) { io.github.jasondorjeshort.dystopo.ui.OverlaySize(130f, 66.4f) }, stripCore = 2, buttons = 1,
-                planning = io.github.jasondorjeshort.dystopo.ui.OverlayCard(600f, 140f, 44f, 395.4f, drawn = io.github.jasondorjeshort.dystopo.ui.OverlayRect(8f, 342f, 403.4f, 822.5f)),
+                windowWidth = w, windowHeight = h, insetLeft = ins[0], insetTop = ins[1], insetRight = ins[2], insetBottom = ins[3], fontScale = scale,
+                search = size(ui.SEARCH_WIDTH, 48f * k), topRow = size(190f * k, 40f * k), credit = size(380f, creditH),
+                online = size(180f, 32f * k), trackBar = size(160f * k, 40f * k), routes = size(70f * k, 36f * k), activity = size(78f * k, 36f * k),
+                horizonSwitch = sw,
+                scaleBar = size(80f, 28f * t), strip = if (readout) List(4) { size(64f * t, 40f * t) } else emptyList(), stripCore = 3, buttons = 2,
+                planning = route?.let { io.github.jasondorjeshort.dystopo.ui.OverlayCard(routeH, routeH * 0.6f, 44f * t, cardW, drawn = it) },
+                warning = if (warning) io.github.jasondorjeshort.dystopo.ui.OverlayCard(120f * t, 100f * t, 80f * t, 395f, drawn = rect(8f + ins[0], warnTop, 403f + ins[0], minOf(warnTop + 120f * t, floor - 6f))) else null,
+                update = if (flights) io.github.jasondorjeshort.dystopo.ui.OverlayCard(flightsH, flightsH, flightsH, cardW, drawn = rect(8f + ins[0], flightsBottom - flightsH, 8f + ins[0] + cardW, flightsBottom)) else null,
                 cardsDrawn = true,
             )
-            val p = io.github.jasondorjeshort.dystopo.ui.OverlayLayout.place(o)
-            assertTrue(p.overlaps().isEmpty(), "measured portrait 2.0 with a route card: ${p.overlaps()}")
-            val sw = p[OverlayIds.HORIZON_SWITCH]?.rect
-            assertTrue(sw != null && sw.bottom <= 342f, "measured portrait 2.0 with a route card: the switch over the card: $sw ${p[OverlayIds.HORIZON_SWITCH]?.reason}")
-        }
-        for (scale in listOf(1f, 2f)) {
-            val p = io.github.jasondorjeshort.dystopo.ui.OverlayLayout.place(input(914f, 411f, scale, true, false))
-            assertTrue(p.overlaps().isEmpty(), "landscape $scale: ${p.overlaps()}")
+            val at = "landscape=$landscape scale=$scale routeCard=$routeCard warning=$warning flights=$flights readout=$readout firstRun=$firstRun"
+            val p = ui.place(o)
+            assertTrue(p.overlaps().filterNot { (a, b) -> a in CARD_IDS && b in CARD_IDS }.isEmpty(), "$at: ${p.overlaps()}")
             val e = p[OverlayIds.HORIZON_SWITCH]!!
-            assertTrue(e.rect != null || e.reason in setOf(io.github.jasondorjeshort.dystopo.ui.OverlayLayout.REASON_ORDER, io.github.jasondorjeshort.dystopo.ui.OverlayLayout.REASON_NO_ROOM),
-                "landscape $scale: shown or hidden with a named reason: ${e.reason}")
+            assertEquals(OverlayState.SHOWN, e.state, "$at: $e")
+            assertEquals(anchor, e.rect, "$at: the same rectangle with every set of cards")
+            assertEquals(ins[0] + 8f, anchor.left, at)
+            assertEquals(h - ins[3] - 8f, anchor.bottom, at)
+            for (id in listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.PLANNING_CARD, OverlayIds.UPDATE_CARD)) {
+                p[id]?.rect?.let { r -> assertTrue(r.bottom <= anchor.top, "$at: $id $r above the switch $anchor") }
+            }
+            assertTrue(p[OverlayIds.CREDIT]!!.rect!!.left >= anchor.right, "$at: the credit line beside the switch")
+            if (firstRun) {
+                val card = rect(12f + ins[0], ins[1] + 64f * k, minOf(w - 12f, 472f + ins[0]), h - (h - anchor.top) - 8f)
+                assertFalse(card.intersects(anchor), "$at: the first-run card $card over the switch $anchor")
+            }
         }
     }
 
     /**
-     * T310: the first-run card up (the sweep's a11y screen `first-run`, a Pixel 6 AVD at font 1.0, where the switch lay at
-     * about 8..157 x 735..783 dp under the card): the switch hidden with its named reason, nothing overlapping, upright and
-     * on its side at font scale 1.0 and 2.0; the card gone, the switch back.
+     * T315 (T309's follow-up: the switch hid at font 2.0 with a route card planned before the font was raised): the route
+     * card drawn where it stood at font 1.0, the font raised to 2.0 with the latch of 1.0 and then without it: the switch is
+     * shown at its anchor, nothing overlapping.
      */
     @Test
-    fun theHorizonSwitchHidesUnderTheFirstRunCard() {
+    fun aRouteCardPlannedBeforeTheFontWasRaisedLeavesTheSwitchShown() {
         val ui = io.github.jasondorjeshort.dystopo.ui.OverlayLayout
-        for (scale in listOf(1f, 2f)) for (landscape in listOf(false, true)) {
-            val k = if (scale > 1f) 1.3f else 1f
-            val t = if (scale > 1f) 1.75f else 1f
-            val (w, h) = if (landscape) 914.3f to 411.4f else 411.4f to 914.3f
-            val o = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
-                windowWidth = w, windowHeight = h, insetTop = if (landscape) 24f else 48.8f, insetRight = if (landscape) 48f else 0f, insetBottom = if (landscape) 0f else 24f, fontScale = scale,
-                search = io.github.jasondorjeshort.dystopo.ui.OverlaySize(ui.SEARCH_WIDTH, 48f * k), topRow = io.github.jasondorjeshort.dystopo.ui.OverlaySize(190f * k, 40f * k),
-                credit = io.github.jasondorjeshort.dystopo.ui.OverlaySize(380f, 30f * t), online = io.github.jasondorjeshort.dystopo.ui.OverlaySize(180f, 32f * k),
-                trackBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(160f * k, 40f * k), routes = io.github.jasondorjeshort.dystopo.ui.OverlaySize(70f * k, 36f * k), activity = io.github.jasondorjeshort.dystopo.ui.OverlaySize(78f * k, 36f * k),
-                horizonSwitch = io.github.jasondorjeshort.dystopo.ui.OverlaySize(149f * k, 48f),
-                scaleBar = io.github.jasondorjeshort.dystopo.ui.OverlaySize(80f, 28f * t), strip = List(3) { io.github.jasondorjeshort.dystopo.ui.OverlaySize(70f * t, 38f * t) }, stripCore = 2, buttons = 1,
-                cardsDrawn = true, firstRunCard = true,
-            )
-            val at = "landscape=$landscape scale=$scale"
-            val p = ui.place(o)
-            assertTrue(p.overlaps().isEmpty(), "$at: ${p.overlaps()}")
+        fun size(w: Float, h: Float) = io.github.jasondorjeshort.dystopo.ui.OverlaySize(w, h)
+        val sw = size(170.7f, 48f)
+        val anchor = ui.switchRect(411.4f, 914.3f, 0f, 24f, sw)
+        val at1 = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
+            windowWidth = 411.4f, windowHeight = 914.3f, insetTop = 48.8f, insetBottom = 24f, fontScale = 1f,
+            search = size(ui.SEARCH_WIDTH, 48f), topRow = size(190f, 40f), credit = size(220f, 30f),
+            online = size(160f, 32f), trackBar = size(106.7f, 40f), routes = size(70f, 36f), horizonSwitch = sw,
+            scaleBar = size(79.6f, 28f), strip = List(3) { size(70f, 40f) }, stripCore = 2, buttons = 1,
+            planning = io.github.jasondorjeshort.dystopo.ui.OverlayCard(420f, 140f, 44f, 395.4f, drawn = io.github.jasondorjeshort.dystopo.ui.OverlayRect(8f, anchor.top - 6f - 420f, 403.4f, anchor.top - 6f)),
+            cardsDrawn = true,
+        )
+        val first = ui.place(at1)
+        val raised = at1.copy(fontScale = 2f, search = size(ui.SEARCH_WIDTH, 63.2f), topRow = size(236.6f, 38.1f), credit = size(220f, 55.6f), trackBar = size(106.7f, 82.3f),
+            scaleBar = size(79.6f, 41.9f), strip = List(3) { size(130f, 66.4f) })
+        for (p in listOf(ui.place(raised, first.latch), ui.place(raised))) {
+            assertTrue(p.overlaps().isEmpty(), "${p.overlaps()}")
             val e = p[OverlayIds.HORIZON_SWITCH]!!
-            assertTrue(e.rect == null && e.reason == ui.REASON_FIRST_RUN, "$at: hidden as firstRunCard: $e")
-            val back = ui.place(o.copy(firstRunCard = false))[OverlayIds.HORIZON_SWITCH]!!
-            assertTrue(back.reason != ui.REASON_FIRST_RUN, "$at: the card gone, the switch is the ladder's again: $back")
-            if (!landscape) assertTrue(back.rect != null, "$at: upright the switch is back: $back")
+            assertEquals(anchor, e.rect, "shown at its anchor: $e")
         }
+    }
+
+    private companion object {
+        val CARD_IDS = setOf(OverlayIds.NAV_CARD, OverlayIds.WARNING_CARD, OverlayIds.PLANNING_CARD, OverlayIds.TRIP_CARD, OverlayIds.UPDATE_CARD)
     }
 }

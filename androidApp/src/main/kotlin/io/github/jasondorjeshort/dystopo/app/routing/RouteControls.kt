@@ -132,8 +132,8 @@ object BottomPanels {
         val strip = if (!io.github.jasondorjeshort.dystopo.app.AppSettings.readoutBar) 0.dp
         else if (measuredStrip > 0) 6.dp + measuredStrip.toDp()
         else 6.dp + 6.dp + (10.sp.toDp() + (if (both) 11.sp.toDp() else 0.dp)) * LINE + 15.sp.toDp() * VALUE_LINE
-        // T309: and the "Map | Horizon" switch over the line (its fixed height at map chrome's capped font scale) with its gap.
-        6.dp + bar + strip + io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.HEIGHT_DP.dp + 6.dp + 8.dp
+        // T315: no longer the "Map | Horizon" switch (T309 put it over the line): it stands at its anchor under the card.
+        6.dp + bar + strip + 8.dp
     }
 
     /** T212: a text line's height for its size (the platform font's ascent and descent, rounded up). */
