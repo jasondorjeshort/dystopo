@@ -32,7 +32,6 @@ Plan: one placement rule for the switch, shared by the map and the Horizon view:
 in `ViewSwitch.kt` (the same alignment, insets from the window's system-bar insets and the same size), with
 `OverlayLayout.kt` reserving that rectangle on the map (the other lower controls stack above it) and `HorizonScreen.kt`
 using the same anchor instead of a pane-fixed copy. The scroll area of the Horizon view is padded by the switch's
-measured height (this also closes `2026-11-20-the-last-peak-row-under-the-switch.md`'s question). Debug: `GET /horizon`
-and `GET /overlays` report the switch's bounds in each view; `tools/android-ui.py`'s horizon step asserts the two
+measured height (this also closes `2026-11-20-the-last-peak-row-under-the-switch.md`'s question). Debug: `POST /horizon/switch` already answers the switch's place in both views (`map` and `view`), and `GET /layout` reads the map's; `tools/android-ui.py`'s horizon step asserts the two
 rectangles are identical in portrait and landscape at font 1.0 and 2.0, with frames of both. Unit test on the layout
 rule (the switch's rectangle is the same for every set of visible cards). New view placement in the report (ADR 0031).
