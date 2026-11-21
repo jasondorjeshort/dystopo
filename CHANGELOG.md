@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-21
 
+- T316: Flight refresh of 2 and 3 minutes, and height above the ground on the card
 - T315: The Map | Horizon switch in the same place in every view
 
 ## v0.1.38-alpha (2026-11-21)
