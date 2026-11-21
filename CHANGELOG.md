@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-21
 
+- T322: The Panorama view, pass one: names placed through a projection, the lens view, and devtool `panorama`
 - T319: The sweep's two checks: screen names against its frames, and the a11y baseline matched by label
 
 ## v0.1.39-alpha (2026-11-21)
