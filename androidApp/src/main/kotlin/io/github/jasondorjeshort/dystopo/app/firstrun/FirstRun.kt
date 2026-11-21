@@ -220,6 +220,8 @@ object FirstRun {
             "noPack" to noPack(app),
             "dismissed" to dismissed,
             "cardVisible" to FirstRunCardState.visible, "cardYieldedTo" to FirstRunCardState.yieldedTo, // T106
+            // T320: how far the card's body scrolls in the room the layout rule gives it, and whether its links scroll with it.
+            "cardScrollMaxPx" to FirstRunCardState.scrollMaxPx(), "cardAllScroll" to FirstRunCardState.allScroll,
             // T220: what the card draws, in its order: the state's sentence, the choices, the primary one, the way back.
             "body" to firstRunBody(AppSettings.server, online.isDirect, if (online.isDirect) online.direct.notice() else null),
             "choices" to choices.map { it.toMap() },
@@ -284,4 +286,24 @@ internal object FirstRunCardState {
     @Volatile var visible = false
     /** T106: why the card is not shown although it would be (`bottomCards`: a trip, a route or navigation owns the bottom). */
     @Volatile var yieldedTo: String? = null
+
+    /**
+     * T320: the card's scrolling body as last measured (its height on screen, px) and its scroll state, for the layout
+     * rule's input (`MapLayout`): the card's whole height is its height and what the body scrolls, its fixed part its height
+     * less the body. Main thread.
+     */
+    var bodyPx = 0
+    var scroll: androidx.compose.foundation.ScrollState? = null
+
+    /**
+     * T320: the card's fixed part (all but the scrolling body, px) as last measured with the links outside the scroll; the
+     * rule's least is it and two lines. Kept while [allScroll], which measures no fixed part, so the choice cannot flip back.
+     */
+    var fixedPx = 0
+
+    /** T320: the rule gave the card less than its least, so the links scroll with the choices (Compose state; set by `MapLayout`). */
+    var allScroll by androidx.compose.runtime.mutableStateOf(false)
+
+    /** T320: how far the card's body scrolls, px (0 while it shows whole or is not up). */
+    fun scrollMaxPx(): Int = scroll?.maxValue?.takeIf { it != Int.MAX_VALUE } ?: 0
 }

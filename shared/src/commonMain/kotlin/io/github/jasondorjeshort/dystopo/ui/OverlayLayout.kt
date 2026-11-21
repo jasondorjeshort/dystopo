@@ -85,6 +85,13 @@ data class OverlayInput(
     val planning: OverlayCard? = null,
     val trip: OverlayCard? = null,
     val update: OverlayCard? = null,
+    /**
+     * T320: the first-run card (no map on the phone yet; `app/firstrun/FirstRunCard.kt`), a bottom card like the update
+     * offer's slot. Unlike the other cards it is placed by the rule even while [cardsDrawn] (it comes without
+     * [OverlayCard.drawn]): under the whole top block, above the frame's bottom, the lower columns standing on it, its
+     * body scrolling in the room left ([OverlayLayout]). With [OverlayCard.drawn] it stays where it is drawn, as the others.
+     */
+    val firstRun: OverlayCard? = null,
     val trackPanel: Float = 0f,
     val panels: OverlayRect? = null,
     val cardsDrawn: Boolean = false,
@@ -160,6 +167,9 @@ object OverlayIds {
     /** T311: the Flights layer's card (a tapped aircraft); added after the inventory, so it keeps a name of its own. */
     const val AIRCRAFT_CARD = "aircraftCard"
 
+    /** T320: the first-run card (no map yet); it has no M-number and keeps the name `GET /layout` gave it since T241. */
+    const val FIRST_RUN_CARD = "firstRunCard"
+
     /** The inventory's rows each element holds, and the name `GET /layout` prints beside the id. */
     val CONTROLS: Map<String, List<String>> = mapOf(
         SETTINGS_ROW to listOf("M1", "M2"), SEARCH to (3..7).map { "M$it" }, ONLINE to (8..10).map { "M$it" },
@@ -176,6 +186,7 @@ object OverlayIds {
         ACTIVITY to "activityChip", // T263
         HORIZON_SWITCH to "horizonSwitch", // T309
         AIRCRAFT_CARD to "aircraftCard", // T311
+        FIRST_RUN_CARD to "firstRunCard", // T320
     )
 }
 
@@ -209,6 +220,9 @@ object OverlayIds {
  * under the navigation card where it reaches their column, the warning follows the chips as it does in the app, the two
  * lower columns stand on the highest drawn card, panel or credit line below them, and the room left between is what the
  * fits and the ladder count. [place] holds [OverlayLatch]'s two choices.
+ *
+ * T320: the first-run card is the one card the rule places in Layout B too ([OverlayInput.firstRun], [arrangeFirstRun]):
+ * a bottom card under the whole top block, the lower columns on it, shrinking toward its least before the ladder walks.
  */
 object OverlayLayout {
     const val COMPACT_HEIGHT = 480f
@@ -234,6 +248,10 @@ object OverlayLayout {
     private const val WARNING_WIDTH = 420f
     private const val PLANNING_WIDTH = 420f
     private const val TRIP_WIDTH = 440f
+
+    /** T320: the first-run card's widest, and its margin from the column's edges (the card's own, since T79). */
+    const val FIRST_RUN_WIDTH = 460f
+    const val FIRST_RUN_EDGE = 12f
     private const val NO_FIT = 1e9f
 
     const val REASON_NO_ROOM = "noRoom"
@@ -281,14 +299,14 @@ object OverlayLayout {
     /** T239: the cards an input has up, by id (the latch's key). */
     fun cardIds(i: OverlayInput): Set<String> = listOfNotNull(
         i.navigation?.let { OverlayIds.NAV_CARD }, i.warning?.let { OverlayIds.WARNING_CARD }, i.planning?.let { OverlayIds.PLANNING_CARD },
-        i.trip?.let { OverlayIds.TRIP_CARD }, i.update?.let { OverlayIds.UPDATE_CARD },
+        i.trip?.let { OverlayIds.TRIP_CARD }, i.update?.let { OverlayIds.UPDATE_CARD }, i.firstRun?.let { OverlayIds.FIRST_RUN_CARD },
     ).toSet()
 
     /** The placement of [i]; T239: with [latch]'s choices while it [OverlayLatch.holds], and the latch it used in the answer. */
     fun place(i: OverlayInput, latch: OverlayLatch? = null): OverlayPlacement {
         val held = latch?.takeIf { it.holds(i) }
         val rungs = rungs(i)
-        val p = if (i.cardsDrawn) arrangeDrawn(i, rungs, held)
+        val p = if (i.cardsDrawn) (if (i.firstRun != null && i.firstRun.drawn == null) arrangeFirstRun(i, rungs, held) else arrangeDrawn(i, rungs, held))
         else rungs.firstNotNullOfOrNull { arrange(i, it, squeeze = false, held) } ?: arrange(i, rungs.last(), squeeze = true, held)!!
         return p.copy(latch = held ?: OverlayLatch(i.windowWidth, i.windowHeight, i.fontScale, cardIds(i), p.sideColumn, p.cardColumns))
     }
@@ -358,7 +376,7 @@ object OverlayLayout {
 
     private fun grow(cards: List<CardIn>, room: Float) {
         var extra = (room - stack(cards) { it.height }).coerceAtLeast(0f)
-        for (id in listOf(OverlayIds.WARNING_CARD, OverlayIds.NAV_CARD, OverlayIds.PLANNING_CARD, OverlayIds.TRIP_CARD, OverlayIds.UPDATE_CARD)) {
+        for (id in listOf(OverlayIds.WARNING_CARD, OverlayIds.NAV_CARD, OverlayIds.PLANNING_CARD, OverlayIds.TRIP_CARD, OverlayIds.UPDATE_CARD, OverlayIds.FIRST_RUN_CARD)) {
             val c = cards.firstOrNull { it.id == id } ?: continue
             val more = min(extra, c.card.natural - c.height).coerceAtLeast(0f)
             c.height += more
@@ -419,12 +437,13 @@ object OverlayLayout {
             if (i.navigation == null) i.planning?.let { out2 += CardIn(OverlayIds.PLANNING_CARD, it.at(widthOf(PLANNING_WIDTH)), false) }
             i.trip?.let { out2 += CardIn(OverlayIds.TRIP_CARD, it.at(widthOf(TRIP_WIDTH)), false) }
             i.update?.let { out2 += CardIn(OverlayIds.UPDATE_CARD, it.at(widthOf(TRIP_WIDTH)), false) }
+            i.firstRun?.let { out2 += CardIn(OverlayIds.FIRST_RUN_CARD, it.at(widthOf(FIRST_RUN_WIDTH)), false) } // T320: at the bottom, last
             return out2
         }
         if (i.navigation != null && i.planning != null) hidden(OverlayIds.PLANNING_CARD, REASON_NAVIGATING)
         // A window on its side: a column of its own at the right for the chips and the buttons, and the cards in the rest,
         // side by side when one stack does not hold their least. Headlines that still do not fit take the chips' width too.
-        val chipsW = max(max(i.trackBar?.width ?: 0f, max(i.routes?.width ?: 0f, i.activity?.width ?: 0f)), max(i.compass?.width ?: 0f, COLUMN - EDGE)) + EDGE
+        val chipsW = chipsWidth(i)
         val side = held?.sideColumn ?: (i.windowHeight < COMPACT_HEIGHT && safeR - safeL - chipsW >= MIN_MAIN)
         val heldTwo = held?.let { it.cardColumns == 2 } // T239: the latch
         fun twoColumns(all: List<CardIn>, roomW: Float) = side && all.size >= 2 && stack(all) { it.card.least } > bodyH && roomW >= MIN_CARD_COLUMN * 2 + GAP
@@ -595,6 +614,7 @@ object OverlayLayout {
         val cards = listOfNotNull(
             i.navigation?.let { OverlayIds.NAV_CARD to it }, i.warning?.let { OverlayIds.WARNING_CARD to it },
             i.planning?.let { OverlayIds.PLANNING_CARD to it }, i.trip?.let { OverlayIds.TRIP_CARD to it }, i.update?.let { OverlayIds.UPDATE_CARD to it },
+            i.firstRun?.let { OverlayIds.FIRST_RUN_CARD to it }, // T320: where the rule put it ([arrangeFirstRun])
         ).filter { it.second.drawn != null }
         for ((id, c) in cards) {
             val r = c.drawn!!
@@ -609,7 +629,7 @@ object OverlayLayout {
         val warning = cards.firstOrNull { it.first == OverlayIds.WARNING_CARD }?.second?.drawn
         val below = cards.filter { it.first != OverlayIds.NAV_CARD && it.first != OverlayIds.WARNING_CARD }.map { it.second.drawn!! } + listOfNotNull(i.panels)
 
-        val chipsW = max(max(i.trackBar?.width ?: 0f, max(i.routes?.width ?: 0f, i.activity?.width ?: 0f)), max(i.compass?.width ?: 0f, COLUMN - EDGE)) + EDGE
+        val chipsW = chipsWidth(i)
         val side = held?.sideColumn ?: (i.windowHeight < COMPACT_HEIGHT && safeR - safeL - chipsW >= MIN_MAIN)
         val columnLeft = safeR - chipsW
         fun crossesRight(r: OverlayRect) = r.right > columnLeft && r.left < safeR
@@ -743,5 +763,79 @@ object OverlayLayout {
         }
         if (i.strip.isNotEmpty() && ln.strip == null) hidden(OverlayIds.STRIP, leftWhy)
         return OverlayPlacement(out, buttons, entries, side, 1, trackRoom = trackRoom, stripRoom = if (entries > 0) ln.stripWidth else 0f)
+    }
+
+    /** The chips' column's width (on a phone on its side, the column of its own at the right). */
+    private fun chipsWidth(i: OverlayInput): Float =
+        max(max(i.trackBar?.width ?: 0f, max(i.routes?.width ?: 0f, i.activity?.width ?: 0f)), max(i.compass?.width ?: 0f, COLUMN - EDGE)) + EDGE
+
+    /** T320: the top block: the first-run card stands under the lowest of these across its span. */
+    private val TOP_BLOCK = setOf(
+        OverlayIds.SEARCH, OverlayIds.SETTINGS_ROW, OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY,
+        OverlayIds.COMPASS, OverlayIds.NAV_CARD, OverlayIds.WARNING_CARD,
+    )
+
+    /** T320: what the chips' fits and the ladder may take for a card: the elements hidden and the readout's entries left out. */
+    private val TAKEN = setOf(
+        OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY, OverlayIds.COMPASS,
+        OverlayIds.LOCK, OverlayIds.ORIENTATION, OverlayIds.POSITION, OverlayIds.SCALE_BAR, OverlayIds.STRIP,
+    )
+
+    private fun taken(i: OverlayInput, p: OverlayPlacement): Int =
+        p.elements.count { it.id in TAKEN && it.rect == null } + (i.strip.size - p.entriesDrawn).coerceAtLeast(0)
+
+    /**
+     * T320: [arrangeDrawn] with the first-run card placed by the rule ([OverlayInput.firstRun] up and not drawn). The card
+     * is a bottom card of the column it stands in (the window upright; on a phone on its side the main column, beside the
+     * chips' own), [FIRST_RUN_WIDTH] at most and centred [FIRST_RUN_EDGE] in from the column's edges; its top no higher than
+     * the bottom of the top block across its span (Search, the settings row, the online column, the chips, a navigation or
+     * warning card, as placed without it), its bottom on the frame's (above the switch and the credit line) or on a drawn
+     * bottom card or track panel. The lower columns stand on it as they stand on any drawn card, so its height is the yield
+     * order's: it shrinks toward its least (its body scrolls) before the chips' fits or the ladder take anything, and from
+     * there it grows only while that takes nothing more; what the room still cannot hold is hidden by the ladder with its
+     * reason. Not even a sliver of room: the card is hidden ([REASON_NO_ROOM]).
+     */
+    private fun arrangeFirstRun(i: OverlayInput, rungs: List<Rung>, held: OverlayLatch?): OverlayPlacement {
+        val card = i.firstRun!!
+        val without = arrangeDrawn(i.copy(firstRun = null), rungs, held)
+        val safeL = i.insetLeft
+        val safeR = i.windowWidth - i.insetRight
+        val columnRight = if (without.sideColumn) safeR - chipsWidth(i) else safeR
+        val left = safeL + FIRST_RUN_EDGE
+        val w = min(FIRST_RUN_WIDTH, columnRight - FIRST_RUN_EDGE - left).coerceAtLeast(0f)
+        val x = left + (columnRight - FIRST_RUN_EDGE - left - w) / 2
+        val f = frame(i, ArrayList())
+        val top = max(
+            f.bodyTop,
+            // The online column keeps a gap to the lower columns' top too, which stands a gap over the card ([arrangeDrawn]).
+            without.elements.filter { it.id in TOP_BLOCK && it.rect.let { r -> r != null && r.left < x + w && r.right > x } }
+                .maxOfOrNull { it.rect!!.bottom + if (it.id == OverlayIds.ONLINE) GAP * 2 else GAP } ?: 0f,
+        )
+        val drawnBelow = listOfNotNull(i.planning, i.trip, i.update).mapNotNull { it.drawn } + listOfNotNull(i.panels)
+        val bottom = min(f.bodyBottom, drawnBelow.minOfOrNull { it.top - GAP } ?: f.bodyBottom)
+        val room = bottom - top
+        if (room < 1f || w < 1f) {
+            return without.copy(elements = without.elements + OverlayElement(OverlayIds.FIRST_RUN_CARD, null, OverlayState.HIDDEN, REASON_NO_ROOM))
+        }
+        val c = card.at(w)
+        fun at(h: Float) = arrangeDrawn(i.copy(firstRun = c.copy(width = w, drawn = OverlayRect(x, bottom - h, x + w, bottom))), rungs, held)
+        val high = min(c.natural, room)
+        val low = min(c.least, high)
+        // The least the fits and the ladder take for any height from the card's least up (a card's top can cost the online
+        // column where a lower one costs the readout, so the count is sampled rather than assumed to rise with the height),
+        // and the tallest card that costs no more: the highest sample, then up to the next one by halves.
+        val steps = 24
+        val hs = List(steps + 1) { k -> low + (high - low) * k / steps }
+        val costs = hs.map { taken(i, at(it)) }
+        val least = costs.min()
+        val best = costs.lastIndexOf(least)
+        if (best == steps) return at(high)
+        var lo = hs[best]
+        var hi = hs[best + 1]
+        repeat(12) {
+            val mid = (lo + hi) / 2
+            if (taken(i, at(mid)) > least) hi = mid else lo = mid
+        }
+        return at(lo)
     }
 }

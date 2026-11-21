@@ -17,6 +17,8 @@ package io.github.jasondorjeshort.dystopo.app
  *   `rule` and `reason`). Nothing reads the rule yet: it is the first half of a layout authority, and `differs` and
  *   `overlaps` are the second half's list. The older routes' figures (`GET /nav` `layout`, `GET /route` `ui.layout`,
  *   `GET /scalebar`, `GET /readout` `layout`) still answer as they did.
+ *   T320: `firstRunCard` is placed by the rule (in `rule.placesNow` and `rule.elements`; `compact` with `scrolls` while
+ *   its body scrolls, or `hidden` with `noRoom`); `GET /firstrun` adds `cardScrollMaxPx` and `cardAllScroll`.
  */
 object LayoutRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {

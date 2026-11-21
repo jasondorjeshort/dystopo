@@ -431,6 +431,7 @@ object MapLayout {
         OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.LOCK,
         OverlayIds.SCALE_BAR, OverlayIds.STRIP,
         OverlayIds.ACTIVITY, // T263: the activity chip, under the Routes chip
+        OverlayIds.FIRST_RUN_CARD, // T320: the first-run card, a bottom card the rule places and sizes
         // T315: not the "Map | Horizon" switch: it stands at its own anchor (`controls/ViewSwitch.kt`), which the rule reserves.
     ).mapTo(LinkedHashSet()) { OverlayIds.NAMES.getValue(it) }
 
@@ -445,7 +446,7 @@ object MapLayout {
 
     /** T241: the Online chip's card and the first-run card, which have no M-number; `GET /layout` lists them by name. */
     const val ONLINE_CARD = "onlineCard"
-    const val FIRST_RUN_CARD = "firstRunCard"
+    const val FIRST_RUN_CARD = OverlayIds.FIRST_RUN_CARD
 
     /**
      * T239: the map is turned from north (MapLibre then shows its compass) and the map's centre is off the fix (the
@@ -543,6 +544,14 @@ object MapLayout {
         val limits = LinkedHashMap<String, MeasuredControls.Limit>()
         if (placed.trackRoom > 0f && placed[OverlayIds.TRACK_BAR]?.rect != null) {
             limits[nameOf(OverlayIds.TRACK_BAR)] = MeasuredControls.Limit(maxHeightPx = ceil(placed.trackRoom * d).toInt())
+        }
+        placed[OverlayIds.FIRST_RUN_CARD]?.rect?.let { r ->
+            // T320: the first-run card measured within the rule's rectangle: its body scrolls in what is left, and below its
+            // least its links scroll with it.
+            limits[nameOf(OverlayIds.FIRST_RUN_CARD)] = MeasuredControls.Limit(maxWidthPx = Math.round(r.width * d), maxHeightPx = Math.floor((r.height * d).toDouble()).toInt())
+            val all = input.firstRun?.let { r.height + 0.5f < it.least } ?: false
+            val state = io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState
+            if (all != state.allScroll) state.allScroll = all
         }
         if (placed[OverlayIds.STRIP]?.rect != null && placed.stripRoom > 0f) {
             // The width the rule wrapped the entries at (a pixel more for the rounding), so the strip's rows are the rule's.
@@ -645,9 +654,24 @@ object MapLayout {
             planning = card(OverlayIds.PLANNING_CARD, BottomPanels.routeCard, 0f, 32f),
             trip = card(OverlayIds.TRIP_CARD, null, 0f, 0f),
             update = card(OverlayIds.UPDATE_CARD, null, 0f, 0f) ?: card(OverlayIds.AIRCRAFT_CARD, null, 0f, 0f), // T311: the flight card in the offer's slot (both at the bottom, the offer first)
+            firstRun = firstRunInput(c, d, twoLines), // T320: placed by the rule
             panels = panels,
             cardsDrawn = true,
         )
+    }
+
+    /**
+     * T320: the first-run card's heights as measured (dp): whole ([OverlayCard.natural], its height and what its body
+     * scrolls), its fixed part (the progress and message lines, Settings, Not now and its line: [OverlayCard.headline])
+     * and its least, the fixed part and [twoLines] of the body; null while it is not composed or not measured yet.
+     */
+    private fun firstRunInput(c: MeasuredControls, d: Float, twoLines: Float): OverlayCard? {
+        val s = c.slot(FIRST_RUN_CARD)?.size?.takeIf { it.width > 0 && it.height > 0 } ?: return null
+        val m = io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState
+        val natural = (s.height + m.scrollMaxPx()) / d
+        if (!m.allScroll || m.fixedPx <= 0) m.fixedPx = (s.height - m.bodyPx).coerceAtLeast(0)
+        val fixed = m.fixedPx / d
+        return OverlayCard(natural, minOf(natural, fixed + twoLines), minOf(natural, fixed), s.width / d)
     }
 
     /** T239: the cards by `GET /layout` id, placed by their own code until Layout C. */
@@ -770,7 +794,10 @@ object MapLayout {
         out += seen(OverlayIds.CREDIT, null)
         // T241: the two cards T224 could not see. The Online chip's card lies inside the online column by design.
         out += read(ONLINE_CARD)?.let { Seen(ONLINE_CARD, it, SHOWN, null, within = OverlayIds.ONLINE) } ?: gone(ONLINE_CARD, "notUp")
-        out += seen(FIRST_RUN_CARD, io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState.yieldedTo ?: "notUp")
+        // T320: placed by the rule; it scrolls when its body is cut.
+        out += read(FIRST_RUN_CARD)?.let {
+            if (io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState.scrollMaxPx() > 0) Seen(FIRST_RUN_CARD, it, COMPACT, OverlayLayout.REASON_SCROLLS) else Seen(FIRST_RUN_CARD, it, SHOWN, null)
+        } ?: gone(FIRST_RUN_CARD, ruledOut(FIRST_RUN_CARD) ?: io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState.yieldedTo ?: "notUp")
         return out
     }
 
