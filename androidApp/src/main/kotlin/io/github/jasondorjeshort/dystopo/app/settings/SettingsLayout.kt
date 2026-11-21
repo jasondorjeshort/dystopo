@@ -116,6 +116,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     AIRCRAFT_REFRESH(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_REFRESH, SettingsGroup.MAP, "Flight tracking: Refresh", "SettingsPages", "T311"),
     AIRCRAFT_AIRPORTS(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_AIRPORTS, SettingsGroup.MAP, "Flight tracking: Airport names", "SettingsPages", "T311"),
     // end T311
+    // T314: which flights show route lines (the Map page, last, after the Flights rows)
+    AIRCRAFT_ROUTE_LINES(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_ROUTE_LINES, SettingsGroup.MAP, "Flight tracking: Route lines", "SettingsPages", "T314"),
+    // end T314
 }
 
 /** T103: the layout as data, for the sheet and `GET /settings/layout` (pure, unit-tested). */

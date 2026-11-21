@@ -165,6 +165,9 @@ object AircraftPoller {
     /** All positions kept for [hex] since it was first seen (the tapped aircraft's solid track). */
     fun history(hex: String): List<TrackPoint> = synchronized(lock) { tracker.history(hex) }
 
+    /** T314: the feed's answered polls so far (the map's faint route lines are rebuilt when it moves, not every tick). */
+    val polls: Long get() = synchronized(lock) { tracker.polls }
+
     /** A setting changed (`SettingsRoutes.apply`): on polls at once, off forgets everything. */
     fun settingsChanged() {
         if (!on) forget() else lastPollAt = 0L

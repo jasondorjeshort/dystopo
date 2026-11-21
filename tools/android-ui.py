@@ -32,13 +32,19 @@ Parts:
                T312: the `horizonflights` step (horizon_flights_step): the Sky range row (frame `sky-range-row`), then
                airplane mode and Flight tracking on, the Horizon view's toggles with Flights (`horizon-flights`) and its
                Flights section offline (`horizon-flights-offline`); both put back.
+               T314: in the `flights` step, the Flight tracking: Route lines row (frame `flights-route-lines-row`) and
+               its help pop-up (`flights-route-lines-help`), read before Flight tracking is turned on.
                --feature-steps runs only the steps named.
   flights      (T311, debug build: --serial, --port) the Flights layer on the replay fixture
                (shared/src/commonTest/resources/aircraft/rainier-replay.json, POST /aircraft/replay with an undulation
                for the emulator's fix): the map at Rainier z9 with silhouettes, trails and labels (frame `flights-map`),
                the nearest aircraft tapped (`select`) with its solid track, its dashed route and the card
                (`flights-card`), the same with the camera moved so the track and route run clear of the card
-               (`flights-track`), the hollow stale one's label read from GET /aircraft, the card at font scale 2.0
+               (`flights-track`), the hollow stale one's label read from GET /aircraft, T314: the view widened to its
+               origin with the dotted estimated path joining the solid track and the card's "Dotted: estimated path
+               from SEA" (`flights-estimated`, Route lines: Selected flight), then Route lines: All flights with the
+               faint lines on the other routed flights (`flights-all`; GET /aircraft's routeLinesDrawn, faintLines and
+               the faint source's times), put back to Selected; the card at font scale 2.0
                (`flights-card-font2`) and in landscape (`flights-card-landscape`), then the live feed with airplane mode
                on (`flights-offline`); every setting, the font scale, the rotation and the network put back.
   horizonflights (T312, debug build: --serial, --port) the Horizon view's Flights layer on T311's replay fixture
@@ -1879,6 +1885,7 @@ def horizon_step(dev):
 FLIGHTS_ROW = "^Flight tracking$"
 FLIGHTS_OFFLINE = "^Flights: No flight data: offline$"
 FLIGHTS_QUOTA = r"^about \d+ requests left today \(UTC\)$"
+ROUTE_LINES_ROW = "^Flight tracking: Route lines$"  # T314
 
 
 def airplane(dev, on):
@@ -1943,8 +1950,41 @@ def flights_step(dev):
         else:
             dev.shell("input", "keyevent", "KEYCODE_BACK")
         time.sleep(1)
+        # T314: the Route lines row (its two choices) and its help pop-up, then back up to Flight tracking.
+        rl, nodes = scroll_row(dev, ROUTE_LINES_ROW, swipes=4)
+        if rl:
+            texts = dev.texts(nodes)
+            out["routeLinesChoices"] = [t for t in ("Selected flight", "All flights") if t in texts]
+            out["frames"]["routeLinesRow"] = dev.screencap("flights-route-lines-row")[0]
+            helpn = dev.find("^Help: Flight tracking: Route lines$", nodes)
+            if helpn:
+                dev.tap(helpn)
+                time.sleep(1)
+                hn = dev.nodes()
+                out["routeLinesHelp"] = next((t for t in dev.texts(hn) if "nothing more is sent" in t), None)
+                out["frames"]["routeLinesHelp"] = dev.screencap("flights-route-lines-help")[0]
+                if not out["routeLinesHelp"]:
+                    errors.append("the Route lines help pop-up did not show its text")
+                ok = dev.find("^OK$", hn)
+                if ok:
+                    dev.tap(ok)
+                else:
+                    dev.shell("input", "keyevent", "KEYCODE_BACK")
+                time.sleep(1)
+            else:
+                errors.append("no help icon on the Route lines row")
+            if len(out["routeLinesChoices"]) != 2:
+                errors.append(f"Route lines choices {out['routeLinesChoices']}")
+            w, h, _d = screen(dev)
+            for _ in range(3):
+                if dev.wait_for(FLIGHTS_ROW, 1)[0]:
+                    break
+                dev.shell("input", "swipe", str(w // 2), str(h * 2 // 5), str(w // 2), str(h * 4 // 5), "600")
+                time.sleep(1)
+        else:
+            errors.append(f"no Route lines row on Map options (texts: {dev.texts(nodes)[-20:]})")
         airplane(dev, True)
-        row, nodes = dev.wait_for(FLIGHTS_ROW, 5)
+        row, nodes = scroll_row(dev, FLIGHTS_ROW)
         on = row_on(dev, row, nodes, "^Flight tracking: Refresh$") if row else None
         if not on:
             raise RuntimeError("no On choice on the Flight tracking row")
@@ -2015,6 +2055,7 @@ def part_flights(args):
     def setup():
         code, st = srv.call("GET", "/settings")
         before["aircraft"] = (st or {}).get("aircraft")
+        before["routeLines"] = (st or {}).get("aircraftRouteLines")  # T314
         before["font"] = dev.shell("settings", "get", "system", "font_scale", check_ok=False).strip()
         before["accel"] = dev.shell("settings", "get", "system", "accelerometer_rotation", check_ok=False).strip()
         before["rotation"] = dev.shell("settings", "get", "system", "user_rotation", check_ok=False).strip()
@@ -2071,6 +2112,60 @@ def part_flights(args):
         ok = (r or {}).get("selected") == "c0ffe1" and (a.get("route") or {}).get("plausible") is True
         return {"ok": ok, "png": png, "route": a.get("route"), **({} if ok else {"error": f"selected {(r or {}).get('selected')}, route {a.get('route')}"})}
 
+    def estimated():
+        """T314: Route lines Selected flight, the view widened to the tapped flight's origin: the dotted estimated path from
+        the airport joins the solid track; the card names it."""
+        srv.call("POST", "/settings?aircraftRouteLines=selected")
+        code, r = srv.call("POST", "/aircraft?select=c0ffe1&wait=800")
+        a = next((x for x in (r or {}).get("aircraft") or [] if x.get("hex") == "c0ffe1"), None)
+        if not a:
+            return {"ok": False, "error": "c0ffe1 not drawn"}
+        # Between Seattle's airport and the aircraft, a little south so the card does not cover them.
+        srv.call("POST", f"/camera?lat={(47.45 + a['lat']) / 2 - 0.4:.4f}&lon={(-122.31 + a['lon']) / 2:.4f}&zoom=7.3&bearing=0")
+        time.sleep(3)
+        png = dev.screencap("flights-estimated")[0]
+        code, r = srv.call("GET", "/aircraft")
+        lines = ((r or {}).get("card") or {}).get("lines") or []
+        texts = dev.texts(dev.nodes())
+        want = "Dotted: estimated path from SEA"
+        checks = {"selected": (r or {}).get("selected") == "c0ffe1", "routeLines": (r or {}).get("routeLines") == "selected",
+                  "estimated": (r or {}).get("estimatedPastPoints", 0) >= 16, "from": (r or {}).get("estimatedFrom") == "SEA",
+                  "cardLine": want in lines and want in texts, "noFaint": (r or {}).get("faintLines") == 0}
+        ok = all(checks.values())
+        return {"ok": ok, "png": png, "checks": checks, "estimatedPastPoints": (r or {}).get("estimatedPastPoints"),
+                "estimatedPastWhyNot": (r or {}).get("estimatedPastWhyNot"), "remainingPoints": (r or {}).get("remainingPoints"),
+                "routeLinesDrawn": (r or {}).get("routeLinesDrawn"), "lines": lines, **({} if ok else {"error": f"checks {checks}"})}
+
+    def all_lines():
+        """T314: Route lines All flights: a faint line origin > aircraft > destination on every other routed flight, the
+        selected one drawn as before on top; the faint source set on the setting change, not each second."""
+        _c, b = srv.call("GET", "/aircraft")
+        code, st = srv.call("POST", "/settings?aircraftRouteLines=all")
+        time.sleep(2.5)
+        _c, r1 = srv.call("GET", "/aircraft")
+        time.sleep(3)
+        _c, r = srv.call("GET", "/aircraft")
+        srv.call("POST", "/camera?lat=46.7&lon=-121.6&zoom=6.6&bearing=0")
+        time.sleep(3)
+        png = dev.screencap("flights-all")[0]
+        _c, r2 = srv.call("GET", "/aircraft")
+        plausible = [x for x in (r or {}).get("aircraft") or [] if (x.get("route") or {}).get("plausible") and x.get("hex") != "c0ffe1"]
+        checks = {"routeLines": (r or {}).get("routeLines") == "all", "faint": (r or {}).get("faintLines", 0) == min(len(plausible), (r or {}).get("routeLinesCap", 50)),
+                  "drawn": (r or {}).get("routeLinesDrawn", 0) == 1 + (r or {}).get("faintLines", 0),
+                  "points": 16 <= (r or {}).get("faintPointsMax", 0) <= 32,
+                  "builtOnChange": (r1 or {}).get("faintUpdates", 0) > (b or {}).get("faintUpdates", 0),
+                  "notEachSecond": (r or {}).get("faintUpdates", 0) - (r1 or {}).get("faintUpdates", 0) <= 1,
+                  "selectedStill": (r or {}).get("selected") == "c0ffe1" and (r or {}).get("estimatedPastPoints", 0) > 0}
+        srv.call("POST", "/settings?aircraftRouteLines=selected")
+        time.sleep(2)
+        _c, back = srv.call("GET", "/aircraft")
+        checks["putBack"] = (back or {}).get("routeLines") == "selected" and (back or {}).get("faintLines") == 0
+        ok = all(checks.values())
+        keys = ("routeLines", "routeLinesDrawn", "routeLinesCapped", "faintLines", "faintPointsMax", "faintUpdatedAtMs", "faintPushedAtMs", "faintUpdates", "faintPushes", "pushes")
+        return {"ok": ok, "png": png, "checks": checks, "plausibleOthers": len(plausible),
+                "after2s": {k: (r1 or {}).get(k) for k in keys}, "after5s": {k: (r or {}).get(k) for k in keys},
+                "atFrame": {k: (r2 or {}).get(k) for k in keys}, **({} if ok else {"error": f"checks {checks}"})}
+
     def font2():
         dev.shell("settings", "put", "system", "font_scale", "2.0")
         time.sleep(3)
@@ -2106,11 +2201,12 @@ def part_flights(args):
                 **({} if ok else {"error": f"offline line {bool(n)}, state {(r or {}).get('state')}, requests spent offline {spent}"})}
 
     try:
-        for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("track", track), ("font2", font2), ("landscape", landscape), ("offline", offline)):
+        for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("track", track), ("estimated", estimated), ("all", all_lines), ("font2", font2), ("landscape", landscape), ("offline", offline)):
             run.step(name, fn)
     finally:
         srv.call("POST", "/aircraft?select=none")
         srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
+        srv.call("POST", f"/settings?aircraftRouteLines={before.get('routeLines') or 'selected'}")  # T314
         if before.get("aircraft") is not True:
             srv.call("POST", "/settings?aircraft=0")
     return run.report()

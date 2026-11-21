@@ -266,6 +266,7 @@ class MapController {
     }
 
     fun detach() {
+        runCatching { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.unbind() } // T314: let go of the destroyed view
         stopDeviceLocation()
         puck.uninstall()
         mapView = null

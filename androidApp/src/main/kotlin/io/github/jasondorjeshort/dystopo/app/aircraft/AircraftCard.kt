@@ -80,7 +80,7 @@ fun AircraftOverlay() {
         val top = maxOf(TopChips.searchBottom, with(density) { TopChips.onlineBottomPx.toDp() }) + 8.dp
         FlightCard(
             a, onClose = { AircraftLayer.select(null) },
-            Modifier.align(Alignment.BottomCenter).padding(start = 12.dp, end = 12.dp, bottom = bottom).widthIn(max = 520.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(start = 12.dp, end = 12.dp, bottom = bottom).widthIn(max = 520.dp)
                 .heightIn(max = (maxHeight - bottom - top).coerceAtLeast(120.dp))
                 .control("aircraftCard")
                 .onGloballyPositioned { c ->
@@ -90,6 +90,7 @@ fun AircraftOverlay() {
                         if (t != io.github.jasondorjeshort.dystopo.app.MapInsets.aircraftCardTop) io.github.jasondorjeshort.dystopo.app.MapInsets.aircraftCardTop = t
                     }
                 },
+            estimatedFrom = AircraftLayer.estimatedFrom.takeIf { AircraftLayer.selected == a.hex }, // T314: the map draws the dotted estimate
         )
     }
 }
@@ -98,11 +99,12 @@ fun AircraftOverlay() {
  * T311: one aircraft's card, for any caller to host (the map hosts it in [AircraftOverlay]; another screen may host it
  * over itself): the call sign as the title with the help icon and Close ([onClose]), then [AircraftText.card]'s lines in
  * the units and airport-name settings, the credit last. [modifier] places and sizes it (it scrolls inside what it is given).
+ * T314: [estimatedFrom], given by a host that draws the dotted estimate (the map), adds "Dotted: estimated path from SEA".
  * No dependency on the map's layout.
  */
 @Composable
-fun FlightCard(aircraft: AircraftNow, onClose: () -> Unit, modifier: Modifier = Modifier) {
-    val lines = AircraftText.card(aircraft, AppSettings.units, AppSettings.AIRCRAFT_AIRPORTS.value, AircraftPoller.credit)
+fun FlightCard(aircraft: AircraftNow, onClose: () -> Unit, modifier: Modifier = Modifier, estimatedFrom: io.github.jasondorjeshort.dystopo.aircraft.Airport? = null) {
+    val lines = AircraftText.card(aircraft, AppSettings.units, AppSettings.AIRCRAFT_AIRPORTS.value, AircraftPoller.credit, estimatedFrom)
     Column(
         modifier
             .background(Paper, RoundedCornerShape(12.dp)).border(1.dp, Line, RoundedCornerShape(12.dp))
@@ -125,7 +127,7 @@ fun FlightCard(aircraft: AircraftNow, onClose: () -> Unit, modifier: Modifier = 
             BasicText(
                 l,
                 style = TextStyle(
-                    color = if (credit || l == AircraftText.ROUTE_HEDGE) Muted else Ink,
+                    color = if (credit || l == AircraftText.ROUTE_HEDGE || l.startsWith(AircraftText.ESTIMATED_PREFIX)) Muted else Ink,
                     fontSize = if (first) 15.sp else if (credit) 11.sp else 13.sp,
                     fontWeight = if (first) FontWeight.SemiBold else FontWeight.Normal,
                 ),
@@ -147,8 +149,8 @@ internal val AIRCRAFT_HELP: List<HelpText> = listOf(
         show = { AircraftLayer.drawn.minByOrNull { it.distanceM ?: 0.0 }?.let { AircraftLayer.select(it.hex) } },
     ) {
         "Aircraft from a volunteer receiver network. The route comes from schedule data on this phone and shows only when " +
-            "the aircraft fits it. Hollow: its position is over 30 seconds old; after a minute it goes. Heights are above sea " +
-            "level, or pressure altitude when your GPS gives no geoid height."
+            "the aircraft fits it. Track: solid as seen, dotted estimated, dashed ahead. Hollow: its position is over 30 s " +
+            "old; gone after a minute. Heights are above sea level, or pressure altitude without a GPS geoid height."
     },
 )
 

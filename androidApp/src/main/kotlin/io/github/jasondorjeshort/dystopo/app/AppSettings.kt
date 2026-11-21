@@ -676,6 +676,15 @@ object AppSettings {
         { "$KEY_SKY_RANGE must be overhead, near or all (got $it)" }))
     val skyRange: io.github.jasondorjeshort.dystopo.horizon.SkyRange get() = SKY_RANGE.value
     // end T312
+    // T314: which flights show route lines on the map, `selected` (the default: the tapped flight only, as before) or `all`
+    // (also a faint line origin > aircraft > destination on every other flight whose route fits). A setting by ADR 0044:
+    // the owner asked for an option to compare the two. Synced (ADR 0033: one key added). Row: Settings › Map options.
+    const val KEY_AIRCRAFT_ROUTE_LINES = "aircraftRouteLines"
+    val AIRCRAFT_ROUTE_LINES = add(Setting(KEY_AIRCRAFT_ROUTE_LINES, io.github.jasondorjeshort.dystopo.aircraft.RouteLinesMode.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.aircraft.RouteLinesMode.of(it) }),
+        { io.github.jasondorjeshort.dystopo.aircraft.RouteLinesMode.of(it.toString()) },
+        { "$KEY_AIRCRAFT_ROUTE_LINES must be selected or all (got $it)" }))
+    // end T314
 }
 
 /**

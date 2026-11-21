@@ -84,6 +84,9 @@ object AndroidControls {
         row("aircraftRefreshS", "map", 29),
         row("aircraftAirports", "map", 30),
         // end T311
+        // T314: Flight tracking: Route lines (the Map page, after the Flights rows)
+        row("aircraftRouteLines", "map", 33), // 31 and 32 are T311's card and status line
+        // end T314
     )
 
     /**

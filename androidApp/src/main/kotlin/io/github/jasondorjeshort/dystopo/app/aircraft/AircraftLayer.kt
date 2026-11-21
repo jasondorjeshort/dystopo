@@ -34,6 +34,7 @@ import io.github.jasondorjeshort.dystopo.aircraft.AircraftTracker
 import io.github.jasondorjeshort.dystopo.aircraft.FeedState
 import io.github.jasondorjeshort.dystopo.aircraft.Observer
 import io.github.jasondorjeshort.dystopo.aircraft.ReplaySource
+import io.github.jasondorjeshort.dystopo.aircraft.RouteLines
 import io.github.jasondorjeshort.dystopo.aircraft.RouteTable
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.BuildConfig
@@ -80,6 +81,22 @@ import java.util.zip.GZIPInputStream
  * track since the layer saw it solid, the remaining great circle to its destination dashed when its route is plausible,
  * and the card ([AircraftCard]).
  *
+ * T314: which flights get which route lines is [RouteLines.plan]'s (pure, in shared); this layer only draws its output.
+ * The selected flight also gets the path before the app saw it, dotted and lighter (round dots `[0.5, 2]`, 0.6 opacity):
+ * the great circle from its origin airport to the first point of its kept track, where the solid track starts; the
+ * card names it ("Dotted: estimated path from SEA"). Under "Flight tracking: Route lines" All, every other flight with a
+ * plausible route gets one faint thin line origin > aircraft > destination (dark, 0.35 opacity, under the trails), the
+ * [RouteLines.CAP] nearest the view's centre, in their own source ([FAINT_SOURCE]) set only when a poll answers, the
+ * selection changes or the setting does, not every second. Nothing is fetched for any of it.
+ *
+ * Threads (T314, after a verifier's SIGABRT "Scudo: corrupted chunk header" in `Layer::setProperty`): MapLibre's map,
+ * style, layer and source objects are touched on the main thread only. [push] builds the features on whichever thread
+ * calls it (the poller's tick, a selection) and posts [pushNow]; every function that calls MapLibre passes [mainOnly]
+ * first, which in a debug build counts and logs a call from another thread (`GET /aircraft` › `offMainCalls`) and
+ * reposts it to the main thread. And the layer lets go of a MapView when the activity is destroyed
+ * (`MapController.detach` calls [unbind]): before, a tick after a rotation or a font-scale change still pushed into the
+ * destroyed view's style until the new view bound.
+ *
  * Feed data stays in memory (ODbL): nothing of it is written to disk, cached or exported; turning the layer off forgets
  * it. Stored on the phone: the day's request count ([AircraftQuota], a number and a day). No call sign leaves the phone:
  * routes come from the shipped table (`assets/aircraft/routes.gzip`).
@@ -92,6 +109,9 @@ object AircraftLayer {
     const val PLANES = "dystopo-aircraft-planes"
     const val RING = "dystopo-aircraft-emergency"
     const val RING_OUTER = "dystopo-aircraft-emergency-outer"
+    const val ESTIMATED = "dystopo-aircraft-estimated" // T314
+    const val FAINT_SOURCE = "dystopo-aircraft-faint" // T314
+    const val FAINT = "dystopo-aircraft-faint-lines" // T314
     @Volatile var hiddenOnGround = 0
         private set
     private const val TAP_RADIUS_DP = 22f
@@ -136,6 +156,7 @@ object AircraftLayer {
 
     /** Draws on [mapView] from now on (main thread); asks the poller for the view's aircraft while it may. */
     fun bind(mapView: MapView) {
+        if (!mainOnly("bind") { bind(mapView) }) return
         if (!started) {
             started = true
             AircraftPoller.onBeforeTick { askForTheView() }
@@ -155,10 +176,37 @@ object AircraftLayer {
     }
 
     fun unbind() {
+        if (!mainOnly("unbind") { unbind() }) return
         view?.removeOnDidFinishLoadingStyleListener(styleListener)
         clickMap?.removeOnMapClickListener(clickListener)
         clickMap = null
         view = null
+        installedOnStyle = false
+    }
+
+    // --- the main-thread rule (T314) ---
+
+    /** Calls to MapLibre that arrived off the main thread (each reposted there); 0 is the rule. */
+    @Volatile var offMainCalls = 0L
+        private set
+    @Volatile var lastOffMain: String? = null
+        private set
+    /** Pushes skipped because the layer's MapView is no longer the one the map controller holds (a destroyed activity's). */
+    @Volatile var skippedDetached = 0L
+        private set
+
+    /**
+     * True on the main thread. Elsewhere: counts it (with the caller's [what] and, in a debug build, the stack), logs it,
+     * posts [again] to the main thread and returns false, so the caller returns without touching MapLibre.
+     */
+    private inline fun mainOnly(what: String, crossinline again: () -> Unit): Boolean {
+        if (Looper.myLooper() == Looper.getMainLooper()) return true
+        offMainCalls++
+        lastOffMain = if (BuildConfig.DEBUG) "$what on ${Thread.currentThread().name}: " +
+            Throwable().stackTrace.drop(1).take(6).joinToString(" < ") { "${it.fileName}:${it.lineNumber}" } else what
+        android.util.Log.e("Dystopo", "AircraftLayer: MapLibre call off the main thread: $lastOffMain")
+        main.post { again() }
+        return false
     }
 
     /** Why the map does not ask now, or null when it does: off, in the background, no view yet, or the Horizon view over it. */
@@ -182,11 +230,14 @@ object AircraftLayer {
     // --- drawing ---
 
     private fun install() {
+        if (!mainOnly("install") { install() }) return
         val v = view ?: return
         v.getMapAsync { m -> m.getStyle { style -> addTo(style) } }
     }
 
     private fun addTo(style: Style) {
+        if (!mainOnly("addTo") { addTo(style) }) return
+        if (view == null || !style.isFullyLoaded) return
         if (style.getImage(icon(AircraftKind.GENERIC, "")) == null) {
             val d = DystopoApp.instance.resources.displayMetrics.density
             for (k in AircraftKind.entries) {
@@ -194,6 +245,14 @@ object AircraftLayer {
                 style.addImage(icon(k, "-hollow"), silhouette(k, d, 26f, 0xFF1D2A3A.toInt(), 0xCCFFFFFF.toInt(), filled = false))
                 style.addImage(icon(k, "-selected"), silhouette(k, d, 34f, 0xFFD9480F.toInt(), 0xFFFFFFFF.toInt(), filled = true))
             }
+        }
+        if (style.getSource(FAINT_SOURCE) == null) {
+            // T314: the faint route lines of the other flights, under everything else of the layer.
+            style.addSource(GeoJsonSource(FAINT_SOURCE, FeatureCollection.fromFeatures(emptyList())))
+            style.addLayer(LineLayer(FAINT, FAINT_SOURCE).withProperties(
+                PropertyFactory.lineColor("#1d2a3a"), PropertyFactory.lineWidth(1.5f), PropertyFactory.lineOpacity(0.35f),
+                PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            ))
         }
         if (style.getSource(SOURCE) == null) {
             style.addSource(GeoJsonSource(SOURCE, FeatureCollection.fromFeatures(emptyList())))
@@ -209,6 +268,11 @@ object AircraftLayer {
             ))
             style.addLayer(LineLayer(ROUTE, SOURCE).withFilter(kind("route")).withProperties(
                 PropertyFactory.lineColor("#d9480f"), PropertyFactory.lineWidth(2.5f), PropertyFactory.lineDasharray(arrayOf(2f, 2f)),
+            ))
+            // T314: the estimated path before the app saw it: round dots, lighter than the solid track, so it reads as a guess.
+            style.addLayer(LineLayer(ESTIMATED, SOURCE).withFilter(kind("estimated")).withProperties(
+                PropertyFactory.lineColor("#d9480f"), PropertyFactory.lineWidth(3f), PropertyFactory.lineOpacity(0.6f),
+                PropertyFactory.lineDasharray(arrayOf(0.5f, 2f)), PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             ))
             style.addLayer(LineLayer(TRACK, SOURCE).withFilter(kind("track")).withProperties(
                 PropertyFactory.lineColor("#d9480f"), PropertyFactory.lineWidth(3.5f),
@@ -238,6 +302,7 @@ object AircraftLayer {
             ))
         }
         installedOnStyle = true
+        faintDirty = true // T314: a new style has an empty faint source
         pushNow()
     }
 
@@ -324,7 +389,12 @@ object AircraftLayer {
     @Volatile private var data: FeatureCollection = FeatureCollection.fromFeatures(emptyList())
 
     /** Builds the features from [list] and sends them to the map (any thread). */
-    private fun push(all: List<AircraftNow>) {
+    private val pushLock = Any()
+
+    private fun push(all: List<AircraftNow>) = synchronized(pushLock) { pushLocked(all) }
+
+    /** Builds the features (no MapLibre call here: any thread), then posts [pushNow] to the main thread. */
+    private fun pushLocked(all: List<AircraftNow>) {
         val sel = selected
         val box = MapViewport.current
         val zoom = zoomNow
@@ -348,15 +418,32 @@ object AircraftLayer {
             }
         }
         val selectedNow = list.firstOrNull { it.hex == sel }
+        val hist = selectedNow?.let { AircraftPoller.history(it.hex) }.orEmpty()
+        val mode = AppSettings.AIRCRAFT_ROUTE_LINES.value
+        val plan = RouteLines.plan(list, mode, sel, hist, box?.let { (it.minLat + it.maxLat) / 2 }, box?.let { (it.minLon + it.maxLon) / 2 })
+        fun line(pts: List<Pair<Double, Double>>, kind: String) =
+            Feature.fromGeometry(LineString.fromLngLats(pts.map { (la, lo) -> Point.fromLngLat(lo, la) })).apply { addStringProperty("kind", kind) }
         if (selectedNow != null) {
-            val hist = AircraftPoller.history(selectedNow.hex)
-            val line = hist.map { Point.fromLngLat(it.lon, it.lat) } + Point.fromLngLat(selectedNow.lon, selectedNow.lat)
-            if (line.size >= 2) fs += Feature.fromGeometry(LineString.fromLngLats(line)).apply { addStringProperty("kind", "track") }
-            selectedNow.route?.takeIf { it.plausible }?.destination?.let { d ->
-                val gc = AircraftGeo.greatCircle(selectedNow.lat, selectedNow.lon, d.lat, d.lon, 64)
-                fs += Feature.fromGeometry(LineString.fromLngLats(gc.map { (la, lo) -> Point.fromLngLat(lo, la) })).apply { addStringProperty("kind", "route") }
-            }
+            val track = hist.map { Point.fromLngLat(it.lon, it.lat) } + Point.fromLngLat(selectedNow.lon, selectedNow.lat)
+            if (track.size >= 2) fs += Feature.fromGeometry(LineString.fromLngLats(track)).apply { addStringProperty("kind", "track") }
+            plan.estimatedPast?.let { fs += line(it, "estimated") }
+            plan.remaining?.let { fs += line(it, "route") }
         }
+        lastPlan = plan
+        estimatedFrom = plan.estimatedFrom
+        // T314: the faint lines' own source, rebuilt only on a poll, a selection or a setting change.
+        val key = "${AircraftPoller.polls}|$sel|${mode.key}|${list.isEmpty()}"
+        if (key != faintKey) {
+            faintKey = key
+            faintData = FeatureCollection.fromFeatures(plan.faint.map { f -> line(f.points, "faint").apply { addStringProperty("hex", f.hex) } })
+            faintCount = plan.faint.size
+            faintPointsMax = plan.faint.maxOfOrNull { it.points.size } ?: 0
+            routeLinesCapped = plan.capped
+            faintUpdatedAtMs = System.currentTimeMillis()
+            faintUpdates++
+            faintDirty = true
+        }
+        routeLinesDrawn = (if (selectedNow != null && plan.drawn > plan.faint.size) 1 else 0) + faintCount
         for (a in list) {
             val isSel = a.hex == sel
             fs += Feature.fromGeometry(Point.fromLngLat(a.lon, a.lat)).apply {
@@ -384,19 +471,50 @@ object AircraftLayer {
     @Volatile var pushes = 0L
         private set
 
+    // T314: the route lines' plan and the faint source's state (for GET /aircraft).
+    @Volatile private var lastPlan: RouteLines.Plan = RouteLines.Plan.NONE
+    /** The origin airport of the selected flight's dotted estimate while one is drawn (the card's line), else null. */
+    @Volatile var estimatedFrom: io.github.jasondorjeshort.dystopo.aircraft.Airport? = null
+        private set
+    @Volatile private var faintKey: String? = null
+    @Volatile private var faintData: FeatureCollection = FeatureCollection.fromFeatures(emptyList())
+    @Volatile private var faintDirty = true
+    @Volatile private var faintCount = 0
+    @Volatile private var faintPointsMax = 0
+    @Volatile var routeLinesDrawn = 0
+        private set
+    @Volatile var routeLinesCapped = 0
+        private set
+    @Volatile private var faintUpdatedAtMs = 0L
+    @Volatile private var faintPushedAtMs = 0L
+    @Volatile private var faintUpdates = 0L
+    @Volatile private var faintPushes = 0L
+
     private fun pushNow() {
+        if (!mainOnly("pushNow") { pushNow() }) return
         val v = view ?: return
+        if (v !== DystopoApp.instance.map.mapView) { skippedDetached++; return } // a destroyed activity's view
         v.getMapAsync { m ->
+            if (view !== v) return@getMapAsync
             zoomNow = m.cameraPosition.zoom
             val style = m.style ?: return@getMapAsync
             if (!style.isFullyLoaded) return@getMapAsync
             (style.getSource(SOURCE) as? GeoJsonSource)?.setGeoJson(data)
             pushes++
+            if (faintDirty) {
+                (style.getSource(FAINT_SOURCE) as? GeoJsonSource)?.let { s ->
+                    s.setGeoJson(faintData)
+                    faintDirty = false
+                    faintPushedAtMs = System.currentTimeMillis()
+                    faintPushes++
+                }
+            }
         }
     }
 
     /** A tap on an aircraft selects it (main thread); other taps fall through. */
     private fun onClick(latLng: LatLng): Boolean {
+        if (Looper.myLooper() != Looper.getMainLooper()) { offMainCalls++; return false }
         if (!on) return false
         val m = clickMap ?: return false
         val p = m.projection.toScreenLocation(latLng)
@@ -418,6 +536,7 @@ object AircraftLayer {
 
     /** The screen point of [hex] now (px in the map view), for the debug route's tap; null when not drawn. Main thread. */
     fun screenPoint(hex: String): PointF? {
+        if (Looper.myLooper() != Looper.getMainLooper()) { offMainCalls++; return null }
         val a = drawn.firstOrNull { it.hex == hex } ?: return null
         val m = clickMap ?: DystopoApp.instance.map.map ?: return null
         return m.projection.toScreenLocation(LatLng(a.lat, a.lon))
@@ -431,6 +550,18 @@ object AircraftLayer {
             put("hiddenOnGround", hiddenOnGround); put("groundMinZoom", AircraftRules.GROUND_MIN_ZOOM)
             put("emergencies", list.count { it.report.emergency != null })
             put("selected", selected); put("drawing", drawing); put("installedOnStyle", installedOnStyle); put("pushes", pushes)
+            // T314: the route lines (the setting, the selected flight's dotted estimate, the faint lines and their source).
+            val p = lastPlan
+            put("routeLines", AppSettings.AIRCRAFT_ROUTE_LINES.value.key)
+            put("estimatedPastPoints", p.estimatedPast?.size ?: 0)
+            put("estimatedFrom", p.estimatedFrom?.code)
+            put("estimatedPastWhyNot", p.estimatedPastWhyNot)
+            put("remainingPoints", p.remaining?.size ?: 0)
+            put("routeLinesDrawn", routeLinesDrawn); put("routeLinesCapped", routeLinesCapped); put("routeLinesCap", RouteLines.CAP)
+            put("faintLines", faintCount); put("faintPointsMax", faintPointsMax)
+            put("faintUpdatedAtMs", faintUpdatedAtMs.takeIf { it > 0 }); put("faintPushedAtMs", faintPushedAtMs.takeIf { it > 0 })
+            put("faintUpdates", faintUpdates); put("faintPushes", faintPushes)
+            put("offMainCalls", offMainCalls); put("lastOffMain", lastOffMain); put("skippedDetached", skippedDetached) // T314
             put("aircraft", list.sortedBy { it.distanceM ?: 0.0 }.map { AircraftJson.now(it) })
         }
     }
