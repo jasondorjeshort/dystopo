@@ -41,7 +41,7 @@ Parts:
                (shared/src/commonTest/resources/aircraft/rainier-replay.json, POST /aircraft/replay with an undulation
                for the emulator's fix): the map at Rainier z9 with silhouettes, trails and labels (frame `flights-map`),
                the nearest aircraft tapped (`select`) with its solid track, its dashed route and the card
-               (`flights-card`), the same with the camera moved so the track and route run clear of the card
+               (`flights-card`; T316: with its "N m above the ground" line and GET /aircraft's groundM and aboveGroundM), the same with the camera moved so the track and route run clear of the card
                (`flights-track`), the hollow stale one's label read from GET /aircraft, T314: the view widened to its
                origin with the dotted estimated path joining the solid track and the card's "Dotted: estimated path
                from SEA" (`flights-estimated`, Route lines: Selected flight), then Route lines: All flights with the
@@ -2133,6 +2133,9 @@ REPLAY_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", 
 REPLAY_UNDULATION_M = -18.4
 
 
+GROUND_LINE = r"^(About )?[\d,]+ (m|ft) above the ground$"  # T316
+
+
 def part_flights(args):
     """T311 (debug build): the Flights layer on the replay; see the part's line in the module's docstring."""
     srv = DebugServer(args.port, args.serial)
@@ -2183,9 +2186,17 @@ def part_flights(args):
             texts = dev.texts(nodes)
             want = ["ASA1670", "From schedule data; may be wrong"]
             missing = [w for w in want if w not in texts]
+            # T316: the line under the altitude, "7,660 m above the ground" (GET /aircraft's aboveGroundM, the DEM pack's ground).
+            a = next((x for x in (r or {}).get("aircraft") or [] if x.get("hex") == "c0ffe1"), {})
+            ground = next((t for t in c.get("lines") or [] if re.match(GROUND_LINE, t)), None)
+            if not ground or ground not in texts:
+                missing.append(f"a line matching {GROUND_LINE} on the card")
+            if a.get("groundM") is None or a.get("aboveGroundM") is None:
+                missing.append(f"groundM {a.get('groundM')} aboveGroundM {a.get('aboveGroundM')}")
             onscreen = dev.find("^Close$", nodes) is not None
             ok = code == 200 and bool(c.get("lines")) and not missing and onscreen and not left
             return {"ok": ok, "png": png, "lines": c.get("lines"), "heightPx": c.get("heightPx"), "missing": missing, "clearAfterS": waited,
+                    "groundLine": ground, "groundM": a.get("groundM"), "aboveGroundM": a.get("aboveGroundM"), "altitudeM": a.get("altitudeM"),
                     **({} if ok else {"error": f"card {c} missing {missing} close {onscreen} overlaps {left}"})}
         return fn
 

@@ -50,7 +50,12 @@ data class AircraftNow(
     val elevationDeg: Double?,
     val label: String,
     val trail: List<TrackPoint>,
+    /** T316: the ground's height (EGM2008 metres) where the aircraft last reported, from the elevation data; null where unknown. */
+    val groundM: Double? = null,
 ) {
+    /** T316: the height above that ground ([AboveGround.of]), or null. */
+    val aboveGround: AboveGround? get() = AboveGround.of(altitudeM, altitudeKind, groundM)
+
     val hex: String get() = report.hex
     val title: String get() = report.callSign ?: report.registration ?: report.hex.uppercase()
 }
@@ -64,7 +69,15 @@ data class AltitudeNow(val meters: Double?, val kind: AltitudeKind)
  * stale ones marked, old ones dropped, routes checked against where each is, distances and angles from the phone.
  */
 class AircraftTracker {
-    private class Seen(var report: AircraftReport, var posAtMs: Long, var altitude: AltitudeNow, val history: ArrayDeque<TrackPoint>)
+    private class Seen(var report: AircraftReport, var posAtMs: Long, var altitude: AltitudeNow, val history: ArrayDeque<TrackPoint>) {
+        /** T316: the reported position [groundM] was sampled at (null: not yet), and the sample (null: no data there). */
+        var groundAt: Pair<Double, Double>? = null
+        var groundM: Double? = null
+        val groundNow: Double? get() = if (groundAt == (report.lat to report.lon)) groundM else null
+    }
+
+    /** T316: one reported position whose ground is not sampled yet ([groundNeeded], [setGround]). */
+    data class GroundAsk(val hex: String, val lat: Double, val lon: Double)
 
     private val seen = LinkedHashMap<String, Seen>()
     var state: FeedState = FeedState.WAITING
@@ -167,6 +180,21 @@ class AircraftTracker {
     val count: Int get() = seen.size
 
     /**
+     * T316: the reported positions whose ground is not sampled yet, one per aircraft (each aircraft's ground is sampled
+     * once per reported position, not each second: the cache). The caller samples them off this object's lock and
+     * hands each back with [setGround].
+     */
+    fun groundNeeded(): List<GroundAsk> =
+        seen.values.filter { it.groundAt != (it.report.lat to it.report.lon) }.map { GroundAsk(it.report.hex, it.report.lat, it.report.lon) }
+
+    /** T316: the ground's height [groundM] (EGM2008 metres, null where the elevation data has none) at [hex]'s reported ([lat], [lon]). */
+    fun setGround(hex: String, lat: Double, lon: Double, groundM: Double?) {
+        val s = seen[hex] ?: return
+        s.groundAt = lat to lon
+        s.groundM = groundM?.takeUnless { it.isNaN() }
+    }
+
+    /**
      * The aircraft as drawn at [nowMs]: moved up, aged, with routes and angles; dropped ones left out. T316: [refreshS]
      * the interval, for the stale, drop, move-cap and trail times ([AircraftRules.staleS], [AircraftRules.dropS],
      * [AircraftRules.moveCapS], [AircraftRules.trailS]; the default keeps the 20 s behaviour).
@@ -209,7 +237,7 @@ class AircraftTracker {
         val trail = s.history.filter { it.atMs >= trailFrom } + TrackPoint(lat, lon, s.altitude.meters, nowMs)
         return AircraftNow(
             r, lat, lon, moved, s.altitude.meters, s.altitude.kind, age, stale, match, dist, bearing, elev,
-            AircraftText.label(r, match, naming, if (stale) age else null), trail,
+            AircraftText.label(r, match, naming, if (stale) age else null), trail, s.groundNow,
         )
     }
 

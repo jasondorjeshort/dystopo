@@ -109,6 +109,18 @@ object AircraftText {
         return trend?.let { "$base, $it" } ?: base
     }
 
+    /**
+     * T316: the card's line under the altitude: "4,210 m above the ground" from a geometric altitude (to 10 m or 10 ft),
+     * "About 4,200 m above the ground" from pressure altitude (to 100 m or 100 ft), in the units setting (ADR 0022).
+     */
+    fun aboveGroundLine(h: AboveGround, units: ContourUnits): String {
+        val v = UnitFormat.elevationValue(h.meters, units).toDouble()
+        val step = if (h.approximate && v >= 100.0) 100.0 else 10.0
+        val n = (kotlin.math.round(v / step) * step).roundToLong().coerceAtLeast(if (v >= 5.0) 10 else 0)
+        val text = grouped(n) + (if (units == ContourUnits.FEET) " ft" else " m") + " above the ground"
+        return if (h.approximate) "About $text" else text
+    }
+
     /** Ground speed in the units setting's road unit: "520 mph" or "837 km/h". */
     fun speedLine(knots: Double?, units: ContourUnits): String? {
         knots ?: return null
@@ -189,9 +201,9 @@ object AircraftText {
         return "$base, $rate at this rate"
     }
 
-    /** T316: the card help's hollow and gone times at [refreshS]: "over 30 s old; gone after 60 s". */
+    /** T316: the card help's hollow and gone times at [refreshS]: "Hollow after 30 s without a position, gone after 60 s". */
     fun staleWords(refreshS: Int): String =
-        "over ${seconds(AircraftRules.staleS(refreshS))} old; gone after ${seconds(AircraftRules.dropS(refreshS))}"
+        "Hollow after ${seconds(AircraftRules.staleS(refreshS))} without a position, gone after ${seconds(AircraftRules.dropS(refreshS))}"
 
     /** "35000" as "35,000". */
     fun grouped(v: Long): String {
@@ -215,6 +227,7 @@ object AircraftText {
         if (a.route?.plausible == true) estimatedFrom?.let { estimatedLine(it, naming) } else null,
         typeLine(a.report),
         altitudeLine(a.altitudeM, a.altitudeKind, a.report.verticalRateFpm, units, a.report.altBaroFt),
+        a.aboveGround?.let { aboveGroundLine(it, units) }, // T316
         speedLine(a.report.groundSpeedKt, units),
         fromYou(a.distanceM, a.bearingDeg, a.elevationDeg, units),
         age(a.ageS),

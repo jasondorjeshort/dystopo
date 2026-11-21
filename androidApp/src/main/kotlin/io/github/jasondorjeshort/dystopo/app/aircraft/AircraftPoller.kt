@@ -245,7 +245,30 @@ object AircraftPoller {
             lastResponseMs = fetch.ms
             lastUrl = fetch.url
             lastCount = fetch.poll.aircraft.size
+            sampleGround()
         }
+    }
+
+    @Volatile var groundSamples = 0L
+        private set
+    @Volatile var lastGroundMs: Long? = null
+        private set
+
+    /**
+     * T316: the ground under each aircraft's newly reported position, from the active DEM pack ([Trips.elevationAt],
+     * EGM2008; null where no tile is held), sampled here on the poll thread once per reported position (the tracker keeps
+     * it until the next report) and off the tracker's lock, so the once-a-second view never waits for a tile.
+     */
+    private fun sampleGround() {
+        val asks = synchronized(lock) { tracker.groundNeeded() }
+        if (asks.isEmpty()) return
+        val t0 = SystemClock.elapsedRealtime()
+        for (g in asks) {
+            val m = runCatching { io.github.jasondorjeshort.dystopo.app.trips.Trips.elevationAt(g.lat, g.lon) }.getOrNull()
+            synchronized(lock) { tracker.setGround(g.hex, g.lat, g.lon, m) }
+        }
+        groundSamples += asks.size
+        lastGroundMs = SystemClock.elapsedRealtime() - t0
     }
 
     /** The live feed, counting the day's requests; none while a 429's pause holds or the phone has no network. */
@@ -384,6 +407,7 @@ object AircraftPoller {
         "requests" to requests, "skippedLimited" to skippedLimited, "quota" to quotaJson(now), "quotaLine" to quotaLine(now),
         "observer" to observer()?.let { o -> linkedMapOf("heightM" to Math.round(o.heightM), "undulationM" to o.undulationM, "undulationOverride" to undulationOverride) },
         "routes" to routesJson(), "ticks" to ticks, "forceOffline" to forceOffline,
+        "groundSamples" to groundSamples, "lastGroundMs" to lastGroundMs, // T316: the ground under each aircraft
     )
 }
 

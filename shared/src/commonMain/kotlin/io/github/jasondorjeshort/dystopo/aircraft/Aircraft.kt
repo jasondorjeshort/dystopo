@@ -98,6 +98,30 @@ enum class AltitudeKind(val json: String) {
     NONE("none"),
 }
 
+/**
+ * T316: an aircraft's height above the ground under it, in metres: its altitude above EGM2008 less the ground's (the
+ * elevation data's, EGM2008). [approximate] when the altitude is pressure altitude, which the day's air pressure can
+ * put hundreds of metres off (the card says "About").
+ */
+data class AboveGround(val meters: Double, val approximate: Boolean) {
+    companion object {
+        /**
+         * The height of an aircraft at [altitudeM] of [kind] over ground at [groundM]; null with no altitude, no ground
+         * (no elevation data there, or NaN), on the ground or with no altitude kind, or at or below the ground.
+         */
+        fun of(altitudeM: Double?, kind: AltitudeKind, groundM: Double?): AboveGround? {
+            if (altitudeM == null || groundM == null || altitudeM.isNaN() || groundM.isNaN()) return null
+            val approximate = when (kind) {
+                AltitudeKind.GEOMETRIC -> false
+                AltitudeKind.BAROMETRIC -> true
+                AltitudeKind.GROUND, AltitudeKind.NONE -> return null
+            }
+            val h = altitudeM - groundM
+            return if (h > 0.0) AboveGround(h, approximate) else null
+        }
+    }
+}
+
 /** The layer's fixed rules (the finding's common practice; T311's task text). */
 object AircraftRules {
     /** A position older than this is drawn hollow, with its age (seconds): the floor of [staleS]. */

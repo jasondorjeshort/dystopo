@@ -22,7 +22,10 @@ import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
  *   `reportedLat`, `reportedLon`, `movedS`, `altitudeM` (EGM2008), `altitudeKind` (`geometric`, `barometric`, `ground`,
  *   `none`), `altGeomFt`, `altBaroFt`, `onGround`, `trackDeg`, `groundSpeedKt`, `verticalRateFpm`, `ageS`, `stale`,
  *   `distanceKm`, `bearingDeg`, `elevationDeg` (from the phone), `route` (`airports`, `plausible`, `leg`, `origin`,
- *   `destination`, `crossTrackKm`, `toleranceKm`, `reason`), `label`, `trailPoints`. Feed data is answered from memory;
+ *   `destination`, `crossTrackKm`, `toleranceKm`, `reason`), `label`, `trailPoints`; T316: `groundM` (the DEM pack's
+ *   ground where it last reported, EGM2008; null without a tile there), `aboveGroundM` and `aboveGroundApproximate` (the
+ *   card's "above the ground" line: null with no ground, on or below it; approximate from pressure altitude), with the
+ *   poller's `groundSamples` and `lastGroundMs` (the last poll's sampling time). Feed data is answered from memory;
  *   nothing of it is stored. T314, the route lines: `routeLines` (the setting, `selected` or `all`; `POST /settings`
  *   key `aircraftRouteLines`), `estimatedPastPoints` (the selected flight's dotted estimate, 0 when none), `estimatedFrom`
  *   (its origin's code) and `estimatedPastWhyNot` (why none: `route not plausible`, `track starts at the origin`,
