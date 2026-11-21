@@ -8,8 +8,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 
 ## Now
 
-- **Wave 44 is open** (planned 2026-11-21, `docs/TASKS.md`; the critic's edits are in its paragraph): T319 the sweep's two checks, T320 the first-run card in the layout rule, T322 the Panorama's pass one, all three launched first; T321 (the peak's "View from here" and the switch carrying the selection) only after T319 and T320 are merged. Owed by the coordinator during the wave: an ADR for the Panorama's lens projection, before pass two.
-- **Wave 43 is closed and v0.1.39-alpha is published** (2026-11-21). It ran T315 to T317 and the sweep fix T318, which rebaselined the a11y findings from the longer long-press card. Its record is `docs/tasks/wave-43.md`. Branches, worktrees and task AVDs are cleaned up. No wave is open.
+- **Wave 44 is open** (planned 2026-11-21, `docs/TASKS.md`; the critic's edits are in its paragraph): T319 the sweep's two checks, T320 the first-run card in the layout rule, T322 the Panorama's pass one, all three launched first; T321 (the peak's "View from here" and the switch carrying the selection) only after T319 and T320 are merged. The Panorama's shape and its lens projection are ADR 0064.
+- **Wave 43 is closed and v0.1.39-alpha is published** (2026-11-21). It ran T315 to T317 and the sweep fix T318, which rebaselined the a11y findings from the longer long-press card. Its record is `docs/tasks/wave-43.md`. Its branches, worktrees and task AVDs are cleaned up.
 - **For the owner:** the emulator `emulator-5554` (default AVD `dystopo35`) is still running from the v0.1.38 draft check. Stop it without `-Delete` if wanted.
 - **Cost:** the 7-day meter read 1 at wave 44's planning (reset 2026-11-28 03:00 UTC), the wave figured at 7. The figures were revised at this close to 1.0 a task, 1 a wave and 0.5 a release (the `wave` skill, step 3). The hold is 97.
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; at most two Gradle agents and two emulators.
