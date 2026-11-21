@@ -671,7 +671,10 @@ object MapLayout {
         val natural = (s.height + m.scrollMaxPx()) / d
         if (!io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardUiState.allScroll || m.fixedPx <= 0) m.fixedPx = (s.height - m.bodyPx).coerceAtLeast(0)
         val fixed = m.fixedPx / d
-        return OverlayCard(natural, minOf(natural, fixed + twoLines), minOf(natural, fixed), s.width / d)
+        // T323: the card keeps its heading and whole filled action above the fixed links before the ladder hides anything.
+        val least = minOf(natural, fixed + twoLines)
+        val keep = if (m.actionEndPx > 0) minOf(natural, maxOf(least, fixed + m.actionEndPx / d)) else least
+        return OverlayCard(natural, least, minOf(natural, fixed), s.width / d, keep = keep)
     }
 
     /** T239: the cards by `GET /layout` id, placed by their own code until Layout C. */

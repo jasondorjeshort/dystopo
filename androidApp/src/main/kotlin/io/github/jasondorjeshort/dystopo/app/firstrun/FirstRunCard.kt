@@ -29,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -147,10 +149,12 @@ fun FirstRunCard(fallback: String?) {
                     .layout { m, c -> m.measure(c).let { p -> FirstRunCardState.bodyPx = p.height; layout(p.width, p.height) { p.place(0, 0) } } } // T320: the body's height for the rule
                     .verticalScroll(scroll),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                BasicText("No map on this phone yet", style = TextStyle(color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold))
+                BasicText("No map on this phone yet", Modifier.onGloballyPositioned { FirstRunCardState.headTop(it.positionInRoot().y) }, style = TextStyle(color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold))
                 BasicText(firstRunBody(ui.server, ui.direct, ui.notice), style = TextStyle(color = Muted, fontSize = 13.sp))
-                firstRunChoices(ui.server, ui.direct, FirstRun.estimateBytes, AppSettings.units).forEach { c ->
-                    ChoiceBlock(c) {
+                val choices = firstRunChoices(ui.server, ui.direct, FirstRun.estimateBytes, AppSettings.units)
+                val firstFilled = choices.firstOrNull { it.weight == ChoiceWeight.FILLED }
+                choices.forEach { c ->
+                    ChoiceBlock(c, c === firstFilled) {
                         FirstRun.message = null
                         when (c.id) {
                             "download" -> FirstRun.downloadAroundMe()
@@ -169,7 +173,7 @@ fun FirstRunCard(fallback: String?) {
 
 /** T220: a choice and its sentence: a filled or outlined button, or a text action. */
 @Composable
-private fun ChoiceBlock(choice: FirstRunChoice, onClick: () -> Unit) {
+private fun ChoiceBlock(choice: FirstRunChoice, measured: Boolean, onClick: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         if (choice.weight == ChoiceWeight.TEXT) {
             BasicText(choice.label, Modifier.clickable(onClick = onClick).padding(vertical = 4.dp), style = TextStyle(color = Link, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
@@ -179,6 +183,7 @@ private fun ChoiceBlock(choice: FirstRunChoice, onClick: () -> Unit) {
                 choice.label,
                 style = TextStyle(color = if (filled) Paper else Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center),
                 modifier = Modifier.fillMaxWidth()
+                    .let { m -> if (measured) m.onGloballyPositioned { FirstRunCardState.actionBottom(it.positionInRoot().y + it.size.height) } else m } // T323
                     .background(if (filled) Accent else Paper, RoundedCornerShape(10.dp))
                     .border(1.dp, Accent, RoundedCornerShape(10.dp))
                     .clickable(onClick = onClick)
