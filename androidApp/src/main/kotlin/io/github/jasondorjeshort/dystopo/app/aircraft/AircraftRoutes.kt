@@ -29,7 +29,9 @@ import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
  *   (flights with route lines: the selected one and each faint line), `routeLinesCapped` (plausible flights left without
  *   a faint line by `routeLinesCap`, 50), `faintLines`, `faintPointsMax`, and the faint source's `faintUpdatedAtMs`
  *   (built), `faintPushedAtMs` (set on the map), `faintUpdates` and `faintPushes` (they move on a poll, a selection or a
- *   setting change, not each second).
+ *   setting change, not each second); `offMainCalls` (MapLibre calls that arrived off the main thread, reposted: 0 is
+ *   the rule), `lastOffMain` (the last one's caller, with a stack in a debug build) and `skippedDetached` (pushes skipped
+ *   for a destroyed activity's view).
  * - `POST /aircraft`: `on=1|0` (Flight tracking, as the row sets it: stored, synced), `select=<hex>|nearest|none` (as a
  *   tap on the map does), `offline=1|0` (polls fail as with no connection, without a request), `spent=<n>` (the day's
  *   count), `limit=<s>` (a 429 with Retry-After `s`; 0 lifts it). Answers `GET /aircraft` after `wait=<ms>` (default 800).
