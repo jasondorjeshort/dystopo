@@ -23,3 +23,11 @@ data flow.
 - Whether it belongs on the map layer list or in a separate drone mode.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: do you want the app to show airspace and temporary flight restrictions at all, given that a missing or stale
+restriction can lead a drone flyer to fly where it is forbidden, and the data is US-only (FAA, public domain) with
+other countries unchecked? Recommended: not now; it is a safety matter the project would have to stand behind, it
+serves a narrow audience, and it would need a research pass on sources and a proposal. If yes, start with that
+research pass (`benchmark.md`, technical variant) on regions and licences.
+
+Answer:
