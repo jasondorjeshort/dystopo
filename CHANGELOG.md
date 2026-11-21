@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-21
+
+- T314: Flight route lines: the path before the app saw the plane, and a setting for which flights show them
+
 ## v0.1.37-alpha (2026-11-21)
 
 ### 2026-11-21
