@@ -13,6 +13,9 @@ import kotlin.math.roundToLong
  */
 data class HorizonPoint(val lat: Double, val lon: Double, val name: String? = null)
 
+/** T321: what a view opened by the switch stands on ([HorizonPlace.switchFrom]); [key] as `GET /horizon` reports it. */
+enum class SwitchFrom(val key: String) { LONG_PRESS("longPress"), SEARCH("search"), FIX("fix") }
+
 /**
  * T317: the place line under the horizon: [text] as shown, [moved] true when the view is not where the phone is (tinted
  * apart, with "Back to here"), [kind] `here`, `named`, `offset` or `unknown` (no fix to measure from), [distanceM] and
@@ -65,6 +68,24 @@ object HorizonPlace {
         val offset = "${UnitFormat.distance(d, units)} ${compass16(b)} of you"
         return if (point.name != null) PlaceLine("At ${point.name}, $offset", true, "named", d, b)
         else PlaceLine(offset, true, "offset", d, b)
+    }
+
+    // ---- T321: two more ways in ----
+
+    /** T321: "View from here" on a picked peak: the view stands on the peak, named ("At <peak>, ..."). */
+    fun pointOf(peak: io.github.jasondorjeshort.dystopo.dem.Peak): HorizonPoint = HorizonPoint(peak.lat, peak.lon, peak.name)
+
+    /**
+     * T321 (the owner, 2026-11-21: "If we select a different location on the map and switch to horizon view we want the
+     * horizon from THAT location, not ours"): where a view the switch opens stands. The map's selection is an open
+     * long-press card ([longPressOpen]; on a named peak it is that peak, as "Sky from here" finds it), else a search result's
+     * marker ([searchMarker]); with neither, the fix. The card wins: it is the newer, deliberate choice, and the marker
+     * stays on the map until the search is cleared. One rule for every view the switch opens (the Panorama view later).
+     */
+    fun switchFrom(longPressOpen: Boolean, searchMarker: HorizonPoint?): SwitchFrom = when {
+        longPressOpen -> SwitchFrom.LONG_PRESS
+        searchMarker != null -> SwitchFrom.SEARCH
+        else -> SwitchFrom.FIX
     }
 
     /** A coordinate to 4 decimals ("46.8530", "-121.7600"). */

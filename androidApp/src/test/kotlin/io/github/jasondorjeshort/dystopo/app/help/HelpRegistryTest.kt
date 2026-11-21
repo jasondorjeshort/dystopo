@@ -314,4 +314,16 @@ class HelpRegistryTest {
         assertTrue("within ${io.github.jasondorjeshort.dystopo.routing.BestStart.START_BY_WITHIN_MIN / 60} hours" in text, text)
     }
     // end T218
+
+    // T321: the Horizon view's help names its two new ways to another place: the switch with a place selected, and a peak's "View from here".
+    @Test
+    fun theHorizonHelpNamesTheWaysToAnotherPlace() {
+        for (u in ContourUnits.entries) {
+            val view = HelpRegistry.byKey("horizon.view")!!.text(u)
+            assertTrue("Sky from here" in view && "Horizon with a place selected on the map" in view, view)
+            val peaks = HelpRegistry.byKey("horizon.peaks")!!.text(u)
+            assertTrue(io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.VIEW_FROM_HERE in peaks, peaks)
+        }
+    }
+    // end T321
 }

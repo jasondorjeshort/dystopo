@@ -100,4 +100,37 @@ class HorizonPlaceTest {
         assertEquals("SSE", HorizonPlace.compass16(157.5))
         assertEquals("NNW", HorizonPlace.compass16(340.0))
     }
+
+    // T321: the switch's rule, and the place line from a peak's "View from here".
+
+    @Test
+    fun theSwitchOpensAtTheMapsSelection() {
+        val marker = HorizonPoint(46.8529, -121.7604, "Mount Rainier")
+        // Nothing selected: the fix.
+        assertEquals(SwitchFrom.FIX, HorizonPlace.switchFrom(longPressOpen = false, searchMarker = null))
+        // A long-press card open: its point, whether or not a search marker stands too (the card is the newer choice).
+        assertEquals(SwitchFrom.LONG_PRESS, HorizonPlace.switchFrom(longPressOpen = true, searchMarker = null))
+        assertEquals(SwitchFrom.LONG_PRESS, HorizonPlace.switchFrom(longPressOpen = true, searchMarker = marker))
+        // The card closed again (Cancel, an action, or the switch itself): back to the marker if one stands, else the fix.
+        assertEquals(SwitchFrom.SEARCH, HorizonPlace.switchFrom(longPressOpen = false, searchMarker = marker))
+        assertEquals(SwitchFrom.FIX, HorizonPlace.switchFrom(longPressOpen = false, searchMarker = null))
+        assertEquals(listOf("longPress", "search", "fix"), SwitchFrom.entries.map { it.key })
+    }
+
+    @Test
+    fun viewFromAPeak() {
+        // Little Tahoma, a peak the Horizon view lists from Paradise (coordinates rounded): the view stands on it, named.
+        val peak = io.github.jasondorjeshort.dystopo.dem.Peak("Little Tahoma", "peak", 46.8496, -121.7123, 3394.0)
+        val p = HorizonPlace.pointOf(peak)
+        assertEquals(HorizonPoint(46.8496, -121.7123, "Little Tahoma"), p)
+        val l = HorizonPlace.line(p, lat, lon, ContourUnits.METERS)
+        assertEquals("named", l.kind)
+        assertTrue(l.moved)
+        assertTrue(l.text.startsWith("At Little Tahoma, ") && l.text.endsWith(" NNE of you"), l.text)
+        assertEquals(TrackStats.distanceM(lat, lon, p.lat, p.lon), l.distanceM!!, 1e-6)
+        assertTrue(HorizonPlace.line(p, lat, lon, ContourUnits.FEET).text.matches(Regex("At Little Tahoma, \\d+\\.\\d mi NNE of you")))
+        // A hop from one peak to another reads from the fix, not from the last point.
+        val summit = HorizonPlace.pointOf(io.github.jasondorjeshort.dystopo.dem.Peak("Mount Rainier", "peak", 46.8529, -121.7604, 4392.0))
+        assertTrue(HorizonPlace.line(summit, lat, lon, ContourUnits.METERS).text.endsWith(" NNW of you"))
+    }
 }

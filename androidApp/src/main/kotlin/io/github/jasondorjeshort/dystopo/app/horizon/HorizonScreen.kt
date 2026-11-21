@@ -139,8 +139,9 @@ object HorizonUi {
 
     /**
      * T317: the point the view is drawn for in place of the fix ("Sky from here" on the long-press card, `POST /horizon/ui?lat=&lon=`),
-     * or null at the fix. In memory only (the app reopens at the fix), never snapped back on a timer; "Back to here", Close
-     * and the switch's "Horizon" (which opens at the fix) let it go.
+     * or null at the fix. In memory only (the app reopens at the fix), never snapped back on a timer; "Back to here" and
+     * Close let it go. T321: also a picked peak's "View from here" ([viewFrom]) and the switch's "Horizon" with a place
+     * selected on the map (`ViewSwitch.openAtSelection`); with nothing selected the switch opens at the fix.
      */
     var point by mutableStateOf<io.github.jasondorjeshort.dystopo.horizon.HorizonPoint?>(null)
         private set
@@ -153,7 +154,7 @@ object HorizonUi {
     fun open() {
         GnssUi.resetUi()
         selected = null
-        point = null // T317: the switch and the settings row open at the fix
+        point = null // T317: the settings row, and the switch with nothing selected on the map (T321), open at the fix
         open = true
     }
 
@@ -180,6 +181,15 @@ object HorizonUi {
                 then()
             }
         }, "dystopo-horizon-point").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * T321: "View from here" on a picked peak: the view moves to stand on it, named (the place line reads "At <peak>, ...").
+     * The same as [openAt]: the pick is let go, the scroll goes to the top. Main thread.
+     */
+    fun viewFrom(p: PeakView) {
+        openAt(HorizonPlace.pointOf(p.peak))
+        scrollTo = 0
     }
 
     /** T317: "Back to here": the view returns to the phone's fix (main thread). */
@@ -741,16 +751,25 @@ private fun PlaceRow(place: PlaceLine, showBack: Boolean, pal: GnssPalette, nigh
     }
 }
 
-/** The peak a tap picked, under the heading (it stays while the list scrolls); a tap on it or Back lets it go. */
+/**
+ * The peak a tap picked, under the heading (it stays while the list scrolls); a tap on its line or Back lets it go. T321:
+ * "View from here" beside the line, a target of its own (a button at least 48 dp tall), stands the view on the peak.
+ */
 @Composable
 private fun PickedPeak(p: PeakView, pal: GnssPalette, units: ContourUnits) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).background(pal.card, RoundedCornerShape(10.dp)).border(1.dp, pal.link, RoundedCornerShape(10.dp))
-            .clickable(role = Role.Button) { HorizonUi.selected = null }.padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BasicText(HorizonText.peakLine(p.peak.name, p.eleM, p.distanceM, p.bearingDeg, units, !PeakRim.inSight(p)), Modifier.weight(1f), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-        BasicText("×", Modifier.padding(start = 8.dp).semantics { contentDescription = HorizonText.PEAK_CLEAR }, style = TextStyle(color = pal.ink, fontSize = 20.sp))
+        Row(
+            Modifier.weight(1f).heightIn(min = 48.dp).clickable(role = Role.Button) { HorizonUi.selected = null }.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicText(HorizonText.peakLine(p.peak.name, p.eleM, p.distanceM, p.bearingDeg, units, !PeakRim.inSight(p)), Modifier.weight(1f), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+            BasicText("×", Modifier.padding(start = 8.dp).semantics { contentDescription = HorizonText.PEAK_CLEAR }, style = TextStyle(color = pal.ink, fontSize = 20.sp))
+        }
+        Box(Modifier.testTag("horizonViewFromHere")) { Button(HorizonText.VIEW_FROM_HERE, pal) { HorizonUi.viewFrom(p) } }
     }
 }
 
@@ -902,12 +921,13 @@ internal val HORIZON_HELP: List<HelpText> = run {
         HelpText("horizon.view", HorizonText.TITLE, placed, show = show) { units ->
             "The sky around you as a circle: its edge the horizon, its centre overhead, the shaded band the land's skyline " +
                 "within ${HorizonText.range(units)}. Show turns the layers on and off: the satellites, the peaks in view and the sun's path. " +
-                "${HorizonText.SKY_FROM_HERE} on the map's long-press card shows another place's." // T317
+                "${HorizonText.SKY_FROM_HERE} on the map's long-press card, or Horizon with a place selected on the map, shows another place's." // T317, T321
         },
         HelpText("horizon.peaks", HorizonText.PEAKS, "$placed › ${HorizonText.PEAKS}", show = show) { units ->
             "Named peaks within ${HorizonText.range(units)} in view, or just out of sight (hidden by under " +
                 "${UnitFormat.elevation(PeakRim.HIDDEN_M, units)}: a hollow triangle). The plot names the highest on the skyline, then the closest " +
-                "and most in view, spaced out where crowded; the list has all, closest first. Tap one for its height, distance and bearing."
+                "and most in view, spaced out where crowded; the list has all, closest first. Tap one for its height, distance and bearing; " +
+                "${HorizonText.VIEW_FROM_HERE} shows the sky from its top." // T321
         },
         HelpText("horizon.sun", HorizonText.SUN, "$placed › ${HorizonText.SUN}", show = show) { _ ->
             "Today's path of the sun, with the hours, dashed where the terrain hides it. The times are when the top of the " +

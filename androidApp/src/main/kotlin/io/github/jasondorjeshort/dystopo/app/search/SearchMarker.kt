@@ -62,14 +62,22 @@ object SearchMarker {
         return src
     }
 
+    /** T321: where the marker stands (its name too), or null; the switch's selection reads it through [selection]. */
+    private var shown: io.github.jasondorjeshort.dystopo.horizon.HorizonPoint? = null
+
+    /** T321: the marker's place while it is on the map (a style reload drops its layers, and with them the selection). */
+    fun selection(style: Style?): io.github.jasondorjeshort.dystopo.horizon.HorizonPoint? = shown?.takeIf { installed(style) }
+
     fun show(style: Style, lat: Double, lon: Double, name: String? = null) {
         val f = Feature.fromGeometry(Point.fromLngLat(lon, lat))
         if (name != null) f.addStringProperty("name", name)
         source(style).setGeoJson(f)
+        shown = io.github.jasondorjeshort.dystopo.horizon.HorizonPoint(lat, lon, name) // T321
     }
 
     fun clear(style: Style) {
         style.getSourceAs<GeoJsonSource>(SOURCE)?.setGeoJson(FeatureCollection.fromFeatures(emptyList()))
+        shown = null // T321
     }
 
     /** Whether the marker's layers are in [style] (for `/search/status`). */

@@ -41,7 +41,9 @@ import java.time.LocalDate
  *   toggles, as a tap sets them (stored, synced); `date=YYYY-MM-DD|today`: the day the Sun layer shows; `select=<peak name>|none`:
  *   picks a candidate peak as a tap does; T312: `flight=<hex or call sign>|none` picks a listed flight as a tap on its dot
  *   or row does (its card opens), `skyRange=overhead|near|all` sets Sky range as its row does; `scroll=<px>`: scrolls the
- *   control area. Answers `GET /horizon` (with `wait`).
+ *   control area. Answers `GET /horizon` (with `wait`). T321: `viewFrom=<peak name>` is a picked peak's "View from here"
+ *   on a candidate of the view as it stands (404 when none is named so): the view stands on the peak, named.
+ *   T321: `horizonSweeps` (the sweeps since launch) and `horizonsKept` (`Gnss.HORIZON_KEEP` at most: the fix's beside the points').
  *   T317: `point` (`lat`, `lon`, `name`: the chosen point, null at the fix), `placeLine` (`text`, `moved`, `kind`
  *   `here|named|offset|unknown`, `distanceM`, `bearingDeg` from the fix); `horizon`, `peaks` and `sun` are the point's, and
  *   `drawn` adds `point`, `placeLine`, `placeKind`, `moved`, `backShown`, `disabledButtons`.
@@ -51,7 +53,9 @@ import java.time.LocalDate
  *   "Back to here" does. With `wait=<ms>` the answer waits for the point's horizon and peaks.
  * - `POST /horizon/switch?to=map|horizon` (T309): selects a segment of the "Map | Horizon" switch, as a tap on it does (on the
  *   map or on the view); answers `{to, open}` and the switch's place: `map` (the map's switch as `GET /layout` reads it:
- *   `rectPx`, `state`, `reason`) and `view` (the view's own, `drawn.switchPx`).
+ *   `rectPx`, `state`, `reason`) and `view` (the view's own, `drawn.switchPx`). T321: "Horizon" opens the view at the map's
+ *   selection as a tap does (`ViewSwitch.openAtSelection`: an open long-press card, else a search result's marker, else the
+ *   fix); the answer adds `from` (`longPress`, `search` or `fix`) and `point` (null at the fix).
  */
 object HorizonRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -77,6 +81,11 @@ object HorizonRoutes {
                 }
                 val range = q["skyRange"]?.let { io.github.jasondorjeshort.dystopo.horizon.SkyRange.of(it) ?: return Response.json(mapOf("error" to "skyRange must be overhead, near or all"), 400) }
                 range?.let { SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok.of(AppSettings.SKY_RANGE, it)); app.map.onMain { io.github.jasondorjeshort.dystopo.app.SettingsUi.revision++ } }
+                // T321: "View from here" on a candidate peak of the view as it stands (a tap on the picked peak's button).
+                val viewFrom = q["viewFrom"]?.let { name ->
+                    HorizonData.peaks?.candidates?.firstOrNull { it.peak.name.equals(name, ignoreCase = true) }
+                        ?: return Response.json(mapOf("error" to "no candidate peak named $name in the view as it stands"), 404)
+                }
                 val scroll = q["scroll"]?.let { it.toIntOrNull()?.takeIf { px -> px >= 0 } ?: return Response.json(mapOf("error" to "scroll must be a whole number of px"), 400) }
                 for ((layer, on) in set) if (AppSettings.horizonLayer(layer).value != on) {
                     val latch = java.util.concurrent.CountDownLatch(1)
@@ -89,6 +98,7 @@ object HorizonRoutes {
                         HorizonUi.selected = if (name == "none") null else HorizonData.peaks?.candidates?.firstOrNull { it.peak.name.equals(name, ignoreCase = true) }?.let { HorizonUi.keyOf(it) }
                     }
                     scroll?.let { HorizonUi.scrollTo = it }
+                    viewFrom?.let { HorizonUi.viewFrom(it) }
                     q["flight"]?.let { want ->
                         HorizonUi.selectedFlight = if (want == "none") null else {
                             val f = HorizonData.flightsFor(Gnss.horizonAtPhone(), Gnss.position(), AppSettings.skyRange).list
@@ -106,6 +116,9 @@ object HorizonRoutes {
                     else -> return Response.json(mapOf("error" to "to=map or to=horizon"), 400)
                 }
                 app.map.onMain { io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.select(horizon) }
+                // T321: from a long-press card the view opens once its named feature is looked up (a thread of its own).
+                val until = SystemClock.elapsedRealtime() + 10_000
+                while (horizon && !app.map.onMain { HorizonUi.open } && SystemClock.elapsedRealtime() < until) Thread.sleep(100)
                 Thread.sleep(800)
                 Response.json(switchJson(app, r.query["to"]!!))
             }
@@ -138,6 +151,9 @@ object HorizonRoutes {
         val map = io.github.jasondorjeshort.dystopo.app.MapLayout.observed().firstOrNull { it.id == id }
         linkedMapOf(
             "to" to to, "open" to HorizonUi.open,
+            // T321: what the last "Horizon" stood on (`longPress`, `search` or `fix`) and the view's point (null at the fix).
+            "from" to io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.lastFrom?.key,
+            "point" to HorizonUi.point?.let { p -> linkedMapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name) },
             "map" to map?.let { s -> linkedMapOf("rectPx" to s.rectPx?.map { Math.round(it) }, "state" to s.state, "reason" to s.reason) },
             "view" to if (HorizonUi.open) HorizonUi.switchPx else null,
         )
@@ -178,6 +194,7 @@ object HorizonRoutes {
             "horizon" to Gnss.horizonJson(h)?.filterKeys { it != "angleDeg" },
             "horizonReason" to if (h == null) (if (src == null) io.github.jasondorjeshort.dystopo.app.gnss.GnssText.NO_POSITION else io.github.jasondorjeshort.dystopo.app.gnss.GnssText.HORIZON_WORKING) else h.reason,
             "peaks" to HorizonData.peaksJson(peaks, HorizonUi.drawn?.let { HorizonUi.names.map { n -> HorizonUi.keyOf(n.peak) }.toSet() }), "peakRuns" to HorizonData.peakRuns.get(),
+            "horizonSweeps" to Gnss.horizonSweeps.get(), "horizonsKept" to Gnss.horizonsKept, // T321: back to the fix sweeps nothing
             "flights" to if (io.github.jasondorjeshort.dystopo.horizon.HorizonPlace.layers(layers.effective(tracking), moved).flights) HorizonData.flightsJson(HorizonData.flightsFor(h, pos, AppSettings.skyRange, now), HorizonUi.drawn?.let { HorizonUi.flightMarks.filter { m -> m.box != null }.map { m -> m.hex } }) else null,
             "sun" to sun?.let { HorizonData.sunJson(it) + mapOf("nowAltitudeDeg" to sunNow?.apparentAltitudeDeg?.let { a -> Math.round(a * 10) / 10.0 }, "nowAzimuthDeg" to sunNow?.azimuthDeg?.let { a -> Math.round(a * 10) / 10.0 }) },
         )

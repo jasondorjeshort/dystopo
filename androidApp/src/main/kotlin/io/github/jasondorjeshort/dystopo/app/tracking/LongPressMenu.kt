@@ -189,7 +189,7 @@ object LongPressMenu {
         private set
     /**
      * What the last long-press or menu tap did: `menu`, `route` (passed to the route, or Route from here), `routeTo`
-     * (T114: Route to here), `waypoint`, `cancel`, `sky` (T317: Sky from here).
+     * (T114: Route to here), `waypoint`, `cancel`, `sky` (T317: Sky from here), `switch` (T321: the switch's "Horizon").
      */
     @Volatile var lastAction: String? = null
         private set
@@ -265,12 +265,13 @@ object LongPressMenu {
     /**
      * T317, "Sky from here": the Horizon view for the pressed point (on a named feature within a fingertip or T197's 100 m,
      * at the feature, named), the satellites and flights hidden, the place line saying where it stands. Main thread.
+     * T321: the switch's "Horizon" with the card open does the same ([via] `switch`, the card's [lastAction]).
      */
-    fun skyFromHere() {
+    fun skyFromHere(via: String = "sky") {
         val (lat, lon) = point ?: return
         val metersPerDp = runCatching { DystopoApp.instance.map.map?.projection?.getMetersPerPixelAtLatitude(lat) }.getOrNull()
         point = null
-        lastAction = "sky"
+        lastAction = via
         io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi.openFrom(lat, lon, maxOf(io.github.jasondorjeshort.dystopo.app.horizon.HorizonData.FEATURE_PRESS_M, (metersPerDp ?: 0.0) * FINGER_DP))
     }
 
