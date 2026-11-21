@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-21
+
+- T319: The sweep's two checks: screen names against its frames, and the a11y baseline matched by label
+
 ## v0.1.39-alpha (2026-11-21)
 
 ### 2026-11-21
