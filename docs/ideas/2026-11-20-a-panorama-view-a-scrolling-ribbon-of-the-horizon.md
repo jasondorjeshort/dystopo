@@ -86,3 +86,7 @@ Out of scope in all three: the camera, the terrain drawn below the horizon (the 
 an aircraft, a choice of drawing styles.
 2026-11-21: pass one is T322 of wave 44 (`docs/TASKS.md`), as the critic's edits left it: the density rule is a
 separation the projection supplies, so the round plot's placements cannot move.
+2026-11-21: pass one is built (T322): `LabelProjection` with `RimGeometry` and `LensView` (perspective; the density gap
+is the screen distance over the rim's 3.17 dp per degree at a 411 dp plot), `LayeredSkyline` (one sweep per range, step
+0.1 degree), devtool `panorama`. Its report proposes 60 degrees as the default field of view and no vertical stretch;
+passes two and three remain, so the file stays.

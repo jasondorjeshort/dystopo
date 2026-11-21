@@ -54,6 +54,8 @@ data class HorizonLabel(
  * box touches no label placed before, no ring label, no hour label and not the sun's arc, and only where no label already
  * placed stands within the density gap in bearing: `4° × sqrt(nLocal / 5)`, at least 2°, nLocal the candidates within ±15°
  * (a crowded stretch of the rim gets sparser names, an empty one takes close neighbours). No fixed cap per sector.
+ * T322: the view is a [LabelProjection]; "within ±15°" and the gap are its [LabelProjection.separation] (bearing on the
+ * round plot, [RimGeometry]; screen distance over a reference scale through the Panorama's lens, [LensView]).
  */
 object HorizonLabels {
     // The score's weights (first guesses).
