@@ -34,7 +34,12 @@ Horizon view (Horizon selected), whatever cards are up, in both orientations and
   card in portrait stands above it. `GET /horizon` `drawn`: `switchPx` (in the Compose root, as `GET /layout`'s), and
   `paneOverSwitch`, `switchRoomDp`.
 
-"Horizon" opens the view, "Map" closes it as Close and Back do. Each segment is a tab (`selectable`, `Role.Tab`), tags
+"Horizon" opens the view, "Map" closes it as Close and Back do. T321 (the owner, 2026-11-21: "If we select a different
+location on the map and switch to horizon view we want the horizon from THAT location, not ours"): "Horizon" opens the view
+at the map's selected place when there is one (`ViewSwitch.openAtSelection`, by `HorizonPlace.switchFrom`, one rule a
+Panorama segment calls too): an open long-press card first (as its "Sky from here": on a named feature within a fingertip,
+at the feature and named; the card closes), else a search result's marker while it is on the map (named; the marker
+stays), else the fix. A peak picked inside the view is not the map's selection. Each segment is a tab (`selectable`, `Role.Tab`), tags
 `horizonSwitch.map` and `horizonSwitch.horizon`; the group's label "Map or horizon view". Debug: `POST /horizon/switch?to=map|horizon`
 answers both rectangles (`map`, `view`). No compass shortcut: MapLibre's compass shows only while the map is turned, and its
 tap resets north. Every map frame of a sweep made before T315 differs by it (the switch, the credit line and every lower
@@ -107,8 +112,9 @@ The owner, 2026-11-20: the skyline is computed from the DEM for any point, but a
 as your own sky. "Sky from here" on the long-press card (after "What can I see from here"; `tracking/LongPressMenu.kt`)
 opens the view for the pressed point: on a named feature (a peak, a saddle or a pass of the pack's `mountain_peak` layer,
 z13 then z12 as T197 reads them) within a fingertip or 100 m, at the feature and named (`HorizonData.pointFor`). The terrain's
-horizon, the peaks and the sun are the point's (`Gnss.horizonAt(lat, lon)`, the one cached sweep, so "Back to here" sweeps
-the fix again); the Satellites and Flights layers do not draw there (the GNSS the phone hears, the poll centred on its fix),
+horizon, the peaks and the sun are the point's (`Gnss.horizonAt(lat, lon)`; T321: up to `Gnss.HORIZON_KEEP`, 3, horizons
+are kept, the least recently used dropped first but never the one at the fix, so "Back to here" and a hop between points
+sweep nothing again); the Satellites and Flights layers do not draw there (the GNSS the phone hears, the poll centred on its fix),
 their buttons shown without a tick, muted and disabled, with "Satellites and flights show only at your location." under
 them; their synced settings are not touched (`shared/.../horizon/HorizonPlace.kt`: `source`, `layers`, `disabled`).
 
@@ -120,11 +126,19 @@ them; their synced settings are not touched (`shared/.../horizon/HorizonPlace.kt
   starts "Horizon from: <the line>".
 - **"Back to here"** (a filled button at the band's right, tag `horizonBackToHere`) returns to the fix; Back does the
   same before it closes the view. A chosen point is held in memory only (`HorizonUi.point`): never snapped back on a
-  timer, let go by Close and by the switch's "Horizon" (which opens at the fix), and gone when the app restarts.
-- **Debug**: `POST /horizon/ui?lat=&lon=` and `?back=1`, `GET /horizon` `point` and `placeLine` (`android-debug-routes.md`).
+  timer, let go by Close and by the switch's "Map", and gone when the app restarts.
+- **"View from here"** (T321): the picked peak's line under the heading carries a button of its own (at least 48 dp tall,
+  tag `horizonViewFromHere`; the rest of the line still lets the peak go): the view moves to stand on the peak, named
+  (`HorizonPlace.pointOf`, "At Little Tahoma, 7.3 km NNE of you"), the pick let go and the list scrolled to its top. From
+  a chosen point it hops; the line is always measured from the fix.
+- **Debug**: `POST /horizon/ui?lat=&lon=` and `?back=1`, `POST /horizon?viewFrom=<peak name>`, `POST /horizon/switch?to=horizon`
+  (answers `from` and `point`), `GET /horizon` `point`, `placeLine`, `horizonSweeps` and `horizonsKept` (`android-debug-routes.md`).
   Sweep: `android-ui.py features` step `horizon` checks "Your location" at the fix, then `sky_from_here`: the map at the
   summit, a long-press, "Sky from here" (frame `horizon-point`), the place line, the Satellites toggle without a tick, and
-  "Back to here" back to "Your location".
+  "Back to here" back to "Your location"; T321, by taps: `horizon_from_switch` (a long-press card open at the summit, the
+  switch's "Horizon": frame `horizon-from-switch`, the card closed after) and `horizon_from_peak` (the switch with nothing
+  selected at "Your location", frame `horizon-switch-here`; Mount Rainier's row picked, its "View from here": frame
+  `horizon-from-peak`). `android-a11y.py` screen `horizon-elsewhere`: the view at the summit with a peak picked.
 
 ## Flights (T312)
 
