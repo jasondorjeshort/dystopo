@@ -128,7 +128,7 @@ them; their synced settings are not touched (`shared/.../horizon/HorizonPlace.kt
   same before it closes the view. A chosen point is held in memory only (`HorizonUi.point`): never snapped back on a
   timer, let go by Close and by the switch's "Map", and gone when the app restarts.
 - **"View from here"** (T321): the picked peak's line under the heading carries a button of its own (at least 48 dp tall,
-  tag `horizonViewFromHere`; the rest of the line still lets the peak go): the view moves to stand on the peak, named
+  tag `horizonViewFromHere`; the rest of the line still lets the peak go; above font scale 1.3 it stands under the line): the view moves to stand on the peak, named
   (`HorizonPlace.pointOf`, "At Little Tahoma, 7.3 km NNE of you"), the pick let go and the list scrolled to its top. From
   a chosen point it hops; the line is always measured from the fix.
 - **Debug**: `POST /horizon/ui?lat=&lon=` and `?back=1`, `POST /horizon?viewFrom=<peak name>`, `POST /horizon/switch?to=horizon`
@@ -137,7 +137,7 @@ them; their synced settings are not touched (`shared/.../horizon/HorizonPlace.kt
   summit, a long-press, "Sky from here" (frame `horizon-point`), the place line, the Satellites toggle without a tick, and
   "Back to here" back to "Your location"; T321, by taps: `horizon_from_switch` (a long-press card open at the summit, the
   switch's "Horizon": frame `horizon-from-switch`, the card closed after) and `horizon_from_peak` (the switch with nothing
-  selected at "Your location", frame `horizon-switch-here`; Mount Rainier's row picked, its "View from here": frame
+  selected at "Your location", frame `horizon-switch-here`; Mount Rainier's row picked, `horizon-peak-picked`; its "View from here": frame
   `horizon-from-peak`). `android-a11y.py` screen `horizon-elsewhere`: the view at the summit with a peak picked.
 
 ## Flights (T312)
