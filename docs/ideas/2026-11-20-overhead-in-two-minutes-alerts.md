@@ -23,3 +23,10 @@ in the background, but the plan forbids background polling to protect the 500-re
 - How accurate a straight-line projection is over two minutes (turns); the replay source can measure it.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: may the app alert you when a flight will pass close or low, and if so only while the app is open (an in-app
+banner, no new permission) or also in the background (notifications and background polling, against the plan's rule
+that protects the 500-a-day quota and the battery)? Recommended: the foreground-only banner as one task, after the
+replay feed measures how far a two-minute straight-line projection drifts; background alerts stay out.
+
+Answer:
