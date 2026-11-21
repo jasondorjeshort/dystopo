@@ -18,16 +18,24 @@ What T317 left (the critic of wave 43: one pass too big) are two more ways to ch
   "At <peak>, ..."), so a peak seen on the rim can be stood on.
 - In Horizon mode, a "View from map centre" action: pan the map, then see the sky from its centre.
 
+The owner, 2026-11-21: "we absolutely want to be able to look at the horizon and pano view from another location. If
+we select a different location on the map and switch to horizon view we want the horizon from THAT location, not ours."
+So the switch itself carries the place: with a location selected on the map (a long-pressed point, a tapped peak,
+waypoint or search result), the switch's Horizon segment, and later Panorama, opens the view there, with the place line
+and Back to here; with nothing selected, at the fix. That replaces "View from map centre" as the main way in.
+
 ## Open
 
-- Where "View from map centre" lives while the Horizon view covers the map (the switch's Map segment shows the map; the
-  action would need a place on the map while Horizon is the chosen view, or on the view itself).
+- ~~Where "View from map centre" lives~~ (the owner, 2026-11-21: the map's selection goes with the switch). Left open:
+  what counts as "selected" (a long-press card open, a tapped feature's card, a search result's pin), and whether
+  "View from map centre" is still wanted beside it.
 
 Plan: on T317's point mode (`HorizonUi.openAt(HorizonPoint)`, `HorizonPlace` in `shared/.../horizon/`): the picked
 peak's line under the heading (`PickedPeak` in `app/horizon/HorizonScreen.kt`) gains "View from here", opening the
-view at that peak's place with its name (`HorizonPoint(lat, lon, name)`; the peak's own `Peak` carries both); and a
-"View from map centre" action whose place is settled first (the Open question; a benchmark survey if in doubt, ADR 0039).
-Debug: `POST /horizon?viewFrom=<peak name>` and `POST /horizon/ui?centre=1`, documented in `HorizonRoutes.kt`'s KDoc.
-Verify: the emulator's frames at Rainier's summit from a peak tap (from Paradise) and from the map centre, the place line
-and "Back to here" in each; `android-ui.py`'s horizon step. New strings in the report (ADR 0031). Out of scope: the
+view at that peak's place with its name (`HorizonPoint(lat, lon, name)`; the peak's own `Peak` carries both); and the
+Map | Horizon switch opens the view at the map's selected location when there is one (the owner, 2026-11-21; what
+counts as selected is the Open question, settled in the task: at least an open long-press card and a tapped peak's card).
+Debug: `POST /horizon?viewFrom=<peak name>`, and `POST /horizon/switch` honouring the selection, documented in
+`HorizonRoutes.kt`'s KDoc. Verify: the emulator's frames at Rainier's summit from a peak tap (from Paradise) and from the
+switch with a long-press card open, the place line and "Back to here" in each; `android-ui.py`'s horizon step. New strings in the report (ADR 0031). Out of scope: the
 Panorama view.
