@@ -138,8 +138,77 @@ down = dict(e1, boundsDp=[100, 135, 200, 165])  # a row lower, same size
 taller = dict(e1, boundsDp=[100, 100, 200, 140])
 assert a11y.matches(e1, moved) and a11y.matches(e1, down) and not a11y.matches(e1, far) and not a11y.matches(e1, taller)
 assert not a11y.matches(e1, dict(e1, screen="route:2.0")) and not a11y.matches(e1, dict(e1, boundsDp=[100, 160, 200, 190]))
-new, gone, matched = a11y.compare([e1, dict(e1, label="Old")], [moved, moved])
-assert matched == 1 and new == [moved] and gone == [dict(e1, label="Old")], (new, gone, matched)
+new, gone, matched, mv = a11y.compare([e1, dict(e1, label="Old")], [moved, moved])
+assert matched == 1 and new == [moved] and gone == [dict(e1, label="Old")] and mv == [], (new, gone, matched, mv)
+
+# T319: matched by screen, kind and label first; the place only tells twins apart and pairs unlabelled lines.
+# Wave 43's case: the long-press card gained a row, and its accepted contrast lines sat 49 dp higher (y 810 to 761);
+# Cancel also went from the right of the row to the left. Each label is alone on its screen: moved, not new.
+lp = "longpress:1.0"
+base43 = [{"screen": lp, "kind": "contrast", "label": "Download around here", "boundsDp": [18, 810, 155, 838]},
+          {"screen": lp, "kind": "contrast", "label": "Cancel", "boundsDp": [340, 810, 382, 838]},
+          {"screen": "first-run:2.0", "kind": "contrast", "label": "On foot", "boundsDp": [317, 258, 403, 296]}]
+now43 = [{"screen": lp, "kind": "contrast", "label": "Download around here", "boundsDp": [18, 761, 155, 790]},
+         {"screen": lp, "kind": "contrast", "label": "Sky from here", "boundsDp": [18, 790, 104, 818]},
+         {"screen": lp, "kind": "contrast", "label": "Cancel", "boundsDp": [120, 790, 162, 818]},
+         {"screen": "first-run:2.0", "kind": "overlap", "label": "On foot", "boundsDp": [317, 258, 403, 296]}]
+assert not a11y.matches(base43[0], now43[0]), "49 dp is past the top's tolerance"
+new, gone, matched, mv = a11y.compare(base43, now43)
+assert [e["label"] for e in mv] == ["Download around here", "Cancel"] and mv[0]["wasDp"] == [18, 810, 155, 838], mv
+assert [(e["label"], e["kind"]) for e in new] == [("Sky from here", "contrast"), ("On foot", "overlap")], new  # a new label; a kind changed
+assert gone == [base43[2]] and matched == 2, (gone, matched)
+# The same label on another screen or scale is another key.
+assert a11y.compare(base43[:1], [dict(now43[0], screen="longpress:2.0")])[0] != []
+# Twins (the two "‹ Settings" of a settings page): nearest first, a pair within the tolerances before any past them.
+tw = "settings-data:1.0"
+t_top = {"screen": tw, "kind": "contrast", "label": "‹ Settings", "boundsDp": [24, 56, 325, 86]}
+t_low = dict(t_top, boundsDp=[24, 256, 325, 286])
+new, gone, matched, mv = a11y.compare([t_top, t_low], [dict(t_top, boundsDp=[24, 60, 325, 90])])
+assert new == [] and gone == [t_low] and matched == 1 and mv == [], (new, gone, mv)
+new, gone, matched, mv = a11y.compare([t_top, t_low], [dict(t_top, boundsDp=[24, 120, 325, 150]), dict(t_top, boundsDp=[24, 330, 325, 360])])
+assert new == [] and gone == [] and [e["wasDp"] for e in mv] == [[24, 56, 325, 86], [24, 256, 325, 286]], mv
+# Three now against two: the nearest two pair, the third is new.
+far3 = dict(t_top, boundsDp=[24, 700, 325, 730])
+new, gone, matched, mv = a11y.compare([t_top, t_low], [far3, dict(t_low), dict(t_top)])
+assert new == [far3] and gone == [] and mv == [], (new, mv)
+# An unlabelled line is matched by place only, as before: within the tolerances, else new and gone.
+un_b = {"screen": "activity-picker:1.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 189, 84]}
+assert a11y.compare([un_b], [dict(un_b, boundsDp=[22, 90, 189, 108])])[2] == 1
+far_un = dict(un_b, boundsDp=[22, 300, 189, 318])
+assert a11y.compare([un_b], [far_un])[:3] == ([far_un], [un_b], 0)
+
+# --replay: a saved run's report against a baseline file, no device: counts.new and counts.moved, exit 1 on anything new.
+import subprocess
+import sys
+tmp = tempfile.mkdtemp(prefix="t319-a11y-")
+try:
+    run_json = os.path.join(tmp, "a11y.json")
+    findings = [{"kind": e["kind"], "label": e["label"], "boundsPx": [round(v * D) for v in e["boundsDp"]], "boundsDp": e["boundsDp"]}
+                for e in now43 if e["screen"] == lp]
+    findings.append({"kind": "contrast", "label": "Busy", "boundsPx": [0, 0, 1, 1], "boundsDp": [0, 0, 1, 1], "advisory": True})
+    with open(run_json, "w", encoding="utf-8") as fh:
+        json.dump({"part": "a11y", "screens": [{"screen": lp, "findings": findings}, {"screen": "share:1.0", "skipped": "x"}]}, fh)
+    base_path = os.path.join(tmp, "baseline.json")
+    with open(base_path, "w", encoding="utf-8") as fh:
+        fh.write(a11y.baseline_text(base43[:2], taken="2026-11-21"))
+    rep = a11y.replay(run_json, base_path)
+    assert rep["counts"]["moved"] == 2 and rep["counts"]["new"] == 1 and rep["counts"]["findings"] == 3 and not rep["ok"], rep["counts"]
+    tool = os.path.join(here, "android-a11y.py")
+    p = subprocess.run([sys.executable, "-I", tool, "--replay", run_json, "--baseline", base_path], capture_output=True, text=True)
+    assert p.returncode == 1 and json.loads(p.stdout)["counts"]["new"] == 1, (p.returncode, p.stdout[:300], p.stderr[-300:])
+    with open(base_path, "w", encoding="utf-8") as fh:
+        fh.write(a11y.baseline_text(base43[:2] + [{"screen": lp, "kind": "contrast", "label": "Sky from here", "boundsDp": [18, 790, 104, 818]}]))
+    p = subprocess.run([sys.executable, "-I", tool, "--replay", run_json, "--baseline", base_path], capture_output=True, text=True)
+    assert p.returncode == 0 and json.loads(p.stdout)["counts"] == {"findings": 3, "entries": 3, "matched": 3, "moved": 2, "new": 0, "gone": 0}, p.stdout[:400]
+    # A live run still needs --serial and --port.
+    p = subprocess.run([sys.executable, "-I", tool], capture_output=True, text=True)
+    assert p.returncode == 2 and "--serial" in p.stderr, p.stderr[-300:]
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+# The baseline file's first line is BASELINE_ABOUT's copy.
+with open(os.path.join(here, "a11y-baseline.json"), encoding="utf-8") as fh:
+    assert json.loads(fh.readline().rstrip()[:-len(', "entries": [')] + "}")["about"] == a11y.BASELINE_ABOUT, "tools/a11y-baseline.json's first line copies BASELINE_ABOUT"
+# end T319
 
 tmp = tempfile.mkdtemp(prefix="t270-a11y-")
 try:

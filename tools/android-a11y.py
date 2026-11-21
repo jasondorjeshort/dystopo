@@ -3,6 +3,7 @@
     python -I tools/android-a11y.py --serial emulator-5574 --port 8698 [--font-scales 1.0,2.0] [--baseline tools/a11y-baseline.json]
                                     [--screens map,route,...] [--dem out/rainier-dem.pmtiles --osm out/rainier-outdoors.pmtiles]
                                     [--no-first-run] [--out out/a11y]
+    python -I tools/android-a11y.py --replay out/sweep-<date>/a11y.json --baseline tools/a11y-baseline.json   # T319, no device
 
 Drives the debug build through its debug routes (the tour's own steps: no taps to get anywhere) to each screen of SCREENS
 (the map with each card up, a track's profile, the Activity and Record-as pickers, the recording panel, the Tracks and routes
@@ -35,9 +36,13 @@ it shows whole. Nodes drawn at alpha 0 (`transparent`) or hidden from accessibil
 The MapLibre view is one opaque node: only the Compose overlays are checked. Each screen's frame is saved with its offending
 nodes outlined (`<n>-<screen>-<scale>.png`, colours in KIND_COLOURS) and all of them on `a11y-sheet.png`. The report (stdout,
 one JSON object) has per screen the counts and the findings; with `--baseline`, a finding is keyed by screen (with the font
-scale), kind, text or description (digits read as `#`) and bounds in dp (left, right and height within MATCH_DP, the top
-within MATCH_Y_DP), and the part is red only
-on a finding the baseline does not list (`baseline.new`); `baseline.gone` lists entries no longer seen (strike them).
+scale), kind and text or description (digits read as `#`). T319: a key alone on its screen on both sides matches its line
+wherever it sits; where a key occurs more than once (twins) the pairs go nearest first, and an unlabelled line (`-`) matches
+by place only (left, right and height within MATCH_DP, the top within MATCH_Y_DP). A pair past those tolerances is listed
+in `baseline.moved` (with `wasDp`) and never makes the part red. The part is red only on a finding the baseline does not
+list (`baseline.new`; a new label, or a kind that changed); `baseline.gone` lists entries no longer seen (strike them);
+`counts` has new, moved, gone and matched. `--replay <a11y.json> --baseline <file>` makes the same comparison from a saved
+run's report with no device (no --serial or --port), prints it, and exits 1 when anything is new, as a live run does.
 Every run writes `baseline-candidate.json` in --out, the file's format, from its non-advisory findings. A screen whose setup
 fails is `skipped` with the reason (red unless --allow-skips). Exit 0 when nothing is new (or no --baseline and no error).
 
@@ -388,32 +393,101 @@ def entry_of(screen, f):
     return {"screen": screen, "kind": f["kind"], "label": key_label(f["label"]), "boundsDp": [round(v) for v in f["boundsDp"]]}
 
 
+def same_key(e, f_entry):
+    """The same screen (with its font scale), kind and label."""
+    return e["screen"] == f_entry["screen"] and e["kind"] == f_entry["kind"] and e["label"] == f_entry["label"]
+
+
 def matches(e, f_entry, tol=MATCH_DP, tol_y=MATCH_Y_DP):
-    if e["screen"] != f_entry["screen"] or e["kind"] != f_entry["kind"] or e["label"] != f_entry["label"]:
+    """The same key and the same place: left, right and height within `tol`, the top within `tol_y`. T319: compare() pairs
+    a label that is alone on its screen whatever this says (a place past it is `moved`); this pairs twins and unlabelled
+    lines."""
+    if not same_key(e, f_entry):
         return False
     a, b = e["boundsDp"], f_entry["boundsDp"]
     return abs(a[0] - b[0]) <= tol and abs(a[2] - b[2]) <= tol and abs(a[1] - b[1]) <= tol_y and \
         abs((a[3] - a[1]) - (b[3] - b[1])) <= tol
 
 
+def distance(e, f_entry):
+    """How far apart two lines' bounds are in dp (the sum over the four edges): the nearest pair first among twins."""
+    return sum(abs(x - y) for x, y in zip(e["boundsDp"], f_entry["boundsDp"]))
+
+
 def compare(baseline, entries):
-    """(new, gone, matched): each finding entry against the baseline's entries, one to one, first match wins."""
-    left = list(baseline)
-    new, matched = [], 0
-    for f in entries:
-        hit = next((i for i, e in enumerate(left) if matches(e, f)), None)
-        if hit is None:
-            new.append(f)
+    """(new, gone, matched, moved): each finding entry against the baseline's entries, one to one (T319).
+
+    Lines are grouped by (screen, kind, label). A key that occurs once among the findings and once in the baseline is a
+    match wherever the finding sits: a card that grows a row moves every line under it, and the accepted finding is still
+    the same one. Where a key occurs more than once on a side (twins, the two "‹ Settings" of a settings page), the pairs
+    go nearest first, a pair within the tolerances (matches()) before any pair past them. An unlabelled line (label "-")
+    is matched by place only, as before T319: first a finding in order, then the first baseline line within the
+    tolerances. A new label, or a kind that changed, has no line of its key: new. `matched` counts every pair; `moved`
+    lists the pairs past the tolerances (each the finding with `wasDp`, the baseline line's bounds), which never make the
+    part red."""
+    def key(e):
+        return e["screen"], e["kind"], e["label"]
+
+    base_by, found_by = {}, {}
+    for i, e in enumerate(baseline):
+        base_by.setdefault(key(e), []).append(i)
+    for j, f in enumerate(entries):
+        found_by.setdefault(key(f), []).append(j)
+    paired = {}  # finding index -> baseline index
+    for k, js in found_by.items():
+        is_ = base_by.get(k) or []
+        if not is_:
+            continue
+        if k[2] == "-":
+            left = list(is_)
+            for j in js:
+                hit = next((i for i in left if matches(baseline[i], entries[j])), None)
+                if hit is not None:
+                    left.remove(hit)
+                    paired[j] = hit
+        elif len(is_) == 1 and len(js) == 1:
+            paired[js[0]] = is_[0]
         else:
-            left.pop(hit)
-            matched += 1
-    return new, left, matched
+            ranked = sorted((not matches(baseline[i], entries[j]), distance(baseline[i], entries[j]), j, i)
+                            for i in is_ for j in js)
+            used_i, used_j = set(), set()
+            for _far, _d, j, i in ranked:
+                if i in used_i or j in used_j:
+                    continue
+                used_i.add(i)
+                used_j.add(j)
+                paired[j] = i
+    new = [f for j, f in enumerate(entries) if j not in paired]
+    taken = set(paired.values())
+    gone = [e for i, e in enumerate(baseline) if i not in taken]
+    moved = [dict(entries[j], wasDp=list(baseline[i]["boundsDp"])) for j, i in sorted(paired.items())
+             if not matches(baseline[i], entries[j])]
+    return new, gone, len(paired), moved
+
+
+def replay(a11y_json, baseline_path):
+    """T319: a saved run (the sweep's a11y.json, the report this tool prints) against a baseline file, with no device: the
+    same comparison a live run makes, from the run's non-advisory findings."""
+    with open(a11y_json, encoding="utf-8") as f:
+        run_report = json.load(f)
+    entries = [entry_of(s["screen"], f) for s in run_report.get("screens") or [] for f in s.get("findings") or []
+               if not f.get("advisory")]
+    missing = not os.path.isfile(baseline_path)
+    base = [] if missing else load_baseline(baseline_path)
+    new, gone, matched, moved = compare(base, entries)
+    return {"part": "a11y", "replay": a11y_json, "ok": not new,
+            "counts": {"findings": len(entries), "entries": len(base), "matched": matched, "moved": len(moved),
+                       "new": len(new), "gone": len(gone)},
+            "baseline": {"file": baseline_path, "entries": len(base), "matched": matched, "new": new, "moved": moved,
+                         "gone": gone, **({"missing": True} if missing else {})}}
 
 
 BASELINE_ABOUT = ("T270: the accessibility part's known findings (tools/android-a11y.py, sweep part a11y). One line per "
-                  "finding: screen:font scale, kind, text or description (digits as #) and bounds in dp. The part is red only "
-                  "on a finding no line lists (left, right and height within 6 dp, the top within 48). A task that fixes a node strikes its line; a new line "
-                  "only with the reason in the dated log.")
+                  "finding: screen:font scale, kind, text or description (digits as #) and bounds in dp. A finding matches the "
+                  "line of its screen, kind and label wherever it sits when that label is alone there on both sides (listed as "
+                  "moved past the tolerances); twins pair nearest first, and unlabelled lines (-) by place only (left, right and "
+                  "height within 6 dp, the top within 48). The part is red only on a finding no line lists. A task that fixes a "
+                  "node strikes its line; a new line only with the reason in the dated log.")
 
 
 def baseline_text(entries, about=BASELINE_ABOUT, taken=None):
@@ -1070,9 +1144,10 @@ def run(args):
     if args.baseline:
         missing = not os.path.isfile(args.baseline)  # every finding is new: the first run, whose candidate becomes the file
         base = [] if missing else load_baseline(args.baseline)
-        new, gone, matched = compare(base, entries)
-        report["baseline"] = {"file": args.baseline, "entries": len(base), "matched": matched, "new": new, "gone": gone,
-                              **({"missing": True} if missing else {})}
+        new, gone, matched, moved = compare(base, entries)
+        report["baseline"] = {"file": args.baseline, "entries": len(base), "matched": matched, "new": new, "moved": moved,
+                              "gone": gone, **({"missing": True} if missing else {})}
+        report["counts"] = {"new": len(new), "moved": len(moved), "gone": len(gone), "matched": matched}
     for s, rep in zip([s for s in report["screens"] if "png" in s], sheet_reps):
         ns = [e for e in new if e["screen"] == s["screen"]]
         rep["ok"] = not ns
@@ -1096,8 +1171,10 @@ def run(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--serial", required=True)
-    ap.add_argument("--port", type=int, required=True, help="host port forwarded to the app's debug server")
+    ap.add_argument("--serial", help="the emulator or phone (required except with --replay)")
+    ap.add_argument("--port", type=int, help="host port forwarded to the app's debug server (required except with --replay)")
+    ap.add_argument("--replay", default="", help="T319: a saved run's report (the sweep's a11y.json) compared with --baseline, "
+                    "no device")
     ap.add_argument("--font-scales", default="1.0,2.0")
     ap.add_argument("--screens", default="", help="comma-separated screen names (default: all)")
     ap.add_argument("--baseline", default="")
@@ -1108,6 +1185,18 @@ def main():
     ap.add_argument("--allow-skips", action="store_true")
     ap.add_argument("--out", default=os.path.join(REPO, "out", "a11y"))
     args = ap.parse_args()
+    if args.replay:
+        if not args.baseline:
+            ap.error("--replay needs --baseline")
+        try:
+            report = replay(args.replay, args.baseline)
+        except (OSError, ValueError) as e:
+            print(json.dumps({"part": "a11y", "ok": False, "error": f"{type(e).__name__}: {e}"}))
+            sys.exit(2)
+        print(json.dumps(report, indent=1))
+        sys.exit(0 if report["ok"] else 1)
+    if not args.serial or args.port is None:
+        ap.error("--serial and --port are required (except with --replay)")
     args.font_scales = [float(x) for x in args.font_scales.split(",") if x.strip()]
     args.screens = [x for x in args.screens.split(",") if x]
     try:
