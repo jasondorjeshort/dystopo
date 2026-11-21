@@ -23,3 +23,10 @@ online-only, so a new data flow.
 - How a forecast is cached for offline use and for how long it stays true.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: is a contrail forecast wanted enough to pay for a research pass on a permissively licensed upper-air
+forecast, the project's first weather data flow? Recommended: not now; it needs a new online source and its caching,
+the payoff is a curiosity line, and no source is known to fit the licence rules. Park it until a weather source
+enters the project for another reason.
+
+Answer:
