@@ -406,7 +406,13 @@ class MeasuredControls(private val ruler: ((MeasuredControls) -> Ruled?)? = null
 
     companion object {
         /** T239: the cards, drawn by their own code until Layout C: the rule reads their rectangles, so a move starts a pass. */
-        val FIXED = setOf("navigationCard", "warningCard", "planningCard", "tripCard", "updateCard")
+        val FIXED = setOf(
+            "navigationCard", "warningCard", "planningCard", "tripCard", "updateCard",
+            // T315: and the flights card (T311, in the update offer's slot): without it a card that came up after the
+            // pass's placement was left out until something else moved, and lay over the scale bar, the strip and the
+            // position column (seen on the emulator at font scale 1.0).
+            "aircraftCard",
+        )
     }
 }
 

@@ -34,6 +34,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -150,6 +151,13 @@ fun ViewSwitchRow(horizon: Boolean, colours: ViewSwitchColours, modifier: Modifi
                     .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.Center,
             ) {
+                // T315: each segment as wide as the wider of its label's two weights whichever is selected, so the switch is
+                // the same size in every view (the selected label is bold: at font scale 2.0 the Horizon view's switch came
+                // out 4 px wider than the map's).
+                for (w in listOf(FontWeight.Bold, FontWeight.Medium)) BasicText(
+                    label, Modifier.clearAndSetSemantics { }, softWrap = false,
+                    style = TextStyle(color = Color.Transparent, fontSize = 15.sp, fontWeight = w),
+                )
                 BasicText(
                     label, softWrap = false,
                     style = TextStyle(color = if (on) colours.paper else colours.ink, fontSize = 15.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium),
