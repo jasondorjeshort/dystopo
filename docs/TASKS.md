@@ -44,6 +44,7 @@ The post-wave sweep `out/sweep-20261121-w43` was red on `a11y` alone (retried on
 **Owns:** `tools/a11y-baseline.json`; for a real defect only, the file the finding is in, named in the report.
 **Done when:** `tools/sweep.ps1 -Only a11y` from the task's worktree green on a fresh emulator (`parts.a11y.new` empty), and the frames of `longpress:1.0`, `first-run:1.0` and `first-run:2.0` viewed and described.
 **Checks:** none.
+**Status: merged.** Verifier MERGE WITH NOTES on c2e875a6, no fix round. Follow-ups: the first-run card at font 2.0 covers the On foot chip and the readout (baselined as overlaps; the owner's eye); the settings-data:1.0 "‹ Settings" baseline line at y 256 is probably a stale duplicate; why the debug flights part's slow step writes no flights-slow frame for the sweep's -First.
 
 ## Owner actions pending (as of 2026-10-27)
 
