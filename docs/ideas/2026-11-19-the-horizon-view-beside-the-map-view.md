@@ -1,7 +1,7 @@
 ---
 date: 2026-11-19
 kind: question
-related: [2026-11-19-the-sky-from-a-long-pressed-point.md]
+related: [2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md]
 ---
 
 # The Horizon view: the map view's counterpart, a sky with layers
@@ -43,7 +43,7 @@ satellites layer plus its summary and check. Layers that fit, from what the app 
 
 - Benchmark first (ADR 0039): how apps switch between a map and a sky or peak view, where the switch sits, and how
   they present layer toggles there.
-- The point it is drawn for: here by default, a long-pressed point (`2026-11-19-the-sky-from-a-long-pressed-point.md`).
+- The point it is drawn for: here by default, a long-pressed point (built in T317, "Sky from here").
 
 2026-11-19, the survey of the switch (read-only, search snippets and store listings only, so low confidence): no app
 found puts a circular sky plot beside the map as a top-level switch, and none combines the terrain's skyline, the sun,
