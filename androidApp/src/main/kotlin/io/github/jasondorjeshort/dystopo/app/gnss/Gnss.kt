@@ -40,7 +40,8 @@ import java.util.concurrent.atomic.AtomicLong
  * - **The terrain's horizon** ([horizonAt]): `Horizon.sweep`'s [HorizonProfile] (1 degree bearings from true north, eye
  *   height [Horizon.EYE_HEIGHT_M]) at the phone's position, over the DEM pyramid under it (`ShadeService.pyramidAt`: the
  *   offline map's, else the online DEM, as the sun and shade's point answer reads it), worked out on its own thread and
- *   kept until the position moves [HORIZON_MOVE_M]; [HorizonState.reason] says why there is none.
+ *   kept until the position moves [HORIZON_MOVE_M]; [HorizonState.reason] says why there is none. T321: up to
+ *   [HORIZON_KEEP] are kept (the fix's beside the Horizon view's chosen points), so going back to the fix sweeps nothing.
  */
 object Gnss {
     /** The horizon is worked out again once the phone is this far from where it was, metres. */
@@ -228,11 +229,30 @@ object Gnss {
         val terrain: io.github.jasondorjeshort.dystopo.dem.Terrain? = null,
     )
 
-    @Volatile var horizon: HorizonState? = null
-        private set
+    /**
+     * T321 (T317's follow-up): the horizons kept, newest use first, at most [HORIZON_KEEP]: the fix's stays beside a chosen
+     * point's, so "Back to here" and each hop between points do not sweep the fix again. When one more is swept, the
+     * least recently used goes, never the one near the phone's position.
+     */
+    private val horizons = ArrayList<HorizonState>()
     @Volatile private var horizonPending = false
     private val horizonThread = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-gnss-horizon").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
     val horizonSweeps = AtomicLong()
+
+    /** T321: how many horizons are kept (the fix's and two chosen points': each holds the terrain it read). */
+    const val HORIZON_KEEP = 3
+
+    /** The horizon near the phone's position when one is kept, else the newest kept (the summary's height from the map). */
+    val horizon: HorizonState?
+        get() {
+            val p = position()
+            return synchronized(horizons) {
+                p?.let { f -> horizons.firstOrNull { TrackStats.distanceM(it.lat, it.lon, f.latitude, f.longitude) < HORIZON_MOVE_M } } ?: horizons.firstOrNull()
+            }
+        }
+
+    /** T321: how many horizons are kept now (`GET /gnss` `horizonsKept`). */
+    val horizonsKept: Int get() = synchronized(horizons) { horizons.size }
 
     /** The horizon at the phone's position (starting its sweep when none is near), or null while it is worked out. */
     fun horizonAtPhone(): HorizonState? {
@@ -241,19 +261,37 @@ object Gnss {
     }
 
     fun horizonAt(lat: Double, lon: Double): HorizonState? {
-        val h = horizon
-        if (h != null && TrackStats.distanceM(h.lat, h.lon, lat, lon) < HORIZON_MOVE_M) return h
+        synchronized(horizons) {
+            val i = horizons.indexOfFirst { TrackStats.distanceM(it.lat, it.lon, lat, lon) < HORIZON_MOVE_M }
+            if (i >= 0) {
+                val h = horizons.removeAt(i)
+                horizons.add(0, h)
+                return h
+            }
+        }
         if (!horizonPending) {
             horizonPending = true
             horizonThread.execute {
                 try {
-                    horizon = sweep(lat, lon)
+                    keep(sweep(lat, lon))
                 } finally {
                     horizonPending = false
                 }
             }
         }
         return null
+    }
+
+    private fun keep(h: HorizonState) {
+        val p = position()
+        synchronized(horizons) {
+            horizons.add(0, h)
+            while (horizons.size > HORIZON_KEEP) {
+                val near = { s: HorizonState -> p != null && TrackStats.distanceM(s.lat, s.lon, p.latitude, p.longitude) < HORIZON_MOVE_M }
+                val drop = horizons.indexOfLast { !near(it) }.takeIf { it > 0 } ?: (horizons.size - 1)
+                horizons.removeAt(drop)
+            }
+        }
     }
 
     /** Waits up to [ms] for the horizon at the phone's position (the debug routes). */
@@ -342,7 +380,7 @@ object Gnss {
             "satellites" to GnssHealth.listOrder(sats).map { GnssHealth.json(it, fn) },
             "horizon" to horizonJson(h),
             "horizonReason" to if (h == null) (if (position() == null) GnssText.NO_POSITION else GnssText.HORIZON_WORKING) else h.reason,
-            "horizonSweeps" to horizonSweeps.get(),
+            "horizonSweeps" to horizonSweeps.get(), "horizonsKept" to horizonsKept, // T321
             "orientation" to io.github.jasondorjeshort.dystopo.app.AppSettings.skyPlot.key,
             "headingDeg" to GnssUi.headingDeg()?.let(::r1),
             "drawn" to GnssUi.drawn,

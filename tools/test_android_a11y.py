@@ -210,6 +210,37 @@ with open(os.path.join(here, "a11y-baseline.json"), encoding="utf-8") as fh:
     assert json.loads(fh.readline().rstrip()[:-len(', "entries": [')] + "}")["about"] == a11y.BASELINE_ABOUT, "tools/a11y-baseline.json's first line copies BASELINE_ABOUT"
 # end T319
 
+# T321: the Horizon view at a chosen point is a screen of its own: opened at Mount Rainier's summit by the debug route (as
+# "Sky from here" opens it), the first peak of its list picked (its "View from here" shows), closed by the view's end.
+he = [s for s in a11y.SCREENS if s[0] == "horizon-elsewhere"]
+assert len(he) == 1 and he[0][3] == "screen" and he[0][2] is a11y.end_horizon, he
+
+
+class PeakSrv:
+    def __init__(self, peaks):
+        self.calls, self.peaks = [], peaks
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        return {"peaks": {"peaks": self.peaks}} if method == "GET" else {}
+
+
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    ps = PeakSrv([{"name": "Liberty Cap"}, {"name": "Little Tahoma"}])
+    he[0][1](type("C", (), {"srv": ps})())
+    assert ps.calls[0] == ("POST", "/horizon/ui?lat=46.8529&lon=-121.7604&wait=90000"), ps.calls
+    assert ps.calls[1][0] == "GET" and ps.calls[1][1].startswith("/horizon?wait="), ps.calls
+    assert ps.calls[2] == ("POST", "/horizon?select=Liberty%20Cap"), ps.calls
+    # No peaks there (no pack): the view at the point alone, nothing picked.
+    ps = PeakSrv([])
+    he[0][1](type("C", (), {"srv": ps})())
+    assert [m for m, _p in ps.calls] == ["POST", "GET"], ps.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T321
+
 tmp = tempfile.mkdtemp(prefix="t270-a11y-")
 try:
     text = a11y.baseline_text([dict(e1, kind="contrast"), e1], taken="2026-11-13")

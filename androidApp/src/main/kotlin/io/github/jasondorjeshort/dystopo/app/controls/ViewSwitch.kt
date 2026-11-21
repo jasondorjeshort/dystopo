@@ -43,7 +43,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.MapChrome
 import io.github.jasondorjeshort.dystopo.app.control
+import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi
+import io.github.jasondorjeshort.dystopo.app.search.SearchMarker
+import io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu
+import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
+import io.github.jasondorjeshort.dystopo.horizon.SwitchFrom
 import io.github.jasondorjeshort.dystopo.ui.OverlayLayout
 
 /**
@@ -111,10 +116,36 @@ object ViewSwitch {
         widthDp; heightDp; floorDp; creditStartDp
     }
 
-    /** Selects a segment: the Horizon view opened or closed. Main thread. */
+    /**
+     * Selects a segment: the Horizon view opened or closed. Main thread. T321: "Horizon" opens the view at the map's
+     * selected place when there is one ([openAtSelection]); a selection made inside the view does not count (the view is
+     * open already, so this returns first).
+     */
     fun select(horizon: Boolean) {
         if (horizon == HorizonUi.open) return
-        if (horizon) HorizonUi.open() else HorizonUi.close()
+        if (horizon) openAtSelection() else HorizonUi.close()
+    }
+
+    /** T321: what the last "Horizon" from the switch stood on (`POST /horizon/switch` answers it), or null before one. */
+    @Volatile var lastFrom: SwitchFrom? = null
+        private set
+
+    /**
+     * T321 (the owner, 2026-11-21: "If we select a different location on the map and switch to horizon view we want the
+     * horizon from THAT location, not ours"): opens the view at the map's selection by [HorizonPlace.switchFrom]'s rule:
+     * an open long-press card (as its "Sky from here": on a named peak within a fingertip, that peak, named; the card
+     * closes), else a search result's marker (named; it stays on the map), else the fix. The one call a third segment (the
+     * Panorama view) makes too. Main thread.
+     */
+    fun openAtSelection() {
+        val marker = SearchMarker.selection(DystopoApp.instance.map.map?.style)
+        val from = HorizonPlace.switchFrom(LongPressMenu.point != null, marker)
+        lastFrom = from
+        when (from) {
+            SwitchFrom.LONG_PRESS -> LongPressMenu.skyFromHere(via = "switch")
+            SwitchFrom.SEARCH -> HorizonUi.openAt(marker!!)
+            SwitchFrom.FIX -> HorizonUi.open()
+        }
     }
 
     internal fun measured(w: Float, h: Float) {

@@ -138,6 +138,8 @@ object HorizonText {
     const val BACK = io.github.jasondorjeshort.dystopo.horizon.HorizonPlace.BACK
     /** Under the toggles at a chosen point, where Satellites and Flights are disabled. */
     const val MOVED_LAYERS = "Satellites and flights show only at your location."
+    /** T321: a picked peak's action: the view moves to stand on the peak. */
+    const val VIEW_FROM_HERE = "View from here"
     /** The place line's label for screen readers, before its text ("Horizon from: At Mount Rainier, ..."). */
     const val PLACE_LABEL = "Horizon from"
 
