@@ -50,8 +50,15 @@ view (`2026-11-20-moonshot-point-the-camera-to-name-a-plane.md`) and stage 3 of 
   and can be cancelled (the surveyed practice for compass error).
 - **The camera behind the drawing** is a later option, offered only while following the phone, its permission asked
   when it is first turned on. It waits for the measurement pass of `2026-11-02-horizon-match-fix-from-the-camera.md`.
-- **The drawing** is the skyline filled and tinted by distance (`HorizonProfile.distanceM`); layered ridge lines or a
-  style choice come later.
+- **The drawing** is the skyline filled and tinted by distance (`HorizonProfile.distanceM`). 2026-11-21, the owner
+  ("integrate the first four"): the sweep taken at a few ranges (about 3, 10, 30 and 100 km) and drawn far to near,
+  each skyline in its own tint, gives layered ridges without a new terrain render; a style choice comes later.
+- **Range**: the view-range setting (`viewRange`, to 100 km), not the Horizon view's 30 km; naming far peaks when
+  zoomed in is the point of the view.
+- **Flat skylines** are the risk: a ridge 30 km off stands 2 to 4 degrees high. The default zoom is chosen from
+  renders of a flat area beside a steep one; a vertical stretch while dragging (never with the camera) is the fallback.
+- **Tied to the rest of the screen**: a bearing tape along the top and the level line; a tap on a list row turns the
+  view to it; an edge arrow for a picked thing that is off the view ("Sun, 40° right").
 - **Projection** (the coordinator's, 2026-11-21): perspective, because looking down, the roll and the camera all need
   it. The widest view is then about 100 degrees across, not the whole circle as a strip; the endless scroll and the
   Horizon view cover the rest.
@@ -61,16 +68,21 @@ Pass one, `shared` and `devtool` only: the label placement takes a projection (w
 that they are off the view; which way is away from a mark; the degrees per dp), `RimGeometry` is one, giving the
 placements it gives today, and a lens view (bearing, tilt, roll, field of view) is the other; the density gap follows
 the zoom, so a narrower view names more; angles below the horizon are placed, not clamped; the sweep's step is fine
-enough for the narrowest zoom, its cost measured; devtool `panorama` renders an area to a PNG and reports the names
-placed and the timings. Done when: `check` green with `HorizonLabels`' tests unchanged; `panorama --area rainier`
-viewed level, tilted down, rolled and zoomed in.
+enough for the narrowest zoom and gives the skyline at several ranges to the view range, its cost measured; devtool
+`panorama` renders an area to a PNG (the layered skylines, the bearing tape, the level line, the names) and reports
+the names placed and the timings. Done when: `check` green with `HorizonLabels`' tests unchanged; `panorama --area
+rainier` viewed level, tilted down, rolled and zoomed in, and `--area bonneville` level; the report proposes the
+default zoom from those and says whether the stretch is needed.
 Pass two, the phone: the third segment; a Panorama screen on the Horizon view's own pane (the place line with "Sky
 from here" and Back to here, the toggles, the lists, the flight card) with the lens view as its plot; drag, tilt and
-pinch as above; names tapped as on the round plot; `GET` and `POST /panorama` (bearing, tilt, field of view, the
+pinch as above; names tapped as on the round plot, a list row's tap turning the view to it, the edge arrow for a
+picked thing off the view; `GET` and `POST /panorama` (bearing, tilt, field of view, the
 screenshot), a sweep step and an a11y screen. Done when: the device tour's frames are viewed at the default text and
 at font scale 2.0, upright and sideways, at the fix and at a chosen point.
 Pass three, the phone: Follow the phone (the attitude from the rotation sensor, any direction, the roll), the steering
 setting, the named offset and its cancel, a debug route that sets an attitude. Done when: frames at a set attitude
 looking down and rolled are viewed, and the offset is seen set and cancelled.
 Out of scope in all three: the camera, the terrain drawn below the horizon (the window seat's pass two), the view from
-an aircraft, layered ridges.
+an aircraft, a choice of drawing styles.
+2026-11-21: pass one is T322 of wave 44 (`docs/TASKS.md`), as the critic's edits left it: the density rule is a
+separation the projection supplies, so the round plot's placements cannot move.
