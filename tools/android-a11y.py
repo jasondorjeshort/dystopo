@@ -803,6 +803,22 @@ def end_horizon(c):
     c.srv.call("POST", "/horizon/ui?open=0")
 
 
+# T321
+SUMMIT = (46.8529, -121.7604)  # Mount Rainier's summit (a public place)
+
+
+def scr_horizon_elsewhere(c):
+    """T321 (T317's follow-up): the Horizon view at a chosen point, Mount Rainier's summit, as "Sky from here" opens it
+    (the amber place line with "Back to here", Satellites and Flights disabled, their note), with the first peak of its
+    list picked (its line under the heading and its "View from here")."""
+    c.srv.ok("POST", f"/horizon/ui?lat={SUMMIT[0]}&lon={SUMMIT[1]}&wait=90000", timeout=150.0)
+    peaks = ((c.srv.ok("GET", "/horizon?wait=30000", timeout=90.0) or {}).get("peaks") or {}).get("peaks") or []
+    if peaks:
+        c.srv.ok("POST", "/horizon?select=" + urllib.parse.quote(peaks[0]["name"]))
+    time.sleep(1.0)
+# end T321
+
+
 # T311
 FLIGHTS_REPLAY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared", "src", "commonTest", "resources", "aircraft", "rainier-replay.json")
 
@@ -920,6 +936,7 @@ SCREENS = [
     # T312
     ("horizon-flights", scr_horizon_flights, end_horizon_flights, "screen"),
     # end T312
+    ("horizon-elsewhere", scr_horizon_elsewhere, end_horizon, "screen"),  # T321
 ]
 
 

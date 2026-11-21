@@ -1837,6 +1837,12 @@ MAP_SEGMENT = "^Map$"
 HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun|Flights)$"  # T312: Flights, shown while Flight tracking is on
 
 
+def horizon_toggles(dev, nodes):
+    """T321 (T317's follow-up): the layer toggles' texts, tick and all. A toggle is a button, so only clickable nodes count:
+    the bare pattern also matched the Peaks section's heading ("Peaks", not clickable), which read as an unticked Peaks."""
+    return [t for t in dev.texts([n for n in nodes if n.get("clickable")]) if re.match(HORIZON_TOGGLES, t)]
+
+
 SWITCH_LABEL = "Map or horizon view"  # app/controls/ViewSwitch.kt: the switch's spoken label, its whole rectangle (T315)
 
 
@@ -1872,7 +1878,10 @@ def horizon_step(dev):
     sun's path; the satellites' count and the peaks' line are reported (`satellitesLine`, `peaksLine`), never failed,
     since an emulator's GNSS may report none at first and the first sweep on a just-booted emulator can take minutes.
     T317: the view at the fix carries the place line "Your location"; then `sky_from_here` (the frame `horizon-point`,
-    opened from the long-press card at Mount Rainier's summit, and "Back to here")."""
+    opened from the long-press card at Mount Rainier's summit, and "Back to here"). T321: then `horizon_from_switch` (the
+    frame `horizon-from-switch`: a long-press card open at the summit, the switch's "Horizon" opens the view there and
+    closes the card) and `horizon_from_peak` (the switch with nothing selected opens at the fix, "Your location", the frame
+    `horizon-switch-here`; Mount Rainier's row picked, its "View from here": the frame `horizon-from-peak`), all by taps."""
     t0 = time.time()
     n, nodes, backs = back_until(dev, HORIZON_SEGMENT)
     if not n:
@@ -1887,7 +1896,7 @@ def horizon_step(dev):
     texts = dev.texts(nodes)
     on_view = switch_rects(nodes)
     png = dev.screencap("horizon")[0]
-    toggles = sorted({re.sub(r"^✓ ", "", t) for t in texts if re.match(HORIZON_TOGGLES, t)})
+    toggles = sorted({re.sub(r"^✓ ", "", t) for t in horizon_toggles(dev, nodes)})
     w, h, _d = screen(dev)
     sw = on_map[0] if on_map else (on_view[0] if on_view else None)
     # Scroll inside the area under the heading, above the switch and right of the plot on a phone on its side.
@@ -1937,9 +1946,18 @@ def horizon_step(dev):
     sky = sky_from_here(dev)
     if sky.get("error"):
         errors.append(sky["error"])
-    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled, "end": end_png, **sky.pop("frames", {})}, "toggles": toggles, "openedBy": "switch", "backs": backs,
+    # T321: the two more ways to another place, by taps: the switch with a long-press card open, a peak's "View from here".
+    from_switch = horizon_from_switch(dev)
+    if from_switch.get("error"):
+        errors.append(from_switch["error"])
+    from_peak = horizon_from_peak(dev)
+    if from_peak.get("error"):
+        errors.append(from_peak["error"])
+    frames = {"horizon": png, "scrolled": scrolled, "end": end_png, **sky.pop("frames", {}), **from_switch.pop("frames", {}), **from_peak.pop("frames", {})}
+    return {"ok": not errors, "png": png, "frames": frames, "toggles": toggles, "openedBy": "switch", "backs": backs,
             "switchMapPx": on_map, "switchViewPx": on_view, "endSwipes": swipes, "underSwitch": under,
-            "satellitesLine": sats, "peaksLine": peaks, "skyFromHere": sky, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
+            "satellitesLine": sats, "peaksLine": peaks, "skyFromHere": sky, "fromSwitch": from_switch, "fromPeak": from_peak,
+            "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
 
 
 # T317: the sky from a long-pressed point.
@@ -1977,7 +1995,7 @@ def sky_from_here(dev):
     texts = dev.texts(nodes)
     out["frames"]["point"] = dev.screencap("horizon-point")[0]
     place = next((t for t in texts if re.match(PLACE_MOVED, t)), None)
-    toggles = sorted(t for t in texts if re.match(HORIZON_TOGGLES, t))
+    toggles = sorted(horizon_toggles(dev, nodes))
     out.update({"placeLine": place, "toggles": toggles, "satellitesListed": any(re.search(r"^\d+ used of \d+ in view|^No satellites heard", t) for t in texts),
                 "movedNote": any(t.startswith("Satellites and flights show only") for t in texts)})
     errors = []
@@ -1994,6 +2012,123 @@ def sky_from_here(dev):
     if m:
         dev.tap(m)
         time.sleep(1)
+    return {**out, **({"error": "; ".join(errors)} if errors else {})}
+
+
+# T321: two more ways to another place.
+VIEW_FROM_HERE = "^View from here$"
+SUMMIT_PEAK = "Mount Rainier"  # its row in the Peaks list at Paradise, and the place line's name at the summit
+LONG_PRESS_CARD = "^(Sky from here|Route to here)$"
+
+
+def wait_point_ready(dev, nodes, seconds=90):
+    """T321: waits for the terrain's sweep and the peaks at the view's point (a just-booted emulator is slow); the nodes."""
+    deadline = time.time() + seconds
+    while time.time() < deadline and any(t.startswith("Working out the terrain horizon") or t.startswith("Finding the peaks") for t in dev.texts(nodes)):
+        time.sleep(2)
+        nodes = dev.nodes()
+    time.sleep(2)
+    return dev.nodes()
+
+
+def back_to_fix_and_map(dev, out, errors):
+    """T321: "Back to here" returns to "Your location"; the view's "Map" segment then closes the view."""
+    back = dev.find(BACK_TO_HERE)
+    if back:
+        dev.tap(back)
+    here, nodes = dev.wait_for("^" + PLACE_HERE + "$", 10)
+    out["backReturned"] = bool(here) and dev.find(BACK_TO_HERE, nodes) is None
+    if not out["backReturned"]:
+        errors.append("Back to here did not return to Your location")
+    m = dev.find(MAP_SEGMENT, nodes)
+    if m:
+        dev.tap(m)
+        time.sleep(1)
+
+
+def horizon_from_switch(dev):
+    """T321: the map at Mount Rainier's summit, a long-press at its centre (the card opens), then the switch's "Horizon"
+    tapped with the card still open: the view opens there (the frame `horizon-from-switch`), the place line naming the
+    point ("At Mount Rainier, ... of you" on the summit's feature) with "Back to here"; "Map" shows the card closed."""
+    out = {"frames": {}}
+    errors = []
+    w, h, d = screen(dev)
+    open_map(dev, *SUMMIT, 13)
+    time.sleep(5)  # the link's camera move ends before the press
+    long_press(dev, *to_screen(*SUMMIT, *SUMMIT, 13, w, h, d))
+    card, nodes = dev.wait_for(LONG_PRESS_CARD, 10)
+    if not card:
+        return {**out, "error": f"no long-press card at the summit (texts: {dev.texts(nodes)[:25]})"}
+    seg = dev.find(HORIZON_SEGMENT, nodes)
+    if not seg:
+        return {**out, "error": f"no Horizon segment beside the long-press card (texts: {dev.texts(nodes)[:25]})"}
+    dev.tap(seg)
+    back, nodes = dev.wait_for(BACK_TO_HERE, 20)
+    if not back:
+        return {**out, "error": f"the switch with a long-press card open did not open the view there (texts: {dev.texts(nodes)[:25]})"}
+    nodes = wait_point_ready(dev, nodes)
+    texts = dev.texts(nodes)
+    out["frames"]["fromSwitch"] = dev.screencap("horizon-from-switch")[0]
+    place = next((t for t in texts if re.match(PLACE_MOVED, t)), None)
+    out.update({"placeLine": place, "toggles": sorted(horizon_toggles(dev, nodes))})
+    if not place:
+        errors.append(f"no place line naming the point after the switch (texts: {texts[:20]})")
+    back_to_fix_and_map(dev, out, errors)
+    out["cardClosed"] = dev.find(LONG_PRESS_CARD) is None
+    if not out["cardClosed"]:
+        errors.append("the long-press card is still open after the switch opened the view there")
+    return {**out, **({"error": "; ".join(errors)} if errors else {})}
+
+
+def horizon_from_peak(dev):
+    """T321: with nothing selected the switch's "Horizon" opens the view at the fix ("Your location", the frame
+    `horizon-switch-here`); Mount Rainier's row in the Peaks list (scrolled to) picks it, and its "View from here" stands the
+    view on the summit (the frame `horizon-from-peak`): the place line "At Mount Rainier, ... of you", "Back to here"."""
+    out = {"frames": {}}
+    errors = []
+    n, nodes, _b = back_until(dev, HORIZON_SEGMENT)
+    if not n:
+        return {**out, "error": f"no Horizon segment on the map (texts: {dev.texts(nodes)[:25]})"}
+    dev.tap(n)
+    here, nodes = dev.wait_for("^" + PLACE_HERE + "$", 15)
+    out["atFix"] = bool(here) and dev.find(BACK_TO_HERE, nodes) is None
+    if not out["atFix"]:
+        errors.append(f"the switch with nothing selected did not open at {PLACE_HERE!r} (texts: {dev.texts(nodes)[:20]})")
+    nodes = wait_point_ready(dev, nodes)
+    out["frames"]["switchHere"] = dev.screencap("horizon-switch-here")[0]
+    w, h, d = screen(dev)
+    x = (w * 3 // 4) if w > h else (w // 2)
+    y0, y1 = (h * 7 // 10, h * 4 // 10) if w > h else (h * 7 // 10, h * 5 // 10)
+    row = None
+    for _ in range(20):
+        row = next((nd for nd in nodes if nd["text"] == SUMMIT_PEAK and nd["bounds"] and nd["bounds"][3] < y0 + 10), None)
+        if row:
+            break
+        dev.shell("input", "swipe", str(x), str(y0), str(x), str(y1), "400")
+        time.sleep(0.8)
+        nodes = dev.nodes()
+    if not row:
+        return {**out, "error": f"no {SUMMIT_PEAK!r} row in the Peaks list at the fix"}
+    dev.tap(row)
+    vfh, nodes = dev.wait_for(VIEW_FROM_HERE, 10)
+    if not vfh:
+        return {**out, "error": f"no {VIEW_FROM_HERE} on the picked peak's line (texts: {dev.texts(nodes)[:20]})"}
+    b = vfh["bounds"]
+    out["viewFromHereDp"] = [round((b[2] - b[0]) / d), round((b[3] - b[1]) / d)]
+    if (b[3] - b[1]) / d < 47.5:
+        errors.append(f"View from here is {out['viewFromHereDp']} dp, under 48 tall")
+    dev.tap(vfh)
+    back, nodes = dev.wait_for(BACK_TO_HERE, 20)
+    if not back:
+        return {**out, "error": f"View from here did not move the view (texts: {dev.texts(nodes)[:20]})"}
+    nodes = wait_point_ready(dev, nodes)
+    texts = dev.texts(nodes)
+    out["frames"]["fromPeak"] = dev.screencap("horizon-from-peak")[0]
+    place = next((t for t in texts if re.match(PLACE_MOVED, t)), None)
+    out["placeLine"] = place
+    if not place or not place.startswith(f"At {SUMMIT_PEAK}"):
+        errors.append(f"the place line after View from here is {place!r}, not 'At {SUMMIT_PEAK}, ...'")
+    back_to_fix_and_map(dev, out, errors)
     return {**out, **({"error": "; ".join(errors)} if errors else {})}
 
 
@@ -2452,7 +2587,7 @@ def horizon_flights_step(dev):
             errors.append(f"no Flights toggle with Flight tracking on (texts: {dev.texts(nodes)[:25]})")
         time.sleep(3)
         nodes = dev.nodes()
-        out["toggles"] = sorted({re.sub(r"^✓ ", "", t) for t in dev.texts(nodes) if re.match(HORIZON_TOGGLES, t)})
+        out["toggles"] = sorted({re.sub(r"^✓ ", "", t) for t in horizon_toggles(dev, nodes)})
         out["frames"]["horizon"] = dev.screencap("horizon-flights")[0]
         w, h, _d = screen(dev)
         line = None
