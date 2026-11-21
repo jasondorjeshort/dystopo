@@ -369,6 +369,146 @@ class SweepDiff(unittest.TestCase):
         self.assertEqual(diff.first_outcome([], [], [], [], []), {"missing": [], "unchanged": [], "added": []})
 
 
+# T319: --check-first, a screen name against the frames a sweep writes: a synthetic tree of the two tools (the static scan)
+# and a synthetic sweep folder (its frames), then the real tree's tools.
+UI_SRC = '''
+class Run:
+    def step(self, name, fn, shot=True):
+        self.dev.screencap(name + ("" if ok else "-failed"))
+
+
+def helper(dev, name="dflt"):
+    return dev.screencap(f"{name}-shot")
+
+
+def saved(dev, step):
+    dev.save(f"{step}-{name}", None)  # no literal of its own: left out
+
+
+def other_step(dev):
+    dev.screencap("other-frame")
+    helper(dev, "passed")
+
+
+def part_alpha(args):
+    dev = None
+    run = Run(dev)
+
+    def first():
+        dev.screencap("alpha-one")
+
+    def card(name="alpha-card"):
+        def show():
+            return dev.screencap(name)
+        return show
+
+    for name, fn in (("first", first), ("card", card()), ("big", card("alpha-card-big")), ("other", lambda: other_step(dev))):
+        run.step(name, fn)
+    run.step("alive", lambda: helper(dev))
+    firstrun.settle_map(dev, "alpha-map", 0.002, 90)
+
+
+def part_debugonly(args):
+    run = Run(None)
+
+    def slow():
+        dev.screencap("debug-slow")
+    run.step("slow", slow)
+'''
+
+A11Y_SRC = '''
+def scr(c):
+    pass
+
+
+SCREENS = [
+    ("map", scr, None, "map"),
+] + [(f"settings-{g}", scr, None, "screen") for g in ("data", "about")] + [
+    ("horizon", scr, scr, "screen"),
+]
+
+
+def main():
+    ap.add_argument("--font-scales", default="1.0,2.0")
+'''
+
+
+class CheckFirst(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="t319-check-first-")
+        self.tools = os.path.join(self.d, "tools")
+        os.makedirs(self.tools)
+        for name, src in (("android-ui.py", UI_SRC), ("android-a11y.py", A11Y_SRC)):
+            with open(os.path.join(self.tools, name), "w", encoding="utf-8") as f:
+                f.write(src)
+        self.sweep = os.path.join(self.d, "sweep")
+        for rel in ("ui/alpha/01-alpha-one.png", "ui/alpha/02-alpha-card.png", "a11y/03-horizon-2.0.png",
+                    "device/tour1-0.png", "sheet.png"):
+            png(os.path.join(self.sweep, rel), 4, 4)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_static_scan_of_parts_steps_and_frames(self):
+        got = {(w["part"], w["step"], w["frame"]) for w in diff.static_writers(self.tools)}
+        for want in [("alpha", "first", "alpha-one"), ("alpha", "card", "alpha-card"), ("alpha", "big", "alpha-card-big"),
+                     ("alpha", "other", "other-frame"), ("alpha", "other", "passed-shot"), ("alpha", "alive", "dflt-shot"),
+                     ("alpha", "alive", "alive"), ("alpha", None, "alpha-map"), ("debugonly", "slow", "debug-slow"),
+                     ("a11y", "map", "map-1.0"), ("a11y", "settings-data", "settings-data-2.0"), ("a11y", "horizon", "horizon-2.0")]:
+            self.assertIn(want, got)
+        self.assertFalse([w for w in got if w[2].replace("*", "").replace("-", "") == ""], "a pattern with no literal is left out")
+        self.assertEqual(len([w for w in got if w[0] == "a11y"]), 8)  # four screens at two scales
+
+    def test_names_against_sweep_and_tools(self):
+        r = diff.check_first(["alpha-card", "horizon", "alpha-card-big", "debug-slow", "nowhere", "tour1"], self.sweep,
+                             self.tools, parts=["alpha", "a11y", "device-tour"])
+        by = {n["name"]: n for n in r["names"]}
+        self.assertEqual(r["missing"], ["debug-slow", "nowhere"])
+        self.assertEqual((r["missingCount"], r["ok"]), (2, False))
+        self.assertEqual((by["alpha-card"]["part"], by["alpha-card"]["step"], by["alpha-card"]["inSweep"]), ("alpha", "card", True))
+        self.assertIn("ui/alpha/02-alpha-card.png", by["alpha-card"]["sweepFrames"])
+        self.assertEqual((by["horizon"]["part"], by["horizon"]["step"]), ("a11y", "horizon"))
+        # A frame new since the sweep (on a task's branch): the static scan alone, in a part the sweep runs.
+        self.assertEqual((by["alpha-card-big"]["sweepFrames"], by["alpha-card-big"]["step"], by["alpha-card-big"]["inSweep"]), ([], "big", True))
+        # Written only by a part the sweep does not run: named, and missing.
+        self.assertEqual((by["debug-slow"]["part"], by["debug-slow"]["step"], by["debug-slow"]["inSweep"]), ("debugonly", "slow", False))
+        self.assertEqual((by["nowhere"]["part"], by["nowhere"]["writers"]), (None, []))
+        self.assertEqual((by["tour1"]["part"], by["tour1"]["inSweep"]), ("device-tour", True))
+        # Without a sweep folder, the static scan alone.
+        self.assertEqual(diff.check_first(["alpha-one"], None, self.tools, parts=["alpha"])["missingCount"], 0)
+
+    def test_parts_from_the_script_text_without_powershell(self):
+        with open(os.path.join(self.tools, "sweep.ps1"), "w", encoding="utf-8") as f:
+            f.write("$runOrder = @('check', 'a11y', 'features', 'matrix', 'phone-tour')\n")
+
+        def no_shell(*a, **kw):
+            raise OSError("no powershell")
+        self.assertEqual(diff.sweep_parts(self.tools, run=no_shell), (["check", "a11y", "features"], "sweep.ps1 $runOrder (text)"))
+
+    def test_the_real_tools(self):
+        have = {(w["part"], w["step"], w["frame"]) for w in diff.static_writers(here)}
+        self.assertIn(("flights", "slow", "flights-slow"), have)  # the debug flights part, which the sweep does not run
+        self.assertIn(("features", "horizon", "horizon-point"), have)
+        self.assertIn(("features", "flights", "flights-refresh-help"), have)
+        self.assertIn(("a11y", "horizon-flights", "horizon-flights-2.0"), have)
+        parts, _src = diff.sweep_parts(here)
+        self.assertIn("features", parts)
+        self.assertNotIn("flights", parts)
+        r = diff.check_first(["flights-slow", "horizon-point"], None, here, parts=parts)
+        self.assertEqual(r["missing"], ["flights-slow"])
+
+    def test_command_line(self):
+        p = subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-diff.py"), "--check-first", "flights-slow",
+                            "horizon-point,flights-row", "--sweep", self.sweep], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 1, p.stderr[-400:])
+        r = json.loads(p.stdout)
+        self.assertEqual(([n["name"] for n in r["names"]], r["missingCount"]), (["flights-slow", "horizon-point", "flights-row"], 1))
+        self.assertIn("flights-slow", p.stderr)
+        p = subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-diff.py"), "--check-first", "horizon-point"],
+                           capture_output=True, text=True)
+        self.assertEqual((p.returncode, json.loads(p.stdout)["missingCount"]), (0, 0))
+
+
 if __name__ == "__main__":
     argv = [a for i, a in enumerate(sys.argv) if a != "--channel" and (i == 0 or sys.argv[i - 1] != "--channel")]
     unittest.main(argv=argv)
