@@ -24,3 +24,11 @@ public-safety aircraft turn transponders off or are filtered from public feeds, 
 - Whether the FAA registry join is worth a shipped file.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: mark firefighting, rescue and medical aircraft by type code, knowing many public-safety aircraft are filtered
+from public feeds, so an absent mark can be read as an absent aircraft? Recommended: yes, a small first version: a
+card line from a short type-code list (air tankers and scoopers, unambiguous by type), no "show only" filter, and
+help text saying the list is partial; helicopters and medical flights stay unmarked until an operator source (the
+FAA registry) is weighed. The wording around absence is a safety rule, so it is yours to confirm.
+
+Answer:
