@@ -486,4 +486,97 @@ class OverlayLayoutTest {
         assertTrue(o.isShown(OverlayIds.POSITION), "the card does not reach the chips' column, so the button keeps its corner")
         assertTrue(o[OverlayIds.SCALE_BAR]!!.rect!!.bottom <= 170.3f - 6f + 0.01f)
     }
+
+    // ---- T320: the first-run card, a bottom card the rule places ----
+
+    /** The first-run card as `MapLayout` reads it at the curve's [k]: whole, its least (the fixed part and two lines), its fixed part. */
+    private fun firstRun(k: Float) = OverlayCard(600f * k, 136f * k, 100f * k, 460f)
+
+    private val topBlock = listOf(OverlayIds.SEARCH, OverlayIds.SETTINGS_ROW, OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY, OverlayIds.COMPASS)
+    private val lower = listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.LOCK)
+
+    /** [o] with the first-run card up in [i] holds T320's rule against [plain], the same input without the card. */
+    private fun firstRunHolds(i: OverlayInput, o: OverlayPlacement, plain: OverlayPlacement, at: String) {
+        assertEquals(emptyList(), o.overlaps(), at)
+        assertEquals(plain[OverlayIds.HORIZON_SWITCH]?.rect, o[OverlayIds.HORIZON_SWITCH]?.rect, "the switch's rectangle unchanged at $at")
+        for (e in o.elements) if (e.rect == null) assertNotNull(e.reason, "${e.id} hidden without a reason at $at")
+        val e = assertNotNull(o[OverlayIds.FIRST_RUN_CARD], "the card is placed or hidden at $at")
+        val card = e.rect ?: return
+        assertTrue(card.width <= OverlayLayout.FIRST_RUN_WIDTH + 0.01f, "$card at $at")
+        val sw = o[OverlayIds.HORIZON_SWITCH]!!.rect!!
+        assertTrue(card.bottom <= sw.top, "the card $card above the switch $sw at $at")
+        // Under the whole top block across its span.
+        for (id in topBlock) o[id]?.rect?.let { r ->
+            if (r.left < card.right && r.right > card.left) assertTrue(r.bottom <= card.top, "$id $r over the card $card at $at")
+        }
+        // The lower controls stand above it.
+        for (id in lower) o[id]?.rect?.let { r -> if (r.left < card.right && r.right > card.left) assertTrue(r.bottom <= card.top, "$id $r under the card $card at $at") }
+        // The yield order: the fits and the ladder take no more than with the card at its least (its body scrolls first).
+        val c = i.firstRun!!
+        val atLeast = OverlayLayout.place(i.copy(firstRun = c.copy(natural = c.least)))
+        fun shown(p: OverlayPlacement) = (topBlock + lower).count { p.isShown(it) } + p.entriesDrawn
+        assertTrue(shown(o) >= shown(atLeast), "the ladder walked with the card at ${card.height} over its least ${c.least} at $at")
+        // Whole, or scrolling and saying so (narrower than it was measured at, it is taller: the rule keeps its area).
+        if (e.state == OverlayState.SHOWN) assertTrue(card.height + 0.01f >= c.natural, "$card shown whole under its height ${c.natural} at $at")
+        else assertNotNull(e.reason, at)
+    }
+
+    @Test
+    fun theFirstRunCardTakesItsPlaceAmongTheControls() {
+        for (p in phones + Phone(411f, 914f)) for (landscape in listOf(false, true)) for (scale in listOf(1f, 1.5f, 2f)) {
+            for (buttons in 1..3) for (off in listOf(false, true)) for (online in listOf(false, true)) for (update in listOf(false, true)) {
+                val w = if (landscape) p.h else p.w
+                val h = if (landscape) p.w else p.h
+                val base = input(w, h, landscape, scale, if (update) 16 else 0, buttons, off, online)
+                val i = base.copy(firstRun = firstRun(curve(scale)))
+                val at = "${w}x$h scale $scale buttons $buttons off $off online $online update $update"
+                // As the app places it (the other cards drawn), and by the pure rule.
+                val drawn = drawnFrom(base)
+                firstRunHolds(drawn.copy(firstRun = i.firstRun), OverlayLayout.place(drawn.copy(firstRun = i.firstRun)), OverlayLayout.place(drawn), "drawn: $at")
+                val pure = OverlayLayout.place(i)
+                assertEquals(emptyList(), pure.overlaps(), "pure: $at")
+                assertEquals(OverlayLayout.place(base)[OverlayIds.HORIZON_SWITCH]?.rect, pure[OverlayIds.HORIZON_SWITCH]?.rect, "pure: $at")
+            }
+        }
+    }
+
+    /** T320's Done when: 411 x 914 and 914 x 411 at 1.0 and 2.0, no map (the readout's elevation alone), nothing else up. */
+    @Test
+    fun theFirstRunCardOnACommonPhone() {
+        for (landscape in listOf(false, true)) for (scale in listOf(1f, 2f)) {
+            val k = curve(scale)
+            val base = input(if (landscape) 914f else 411f, if (landscape) 411f else 914f, landscape, scale, 0, 1, false, true).copy(cardsDrawn = true)
+            val i = base.copy(firstRun = firstRun(k))
+            val o = OverlayLayout.place(i)
+            val at = "landscape $landscape scale $scale"
+            firstRunHolds(i, o, OverlayLayout.place(base), at)
+            val card = assertNotNull(o[OverlayIds.FIRST_RUN_CARD]?.rect, at)
+            // Its least where the room holds it (upright); on its side at 2.0 it takes all the room under the top block and
+            // the ladder has taken the scale bar's line (its whole content then scrolls in the app, `FirstRunCard.kt`).
+            if (card.height < i.firstRun!!.least - 0.01f) {
+                assertTrue(landscape && scale == 2f, "the card under its least at $at: $card")
+                assertTrue(!o.isShown(OverlayIds.STRIP) && !o.isShown(OverlayIds.SCALE_BAR), "the ladder walked to its end at $at")
+            }
+            // The chips stay: the card stands under them upright, beside their column on its side.
+            for (id in listOf(OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY)) assertTrue(o.isShown(id), "$id at $at")
+            if (landscape) {
+                val chipsLeft = listOf(OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY).minOf { o[it]!!.rect!!.left }
+                assertTrue(card.right <= chipsLeft, "the card $card beside the chips' column at $chipsLeft at $at")
+                assertEquals(OverlayLayout.FIRST_RUN_WIDTH, card.width, 0.01f, at)
+            }
+            // At 1.0 upright the scale bar, the readout and the position button stand above the card.
+            if (!landscape && scale == 1f) {
+                for (id in listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP, OverlayIds.POSITION)) assertTrue(o.isShown(id), "$id at $at")
+            }
+        }
+    }
+
+    @Test
+    fun aFirstRunCardWithNoRoomHidesAndSaysSo() {
+        val base = input(360f, 300f, true, 2f, 0, 1, false, true).copy(cardsDrawn = true, firstRun = firstRun(1.75f))
+        val o = OverlayLayout.place(base.copy(warning = OverlayCard(400f, 300f, 200f, 360f, drawn = OverlayRect(8f, 60f, 352f, 280f))))
+        val e = assertNotNull(o[OverlayIds.FIRST_RUN_CARD])
+        if (e.rect == null) assertEquals(OverlayLayout.REASON_NO_ROOM, e.reason)
+        assertTrue(OverlayLayout.cardIds(base).contains(OverlayIds.FIRST_RUN_CARD))
+    }
 }

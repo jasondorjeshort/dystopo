@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,6 +59,10 @@ private class CardUi(val noPack: Boolean, val server: String, val progress: Stri
  * the screen; the progress, the message and the two links stay in view under them. Hidden while the pack list or the settings sheet is open, and after "Not now"
  * (then [fallback], the plain no-pack line, shows when the map is empty). Drawn by one line in the map screen,
  * which also hosts the file picker ([ImportPickerHost]).
+ *
+ * T320: one of the layout rule's bottom cards (`OverlayLayout`, `MapLayout`): placed under the whole top block (Search,
+ * the chips, the online column) with the scale bar, the readout and the position buttons standing on it; its body scrolls
+ * in the height the rule gives it, and what still does not fit is hidden by the rule's ladder with its reason.
  */
 @Composable
 fun FirstRunCard(fallback: String?) {
@@ -106,21 +111,42 @@ fun FirstRunCard(fallback: String?) {
             }
             return@Box
         }
-        // T106: above the update offer when one shows (it covered the card's lower buttons). T315: and above the "Map | Horizon" switch.
+        // T320: the layout rule places and sizes the card (`OverlayLayout`, a bottom card under the whole top block, the
+        // lower controls standing on it) through its control node; the paddings here only hold it for the first frame,
+        // before the rule has measured it: under the search box (T220), above the update offer (T106) and the switch (T315).
         val above = maxOf(io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.floorDp.dp)
+        val scroll = rememberScrollState()
+        FirstRunCardState.scroll = scroll
         Column(
             Modifier.align(Alignment.BottomCenter)
-                // T220: at a large font scale the card reaches the top row, which is drawn over it: it stops under the search box.
                 .let { m -> io.github.jasondorjeshort.dystopo.app.TopChips.searchBottom.let { top -> if (top > 0.dp) m.padding(top = top + 4.dp) else m.statusBarsPadding() } }
                 .let { m -> if (above > 0.dp) m.padding(start = 12.dp, end = 12.dp, bottom = above + 8.dp) else m.navigationBarsPadding().padding(start = 12.dp, end = 12.dp, bottom = 36.dp) }
+                .control("firstRunCard") // T238; T320: within the rule's width and height, so its width limits come after
                 .widthIn(max = 460.dp).fillMaxWidth()
-                .control("firstRunCard") // T238
                 .background(Paper, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp))
                 .pointerInput(Unit) { detectTapGestures { } } // T220: a touch on its paper stays out of the map
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // T320: below its least (a phone on its side at a large font scale) the progress, the message and the links
+            // scroll with the choices, so every action stays reachable.
+            val allScroll = FirstRunCardUiState.allScroll
+            val footer: @Composable () -> Unit = {
+                ui.progress?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Download failed")) Red else Accent, fontSize = 13.sp)) }
+                FirstRun.message?.let { BasicText(it, style = TextStyle(color = if (it.contains("failed") || it.contains("permission")) Red else Accent, fontSize = 13.sp)) }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        BasicText(Screens.SETTINGS, Modifier.clickable { SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) }.padding(vertical = 4.dp), style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                        BasicText("Not now", Modifier.clickable { FirstRun.dismissed = true }.padding(vertical = 4.dp), style = TextStyle(color = Muted, fontSize = 14.sp))
+                    }
+                    BasicText(NOT_NOW_LINE, style = TextStyle(color = Muted, fontSize = 12.sp))
+                }
+            }
+            Column(
+                Modifier.weight(1f, fill = false)
+                    .layout { m, c -> m.measure(c).let { p -> FirstRunCardState.bodyPx = p.height; layout(p.width, p.height) { p.place(0, 0) } } } // T320: the body's height for the rule
+                    .verticalScroll(scroll),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 BasicText("No map on this phone yet", style = TextStyle(color = Ink, fontSize = 19.sp, fontWeight = FontWeight.Bold))
                 BasicText(firstRunBody(ui.server, ui.direct, ui.notice), style = TextStyle(color = Muted, fontSize = 13.sp))
                 firstRunChoices(ui.server, ui.direct, FirstRun.estimateBytes, AppSettings.units).forEach { c ->
@@ -134,16 +160,9 @@ fun FirstRunCard(fallback: String?) {
                         }
                     }
                 }
+                if (allScroll) footer()
             }
-            ui.progress?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Download failed")) Red else Accent, fontSize = 13.sp)) }
-            FirstRun.message?.let { BasicText(it, style = TextStyle(color = if (it.contains("failed") || it.contains("permission")) Red else Accent, fontSize = 13.sp)) }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    BasicText(Screens.SETTINGS, Modifier.clickable { SettingsUi.open(io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.SERVER_GROUP) }.padding(vertical = 4.dp), style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Bold))
-                    BasicText("Not now", Modifier.clickable { FirstRun.dismissed = true }.padding(vertical = 4.dp), style = TextStyle(color = Muted, fontSize = 14.sp))
-                }
-                BasicText(NOT_NOW_LINE, style = TextStyle(color = Muted, fontSize = 12.sp))
-            }
+            if (!allScroll) footer()
         }
     }
 }

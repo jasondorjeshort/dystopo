@@ -509,8 +509,8 @@ class MapLayoutTest {
      * and up from the bottom inset, the same rectangle for every set of cards up (the flights card, the route card, the
      * warning, the readout, the first-run card), upright 411 x 914 and on its side 914 x 411, at font scale 1.0 and 2.0,
      * nothing overlapping. The cards stand where the app draws them: on the higher of the credit line and the switch
-     * (`AttributionInsets.bottom`, `ViewSwitch.floorDp`), the flights card drawn over a route card; the first-run card, which
-     * the rule does not place, 8 dp over the switch (`FirstRunCard.kt`).
+     * (`AttributionInsets.bottom`, `ViewSwitch.floorDp`), the flights card drawn over a route card. T320: the first-run card
+     * placed by the rule, above the switch and clear of every other element.
      */
     @Test
     fun theHorizonSwitchKeepsItsAnchorWithEveryCard() {
@@ -548,6 +548,7 @@ class MapLayoutTest {
                 planning = route?.let { io.github.jasondorjeshort.dystopo.ui.OverlayCard(routeH, routeH * 0.6f, 44f * t, cardW, drawn = it) },
                 warning = if (warning) io.github.jasondorjeshort.dystopo.ui.OverlayCard(120f * t, 100f * t, 80f * t, 395f, drawn = rect(8f + ins[0], warnTop, 403f + ins[0], minOf(warnTop + 120f * t, floor - 6f))) else null,
                 update = if (flights) io.github.jasondorjeshort.dystopo.ui.OverlayCard(flightsH, flightsH, flightsH, cardW, drawn = rect(8f + ins[0], flightsBottom - flightsH, 8f + ins[0] + cardW, flightsBottom)) else null,
+                firstRun = if (firstRun) io.github.jasondorjeshort.dystopo.ui.OverlayCard(600f * t, 136f * t, 100f * t, 460f) else null, // T320
                 cardsDrawn = true,
             )
             val at = "landscape=$landscape scale=$scale routeCard=$routeCard warning=$warning flights=$flights readout=$readout firstRun=$firstRun"
@@ -563,8 +564,9 @@ class MapLayoutTest {
             }
             assertTrue(p[OverlayIds.CREDIT]!!.rect!!.left >= anchor.right, "$at: the credit line beside the switch")
             if (firstRun) {
-                val card = rect(12f + ins[0], ins[1] + 64f * k, minOf(w - 12f, 472f + ins[0]), h - (h - anchor.top) - 8f)
-                assertFalse(card.intersects(anchor), "$at: the first-run card $card over the switch $anchor")
+                val card = p[OverlayIds.FIRST_RUN_CARD]
+                assertTrue(card != null && (card.rect != null || card.reason != null), "$at: the first-run card placed, or hidden with a reason: $card")
+                card.rect?.let { assertTrue(it.bottom <= anchor.top, "$at: the first-run card $it over the switch $anchor") }
             }
         }
     }
