@@ -38,6 +38,13 @@ Launched after T315 and T316 are merged (the wave paragraph).
 **Checks:** none.
 **Status: merged.** Verifier MERGE on fcd75ce5 (merged as 8ec443ca), no fix round. Follow-ups: android-a11y.py has no screen for the view at a chosen point; the HORIZON_TOGGLES regex also matches the Peaks heading; one horizon cache in Gnss, so going back re-sweeps the fix; the release horizon step not rerun until the sweep; the place line's distance after "At <name>" and the amber band are the owner's eye (ADR 0031).
 
+### T318. The sweep's a11y findings after wave 43
+The post-wave sweep `out/sweep-20261121-w43` was red on `a11y` alone (retried once, still red; `demo-serve` was a flake that passed on rerun) with 7 new findings: contrast on the long-press card at 1.0 for Download around here, What can I see from here, Sky from here (new, T317) and Cancel, whose baselined lines moved from y 810-838 dp to 761-818 dp when the card grew a row; contrast at `first-run:1.0` for Choose from server; an overlap at `first-run:2.0` between On foot and the readout, which the baseline had as a contrast line (the first-run card stands above the switch since T315). A Sonnet-class fix-up, not a feature.
+**Goal:** view each new finding's frame in `a11y/`; where the finding is a baselined line whose position moved or a new button of the same style as its baselined siblings, strike the old line and add the new one; where it is a defect the wave made (a control now covered or overlapping that was not), fix it in the owning file instead, or report why it is left for the owner. Each new baseline line gets its reason in the report (the log carries it).
+**Owns:** `tools/a11y-baseline.json`; for a real defect only, the file the finding is in, named in the report.
+**Done when:** `tools/sweep.ps1 -Only a11y` from the task's worktree green on a fresh emulator (`parts.a11y.new` empty), and the frames of `longpress:1.0`, `first-run:1.0` and `first-run:2.0` viewed and described.
+**Checks:** none.
+
 ## Owner actions pending (as of 2026-10-27)
 
 The owner's to-do list; the coordinator adds to it whenever a task leaves something only the owner can do, and strikes an item when it is done. `docs/HANDOFF.md` › Waiting on user points here.
