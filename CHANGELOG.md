@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-21
 
+- T321: A peak's "View from here", and the switch opens the Horizon view at the map's selected place
 - T323: The first-run card keeps its filled action whole: the readout yields first
 - T320: The first-run card takes its place among the map's controls
 - T322: The Panorama view, pass one: names placed through a projection, the lens view, and devtool `panorama`
