@@ -22,4 +22,4 @@ developer option for full tracking to be useful, adds about 1 MB an hour, and a 
 read (a proposal first by the project's rules); the per-point signal idea covers the everyday "why was my track
 wobbly" question at a fraction of the cost.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: no, at rest (recommended).

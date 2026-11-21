@@ -30,4 +30,4 @@ other countries unchecked? Recommended: not now; it is a safety matter the proje
 serves a narrow audience, and it would need a research pass on sources and a proposal. If yes, start with that
 research pass (`benchmark.md`, technical variant) on regions and licences.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: not now (recommended).

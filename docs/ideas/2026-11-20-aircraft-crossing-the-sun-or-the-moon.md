@@ -29,4 +29,4 @@ until the moon lands on the Horizon view (its Plan is queued), then build the li
 measured against the replay feed first; a planning mode needs schedules nobody offers free, and a 0.5 degree disc
 against position age and the quota may make most predictions untrustworthy, which that measurement would show.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: the live alert after the moon lands on the Horizon view (recommended); no planning mode.

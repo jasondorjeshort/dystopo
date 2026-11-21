@@ -33,4 +33,4 @@ warning by angle alone would miss long tight bends and fire on mapping kinks. Th
 what "sharp" means on signs) was run 2026-11-16; its result is in
 `docs/findings/2026-11-16-research-for-pending-ideas.md`.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: after the speed profile and the learned bend limit (recommended).

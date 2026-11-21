@@ -29,4 +29,4 @@ banner, no new permission) or also in the background (notifications and backgrou
 that protects the 500-a-day quota and the battery)? Recommended: the foreground-only banner as one task, after the
 replay feed measures how far a two-minute straight-line projection drifts; background alerts stay out.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: the banner while the app is open (recommended); no background alerts.

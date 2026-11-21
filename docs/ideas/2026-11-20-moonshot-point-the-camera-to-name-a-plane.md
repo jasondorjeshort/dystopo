@@ -27,4 +27,4 @@ Recommended: not as its own work; if the peak labels on the camera (`2026-10-29-
 ever built, add aircraft to that overlay then, since placement, calibration and compass error are shared work, and
 position age (a kilometre in four seconds at cruise) makes plane labels the harder half.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: "I think camera view is a fourth type of view where it shows any direction, not just the skyline. Unless this can be merged into panorama view somehow. Lets record but park it for now." (asked whether it is part of the Panorama view: the Panorama as planned is a drawn ribbon with no camera.) Parked: a camera view, a possible fourth view looking in any direction, with peaks and planes labelled.

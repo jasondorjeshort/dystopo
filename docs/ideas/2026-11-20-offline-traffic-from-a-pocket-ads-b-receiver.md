@@ -29,4 +29,4 @@ Recommended: only if you or testers own such a device; the protocols are public 
 third implementation cleanly, but Android's binding to a no-internet Wi-Fi and no device to test against make it a
 speculative pass. If yes, SBS first (plain text, testable with the replay source), then GDL90.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: only if the owner or a tester owns such a device (recommended); then SBS first.

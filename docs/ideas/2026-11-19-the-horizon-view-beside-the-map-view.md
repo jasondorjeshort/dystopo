@@ -78,4 +78,4 @@ bright stars and planets, satellite passes, or the camera behind the plot? Recom
 first; everything it needs is on the phone already (waypoints, routes, `Viewshed` for whether each is in sight) and
 it joins the rim's ranking through T309's `kind` weights. Stars and passes need new data sources and can wait.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: your own places in view next (recommended).

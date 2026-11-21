@@ -29,4 +29,4 @@ and airplanes.live are yours to send, from your address. Recommended: wait on th
 many routes are missing (a stale table may serve for months), and send the emails before the next flights release so
 a fallback source is known; nothing in the app waits on either.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: wait for the phone's count of Route unknown cards before the route-table ADR (recommended); the two emails before the next flights release.

@@ -36,4 +36,4 @@ devtool only). Recommended: hikes now, one pass: a slider on the card sets `SunC
 to that point, with a marker on the line; drives follow the profile's port to the phone, since table times would put
 a mountain drive's points minutes early.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: wait and build hikes and drives together (not the recommended hikes-first).

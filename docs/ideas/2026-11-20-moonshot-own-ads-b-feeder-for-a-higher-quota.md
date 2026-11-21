@@ -28,4 +28,4 @@ to phones (each phone then sends its area to your server, a new data flow)? Reco
 the hardware anyway (a higher personal quota and a contribution back); no site-served feed until the 500-a-day limit
 is seen to bite in real use, since one shared quota behind one IP for every phone may be worse, not better.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: the feeder only if the hardware is wanted anyway; no site-served feed until the 500-a-day limit bites (recommended).

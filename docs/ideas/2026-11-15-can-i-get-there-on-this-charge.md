@@ -35,4 +35,4 @@ guide. An honest band is the survey's guess, about 15 percent for a car and 25 t
 nobody here, and a wrong "you will make it" strands someone on a pass. It needs real trips to check against
 before it is shown, which is why the first question is whether you have the vehicle.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: the owner has an e-bike to check against (not an electric car); so the e-bike side, after the speed profile, with a proposal.

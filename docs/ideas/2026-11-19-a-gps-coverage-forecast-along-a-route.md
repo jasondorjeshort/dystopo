@@ -28,4 +28,4 @@ warrant it. The terrain horizon alone (`dem/Horizon.kt`) can already mark deep, 
 orbits; if you want something sooner, that cheaper "sky open above N degrees" line on the route card is the step to
 ask for.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: not yet (recommended).

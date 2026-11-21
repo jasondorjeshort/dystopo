@@ -31,4 +31,4 @@ card line from a short type-code list (air tankers and scoopers, unambiguous by 
 help text saying the list is partial; helicopters and medical flights stay unmarked until an operator source (the
 FAA registry) is weighed. The wording around absence is a safety rule, so it is yours to confirm.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: the small first version (recommended): a card line for air tankers and scoopers from a short type list, no show-only filter, help saying the list is partial.

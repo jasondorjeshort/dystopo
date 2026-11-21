@@ -38,4 +38,4 @@ metric of the same form": `routing/DriveOverlay.kt` treats every metric that is 
 name, magic and turn table), so the overlay is generalised first. The idea that puts both routes on the card
 (`2026-11-15-the-card-offers-the-other-route.md`) is the better home for a third row if it is ever wanted.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: at rest (recommended).

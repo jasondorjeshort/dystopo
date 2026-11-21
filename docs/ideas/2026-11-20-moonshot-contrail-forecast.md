@@ -29,4 +29,4 @@ forecast, the project's first weather data flow? Recommended: not now; it needs 
 the payoff is a curiosity line, and no source is known to fit the licence rules. Park it until a weather source
 enters the project for another reason.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: park it until a weather source enters the project for another reason (recommended).

@@ -24,4 +24,4 @@ strong on 2026-11-20, the verdict's 25 and 35 dB-Hz are still uncalibrated (hand
 that fires under every tree is worse than none; once a few recorded tracks carry the signal, the same pass can set
 the rule from them.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: build it now with the cautious rule (not the recommended wait): many satellites in view, all below 25 dB-Hz for five minutes, the terrain rim not explaining it, at most once a recording.

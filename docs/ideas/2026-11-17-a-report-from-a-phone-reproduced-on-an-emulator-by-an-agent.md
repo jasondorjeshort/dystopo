@@ -27,4 +27,4 @@ when they come, and the replay needs the issue body to carry the settings that d
 field (the debug state ledger idea's list, without places) is the cheap first step, and a hand-launched "reproduce
 issue N" chore can follow before any watcher.
 
-Answer:
+Answer: the owner, 2026-11-21, by multiple choice: not now (recommended).
