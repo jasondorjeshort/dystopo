@@ -227,7 +227,9 @@ private fun sunColour(night: Boolean): Color = if (night) Color(0xFFE6A84E) else
  * a synced setting, all on by default), the plot's orientation and terrain line, then each layer's content: the peaks on
  * the skyline, the sun's day, and the satellites (T307's summary, "Check my GPS" and list, last because the list is long).
  * While open and started it holds the compass for "Follow the phone"; it holds the GNSS only while Satellites is on (off,
- * the position is the map's own fix). A second each it reads everything again.
+ * the position is the map's own fix). A second each it reads everything again. T317: at a chosen point ([HorizonUi.point])
+ * the horizon, peaks and sun are the point's, Satellites and Flights do not draw, and the place line ([PlaceRow]) says where
+ * the view stands, with "Back to here".
  */
 @Composable
 fun HorizonScreen() {
@@ -900,9 +902,7 @@ internal val HORIZON_HELP: List<HelpText> = run {
         HelpText("horizon.view", HorizonText.TITLE, placed, show = show) { units ->
             "The sky around you as a circle: its edge the horizon, its centre overhead, the shaded band the land's skyline " +
                 "within ${HorizonText.range(units)}. Show turns the layers on and off: the satellites, the peaks in view and the sun's path. " +
-                // T317
-                "To see another place's sky, long-press the map and pick ${HorizonText.SKY_FROM_HERE}: the line under the plot then " +
-                "says where it stands, satellites and flights are off, and ${HorizonText.BACK} returns to where you are."
+                "${HorizonText.SKY_FROM_HERE} on the map's long-press card shows another place's." // T317
         },
         HelpText("horizon.peaks", HorizonText.PEAKS, "$placed › ${HorizonText.PEAKS}", show = show) { units ->
             "Named peaks within ${HorizonText.range(units)} in view, or just out of sight (hidden by under " +

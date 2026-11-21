@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicLong
  * - **Sun** ([sunFor]): [SunPath.of] on the profile's `angleAt` for the day shown (today at the point, or [HorizonUi.date]),
  *   so the terrain times are `Sun.onTerrain`'s on the same profile the turn-around clock reaches through
  *   `ShadeTiles.pointAnswer`; over the flat horizon while there is no profile. Kept until the horizon or the day changes.
+ * - T317: both work on whatever horizon they are given: the fix's, or a chosen point's ([pointFor]: "Sky from here").
  */
 object HorizonData {
     private val app get() = DystopoApp.instance
