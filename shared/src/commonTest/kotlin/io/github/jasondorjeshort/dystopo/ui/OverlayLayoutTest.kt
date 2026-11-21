@@ -158,10 +158,6 @@ class OverlayLayoutTest {
             if (i.buttons >= 3) assertTrue(lockGone, at)
         }
         if (entriesLeftOut) assertTrue(barGone, "$at: the scale bar before the entries")
-        // T309: the switch goes after the scale bar and before the core entries.
-        val switchGone = !o.isShown(OverlayIds.HORIZON_SWITCH)
-        if (switchGone) assertTrue(barGone, "$at: the scale bar before the switch")
-        if (entriesLeftOut) assertTrue(switchGone, "$at: the switch before the entries")
         if (stripGone) assertEquals(0, o.entriesDrawn, at)
         if (!o.isShown(OverlayIds.POSITION)) {
             assertFalse(i.offCentre, at)
@@ -200,8 +196,7 @@ class OverlayLayoutTest {
     fun cardsYieldBeforeAnythingIsHidden() {
         // A warning that would take the whole band scrolls, and the buttons and the scale bar stay.
         // T263: without the activity chip, which as a chip keeps its room before the ladder walks (here it costs the lock).
-        // T309: and without the switch, which the ladder takes after the scale bar (here it would cost the lock too).
-        val i = input(393f, 851f, false, 2f, 2, 3, false, true).let { it.copy(warning = it.warning!!.copy(natural = 2000f), activity = null, horizonSwitch = null) }
+        val i = input(393f, 851f, false, 2f, 2, 3, false, true).let { it.copy(warning = it.warning!!.copy(natural = 2000f), activity = null) }
         val o = OverlayLayout.place(i)
         assertEquals(OverlayState.COMPACT, o[OverlayIds.WARNING_CARD]?.state)
         assertEquals(OverlayLayout.REASON_SCROLLS, o[OverlayIds.WARNING_CARD]?.reason)
@@ -213,8 +208,9 @@ class OverlayLayoutTest {
     @Test
     fun aHeadlineStaysWholeOnACommonPhone() {
         for (landscape in listOf(false, true)) for (scale in listOf(1f, 1.5f, 2f)) for (cards in listOf(1, 2, 4, 3, 6)) {
-            val w = if (landscape) 800f else 360f
-            val h = if (landscape) 360f else 800f
+            // T315: on its side the emulator's 914 x 411; at 360 dp tall the switch's band at the bottom leaves a warning's headline short at 1.5.
+            val w = if (landscape) 914f else 360f
+            val h = if (landscape) 411f else 800f
             val o = OverlayLayout.place(input(w, h, landscape, scale, cards, 1, true, true))
             for (id in listOf(OverlayIds.NAV_CARD, OverlayIds.WARNING_CARD)) {
                 val e = o[id] ?: continue
@@ -271,44 +267,36 @@ class OverlayLayoutTest {
     }
 
     @Test
-    fun theSwitchStandsOverTheScaleBarsLineAtTheLeft() { // T309
-        for (scale in listOf(1f, 2f)) {
-            val i = input(411f, 914f, false, scale, 0, 1, false, true)
-            val o = OverlayLayout.place(i)
-            val sw = assertNotNull(o[OverlayIds.HORIZON_SWITCH]?.rect, "shown at $scale")
-            val bar = o[OverlayIds.SCALE_BAR]!!.rect!!
-            val strip = o[OverlayIds.STRIP]!!.rect!!
-            assertTrue(sw.bottom <= minOf(bar.top, strip.top) && sw.left == bar.left, "$sw over $bar and $strip at $scale")
-            assertEquals(emptyList(), o.overlaps())
-            val drawn = OverlayLayout.place(drawnFrom(i))
-            assertEquals(sw, drawn[OverlayIds.HORIZON_SWITCH]?.rect, "the live placer puts it in the same place at $scale")
+    fun theSwitchKeepsItsAnchorWhateverIsUp() = grid { i, o, at -> // T315
+        val anchor = OverlayLayout.switchRect(i.windowWidth, i.windowHeight, i.insetLeft, i.insetBottom, i.horizonSwitch!!)
+        assertEquals(i.insetLeft + OverlayLayout.SWITCH_EDGE, anchor.left, at)
+        assertEquals(i.windowHeight - i.insetBottom - OverlayLayout.SWITCH_EDGE, anchor.bottom, at)
+        for (p in listOf(o, OverlayLayout.place(drawnFrom(i)))) {
+            val sw = assertNotNull(p[OverlayIds.HORIZON_SWITCH], at)
+            assertEquals(OverlayState.SHOWN, sw.state, at)
+            assertEquals(anchor, sw.rect, "the same rectangle with every set of cards: $at")
+            // The credit line beside it at its right; everything else above it (no other element reaches its band at the left).
+            val credit = p[OverlayIds.CREDIT]!!.rect!!
+            assertTrue(credit.left >= anchor.right, "credit beside: $credit $at")
+            for (e in p.elements) {
+                val r = e.rect ?: continue
+                if (e.id == OverlayIds.HORIZON_SWITCH || e.id == OverlayIds.CREDIT) continue
+                assertTrue(r.bottom <= anchor.top, "${e.id} above the switch: $r $anchor $at")
+            }
         }
-        // Squeezed: the scale bar goes first, then the switch, then the entries; each says why.
-        val base = input(360f, 640f, false, 2f, 2 or 4, 1, false, false)
-        var barFirst = false
-        for (h in 1600 downTo 400 step 2) {
-            val o = OverlayLayout.place(base.copy(windowHeight = h.toFloat()))
-            val sw = o[OverlayIds.HORIZON_SWITCH]!!
-            if (sw.rect == null) assertEquals(OverlayLayout.REASON_ORDER, sw.reason, "at $h")
-            if (sw.rect != null && o[OverlayIds.SCALE_BAR]?.rect == null) barFirst = true
-        }
-        assertTrue(barFirst, "some height keeps the switch with the scale bar gone")
     }
 
     @Test
-    fun theSwitchHidesWhileTheFirstRunCardIsUp() { // T310
+    fun theScaleBarAndTheStripStandAboveTheSwitch() { // T315
         for (scale in listOf(1f, 2f)) for (w in listOf(411f to 914f, 914f to 411f)) {
-            val i = input(w.first, w.second, w.first > w.second, scale, 0, 1, false, true).copy(firstRunCard = true)
+            val i = input(w.first, w.second, w.first > w.second, scale, 0, 1, false, true)
             for (o in listOf(OverlayLayout.place(i), OverlayLayout.place(drawnFrom(i)))) {
-                val sw = assertNotNull(o[OverlayIds.HORIZON_SWITCH], "listed at $scale $w")
-                assertEquals(null, sw.rect, "hidden at $scale $w")
-                assertEquals(OverlayLayout.REASON_FIRST_RUN, sw.reason, "at $scale $w")
+                val sw = o[OverlayIds.HORIZON_SWITCH]!!.rect!!
+                val bar = assertNotNull(o[OverlayIds.SCALE_BAR]?.rect, "bar at $scale $w")
+                assertTrue(bar.bottom <= sw.top && bar.left == sw.left, "$bar over $sw at $scale $w")
+                o[OverlayIds.STRIP]?.rect?.let { assertTrue(it.bottom <= sw.top, "strip $it over $sw at $scale $w") }
                 assertEquals(emptyList(), o.overlaps())
             }
-            // Its going frees the line for the rest: the scale bar and the strip stay where the ladder keeps them.
-            val without = OverlayLayout.place(drawnFrom(i).copy(horizonSwitch = null))
-            val with = OverlayLayout.place(drawnFrom(i))
-            for (id in listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP)) assertEquals(without[id]?.rect, with[id]?.rect, "$id at $scale $w")
         }
     }
 
@@ -425,8 +413,9 @@ class OverlayLayoutTest {
         val narrow = OverlayLayout.place(side.copy(navigation = OverlayCard(200f, 150f, 70f, 400f, drawn = OverlayRect(100f, 90f, 500f, 260f))))
         assertTrue(narrow.sideColumn)
         assertTrue(narrow[OverlayIds.TRACK_BAR]!!.rect!!.top < 260f, "beside a card that does not reach the column")
-        val wide = OverlayLayout.place(side.copy(navigation = OverlayCard(200f, 150f, 70f, 700f, drawn = OverlayRect(50f, 90f, 750f, 260f))))
-        assertTrue(wide[OverlayIds.TRACK_BAR]!!.rect!!.top >= 266f, "under a card that reaches it")
+        // T315: the card ends higher than before, since the switch's band at the bottom leaves the column shorter.
+        val wide = OverlayLayout.place(side.copy(navigation = OverlayCard(200f, 150f, 70f, 700f, drawn = OverlayRect(50f, 90f, 750f, 230f))))
+        assertTrue(wide[OverlayIds.TRACK_BAR]!!.rect!!.top >= 236f, "under a card that reaches it")
         assertEquals(emptyList(), wide.overlaps())
     }
 

@@ -35,7 +35,10 @@ import io.github.jasondorjeshort.dystopo.attribution.HtmlText
  * window edge, above the navigation bar), so panels at the bottom (the track profile) sit above it.
  */
 object AttributionInsets {
-    var bottom by mutableStateOf(0.dp)
+    var credit by mutableStateOf(0.dp)
+
+    /** T315: the higher of the credit line and the map's "Map | Horizon" switch beside it (`controls/ViewSwitch.kt`). */
+    val bottom: Dp get() = maxOf(credit, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.floorDp.dp)
 }
 
 /**
@@ -79,7 +82,7 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
             .onGloballyPositioned { c ->
                 // The line sits at the bottom-left; its top edge measured from the window bottom is what panels must clear.
                 val fromBottom: Dp = with(density) { (rootHeight(c) - c.positionInRoot().y).toDp() }
-                if (fromBottom != AttributionInsets.bottom) AttributionInsets.bottom = fromBottom
+                if (fromBottom != AttributionInsets.credit) AttributionInsets.credit = fromBottom
             }
             .background(Color(0xCCF6F1E4), RoundedCornerShape(4.dp))
             .clickable { context.startActivity(Intent(context, AboutActivity::class.java)) }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -247,7 +248,13 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
         io.github.jasondorjeshort.dystopo.app.activity.ActivityChipOverlay() // T263: the current activity's chip, under Routes
         StartupTrace.composing("compose AttributionLine")
-        AttributionLine(attribution, Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(6.dp))
+        // T315: beside the "Map | Horizon" switch at its right, inside the same insets as the switch's anchor.
+        AttributionLine(
+            attribution,
+            Modifier.align(Alignment.BottomStart).navigationBarsPadding()
+                .windowInsetsPadding(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.anchorInsets)
+                .padding(start = 6.dp + io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.creditStartDp.dp, top = 6.dp, end = 6.dp, bottom = 6.dp),
+        )
         StartupTrace.composing("compose OnlineOverlay")
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
         StartupTrace.composing("compose SearchOverlay")
@@ -259,7 +266,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         StartupTrace.composing("compose RecenterButton and ScaleBar")
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
         if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
-        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.MapViewSwitch() // T309: "Map | Horizon", over the scale bar's line (the layout rule places it)
+        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.MapViewSwitch() // T309, T315: "Map | Horizon" at its anchor, the bottom-left corner (`controls/ViewSwitch.kt`)
         StartupTrace.composing("compose FirstRunCard")
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
         StartupTrace.composing("compose UpdateOverlay")

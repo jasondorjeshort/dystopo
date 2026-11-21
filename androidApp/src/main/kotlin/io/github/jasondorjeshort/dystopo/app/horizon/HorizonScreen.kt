@@ -58,8 +58,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.ClockFormat
@@ -119,7 +117,10 @@ object HorizonUi {
 
     @Volatile var drawn: Map<String, Any?>? = null
 
-    /** T309: where the view's "Map | Horizon" switch was last laid out, px in the window (left, top, right, bottom), or null. */
+    /**
+     * T309: where the view's "Map | Horizon" switch was last laid out (left, top, right, bottom), or null. T315: px in the
+     * Compose root, as the map's elements are in `GET /layout`, so the two rectangles compare as they are.
+     */
     @Volatile var switchPx: List<Int>? = null
 
     /** The rim's names as last drawn (the plot's taps read them). */
@@ -276,7 +277,13 @@ fun HorizonScreen() {
     Box(Modifier.fillMaxSize().background(pal.paper).pointerInput(Unit) { detectTapGestures { } }) {
         BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding()) {
             val landscape = maxWidth > maxHeight
-            val side = minOf(maxWidth, maxHeight)
+            // T315: the "Map | Horizon" switch stands at its anchor in the window's bottom-left corner (`controls/ViewSwitch.kt`),
+            // the same place as on the map. In landscape the plot, which fills the left, ends above it; in portrait the scroll
+            // area runs under it and ends with room for it, so its last row clears the switch at the end of the scroll.
+            val switchW = io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.widthDp.dp
+            val switchRoom = io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.reserveDp.dp + SWITCH_GAP
+            val side = if (landscape) minOf(maxWidth, maxHeight - switchRoom) else minOf(maxWidth, maxHeight)
+            val paneOverSwitch = !landscape || side < switchW + io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.EDGE_DP.dp + SWITCH_GAP
             val sunDrawn = layers.sun && sunNow != null && sunNow.apparentAltitudeDeg >= -0.5
             val description = HorizonText.plotLabel(
                 listOfNotNull(
@@ -336,7 +343,7 @@ fun HorizonScreen() {
                     }
                     picked?.let { p -> PickedPeak(p, pal, units) }
                     Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                        Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Toggles(layers, HorizonLayers.buttons(tracking), pal)
@@ -359,13 +366,6 @@ fun HorizonScreen() {
                         if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { tick++ }
                         if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
                     }
-                    // T309: the "Map | Horizon" switch, fixed at the pane's bottom under the scroll area (which so ends above it).
-                    io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchRow(
-                        true, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchColours(pal.card, pal.ink, pal.line),
-                        Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp)
-                            .onGloballyPositioned { c -> c.boundsInWindow().let { b -> HorizonUi.switchPx = listOf(b.left, b.top, b.right, b.bottom).map { Math.round(it) } } }
-                            .testTag(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.TAG_ON_VIEW),
-                    )
                 }
             }
             if (landscape) Row(Modifier.fillMaxSize()) {
@@ -381,7 +381,8 @@ fun HorizonScreen() {
                 io.github.jasondorjeshort.dystopo.app.aircraft.FlightCard(
                     a, { HorizonUi.selectedFlight = null },
                     (if (landscape) Modifier.align(Alignment.BottomEnd).width(maxWidth - side) else Modifier.align(Alignment.BottomCenter).fillMaxWidth())
-                        .heightIn(max = (if (landscape) maxHeight else maxHeight - side) * 0.9f).padding(8.dp).testTag("horizonFlightCard"),
+                        .heightIn(max = (if (landscape) maxHeight else maxHeight - side) * 0.9f).padding(8.dp)
+                        .padding(bottom = if (landscape) 0.dp else switchRoom - 8.dp).testTag("horizonFlightCard"), // T315: above the switch in portrait
                 )
             }
             SideEffect {
@@ -403,11 +404,21 @@ fun HorizonScreen() {
                     "flightsHollow" to HorizonUi.flightMarks.filter { it.hollow }.map { it.hex }, "flightsEmergency" to HorizonUi.flightMarks.filter { it.emergency }.map { it.hex },
                     "flightTailPoints" to HorizonUi.flightMarks.sumOf { it.tailPoints }, "flightsListed" to (flights?.list?.size ?: 0),
                     "selectedFlight" to pickedFlight?.hex, "flightCard" to (pickedFlight != null), "creditShown" to flights?.credit,
+                    // T315: what the switch's place costs the view: the square's side and whether the pane runs under the switch.
+                    "paneOverSwitch" to paneOverSwitch, "switchRoomDp" to Math.round(switchRoom.value),
                 )
             }
         }
+        // T315: the "Map | Horizon" switch at its anchor (the map's own place for it), Horizon selected, over the content.
+        io.github.jasondorjeshort.dystopo.app.controls.AnchoredViewSwitch(
+            true, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchColours(pal.card, pal.ink, pal.line),
+            Modifier.testTag(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.TAG_ON_VIEW),
+        ) { r, _ -> HorizonUi.switchPx = r.map { Math.round(it) } }
     }
 }
+
+/** T315: the room between the switch's top and what stands above it on the Horizon view (the plot in landscape, the last row). */
+private val SWITCH_GAP = 8.dp
 
 /** A rim name as last drawn: the peak, the text's baseline centre and its box (px), for the tap and `drawn`; T309: its leader line. */
 class PlacedName(val peak: PeakView, val anchor: Offset, val box: androidx.compose.ui.geometry.Rect, val leader: Pair<Offset, Offset>? = null)

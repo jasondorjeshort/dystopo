@@ -425,7 +425,7 @@ object MapLayout {
         OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.LOCK,
         OverlayIds.SCALE_BAR, OverlayIds.STRIP,
         OverlayIds.ACTIVITY, // T263: the activity chip, under the Routes chip
-        OverlayIds.HORIZON_SWITCH, // T309: the "Map | Horizon" switch, over the scale bar's line
+        // T315: not the "Map | Horizon" switch: it stands at its own anchor (`controls/ViewSwitch.kt`), which the rule reserves.
     ).mapTo(LinkedHashSet()) { OverlayIds.NAMES.getValue(it) }
 
     /** T241: the [control] nodes' sizes and rectangles; T239: and the rule's placement of them. Main thread. */
@@ -627,8 +627,7 @@ object MapLayout {
             trackPanel = barSize?.let { (it.height - rowPx).coerceAtLeast(0) / d } ?: 0f,
             routes = dp(c.sizeOf(nameOf(OverlayIds.ROUTES))),
             activity = dp(c.sizeOf(nameOf(OverlayIds.ACTIVITY))), // T263
-            horizonSwitch = dp(c.sizeOf(nameOf(OverlayIds.HORIZON_SWITCH))), // T309
-            firstRunCard = c.slot(FIRST_RUN_CARD) != null, // T310: its node is composed only while the card is up
+            horizonSwitch = dp(c.sizeOf(nameOf(OverlayIds.HORIZON_SWITCH))), // T309; T315: the rule reserves its anchor
             compass = if (turned) CompassView.sizePx()?.let { OverlaySize(it[0] / d, it[1] / d) } else null,
             scaleBar = dp(c.sizeOf(nameOf(OverlayIds.SCALE_BAR))),
             strip = if (stripUp) StripLayout.entrySizesPx.map { OverlaySize(it[0] / d, it[1] / d) } else emptyList(),
@@ -758,7 +757,7 @@ object MapLayout {
             out += seen(id, RecenterLayout.hiddenBecause ?: OverlayLayout.REASON_NO_ROOM)
         }
         out += seen(OverlayIds.SCALE_BAR, ScaleBarLayout.hiddenBecause)
-        out += seen(OverlayIds.HORIZON_SWITCH, null) // T309
+        out += seen(OverlayIds.HORIZON_SWITCH, null) // T309; T315: at its anchor, drawn where its own code puts it
         out += read(OverlayIds.STRIP)?.let {
             if (StripLayout.droppedItems.isEmpty()) Seen(OverlayIds.STRIP, it, SHOWN, null) else Seen(OverlayIds.STRIP, it, COMPACT, OverlayLayout.REASON_ENTRIES)
         } ?: gone(OverlayIds.STRIP, ruledOut(OverlayIds.STRIP) ?: StripLayout.hiddenBecause)

@@ -67,16 +67,11 @@ data class OverlayInput(
     val scaleBar: OverlaySize? = null,
     val strip: List<OverlaySize> = emptyList(),
     /**
-     * T309: the two-segment "Map | Horizon" switch, in the left lower column above the scale bar's line; it yields after
-     * the scale bar and before the readout's core entries ([OverlayLayout]'s ladder).
+     * T309: the two-segment "Map | Horizon" switch. T315: at its anchor ([OverlayLayout.switchRect]: the window's bottom-left
+     * corner, [OverlayLayout.SWITCH_EDGE] in from the left inset and above the bottom inset), the same in every view; never
+     * hidden and never moved: the credit line stands beside it and everything else above it.
      */
     val horizonSwitch: OverlaySize? = null,
-    /**
-     * T310: the first-run card is up (no map on the phone yet; `firstrun/FirstRunCard.kt`, drawn over the map's lower half by
-     * its own code): the "Map | Horizon" switch hides with [OverlayLayout.REASON_FIRST_RUN] while it is, since the card
-     * covers the switch's place and its choices are the screen's business.
-     */
-    val firstRunCard: Boolean = false,
     /**
      * T257: how many of [strip]'s first entries outrank the scale bar (the readout's own four, the course by its point);
      * the rest (the pressure, the extended readout's, the course's degrees) are left out before the scale bar yields,
@@ -191,14 +186,14 @@ object OverlayIds {
  *
  * The yield order (the survey `map-screen-controls.md`: no app documents one, so this is the project's own rule, with the
  * survey's recommendation as its source):
- * - Never hidden and never shrunk: the credit line, the navigation instruction, a warning's headline, the position
+ * - Never hidden and never shrunk: the credit line, (T315) the "Map | Horizon" switch, the navigation instruction, a warning's headline, the position
  *   button while the map is off centre, Search (it narrows for the top row, to no less than [SEARCH_MIN]; its text does not shrink).
  * - Cards scroll and collapse, down to their least, before anything is hidden.
  * - Then hidden in this order, one rung at a time ([rungs]): the lock button, the orientation button, (T257) the
  *   readout's extra entries past [OverlayInput.stripCore] from the end (the course's degrees, the fix age, the accuracy,
- *   the pressure), the scale bar, (T309) the "Map | Horizon" switch, the readout's entries from the end of their drawn
- *   order with the elevation last, and (centred only) the position button. (T310) The switch is off the ladder while the
- *   first-run card is up ([OverlayInput.firstRunCard], [REASON_FIRST_RUN]).
+ *   the pressure), the scale bar, the readout's entries from the end of their drawn order with the elevation last, and
+ *   (centred only) the position button. (T315) The "Map | Horizon" switch is not on the ladder: it stands at its anchor
+ *   ([switchRect]) in the frame like the credit line, which moves beside it, and the body ends above it.
  *   The ladder is global: a rung is taken for the whole screen, so the order holds where the two sides are short apart too.
  * - The Waypoint and Tracks bar, the Routes chip, (T263) the activity chip, the compass and the online indicator keep their size while they fit
  *   and hide rather than sit under a card or the credit line; they do not wait for the ladder.
@@ -249,21 +244,35 @@ object OverlayLayout {
     const val REASON_ENTRIES = "entriesLeftOut"
     const val REASON_NAVIGATING = "navigating"
 
-    /** T310: the "Map | Horizon" switch while the first-run card is up ([OverlayInput.firstRunCard]). */
-    const val REASON_FIRST_RUN = "firstRunCard"
+    /**
+     * T315: the "Map | Horizon" switch's distance in from the window's left inset and up from its bottom inset (dp), in
+     * every view (`app/controls/ViewSwitch.kt` draws it there, on the map and on the Horizon view).
+     */
+    const val SWITCH_EDGE = 8f
 
-    /** One step of the ladder: the buttons drawn, whether the scale bar is, how many of the readout's entries are, (T309) whether the switch is. */
-    private data class Rung(val buttons: Int, val bar: Boolean, val entries: Int, val switch: Boolean = false)
+    /**
+     * T315: the switch's rectangle for [size] in a window [windowWidth] by [windowHeight] with the system bars' [insetLeft]
+     * and [insetBottom] (dp): its bottom-left corner [SWITCH_EDGE] in from the left inset and up from the bottom inset. It
+     * depends on nothing else on the screen, so it is the same rectangle whatever cards are up, and in every view.
+     */
+    fun switchRect(windowWidth: Float, windowHeight: Float, insetLeft: Float, insetBottom: Float, size: OverlaySize): OverlayRect {
+        val left = insetLeft + SWITCH_EDGE
+        val bottom = windowHeight - insetBottom - SWITCH_EDGE
+        return OverlayRect(left, bottom - size.height, min(windowWidth, left + size.width), bottom)
+    }
+
+    /** T315: [switchRect] of [i]'s switch, or null while it is not up. */
+    fun switchRect(i: OverlayInput): OverlayRect? = i.horizonSwitch?.let { switchRect(i.windowWidth, i.windowHeight, i.insetLeft, i.insetBottom, it) }
+
+    /** One step of the ladder: the buttons drawn, whether the scale bar is, how many of the readout's entries are. */
+    private data class Rung(val buttons: Int, val bar: Boolean, val entries: Int)
 
     private fun rungs(i: OverlayInput): List<Rung> {
         val out = ArrayList<Rung>()
-        val sw = i.horizonSwitch != null && !i.firstRunCard // T310
-        for (b in i.buttons.coerceIn(1, 3) downTo 1) out += Rung(b, i.scaleBar != null, i.strip.size, sw)
+        for (b in i.buttons.coerceIn(1, 3) downTo 1) out += Rung(b, i.scaleBar != null, i.strip.size)
         // T257: the strip's extra entries go before the scale bar does; the bar never yields to them.
         val core = if (i.scaleBar == null) i.strip.size else i.stripCore.coerceIn(0, i.strip.size)
-        if (i.scaleBar != null) for (e in i.strip.size - 1 downTo core) out += Rung(1, true, e, sw)
-        // T309: the switch goes after the scale bar and before the core entries.
-        out += Rung(1, false, core, sw)
+        if (i.scaleBar != null) for (e in i.strip.size - 1 downTo core) out += Rung(1, true, e)
         for (e in core downTo 0) out += Rung(1, false, e)
         if (!i.offCentre) out += Rung(0, false, 0)
         return out.distinct()
@@ -288,16 +297,10 @@ object OverlayLayout {
         var height = 0f
     }
 
-    /**
-     * The scale bar's line at a rung: the bar, the strip's plate, and whether the plate goes [beside] (at that x) or above the
-     * bar; T309: the [switch] above them all, its bottom [switchUp] above the line's bottom.
-     */
-    private class Line(
-        val height: Float, val bar: OverlaySize?, val strip: OverlaySize?, val beside: Float?, val stripWidth: Float = 0f,
-        val switch: OverlaySize? = null, val switchUp: Float = 0f,
-    ) {
-        val empty: Boolean get() = bar == null && strip == null && switch == null
-        fun reach(): Float = max(max(bar?.width ?: 0f, (beside ?: 0f) + (strip?.width ?: 0f)), switch?.width ?: 0f)
+    /** The scale bar's line at a rung: the bar, the strip's plate, and whether the plate goes [beside] (at that x) or above the bar. */
+    private class Line(val height: Float, val bar: OverlaySize?, val strip: OverlaySize?, val beside: Float?, val stripWidth: Float = 0f) {
+        val empty: Boolean get() = bar == null && strip == null
+        fun reach(): Float = max(bar?.width ?: 0f, (beside ?: 0f) + (strip?.width ?: 0f))
     }
 
     private fun stripPlate(entries: List<OverlaySize>, width: Float): OverlaySize? {
@@ -320,16 +323,7 @@ object OverlayLayout {
         return OverlaySize(min(max(widest, rowW) + PLATE_X, width), rows + rowH + PLATE_Y)
     }
 
-    /** T309: the line with the switch on top when the rung keeps it and it fits the width (else the line without it). */
     private fun line(i: OverlayInput, r: Rung, width: Float): Line {
-        val base = barLine(i, r, width)
-        val sw = i.horizonSwitch?.takeIf { r.switch && !i.firstRunCard && it.width <= width } ?: return base
-        if (base.height >= NO_FIT) return base
-        val up = if (base.height > 0f) base.height + GAP else 0f
-        return Line(up + sw.height, base.bar, base.strip, base.beside, base.stripWidth, sw, up)
-    }
-
-    private fun barLine(i: OverlayInput, r: Rung, width: Float): Line {
         val bar = if (r.bar) i.scaleBar else null
         if (bar != null && bar.width > width) return Line(NO_FIT, null, null, null)
         val entries = i.strip.take(r.entries)
@@ -372,7 +366,11 @@ object OverlayLayout {
         }
     }
 
-    /** The credit line, Search and the top row (always, in bands nothing else enters), added to [out]; the body between them. */
+    /**
+     * The credit line, Search and the top row (always, in bands nothing else enters), added to [out]; the body between them.
+     * T315: and the "Map | Horizon" switch at its anchor ([switchRect]) with the credit line beside it at its right; the body
+     * ends above both.
+     */
     private class Frame(val bodyTop: Float, val bodyBottom: Float) {
         val bodyH: Float get() = bodyBottom - bodyTop
     }
@@ -382,9 +380,12 @@ object OverlayLayout {
         val safeR = i.windowWidth - i.insetRight
         val safeT = i.insetTop
         val safeB = i.windowHeight - i.insetBottom
-        val creditW = min(i.credit.width, safeR - safeL - CREDIT_PAD * 2)
+        val sw = switchRect(i)
+        sw?.let { out += OverlayElement(OverlayIds.HORIZON_SWITCH, it, OverlayState.SHOWN) }
+        val creditL = (sw?.right ?: safeL) + CREDIT_PAD
+        val creditW = min(i.credit.width, (safeR - creditL - CREDIT_PAD).coerceAtLeast(0f))
         val creditTop = safeB - CREDIT_PAD - i.credit.height
-        out += OverlayElement(OverlayIds.CREDIT, OverlayRect(safeL + CREDIT_PAD, creditTop, safeL + CREDIT_PAD + creditW, safeB - CREDIT_PAD), OverlayState.SHOWN)
+        out += OverlayElement(OverlayIds.CREDIT, OverlayRect(creditL, creditTop, creditL + creditW, safeB - CREDIT_PAD), OverlayState.SHOWN)
         // The top row beside Search while Search keeps its least, else on a line of its own under it.
         val rowLeft = safeR - MARGIN - i.topRow.width
         val beside = rowLeft - GAP - EDGE - (safeL + EDGE) >= SEARCH_MIN
@@ -397,7 +398,7 @@ object OverlayLayout {
         )
         val rowTop = if (beside) safeT + MARGIN else searchBottom + GAP
         out += OverlayElement(OverlayIds.SETTINGS_ROW, OverlayRect(rowLeft, rowTop, safeR - MARGIN, rowTop + i.topRow.height), OverlayState.SHOWN)
-        return Frame(max(searchBottom, rowTop + i.topRow.height) + GAP, creditTop - GAP)
+        return Frame(max(searchBottom, rowTop + i.topRow.height) + GAP, min(creditTop, sw?.top ?: creditTop) - GAP)
     }
 
     private fun arrange(i: OverlayInput, r: Rung, squeeze: Boolean, held: OverlayLatch?): OverlayPlacement? {
@@ -555,8 +556,6 @@ object OverlayLayout {
         }
         ln.bar?.let { b -> shown(OverlayIds.SCALE_BAR, OverlayRect(xA, yb - b.height, xA + b.width, yb)) }
         if (i.scaleBar != null && ln.bar == null) hidden(OverlayIds.SCALE_BAR, REASON_ORDER)
-        ln.switch?.let { s -> shown(OverlayIds.HORIZON_SWITCH, OverlayRect(xA, yb - ln.switchUp - s.height, xA + s.width, yb - ln.switchUp)) }
-        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, if (i.firstRunCard) REASON_FIRST_RUN else REASON_ORDER)
         var entries = 0
         ln.strip?.let { s ->
             val x = xA + (ln.beside ?: 0f)
@@ -702,11 +701,9 @@ object OverlayLayout {
         fun rightFits(r: Rung) = r.buttons <= 0 || BUTTON * r.buttons + BUTTON_GAP * (r.buttons - 1) <= by - rightTop
         val rightPossible = rightFits(Rung(1, false, 0))
         // The left column at its least: the elevation alone; where not even that fits, the scale bar alone, which the ladder
-        // would take first but whose going frees nothing there. T309: with the switch over it, else the switch alone.
+        // would take first but whose going frees nothing there.
         val stripPossible = i.strip.isNotEmpty() && rungs.any { it.entries > 0 && lineAt(it) != null }
-        val barAlone = if (!stripPossible && (i.scaleBar != null || i.horizonSwitch != null)) {
-            listOf(Rung(1, true, 0, true), Rung(1, true, 0, false), Rung(1, false, 0, true)).firstNotNullOfOrNull { r -> lineAt(r)?.takeIf { !it.line.empty } }
-        } else null
+        val barAlone = if (!stripPossible && i.scaleBar != null) lineAt(Rung(1, true, 0))?.takeIf { !it.line.empty } else null
         val leftPossible = stripPossible || barAlone != null
         val none = Choice(Rung(0, false, 0), Line(0f, null, null, null), yb)
         val (buttons, pick) = when {
@@ -736,8 +733,6 @@ object OverlayLayout {
         val leftWhy = if (stripPossible) REASON_ORDER else REASON_NO_ROOM
         ln.bar?.let { b -> shown(OverlayIds.SCALE_BAR, OverlayRect(xA, yb - b.height, xA + b.width, yb)) }
         if (i.scaleBar != null && ln.bar == null) hidden(OverlayIds.SCALE_BAR, leftWhy)
-        ln.switch?.let { s -> shown(OverlayIds.HORIZON_SWITCH, OverlayRect(xA, yb - ln.switchUp - s.height, xA + s.width, yb - ln.switchUp)) }
-        if (i.horizonSwitch != null && ln.switch == null) hidden(OverlayIds.HORIZON_SWITCH, if (i.firstRunCard) REASON_FIRST_RUN else leftWhy)
         var entries = 0
         ln.strip?.let { s ->
             val x = xA + (ln.beside ?: 0f)
