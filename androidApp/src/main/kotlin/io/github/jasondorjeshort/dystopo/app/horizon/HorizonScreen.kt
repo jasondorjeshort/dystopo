@@ -88,6 +88,8 @@ import io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayer
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLabels
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
+import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
+import io.github.jasondorjeshort.dystopo.horizon.PlaceLine
 import io.github.jasondorjeshort.dystopo.horizon.PeakRim
 import io.github.jasondorjeshort.dystopo.horizon.RimBox
 import io.github.jasondorjeshort.dystopo.horizon.RimGeometry
@@ -135,19 +137,61 @@ object HorizonUi {
     /** T312: the flights as last drawn: each dot, its name's box when named (the plot's taps and `drawn` read them). */
     @Volatile var flightMarks: List<FlightMark> = emptyList()
 
+    /**
+     * T317: the point the view is drawn for in place of the fix ("Sky from here" on the long-press card, `POST /horizon/ui?lat=&lon=`),
+     * or null at the fix. In memory only (the app reopens at the fix), never snapped back on a timer; "Back to here", Close
+     * and the switch's "Horizon" (which opens at the fix) let it go.
+     */
+    var point by mutableStateOf<io.github.jasondorjeshort.dystopo.horizon.HorizonPoint?>(null)
+        private set
+
     /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
     fun prepare() {
-        open; selected; date; scrollTo; namedKeys; selectedFlight
+        open; selected; date; scrollTo; namedKeys; selectedFlight; point
     }
 
     fun open() {
         GnssUi.resetUi()
         selected = null
+        point = null // T317: the switch and the settings row open at the fix
         open = true
+    }
+
+    /** T317: opens the view at [p] (main thread): the satellites and flights hidden, the place line saying where it stands. */
+    fun openAt(p: io.github.jasondorjeshort.dystopo.horizon.HorizonPoint) {
+        GnssUi.resetUi()
+        selected = null
+        selectedFlight = null
+        flightMarks = emptyList()
+        point = p
+        open = true
+    }
+
+    /**
+     * T317: "Sky from here" for a press at [lat], [lon]: the named feature within [radiusM] looked up off the main thread,
+     * then the view opened there ([openAt]); [then] after it opened (main thread).
+     */
+    fun openFrom(lat: Double, lon: Double, radiusM: Double, then: () -> Unit = {}) {
+        val app = DystopoApp.instance
+        Thread({
+            val p = HorizonData.pointFor(lat, lon, radiusM)
+            app.map.onMain {
+                openAt(p)
+                then()
+            }
+        }, "dystopo-horizon-point").apply { isDaemon = true }.start()
+    }
+
+    /** T317: "Back to here": the view returns to the phone's fix (main thread). */
+    fun back() {
+        selected = null
+        point = null
+        scrollTo = 0
     }
 
     fun close() {
         open = false
+        point = null // T317
         selected = null
         selectedFlight = null // T312
         flightMarks = emptyList()
@@ -183,7 +227,9 @@ private fun sunColour(night: Boolean): Color = if (night) Color(0xFFE6A84E) else
  * a synced setting, all on by default), the plot's orientation and terrain line, then each layer's content: the peaks on
  * the skyline, the sun's day, and the satellites (T307's summary, "Check my GPS" and list, last because the list is long).
  * While open and started it holds the compass for "Follow the phone"; it holds the GNSS only while Satellites is on (off,
- * the position is the map's own fix). A second each it reads everything again.
+ * the position is the map's own fix). A second each it reads everything again. T317: at a chosen point ([HorizonUi.point])
+ * the horizon, peaks and sun are the point's, Satellites and Flights do not draw, and the place line ([PlaceRow]) says where
+ * the view stands, with "Back to here".
  */
 @Composable
 fun HorizonScreen() {
@@ -202,7 +248,10 @@ fun HorizonScreen() {
     @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
     // T312: the Flights layer and its button only while Flight tracking (T311's setting) is on.
     val tracking = AppSettings.AIRCRAFT.value
-    val layers = AppSettings.horizonLayers.effective(tracking)
+    // T317: at a chosen point the Satellites and Flights layers do not draw (the phone's own sky), their settings untouched.
+    val point = HorizonUi.point
+    val moved = point != null
+    val layers = HorizonPlace.layers(AppSettings.horizonLayers.effective(tracking), moved)
     val skyRange = AppSettings.skyRange
     DisposableEffect(started) {
         Heading.setGnssWanted(started)
@@ -218,6 +267,7 @@ fun HorizonScreen() {
             GnssUi.menuOpen -> GnssUi.menuOpen = false
             HorizonUi.selectedFlight != null -> HorizonUi.selectedFlight = null
             HorizonUi.selected != null -> HorizonUi.selected = null
+            HorizonUi.point != null -> HorizonUi.back() // T317: Back first returns to the fix, as "Back to here"
             else -> HorizonUi.close()
         }
     }
@@ -241,8 +291,11 @@ fun HorizonScreen() {
     }
     val units = AppSettings.units
     val orientation = AppSettings.skyPlot
-    val pos = Gnss.position()
-    val h = Gnss.horizonAtPhone()
+    val fix = Gnss.position()
+    // T317: the point the view describes (the chosen one, else the fix), and the place line saying which.
+    val pos = HorizonPlace.source(point, fix?.latitude, fix?.longitude)
+    val place = HorizonPlace.line(point, fix?.latitude, fix?.longitude, units)
+    val h = pos?.let { Gnss.horizonAt(it.first, it.second) }
     val horizon = h?.profile
     val fn = horizon?.let { p -> { az: Double -> p.angleAt(az) } }
     val sats = if (layers.satellites) Gnss.satellites else emptyList()
@@ -251,18 +304,18 @@ fun HorizonScreen() {
     val heading = GnssUi.headingDeg()
     val rotation = GnssUi.rotationDeg(orientation)
     val now = System.currentTimeMillis()
-    val sunNow = pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.latitude, it.longitude, now) }
-    val sunDay = if (layers.sun && pos != null) HorizonData.sunFor(h?.takeIf { it.profile != null }, pos.latitude, pos.longitude, HorizonUi.date, now) else null
+    val sunNow = pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.first, it.second, now) }
+    val sunDay = if (layers.sun && pos != null) HorizonData.sunFor(h?.takeIf { it.profile != null }, pos.first, pos.second, HorizonUi.date, now) else null
     val peaks = if (layers.peaks && h != null) HorizonData.peaksFor(h) else null
     // T312: the poll's centre is the phone's position rounded to 0.1 degree (the poller rounds; a new key only when it moves that far).
-    val centre = pos?.let { Math.round(it.latitude * 10) to Math.round(it.longitude * 10) }
+    val centre = fix?.let { Math.round(it.latitude * 10) to Math.round(it.longitude * 10) }
     DisposableEffect(started, layers.flights, centre, skyRange) {
-        if (started && layers.flights && pos != null) {
-            io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.request(HorizonData.FLIGHTS_OWNER, pos.latitude, pos.longitude, HorizonData.radiusNm(skyRange))
+        if (started && layers.flights && fix != null) {
+            io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.request(HorizonData.FLIGHTS_OWNER, fix.latitude, fix.longitude, HorizonData.radiusNm(skyRange))
         }
         onDispose { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.release(HorizonData.FLIGHTS_OWNER) }
     }
-    val flights = if (layers.flights) HorizonData.flightsFor(h, pos, skyRange, now) else null
+    val flights = if (layers.flights) HorizonData.flightsFor(h, fix, skyRange, now) else null
     val pickedFlight = HorizonUi.selectedFlight?.let { hex -> io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.view.value.aircraft.firstOrNull { it.hex == hex } }
     val selected = HorizonUi.selected
     val picked = peaks?.candidates?.firstOrNull { HorizonUi.keyOf(it) == selected }
@@ -287,6 +340,7 @@ fun HorizonScreen() {
             val sunDrawn = layers.sun && sunNow != null && sunNow.apparentAltitudeDeg >= -0.5
             val description = HorizonText.plotLabel(
                 listOfNotNull(
+                    "${HorizonText.PLACE_LABEL}: ${place.text}", // T317: where the plot stands, first
                     horizon?.let { p -> GnssText.horizonLine(p.angleDeg[p.highest], p.bearingDeg(p.highest), p.distanceM[p.highest], h.source, units) },
                     peaks?.ranked?.takeIf { it.isNotEmpty() }?.let { l -> "${HorizonText.PEAKS}: " + l.take(5).joinToString(", ") { it.label.name } },
                     sunNow?.takeIf { layers.sun }?.let { s -> HorizonText.sunNow(s.apparentAltitudeDeg, s.azimuthDeg, fn?.let { f -> s.apparentAltitudeDeg < f(s.azimuthDeg) } ?: false) },
@@ -333,6 +387,9 @@ fun HorizonScreen() {
             }
             val pane: @Composable (Modifier) -> Unit = { m ->
                 Column(m) {
+                    // T317: the place line, just below the horizon (the plot) in portrait and at the pane's top in landscape,
+                    // always shown; at a chosen point tinted apart with "Back to here", so another place's sky is never read as yours.
+                    PlaceRow(place, moved, pal, night)
                     // The heading stays while the rest scrolls: the title, its help and Close.
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -346,7 +403,8 @@ fun HorizonScreen() {
                         Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Toggles(layers, HorizonLayers.buttons(tracking), pal)
+                        Toggles(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), pal)
+                        if (moved) BasicText(HorizonText.MOVED_LAYERS, Modifier.testTag("horizonMovedLayers"), style = TextStyle(color = pal.muted, fontSize = 13.sp))
                         OrientationRow(orientation, pal)
                         if (orientation == SkyPlotOrientation.PHONE && heading == null) BasicText(GnssText.NORTH_UP_NO_COMPASS, style = TextStyle(color = pal.muted, fontSize = 13.sp))
                         BasicText(
@@ -360,7 +418,7 @@ fun HorizonScreen() {
                         )
                         if (horizon != null) LegendItem(pal, GnssText.LEGEND_TERRAIN) { MarkIcon(Mark.CIRCLE, null, pal.ink, band = pal.band) }
                         // T312: Flights before Peaks: a short live list, where the Peaks list runs to dozens of rows.
-                        flights?.let { FlightsSection(it, pos != null, HorizonUi.selectedFlight, pal, units) }
+                        flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units) }
                         if (layers.peaks) PeaksSection(h, peaks, selected, pal, units)
                         if (layers.sun) SunSection(pos != null, sunDay, sunNow, fn, pal, night, tick)
                         if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { tick++ }
@@ -406,6 +464,10 @@ fun HorizonScreen() {
                     "selectedFlight" to pickedFlight?.hex, "flightCard" to (pickedFlight != null), "creditShown" to flights?.credit,
                     // T315: what the switch's place costs the view: the square's side and whether the pane runs under the switch.
                     "paneOverSwitch" to paneOverSwitch, "switchRoomDp" to Math.round(switchRoom.value),
+                    // T317: the point and the place line as drawn.
+                    "point" to point?.let { p -> linkedMapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name) }, "placeLine" to place.text,
+                    "placeKind" to place.kind, "moved" to place.moved, "backShown" to moved,
+                    "disabledButtons" to HorizonPlace.disabled(moved).map { it.key },
                 )
             }
         }
@@ -621,7 +683,7 @@ private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondor
 
 /** The layer toggles: one row of toggle buttons (the owner's words), wrapping at large text; T312: [buttons] those shown. */
 @Composable
-private fun Toggles(layers: HorizonLayers, buttons: List<HorizonLayer>, pal: GnssPalette) {
+private fun Toggles(layers: HorizonLayers, buttons: List<HorizonLayer>, disabled: Set<HorizonLayer>, pal: GnssPalette) {
     @OptIn(ExperimentalLayoutApi::class)
     // Round 2 (T312): 6 dp gaps and 10 dp padding, so "Show:" and the four buttons fit one row at the default font on a
     // 411 dp phone (14 dp and 8 dp wrapped Flights onto a row of its own); larger text still wraps.
@@ -631,18 +693,51 @@ private fun Toggles(layers: HorizonLayers, buttons: List<HorizonLayer>, pal: Gns
         }
         for (l in buttons) {
             val on = layers[l]
+            // T317: at a chosen point Satellites and Flights are disabled: no tick, muted, not tappable (their settings kept).
+            val enabled = l !in disabled
             Box(
-                Modifier.heightIn(min = 48.dp).semantics { this.selected = on }.clickable(role = Role.Switch) { HorizonUi.setLayer(l, !on) },
+                Modifier.heightIn(min = 48.dp).semantics { this.selected = on }.clickable(enabled = enabled, role = Role.Switch) { HorizonUi.setLayer(l, !on) },
                 contentAlignment = Alignment.Center,
             ) {
                 BasicText(
                     (if (on) "✓ " else "") + l.label,
-                    style = TextStyle(color = if (on) pal.paper else pal.ink, fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium),
-                    modifier = Modifier.background(if (on) pal.ink else pal.card, RoundedCornerShape(16.dp)).border(1.dp, if (on) pal.ink else pal.line, RoundedCornerShape(16.dp))
+                    style = TextStyle(color = if (on) pal.paper else if (enabled) pal.ink else pal.muted, fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium),
+                    modifier = Modifier.background(if (on) pal.ink else if (enabled) pal.card else pal.paper, RoundedCornerShape(16.dp))
+                        .border(1.dp, if (on) pal.ink else pal.line, RoundedCornerShape(16.dp))
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                 )
             }
         }
+    }
+}
+
+/** T317: the moved place line's tint: the sun's amber, a fill and a stronger edge, legible on the day and the night paper. */
+private fun movedFill(night: Boolean): Color = if (night) Color(0xFF4A3412) else Color(0xFFFBE2AE)
+private fun movedEdge(night: Boolean): Color = if (night) Color(0xFFE6A84E) else Color(0xFFB8641A)
+
+/**
+ * T317: where the view stands, always shown: "Your location" beside a dot in the link colour at the fix; at a chosen point
+ * the line ("At Mount Rainier, 7.6 km NNW of you", "12 km SSE of you") bold on an amber band with "Back to here", so a moved
+ * view is never read as the phone's own. A point within 50 m of the fix reads "Your location" but keeps "Back to here".
+ */
+@Composable
+private fun PlaceRow(place: PlaceLine, showBack: Boolean, pal: GnssPalette, night: Boolean) {
+    if (!showBack) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("horizonPlaceLine"), verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.Canvas(Modifier.size(10.dp)) { drawCircle(pal.link) }
+            BasicText(place.text, Modifier.padding(start = 8.dp), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+        }
+        return
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+            .background(if (place.moved) movedFill(night) else pal.card, RoundedCornerShape(10.dp))
+            .border(2.dp, if (place.moved) movedEdge(night) else pal.line, RoundedCornerShape(10.dp))
+            .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText(place.text, Modifier.weight(1f).testTag("horizonPlaceLine"), style = TextStyle(color = pal.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold))
+        Box(Modifier.padding(start = 8.dp).testTag("horizonBackToHere")) { Button(HorizonText.BACK, pal, filled = true) { HorizonUi.back() } }
     }
 }
 
@@ -806,7 +901,8 @@ internal val HORIZON_HELP: List<HelpText> = run {
     listOf(
         HelpText("horizon.view", HorizonText.TITLE, placed, show = show) { units ->
             "The sky around you as a circle: its edge the horizon, its centre overhead, the shaded band the land's skyline " +
-                "within ${HorizonText.range(units)}. Show turns the layers on and off: the satellites, the peaks in view and the sun's path."
+                "within ${HorizonText.range(units)}. Show turns the layers on and off: the satellites, the peaks in view and the sun's path. " +
+                "${HorizonText.SKY_FROM_HERE} on the map's long-press card shows another place's." // T317
         },
         HelpText("horizon.peaks", HorizonText.PEAKS, "$placed › ${HorizonText.PEAKS}", show = show) { units ->
             "Named peaks within ${HorizonText.range(units)} in view, or just out of sight (hidden by under " +
@@ -819,8 +915,11 @@ internal val HORIZON_HELP: List<HelpText> = run {
         },
         // T312
         HelpText("horizon.flights", HorizonText.FLIGHTS, "$placed › ${HorizonText.FLIGHTS}", show = show) { _ ->
+            // T317 (T316's follow-up): the stale age scales with the refresh interval, as the tracker's rule does.
+            val refreshS = AppSettings.AIRCRAFT_REFRESH_S.value
             "Each flight in the air is a dot where it is in the sky, with a tail of its last 90 s. Hollow: hidden by the " +
-                "terrain or its position over ${Math.round(io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.STALE_S)} s old. " +
+                "terrain or its position over ${io.github.jasondorjeshort.dystopo.aircraft.AircraftText.seconds(io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.staleS(refreshS))} old " +
+                "(${io.github.jasondorjeshort.dystopo.aircraft.AircraftText.refreshLabel(refreshS)} refresh). " +
                 "A ring marks an emergency code. The list has all, closest first; tap a dot or a row for its card. " +
                 "${HorizonText.SKY_RANGE} in Settings picks overhead, near or all."
         },

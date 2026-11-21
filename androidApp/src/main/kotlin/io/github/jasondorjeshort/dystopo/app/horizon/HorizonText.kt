@@ -132,6 +132,15 @@ object HorizonText {
 
     private fun angle(d: Double) = if (d < 10) UnitFormat.fixed(d, 1) else Math.round(d).toString()
 
+    // T317: the sky from another place (the place line's own words are shared `horizon/HorizonPlace`).
+    /** The long-press card's action, beside "What can I see from here". */
+    const val SKY_FROM_HERE = "Sky from here"
+    const val BACK = io.github.jasondorjeshort.dystopo.horizon.HorizonPlace.BACK
+    /** Under the toggles at a chosen point, where Satellites and Flights are disabled. */
+    const val MOVED_LAYERS = "Satellites and flights show only at your location."
+    /** The place line's label for screen readers, before its text ("Horizon from: At Mount Rainier, ..."). */
+    const val PLACE_LABEL = "Horizon from"
+
     // The plot's description for screen readers.
     const val PLOT_LABEL = "Horizon plot"
     fun plotLabel(parts: List<String>) = (listOf(PLOT_LABEL) + parts).joinToString("; ")

@@ -38,7 +38,7 @@ data class SkyPoint(val bearingDeg: Double, val elevationDeg: Double)
  * T312: one aircraft on the Horizon view's plot: [aircraft] as T311's tracker draws it now, seen from the plot's observer
  * at [bearingDeg] and [elevationDeg] (T311's [AircraftGeo.elevationAngleDeg], the earth's curvature in), [distanceM]
  * along the ground; [hidden] behind the terrain ([HorizonFlights.hiddenByTerrain]), [stale] its position older than T311's
- * `AircraftRules.STALE_S`; drawn [hollow] when either; [label] "call sign > destination code"; [tail] its positions of the
+ * `AircraftRules.staleS(refreshS)` (T316: the tracker's rule, scaled with the refresh interval); drawn [hollow] when either; [label] "call sign > destination code"; [tail] its positions of the
  * last [HorizonFlights.TAIL_S], oldest first, ending at the dot; [horizonDeg] the terrain's angle at its bearing (null: no profile).
  */
 data class SkyFlight(

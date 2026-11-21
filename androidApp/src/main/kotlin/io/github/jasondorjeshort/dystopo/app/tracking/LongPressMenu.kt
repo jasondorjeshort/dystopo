@@ -189,13 +189,13 @@ object LongPressMenu {
         private set
     /**
      * What the last long-press or menu tap did: `menu`, `route` (passed to the route, or Route from here), `routeTo`
-     * (T114: Route to here), `waypoint`, `cancel`.
+     * (T114: Route to here), `waypoint`, `cancel`, `sky` (T317: Sky from here).
      */
     @Volatile var lastAction: String? = null
         private set
 
     /** T114: the card's actions in their order (`GET /map/longpress` `actions`). */
-    val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE, io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.ACTION, "Cancel") // T182: the viewshed
+    val ACTIONS = listOf(ROUTE_TO, "Waypoint here", "Route from here", io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE, io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.ACTION, io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.SKY_FROM_HERE, "Cancel") // T182: the viewshed; T317: the sky
 
     /** T213 (T197's follow-up): the actions the card draws now, T197's "I am at <name>, <height>" before Cancel when offered. */
     fun actions(): List<String> = withKnown(ACTIONS, known?.let { KnownHeights.menuLabel(it, AppSettings.units) })
@@ -260,6 +260,18 @@ object LongPressMenu {
         point = null
         lastAction = "viewshed"
         io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSession.start(lat, lon, "longpress")
+    }
+
+    /**
+     * T317, "Sky from here": the Horizon view for the pressed point (on a named feature within a fingertip or T197's 100 m,
+     * at the feature, named), the satellites and flights hidden, the place line saying where it stands. Main thread.
+     */
+    fun skyFromHere() {
+        val (lat, lon) = point ?: return
+        val metersPerDp = runCatching { DystopoApp.instance.map.map?.projection?.getMetersPerPixelAtLatitude(lat) }.getOrNull()
+        point = null
+        lastAction = "sky"
+        io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi.openFrom(lat, lon, maxOf(io.github.jasondorjeshort.dystopo.app.horizon.HorizonData.FEATURE_PRESS_M, (metersPerDp ?: 0.0) * FINGER_DP))
     }
 
     fun cancel() {
@@ -330,6 +342,7 @@ internal fun LongPressCard() {
             MenuAction("Route from here") { LongPressMenu.route() }
             MenuAction(io.github.jasondorjeshort.dystopo.app.areas.AROUND_HERE) { LongPressMenu.aroundHere() } // T142
             MenuAction(io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText.ACTION) { LongPressMenu.viewshed() } // T182
+            MenuAction(io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.SKY_FROM_HERE) { LongPressMenu.skyFromHere() } // T317
             LongPressMenu.known?.let { k -> MenuAction(KnownHeights.menuLabel(k, AppSettings.units)) { LongPressMenu.setHeight() } } // T197
             MenuAction("Cancel") { LongPressMenu.cancel() }
         }
@@ -361,9 +374,9 @@ private fun PointLines() {
 internal val LONG_PRESS_HELP: List<HelpText> = listOf(
     HelpText("longPress.menu", "Long-press menu", "The map: long-press anywhere", show = { LongPressMenu.showAtCentre() }) {
         "A long-press on the map opens this card. Route to here plans a route from where you are to the point. " +
-            "Waypoint here marks the point with a waypoint you can name. Route " +
-            "from here starts a route at the point: long-press again where it should end. What can I see from here " +
-            "shows the ground and peaks in view."
+            "Waypoint here marks it with a waypoint you can name. Route " +
+            "from here starts a route there: long-press again where it ends. What can I see from here " +
+            "shows the ground and peaks in view; Sky from here, the sky there." // T317
     },
     // T188: the sun line.
     HelpText("longPress.sun", "Sun at this point", "The map: long-press anywhere, the sun line", show = { LongPressMenu.showAtCentre() }) {

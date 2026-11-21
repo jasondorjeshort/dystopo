@@ -42,7 +42,13 @@ import java.time.LocalDate
  *   picks a candidate peak as a tap does; T312: `flight=<hex or call sign>|none` picks a listed flight as a tap on its dot
  *   or row does (its card opens), `skyRange=overhead|near|all` sets Sky range as its row does; `scroll=<px>`: scrolls the
  *   control area. Answers `GET /horizon` (with `wait`).
- * - `POST /horizon/ui?open=1|0`: opens or closes the Horizon view, as the settings row and Close do; answers `GET /horizon`.
+ *   T317: `point` (`lat`, `lon`, `name`: the chosen point, null at the fix), `placeLine` (`text`, `moved`, `kind`
+ *   `here|named|offset|unknown`, `distanceM`, `bearingDeg` from the fix); `horizon`, `peaks` and `sun` are the point's, and
+ *   `drawn` adds `point`, `placeLine`, `placeKind`, `moved`, `backShown`, `disabledButtons`.
+ * - `POST /horizon/ui?open=1|0`: opens or closes the Horizon view, as the settings row and Close do (open at the fix);
+ *   answers `GET /horizon`. T317: `lat=&lon=` opens it for that point as the long-press card's "Sky from here" does (on a
+ *   named feature within `radius=` metres, default 100, at the feature and named); `back=1` returns to the fix as
+ *   "Back to here" does. With `wait=<ms>` the answer waits for the point's horizon and peaks.
  * - `POST /horizon/switch?to=map|horizon` (T309): selects a segment of the "Map | Horizon" switch, as a tap on it does (on the
  *   map or on the view); answers `{to, open}` and the switch's place: `map` (the map's switch as `GET /layout` reads it:
  *   `rectPx`, `state`, `reason`) and `view` (the view's own, `drawn.switchPx`).
@@ -104,10 +110,20 @@ object HorizonRoutes {
                 Response.json(switchJson(app, r.query["to"]!!))
             }
             "POST" to "/horizon/ui" -> {
-                when (r.query["open"]) {
-                    "1", "true" -> app.map.onMain { HorizonUi.open() }
-                    "0", "false" -> app.map.onMain { HorizonUi.close() }
-                    else -> return Response.json(mapOf("error" to "open=1 or open=0"), 400)
+                val q = r.query
+                val lat = q["lat"]?.let { it.toDoubleOrNull()?.takeIf { v -> v in -85.0..85.0 } ?: return Response.json(mapOf("error" to "lat must be degrees"), 400) }
+                val lon = q["lon"]?.let { it.toDoubleOrNull()?.takeIf { v -> v in -180.0..180.0 } ?: return Response.json(mapOf("error" to "lon must be degrees"), 400) }
+                val radius = q["radius"]?.let { it.toDoubleOrNull()?.takeIf { v -> v >= 0 } ?: return Response.json(mapOf("error" to "radius must be metres"), 400) } ?: HorizonData.FEATURE_PRESS_M
+                when {
+                    (lat == null) != (lon == null) -> return Response.json(mapOf("error" to "lat and lon go together"), 400)
+                    lat != null && lon != null -> {
+                        val p = HorizonData.pointFor(lat, lon, radius) // T317: as "Sky from here" looks it up
+                        app.map.onMain { HorizonUi.openAt(p) }
+                    }
+                    q["back"] == "1" -> app.map.onMain { HorizonUi.back() }
+                    q["open"] == "1" || q["open"] == "true" -> app.map.onMain { HorizonUi.open() }
+                    q["open"] == "0" || q["open"] == "false" -> app.map.onMain { HorizonUi.close() }
+                    else -> return Response.json(mapOf("error" to "open=1, open=0, lat=&lon= or back=1"), 400)
                 }
                 Thread.sleep(600)
                 answer(app, r)
@@ -133,26 +149,50 @@ object HorizonRoutes {
         val date = q["date"]?.takeIf { r.method == "GET" && it != "today" }?.let { d ->
             runCatching { LocalDate.parse(d) }.getOrElse { return Response.json(mapOf("error" to "date must be YYYY-MM-DD or today"), 400) }
         } ?: app.map.onMain { HorizonUi.date }
-        val h = if (wait > 0) Gnss.awaitHorizon(wait) else Gnss.horizonAtPhone()
+        // T317: the view's point (the chosen one, else the fix) and the place line, as the screen works them out.
+        val point = app.map.onMain { HorizonUi.point }
+        val fix = Gnss.position()
+        val src = io.github.jasondorjeshort.dystopo.horizon.HorizonPlace.source(point, fix?.latitude, fix?.longitude)
+        val place = io.github.jasondorjeshort.dystopo.horizon.HorizonPlace.line(point, fix?.latitude, fix?.longitude, AppSettings.units)
+        val h = when {
+            point == null -> if (wait > 0) Gnss.awaitHorizon(wait) else Gnss.horizonAtPhone()
+            else -> awaitAt(point.lat, point.lon, wait)
+        }
+        val moved = point != null
         val layers = AppSettings.horizonLayers
         val tracking = AppSettings.AIRCRAFT.value
         val peaks = h?.let { if (wait > 0) HorizonData.awaitPeaks(it, wait) else HorizonData.peaksFor(it) }
-        val pos = Gnss.position()
+        val pos = fix
         val now = System.currentTimeMillis()
-        val sun = pos?.let { HorizonData.sunFor(h?.takeIf { s -> s.profile != null }, it.latitude, it.longitude, date, now) }
-        val sunNow = pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.latitude, it.longitude, now) }
+        val sun = src?.let { HorizonData.sunFor(h?.takeIf { s -> s.profile != null }, it.first, it.second, date, now) }
+        val sunNow = src?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.first, it.second, now) }
         val out = linkedMapOf<String, Any?>(
             "open" to HorizonUi.open, "layers" to layers.json(), "flightTracking" to tracking, "skyRange" to AppSettings.skyRange.key,
             "gnss" to linkedMapOf("held" to Gnss.held, "holders" to Gnss.holders(), "engine" to Gnss.engine),
             "position" to (pos != null), "drawn" to HorizonUi.drawn,
+            "point" to point?.let { p -> linkedMapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name) },
+            "placeLine" to linkedMapOf(
+                "text" to place.text, "moved" to place.moved, "kind" to place.kind,
+                "distanceM" to place.distanceM?.let { Math.round(it) }, "bearingDeg" to place.bearingDeg?.let { Math.round(it * 10) / 10.0 },
+            ),
             "horizon" to Gnss.horizonJson(h)?.filterKeys { it != "angleDeg" },
-            "horizonReason" to if (h == null) (if (pos == null) io.github.jasondorjeshort.dystopo.app.gnss.GnssText.NO_POSITION else io.github.jasondorjeshort.dystopo.app.gnss.GnssText.HORIZON_WORKING) else h.reason,
+            "horizonReason" to if (h == null) (if (src == null) io.github.jasondorjeshort.dystopo.app.gnss.GnssText.NO_POSITION else io.github.jasondorjeshort.dystopo.app.gnss.GnssText.HORIZON_WORKING) else h.reason,
             "peaks" to HorizonData.peaksJson(peaks, HorizonUi.drawn?.let { HorizonUi.names.map { n -> HorizonUi.keyOf(n.peak) }.toSet() }), "peakRuns" to HorizonData.peakRuns.get(),
-            "flights" to if (layers.effective(tracking).flights) HorizonData.flightsJson(HorizonData.flightsFor(h, pos, AppSettings.skyRange, now), HorizonUi.drawn?.let { HorizonUi.flightMarks.filter { m -> m.box != null }.map { m -> m.hex } }) else null,
+            "flights" to if (io.github.jasondorjeshort.dystopo.horizon.HorizonPlace.layers(layers.effective(tracking), moved).flights) HorizonData.flightsJson(HorizonData.flightsFor(h, pos, AppSettings.skyRange, now), HorizonUi.drawn?.let { HorizonUi.flightMarks.filter { m -> m.box != null }.map { m -> m.hex } }) else null,
             "sun" to sun?.let { HorizonData.sunJson(it) + mapOf("nowAltitudeDeg" to sunNow?.apparentAltitudeDeg?.let { a -> Math.round(a * 10) / 10.0 }, "nowAzimuthDeg" to sunNow?.azimuthDeg?.let { a -> Math.round(a * 10) / 10.0 }) },
         )
-        if (q["compare"] == "1" && sun != null) out["turnaround"] = compare(app, h, pos.latitude, pos.longitude, sun)
+        if (q["compare"] == "1" && sun != null && src != null) out["turnaround"] = compare(app, h, src.first, src.second, sun)
         return Response.json(out)
+    }
+
+    /** T317: the horizon at a chosen point, waiting up to [ms] for its sweep (none: as it stands now). */
+    private fun awaitAt(lat: Double, lon: Double, ms: Long): Gnss.HorizonState? {
+        val until = SystemClock.elapsedRealtime() + ms
+        while (true) {
+            Gnss.horizonAt(lat, lon)?.let { return it }
+            if (SystemClock.elapsedRealtime() > until) return null
+            Thread.sleep(100)
+        }
     }
 
     /** The turn-around clock's terrain day for the same point and day, beside the view's (`compare=1`). */

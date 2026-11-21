@@ -1,6 +1,6 @@
 ---
 verified: 2026-11-21
-source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T308, T312 with T311's replay); moved from android-app.md in T308
+source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T308, T312 with T311's replay, T317 at the summit); moved from android-app.md in T308
 ---
 
 # The Horizon view
@@ -101,6 +101,31 @@ segment closing it; frames `horizon`, `horizon-scrolled` and, T315, `horizon-end
 `switchViewPx`, and nothing of the view lies under it at the end of the scroll, `underSwitch`) and `android-a11y.py`
 (screen `horizon`, `gps` before T308).
 
+## Another place (T317)
+
+The owner, 2026-11-20: the skyline is computed from the DEM for any point, but a view of another place must never be read
+as your own sky. "Sky from here" on the long-press card (after "What can I see from here"; `tracking/LongPressMenu.kt`)
+opens the view for the pressed point: on a named feature (a peak, a saddle or a pass of the pack's `mountain_peak` layer,
+z13 then z12 as T197 reads them) within a fingertip or 100 m, at the feature and named (`HorizonData.pointFor`). The terrain's
+horizon, the peaks and the sun are the point's (`Gnss.horizonAt(lat, lon)`, the one cached sweep, so "Back to here" sweeps
+the fix again); the Satellites and Flights layers do not draw there (the GNSS the phone hears, the poll centred on its fix),
+their buttons shown without a tick, muted and disabled, with "Satellites and flights show only at your location." under
+them; their synced settings are not touched (`shared/.../horizon/HorizonPlace.kt`: `source`, `layers`, `disabled`).
+
+- **The place line**, always shown: just below the plot in portrait, at the top of the right pane in landscape, above the
+  heading. At the fix (or within 50 m of it, `HorizonPlace.HERE_M`): "Your location" beside a dot in the link colour.
+  Elsewhere, bold on an amber band with a 2 dp edge: "At Mount Rainier, 7.6 km NNW of you" on a named feature, "12.0 km
+  SSE of you" otherwise (16-point compass, units per ADR 0022; "At <name>" alone or the coordinates with no fix),
+  recomputed every second as the fix moves (`HorizonPlace.line`, pure, `HorizonPlaceTest`). The plot's spoken label
+  starts "Horizon from: <the line>".
+- **"Back to here"** (a filled button at the band's right, tag `horizonBackToHere`) returns to the fix; Back does the
+  same before it closes the view. A chosen point is held in memory only (`HorizonUi.point`): never snapped back on a
+  timer, let go by Close and by the switch's "Horizon" (which opens at the fix), and gone when the app restarts.
+- **Debug**: `POST /horizon/ui?lat=&lon=` and `?back=1`, `GET /horizon` `point` and `placeLine` (`android-debug-routes.md`).
+  Sweep: `android-ui.py features` step `horizon` checks "Your location" at the fix, then `sky_from_here`: the map at the
+  summit, a long-press, "Sky from here" (frame `horizon-point`), the place line, the Satellites toggle without a tick, and
+  "Back to here" back to "Your location".
+
 ## Flights (T312)
 
 The fourth layer, "Flights": T311's aircraft (`app/aircraft/AircraftPoller.kt`, feed data in memory only) on the plot.
@@ -119,7 +144,7 @@ Code: `shared/.../horizon/HorizonFlights.kt` (pure: the sky position, the terrai
   2026-11-20); one with no altitude has no angle and is left out (`noAltitude`).
 - **Hollow** when hidden by the terrain, meaning below `HorizonProfile.angleAt(bearing)` **and** farther than the ridge's
   `distanceAt(bearing)` (a helicopter below the ridge line but in front of the ridge is in sight; the profile's refraction,
-  k θ / 2, is added to the aircraft's angle for this test only), or when its position is stale (T311's 30 s). The dot is
+  k θ / 2, is added to the aircraft's angle for this test only), or when its position is stale (T311's rule, 30 s at the default refresh; T316 scales it with the interval, 1.5 intervals at 120 and 180 s, as the help says). The dot is
   filled in T311's altitude colour with an ink edge, or hollow (sky inside an altitude-coloured ring); its tail is its
   last 90 s (T311's trail), dashed while hollow. An emergency (7700, 7600, 7500, or the feed's emergency field) gets a red
   ring around its dot and its row's dot, a shape and not a colour alone; the row says "Emergency (7700)".
