@@ -639,10 +639,20 @@ print("test_android_ui (T300): ok")
 
 # T303: the release parts drive the release build's id, routes/search/bothunits the debug build's (.debug), and every
 # package-derived name follows use_package.
-assert ui.PACKAGE == ui.debug.RELEASE_PACKAGE and set(ui.DEBUG_PARTS) == {"routes", "search", "bothunits"}
+assert ui.PACKAGE == ui.debug.RELEASE_PACKAGE and set(ui.DEBUG_PARTS) == {"routes", "search", "bothunits", "flights", "horizonflights"}
 ui.use_package(ui.debug.DEBUG_PACKAGE)
 assert ui.ACTIVITY == ui.debug.DEBUG_PACKAGE + "/io.github.jasondorjeshort.dystopo.app.MainActivity"
 assert ui.EXTERNAL.endswith(".dystopo.debug/files") and ".dystopo.debug/" in ui.STORE_NEW and ui.UPDATE_API_FILE.startswith(ui.EXTERNAL)
 ui.use_package(ui.debug.RELEASE_PACKAGE)
 assert ui.EXTERNAL == "/sdcard/Android/data/io.github.jasondorjeshort.dystopo/files" and ui.firstrun.PACKAGE == ui.debug.RELEASE_PACKAGE
 print("test_android_ui (T303): ok")
+
+# T313: a second top-level def of one name silently replaces the first (scroll_to for the drive row was shadowed by the
+# flights steps' scroll_to, so drive_row passed a string where the later one takes the swipe count: TypeError).
+import ast
+_seen = {}
+for _n in ast.parse(open(os.path.join(here, "android-ui.py"), encoding="utf-8").read()).body:
+    if isinstance(_n, ast.FunctionDef):
+        assert _n.name not in _seen, f"android-ui.py defines {_n.name} twice (lines {_seen[_n.name]} and {_n.lineno})"
+        _seen[_n.name] = _n.lineno
+print("test_android_ui (T313): ok")

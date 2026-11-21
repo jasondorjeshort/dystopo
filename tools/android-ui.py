@@ -1886,8 +1886,8 @@ def airplane(dev, on):
     time.sleep(3)
 
 
-def scroll_to(dev, pattern, swipes=14):
-    """Swipes the open settings page up until [pattern] shows, its node and the screen's nodes."""
+def scroll_row(dev, pattern, swipes=14):
+    """(Not scroll_to, the drive row's: a second def of that name once shadowed it, T313.) Swipes the open settings page up until [pattern] shows, its node and the screen's nodes."""
     n, nodes = dev.wait_for(pattern, 3)
     w, h, _d = screen(dev)
     for _ in range(swipes):
@@ -1920,10 +1920,10 @@ def flights_step(dev):
     try:
         close_sheet(dev)
         open_settings(dev, "Map options", "^Hillshade$")
-        row, nodes = scroll_to(dev, FLIGHTS_ROW)
+        row, nodes = scroll_row(dev, FLIGHTS_ROW)
         if not row:
             raise RuntimeError(f"no Flight tracking row on Map options (texts: {dev.texts(nodes)[-20:]})")
-        _q, nodes = scroll_to(dev, FLIGHTS_QUOTA, swipes=3)
+        _q, nodes = scroll_row(dev, FLIGHTS_QUOTA, swipes=3)
         out["quotaLine"] = next((t for t in dev.texts(nodes) if re.match(FLIGHTS_QUOTA, t)), None)
         out["frames"]["row"] = dev.screencap("flights-row")[0]
         row, nodes = dev.wait_for(FLIGHTS_ROW, 5)
@@ -1963,7 +1963,7 @@ def flights_step(dev):
         if turned_on:
             try:
                 open_settings(dev, "Map options", "^Hillshade$")
-                row, nodes = scroll_to(dev, FLIGHTS_ROW)
+                row, nodes = scroll_row(dev, FLIGHTS_ROW)
                 off = None
                 if row:
                     stop = dev.find("^Flight tracking: Refresh$", nodes)
@@ -2139,7 +2139,7 @@ def horizon_flights_step(dev):
     try:
         close_sheet(dev)
         open_settings(dev, "Navigation and tracking", "^Route snap$")
-        row, nodes = scroll_to(dev, SKY_RANGE_ROW, swipes=30)
+        row, nodes = scroll_row(dev, SKY_RANGE_ROW, swipes=30)
         if not row:
             raise RuntimeError(f"no Sky range row (texts: {dev.texts(nodes)[-20:]})")
         out["skyRangeChoices"] = [t for t in dev.texts(nodes) if t in ("Overhead", "Near", "All", "✓ Overhead", "✓ Near", "✓ All")]
@@ -2147,7 +2147,7 @@ def horizon_flights_step(dev):
         close_sheet(dev)
         airplane(dev, True)
         open_settings(dev, "Map options", "^Hillshade$")
-        row, nodes = scroll_to(dev, FLIGHTS_ROW)
+        row, nodes = scroll_row(dev, FLIGHTS_ROW)
         on = row_on(dev, row, nodes, "^Flight tracking: Refresh$") if row else None
         if not on:
             raise RuntimeError("no On choice on the Flight tracking row")
@@ -2191,7 +2191,7 @@ def horizon_flights_step(dev):
             try:
                 close_sheet(dev)
                 open_settings(dev, "Map options", "^Hillshade$")
-                row, nodes = scroll_to(dev, FLIGHTS_ROW)
+                row, nodes = scroll_row(dev, FLIGHTS_ROW)
                 stop = dev.find("^Flight tracking: Refresh$", nodes) if row else None
                 offs = [x for x in nodes if row and x["text"] == "Off" and x["bounds"] and row["bounds"][1] < x["bounds"][1] < (stop["bounds"][1] if stop else 10 ** 6)]
                 if offs:
