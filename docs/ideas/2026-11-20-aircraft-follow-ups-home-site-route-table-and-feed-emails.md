@@ -22,3 +22,11 @@ same source interface.
 Open: who sends them and from which address; whether a no or silence changes anything before the first release.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: start the ADR for the home site's daily route-table refresh now, or wait until your phone shows how often
+cards read "Route unknown" with the shipped table (already asked under Waiting on user)? The two emails to adsb.fi
+and airplanes.live are yours to send, from your address. Recommended: wait on the route table until you report how
+many routes are missing (a stale table may serve for months), and send the emails before the next flights release so
+a fallback source is known; nothing in the app waits on either.
+
+Answer:
