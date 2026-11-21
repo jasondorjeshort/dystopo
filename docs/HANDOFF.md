@@ -15,7 +15,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 
 ## Next
 
-1. Small follow-ups from wave 43 (Later): the debug `flights` part's `slow` step writes no frame for the sweep's `-First`; devtool `aircraft` prints a null `groundM`; android-a11y.py has no screen for the Horizon view at a chosen point; the stale `settings-data:1.0` baseline line. `DivergenceLayer` binds without unbinding (T314's finding).
+1. **Next pass (the owner, 2026-11-21: "basically right away"):** the three Plans of 2026-11-21: `-First` names checked at planning, the a11y baseline matched by label, the first-run card at large text. Then the owner's switch rule: with a place selected on the map, Horizon opens there (Plan in `docs/ideas/2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md`). Also from wave 43 (Later): the debug `flights` part's `slow` step writes no frame for the sweep's `-First`; devtool `aircraft` prints a null `groundM`; android-a11y.py has no screen for the Horizon view at a chosen point; the stale `settings-data:1.0` baseline line. `DivergenceLayer` binds without unbinding (T314's finding).
 2. The Panorama view (the owner: "soon but after the airplane tracks"), then the window-seat flip of the Horizon view; "View from here" on a peak's card and "View from map centre" (Plan in `docs/ideas/2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md`).
 3. The reroute: an amendment to ADR 0040 for drives, with a short research pass; then one drive task.
 4. The routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`; the cheap phone fixes ready as Plans.
