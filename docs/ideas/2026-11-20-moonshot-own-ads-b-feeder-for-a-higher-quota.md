@@ -22,3 +22,10 @@ adsb.lol returns stays ODbL; share-alike applies to a derived database, which a 
 - Hardware, placement and upkeep are the owner's; whether he wants a feeder at all.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: do you want to run an ADS-B receiver at home feeding adsb.lol, and if so, should the home site serve aircraft
+to phones (each phone then sends its area to your server, a new data flow)? Recommended: the feeder only if you want
+the hardware anyway (a higher personal quota and a contribution back); no site-served feed until the 500-a-day limit
+is seen to bite in real use, since one shared quota behind one IP for every phone may be worse, not better.
+
+Answer:
