@@ -16,6 +16,7 @@ object AircraftText {
     const val ROUTE_HEDGE = "From schedule data; may be wrong"
     const val CREDIT = "ADSB.lol contributors (ODbL)"
     const val REPLAY_CREDIT = "Recorded flights (a replay on this phone)"
+    const val ESTIMATED_PREFIX = "Dotted: " // T314
     const val NO_POSITION = "Distance from you: waiting for your position"
 
     /** Vertical rate (feet a minute) past which the card says climbing or descending rather than level. */
@@ -47,7 +48,7 @@ object AircraftText {
      * (the city with [AirportNaming.CITIES]).
      */
     fun estimatedLine(from: Airport, naming: AirportNaming): String =
-        "Dotted: estimated path from ${if (naming == AirportNaming.CITIES) city(from) else from.code}"
+        "${ESTIMATED_PREFIX}estimated path from ${if (naming == AirportNaming.CITIES) city(from) else from.code}"
 
     /** The map label: the call sign (else registration, else the hex code), the route when plausible, the age when stale. */
     fun label(r: AircraftReport, m: RoutePlausibility.Match?, naming: AirportNaming, staleAgeS: Double?): String {

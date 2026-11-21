@@ -187,6 +187,9 @@ class HelpRegistryTest {
             // T312: Sky range and the Horizon view's Flights.
             "settings.skyRange", "horizon.flights",
             // end T312
+            // T314: Flight tracking: Route lines.
+            "settings.aircraftRouteLines",
+            // end T314
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

@@ -90,6 +90,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   T311, the Flights layer (Settings › Map options, `aircraft/AircraftLayer`): `aircraft=1|0` (default off: "Flight
  *   tracking"), `aircraftRefreshS=10|20|30|60` (default 20) and `aircraftAirports=both|codes|cities` (default both),
  *   synced as `app.<key>`; turning it on polls at once, off forgets every aircraft. `GET /aircraft` shows the effect.
+ *   T314: `aircraftRouteLines=selected|all` (default selected: "Flight tracking: Route lines"), synced as
+ *   `app.aircraftRouteLines`; the map's faint lines follow at once (`GET /aircraft` › `routeLines`).
  *   T248: the keys with one stored value each are the registry's ([AppSettings.PLAIN], one line per setting: parsed,
  *   refused, stored, reported and synced from that line); the others are [COMPOSITE_KEYS], each with its code here.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
@@ -212,7 +214,7 @@ class SettingsRoutes(private val app: DystopoApp) {
         // T213: the trail disagreements' layer switch; the markers follow at once.
         if (given(AppSettings.SHOW_DIVERGENCE)) io.github.jasondorjeshort.dystopo.app.divergence.DivergenceLayer.refresh()
         // T311: the Flights layer polls at once when turned on, forgets every aircraft when turned off.
-        if (given(AppSettings.AIRCRAFT, AppSettings.AIRCRAFT_REFRESH_S, AppSettings.AIRCRAFT_AIRPORTS)) io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.settingsChanged()
+        if (given(AppSettings.AIRCRAFT, AppSettings.AIRCRAFT_REFRESH_S, AppSettings.AIRCRAFT_AIRPORTS, AppSettings.AIRCRAFT_ROUTE_LINES)) io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.settingsChanged() // T314: route lines
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }

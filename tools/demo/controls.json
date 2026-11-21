@@ -1189,6 +1189,19 @@
       }
     },
     {
+      "id": "aircraftRouteLines",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "map",
+          "order": 33,
+          "zone": "settings",
+          "row": "aircraftRouteLines"
+        }
+      }
+    },
+    {
       "id": "settingsAndPacks",
       "kind": "link",
       "platforms": ["android"],

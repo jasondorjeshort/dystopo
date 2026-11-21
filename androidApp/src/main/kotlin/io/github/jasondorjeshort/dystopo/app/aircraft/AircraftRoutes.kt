@@ -22,7 +22,14 @@ import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
  *   `none`), `altGeomFt`, `altBaroFt`, `onGround`, `trackDeg`, `groundSpeedKt`, `verticalRateFpm`, `ageS`, `stale`,
  *   `distanceKm`, `bearingDeg`, `elevationDeg` (from the phone), `route` (`airports`, `plausible`, `leg`, `origin`,
  *   `destination`, `crossTrackKm`, `toleranceKm`, `reason`), `label`, `trailPoints`. Feed data is answered from memory;
- *   nothing of it is stored.
+ *   nothing of it is stored. T314, the route lines: `routeLines` (the setting, `selected` or `all`; `POST /settings`
+ *   key `aircraftRouteLines`), `estimatedPastPoints` (the selected flight's dotted estimate, 0 when none), `estimatedFrom`
+ *   (its origin's code) and `estimatedPastWhyNot` (why none: `route not plausible`, `track starts at the origin`,
+ *   `track starts on an earlier leg`, `track passed the origin after it began`, ...), `remainingPoints`, `routeLinesDrawn`
+ *   (flights with route lines: the selected one and each faint line), `routeLinesCapped` (plausible flights left without
+ *   a faint line by `routeLinesCap`, 50), `faintLines`, `faintPointsMax`, and the faint source's `faintUpdatedAtMs`
+ *   (built), `faintPushedAtMs` (set on the map), `faintUpdates` and `faintPushes` (they move on a poll, a selection or a
+ *   setting change, not each second).
  * - `POST /aircraft`: `on=1|0` (Flight tracking, as the row sets it: stored, synced), `select=<hex>|nearest|none` (as a
  *   tap on the map does), `offline=1|0` (polls fail as with no connection, without a request), `spent=<n>` (the day's
  *   count), `limit=<s>` (a 429 with Retry-After `s`; 0 lifts it). Answers `GET /aircraft` after `wait=<ms>` (default 800).
@@ -82,7 +89,7 @@ object AircraftRoutes {
             AircraftLayer.drawn.firstOrNull { it.hex == h }?.let { a ->
                 linkedMapOf(
                     "title" to a.title,
-                    "lines" to io.github.jasondorjeshort.dystopo.aircraft.AircraftText.card(a, AppSettings.units, AppSettings.AIRCRAFT_AIRPORTS.value, AircraftPoller.credit),
+                    "lines" to io.github.jasondorjeshort.dystopo.aircraft.AircraftText.card(a, AppSettings.units, AppSettings.AIRCRAFT_AIRPORTS.value, AircraftPoller.credit, AircraftLayer.estimatedFrom),
                     "heightPx" to AircraftCardLayout.heightPx,
                 )
             }

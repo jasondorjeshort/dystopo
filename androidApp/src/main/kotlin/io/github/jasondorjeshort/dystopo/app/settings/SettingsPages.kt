@@ -490,6 +490,15 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             }
         }
         // end T311
+        // T314: which flights show route lines (ADR 0044: the owner asked for an option to compare).
+        SettingsRow.AIRCRAFT_ROUTE_LINES -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.AIRCRAFT_ROUTE_LINES.value
+            Setting(row.label, AIRCRAFT_ROUTE_LINES_LINE, help = "settings.aircraftRouteLines") {
+                for (m in io.github.jasondorjeshort.dystopo.aircraft.RouteLinesMode.entries) Option(m.label, v == m) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.AIRCRAFT_ROUTE_LINES, m)) }
+            }
+        }
+        // end T314
     }
 }
 
@@ -512,6 +521,9 @@ internal const val SHOW_DIVERGENCE_LINE = "where your recorded tracks keep leavi
 internal const val AIRCRAFT_LINE = "live aircraft around the map you are viewing; needs a connection"
 internal const val AIRCRAFT_AIRPORTS_LINE = "on the map's labels and the flight card"
 // end T311
+// T314: the Route lines row's line (ADR 0031 string).
+internal const val AIRCRAFT_ROUTE_LINES_LINE = "the tapped flight only, or a faint line on every flight with a known route"
+// end T314
 
 /** T203: the Estimate position row's line under its title (ADR 0031 string). */
 /** T250: the Barometer row's line under its title. */
@@ -943,6 +955,14 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "(SEA Seattle > DEN Denver). Codes puts codes on both; Cities, city names on both."
         },
         // end T311
+        // T314: which flights show route lines.
+        HelpText("settings.aircraftRouteLines", "Flight tracking: Route lines", at(SettingsGroup.MAP, "Flight tracking: Route lines"), show = page(SettingsGroup.MAP)) {
+            "Selected flight: route lines only for the flight you tap. All flights: also a faint line from origin through the " +
+                "aircraft to destination on every other flight whose route fits, for the " +
+                "${io.github.jasondorjeshort.dystopo.aircraft.RouteLines.CAP} nearest the map's centre. Worked out on this " +
+                "phone from schedule data; nothing more is sent."
+        },
+        // end T314
     )
 }
 
