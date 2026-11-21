@@ -8,14 +8,14 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 
 ## Now
 
-- **Waves 41 and 42 (Flights) are closed; v0.1.38-alpha is published** (2026-11-21, after a fully green sweep `out/sweep-20261121-w42`). Close-out still due: the wave 42 record to `docs/tasks/wave-42.md` (the `wave` skill, Close step 5), and a cleanup chore for `task/T314` (remote and local), the worktrees `dystopo-wt/T314`, `T314-verify` and `T313-verify` (the last held by a leftover Gradle java, PID 111504 at 06:00 UTC, started by a verifier of this session), and the AVDs `dystopo35-T314` if left.
+- **Waves 41 and 42 (Flights) are closed; v0.1.38-alpha is published** (2026-11-21, after a fully green sweep `out/sweep-20261121-w42`); records `docs/tasks/wave-41.md` and `wave-42.md`, branches and worktrees cleaned up. Left: the folder `dystopo-wt/T313-verify` (no longer a worktree; once held by a leftover Gradle java) to delete.
 - **For the owner:** an emulator `emulator-5554` (default AVD `dystopo35`) was booted by accident by the v0.1.38 draft check (`android-emu.ps1 -?` starts one); the agent was refused its stop and delete. Stop it without `-Delete` if wanted.
 - **Cost:** the 7-day meter read 21 at wave 42's close (7 at its planning; shared with other work); reset 2026-11-27 03:00 UTC. Figures unchanged (1.5 a task, 1.5 a wave, 1 a release). The hold is 97.
 - The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; at most two Gradle agents and two emulators.
 
 ## Next
 
-1. Close-out chores (above), then triage the new ideas: the 11 flight ideas of 2026-11-20 and the owner's three of the evening (the Horizon view from another place; flight refresh choices of two and three minutes; the Map | Horizon switch in the same place in every view). Follow-ups: `DivergenceLayer` binds without unbinding (T314's finding).
+1. Triage the new ideas: the 11 flight ideas of 2026-11-20 and the owner's three of the evening (the Horizon view from another place; flight refresh choices of two and three minutes; the Map | Horizon switch in the same place in every view). Follow-ups: `DivergenceLayer` binds without unbinding (T314's finding).
 2. The Panorama view (the owner: "soon but after the airplane tracks"), then the window-seat flip of the Horizon view.
 3. The reroute: an amendment to ADR 0040 for drives, with a short research pass; then one drive task.
 4. The routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`; the cheap phone fixes ready as Plans.
