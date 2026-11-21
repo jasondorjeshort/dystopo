@@ -22,3 +22,11 @@ Accuracy depends on the position's age and the poll interval; dead reckoning bet
 - Whether a planning mode (where to stand so a known flight crosses the sun) is wanted, or only the live alert.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: build transit prediction now, and if so only a live alert (a flight already in the air will cross the sun or
+moon disc from where you stand within a few minutes), or also a planning mode (where to stand)? Recommended: wait
+until the moon lands on the Horizon view (its Plan is queued), then build the live, foreground-only form as one task,
+measured against the replay feed first; a planning mode needs schedules nobody offers free, and a 0.5 degree disc
+against position age and the quota may make most predictions untrustworthy, which that measurement would show.
+
+Answer:
