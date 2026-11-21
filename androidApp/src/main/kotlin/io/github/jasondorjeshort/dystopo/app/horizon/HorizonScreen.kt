@@ -753,23 +753,32 @@ private fun PlaceRow(place: PlaceLine, showBack: Boolean, pal: GnssPalette, nigh
 
 /**
  * The peak a tap picked, under the heading (it stays while the list scrolls); a tap on its line or Back lets it go. T321:
- * "View from here" beside the line, a target of its own (a button at least 48 dp tall), stands the view on the peak.
+ * "View from here" beside the line, a target of its own (a button at least 48 dp tall), stands the view on the peak; above
+ * font scale 1.3 it goes under the line, at its end (beside it, at 2.0 the line wrapped to five lines in a third of the width).
  */
 @Composable
 private fun PickedPeak(p: PeakView, pal: GnssPalette, units: ContourUnits) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).background(pal.card, RoundedCornerShape(10.dp)).border(1.dp, pal.link, RoundedCornerShape(10.dp))
-            .padding(end = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val line: @Composable (Modifier) -> Unit = { m ->
         Row(
-            Modifier.weight(1f).heightIn(min = 48.dp).clickable(role = Role.Button) { HorizonUi.selected = null }.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            m.heightIn(min = 48.dp).clickable(role = Role.Button) { HorizonUi.selected = null }.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicText(HorizonText.peakLine(p.peak.name, p.eleM, p.distanceM, p.bearingDeg, units, !PeakRim.inSight(p)), Modifier.weight(1f), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
             BasicText("×", Modifier.padding(start = 8.dp).semantics { contentDescription = HorizonText.PEAK_CLEAR }, style = TextStyle(color = pal.ink, fontSize = 20.sp))
         }
-        Box(Modifier.testTag("horizonViewFromHere")) { Button(HorizonText.VIEW_FROM_HERE, pal) { HorizonUi.viewFrom(p) } }
+    }
+    val button: @Composable () -> Unit = { Box(Modifier.testTag("horizonViewFromHere")) { Button(HorizonText.VIEW_FROM_HERE, pal) { HorizonUi.viewFrom(p) } } }
+    val frame = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).background(pal.card, RoundedCornerShape(10.dp)).border(1.dp, pal.link, RoundedCornerShape(10.dp))
+    if (LocalDensity.current.fontScale > 1.3f) {
+        Column(frame.padding(end = 6.dp, bottom = 4.dp), horizontalAlignment = Alignment.End) {
+            line(Modifier.fillMaxWidth())
+            button()
+        }
+    } else {
+        Row(frame.padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            line(Modifier.weight(1f))
+            button()
+        }
     }
 }
 
