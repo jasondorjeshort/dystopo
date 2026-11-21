@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-21, by main session (wave 43 closed, v0.1.39-alpha published)
+Updated: 2026-11-21, by main session (wave 43 closed, v0.1.39-alpha published; the Panorama view planned)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-43.md`, Later on the board in `docs/TASKS.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
@@ -16,14 +16,14 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 ## Next
 
 1. **Next pass (the owner, 2026-11-21: "basically right away"):** the three Plans of 2026-11-21: `-First` names checked at planning, the a11y baseline matched by label, the first-run card at large text. Then the owner's switch rule: with a place selected on the map, Horizon opens there (Plan in `docs/ideas/2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md`). Also from wave 43 (Later): the debug `flights` part's `slow` step writes no frame for the sweep's `-First`; devtool `aircraft` prints a null `groundM`; android-a11y.py has no screen for the Horizon view at a chosen point; the stale `settings-data:1.0` baseline line. `DivergenceLayer` binds without unbinding (T314's finding).
-2. The Panorama view (the owner: "soon but after the airplane tracks"), then the window-seat flip of the Horizon view; "View from here" on a peak's card and "View from map centre" (Plan in `docs/ideas/2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md`).
+2. The Panorama view: planned with the owner on 2026-11-21, a three-pass Plan in `docs/ideas/2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md` (the survey is in it; none further). Pass one is `shared` and `devtool` only and can ride with item 1; pass two shares `ViewSwitch.kt` with the switch rule, so it goes the wave after; pass three follows. Then the window-seat flip of the Horizon view; "View from here" on a peak's card and "View from map centre" (Plan in `docs/ideas/2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md`).
 3. The reroute: an amendment to ADR 0040 for drives, with a short research pass; then one drive task.
 4. The routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`; the cheap phone fixes ready as Plans.
 
 ## Waiting on user
 
 - **On the phone, v0.1.39-alpha** (ADR 0031): the Map | Horizon switch's new bottom-left place in both views; the credit line cut short beside it held upright; the Horizon plot held sideways (about 300 dp instead of 363); "Sky from here" on the long-press card, the amber "At <name>, <distance> <direction> of you" line and Back to here; the refresh choices 2 min and 3 min with the line saying how long requests last; the card's "N ft above the ground". At the largest text the first-run card covers the activity chip and readout. Strings: the merge bodies of T315, T316 and T317.
-- **All 20 open Questions in `docs/ideas/` were answered** by the owner on 2026-11-21 (by multiple choice; written into each Answer line). Next triage turns them into Plans or rest. To build: the overhead banner, the fire-tanker card line, the weak-GPS note (with the cautious rule), your places in the Horizon view, and the pack-facts proposal. Later: the transit alert after the moon, the plane view after Panorama, the e-bike range after the speed profile. The camera view is parked as a possible fourth view. Still the owner's: the two feed emails.
+- **All 20 open Questions in `docs/ideas/` were answered** by the owner on 2026-11-21 (by multiple choice; written into each Answer line). Next triage turns them into Plans or rest. To build: the overhead banner, the fire-tanker card line, the weak-GPS note (with the cautious rule), your places in the Horizon view, and the pack-facts proposal. Later: the transit alert after the moon, the plane view after Panorama, the e-bike range after the speed profile. The camera is an option of the Panorama view while the phone steers it, not a fourth view (the owner, 2026-11-21); parked until its measurement pass. Still the owner's: the two feed emails.
 - **On the phone, v0.1.38-alpha:** the dotted estimate and Route lines (Selected flight or All flights); whether more airline flights show routes; the ±300 ft/min climbing threshold, the 18,000 ft flight level, Sky range's Overhead 45° and Near 50 km.
 - **Older phone checks** (v0.1.35 to v0.1.29): the peak names and their weights; Check my GPS's thresholds; "Follow the phone" held sideways; Report a problem's Share and Open GitHub issue; Plan drives for and the fuel line; the activity chip and Trip details; OpenFreeMap's terms (the owner emails them). **The release key:** a script started by an agent can read `tools\release.properties` (T293); closing it is a permission-settings change, yours. Left for the owner: the empty folders `dystopo-wt/T275` and `C:\c`, a stray `msg.txt` in `dystopo-wt`.
 

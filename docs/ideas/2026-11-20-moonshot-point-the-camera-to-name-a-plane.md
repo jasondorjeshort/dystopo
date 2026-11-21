@@ -28,3 +28,4 @@ ever built, add aircraft to that overlay then, since placement, calibration and 
 position age (a kilometre in four seconds at cruise) makes plane labels the harder half.
 
 Answer: the owner, 2026-11-21, by multiple choice: "I think camera view is a fourth type of view where it shows any direction, not just the skyline. Unless this can be merged into panorama view somehow. Lets record but park it for now." (asked whether it is part of the Panorama view: the Panorama as planned is a drawn ribbon with no camera.) Parked: a camera view, a possible fourth view looking in any direction, with peaks and planes labelled.
+2026-11-21, the owner, planning the Panorama view: not a fourth view. The Panorama view is steered by a drag or by the phone, and the camera behind the drawing is an option while the phone steers it (`2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md`, Shape). Planes get their labels there once that option exists; still parked until then.
