@@ -82,7 +82,8 @@ object Goldens {
      * The approved set. Three landscapes at two zoom-equivalents each: the low zoom shows each
      * whole preset with sparse contours, the high zoom a close-up with dense contours, cliff
      * thinning and several labels. Then the OSM case, and (T104) the two slope shadings over a
-     * real DEM tile.
+     * real DEM tile. (The printed sheet, the shade tiles and, T322, the Panorama have their own goldens in subdirectories:
+     * `PrintGolden`, `ShadeGolden`, `PanoramaGolden`; `UpdateGoldens` writes them all.)
      */
     val cases = listOf(
         GoldenCase(SyntheticTerrain.MIXED, zoom = 12),

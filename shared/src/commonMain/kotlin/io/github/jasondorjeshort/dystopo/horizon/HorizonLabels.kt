@@ -54,6 +54,8 @@ data class HorizonLabel(
  * box touches no label placed before, no ring label, no hour label and not the sun's arc, and only where no label already
  * placed stands within the density gap in bearing: `4° × sqrt(nLocal / 5)`, at least 2°, nLocal the candidates within ±15°
  * (a crowded stretch of the rim gets sparser names, an empty one takes close neighbours). No fixed cap per sector.
+ * T322: the view is a [LabelProjection]; "within ±15°" and the gap are its [LabelProjection.separation] (bearing on the
+ * round plot, [RimGeometry]; screen distance over a reference scale through the Panorama's lens, [LensView]).
  */
 object HorizonLabels {
     // The score's weights (first guesses).
@@ -165,41 +167,40 @@ object HorizonLabels {
     private fun nearest(b: RimBox, p: RimPt) = RimPt(p.x.coerceIn(b.left, b.right), p.y.coerceIn(b.top, b.bottom))
 
     /**
-     * [ranked] placed on [g], highest first: each by its mark ([RimGeometry.at] of its angle and bearing), at the nearest
-     * of the places around it (inward along the radius at [STEPS] steps, and beside it either side along the rim; T309)
+     * [ranked] placed on [g], highest first: each by its mark ([LabelProjection.mark] of its angle and bearing; T322: a
+     * label whose mark is off the view is left out, forced or not), at the nearest
+     * of the places around it (inward, [LabelProjection.away], at [STEPS] steps, and beside it either side; T309)
      * where its box (the text [width] of its name, [ascent] above the baseline
      * (negative) and [descent] below, padded 2 dp) touches no label placed before, none of [blocked] (the ring and hour
-     * labels) and no segment of [lines] (the sun's arc), and only when no label placed stands within its density gap in
-     * bearing; a box farther than [LEADER_DP] from its mark gets a leader line, which crosses no name and which no later
+     * labels) and no segment of [lines] (the sun's arc), and only when no label placed stands within its density gap
+     * ([LabelProjection.separation]: in bearing on the rim; T322); a box farther than [LEADER_DP] from its mark gets a leader line, which crosses no name and which no later
      * name crosses. The dominant label, then the closest of the view, are placed first and whatever the density: at their
      * first free place, else at the first. The rest without a free place are left out (the list has them). [first] goes
      * before everything (a picked label). T312: [forceClosest] false places the closest by rank like the rest (the aircraft
      * pass: no forced name over a peak's).
      */
     fun place(
-        g: RimGeometry, ranked: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
+        g: LabelProjection, ranked: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
         blocked: List<RimBox> = emptyList(), lines: List<List<RimPt>> = emptyList(), first: HorizonLabel? = null,
         forceClosest: Boolean = true,
     ): List<Placed> {
         val placed = ArrayList<Placed>()
         val pad = 2 * g.dp
-        val bearings = ranked.map { it.label.bearingDeg }
+        val labels = ranked.map { it.label }
         val closest = if (forceClosest) ranked.minByOrNull { it.label.distanceM }?.label else null
         // Stable: the picked one, the dominant, the closest, then the rank.
         val order = ranked.sortedWith(compareByDescending<Scored> { it.label == first }.thenByDescending { it.label.dominant }.thenByDescending { it.label == closest })
         for (s in order) {
             val l = s.label
-            val nLocal = bearings.count { apart(it, l.bearingDeg) <= LOCAL_DEG }
+            val at = g.mark(l.angleDeg, l.bearingDeg) ?: continue
+            val nLocal = labels.count { g.separation(it, l) <= LOCAL_DEG }
             val gap = gapDeg(nLocal)
             val forced = l.dominant || l == first || l == closest
-            if (!forced && placed.any { apart(it.label.bearingDeg, l.bearingDeg) < gap }) continue
-            val at = g.at(l.angleDeg, l.bearingDeg)
-            val dx = g.cx - at.x
-            val dy = g.cy - at.y
-            val len = max(hypot(dx, dy), 1.0)
+            if (!forced && placed.any { g.separation(it.label, l) < gap }) continue
             val w = width(l.name)
-            val ux = dx / len
-            val uy = dy / len
+            val away = g.away(at, l.angleDeg, l.bearingDeg)
+            val ux = away.x
+            val uy = away.y
             fun placeAt(x: Double, y: Double): Placed {
                 val box = RimBox(x - w / 2 - pad, y + ascent - pad, x + w / 2 + pad, y + descent + pad)
                 val n = nearest(box, at)
@@ -254,7 +255,7 @@ object HorizonLabels {
      * [RimGeometry.compassBoxes]; the ring labels are in [blocked], which both passes keep off).
      */
     fun placeLayers(
-        g: RimGeometry, peaks: List<Scored>, aircraft: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
+        g: LabelProjection, peaks: List<Scored>, aircraft: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
         blocked: List<RimBox> = emptyList(), lines: List<List<RimPt>> = emptyList(), firstPeak: HorizonLabel? = null, firstAircraft: HorizonLabel? = null,
         aircraftBlocked: List<RimBox> = emptyList(),
     ): Layers {
@@ -295,7 +296,21 @@ data class RimBox(val left: Double, val top: Double, val right: Double, val bott
  * rim) and a true azimuth. The ring labels ([ringLabel]) and the sun's hour labels ([hourLabel]) are where the plot
  * draws them, so names keep off them.
  */
-class RimGeometry(val cx: Double, val cy: Double, val radius: Double, val rotationDeg: Double, val dp: Double) {
+class RimGeometry(val cx: Double, val cy: Double, val radius: Double, val rotationDeg: Double, override val dp: Double) : LabelProjection {
+    /** T322: the rim as a [LabelProjection]: every mark is on the view ([at], clamped to the rim). */
+    override fun mark(elDeg: Double, azDeg: Double): RimPt = at(elDeg, azDeg)
+
+    /** T322: toward the centre (the zenith), with T309's guard at the centre itself. */
+    override fun away(at: RimPt, elDeg: Double, azDeg: Double): RimPt {
+        val dx = cx - at.x
+        val dy = cy - at.y
+        val len = max(hypot(dx, dy), 1.0)
+        return RimPt(dx / len, dy / len)
+    }
+
+    /** T322: the bearing between the two the short way round ([HorizonLabels.apart]), as T309 held the gap. */
+    override fun separation(a: HorizonLabel, b: HorizonLabel): Double = HorizonLabels.apart(a.bearingDeg, b.bearingDeg)
+
     fun at(elDeg: Double, azDeg: Double): RimPt {
         val r = radius * (90 - elDeg.coerceIn(0.0, 90.0)) / 90
         val a = (azDeg - rotationDeg) * PI / 180
