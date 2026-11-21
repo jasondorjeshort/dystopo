@@ -21,3 +21,10 @@ Data: the layer's positions (adsb.lol, ODbL) and the orientation sensors; nothin
 - Whether it should wait for the peak-labels-on-camera idea and share its overlay.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: build a camera view that labels aircraft in the sky, a new camera permission and a large feature?
+Recommended: not as its own work; if the peak labels on the camera (`2026-10-29-viewshed-and-peak-labels.md`) are
+ever built, add aircraft to that overlay then, since placement, calibration and compass error are shared work, and
+position age (a kilometre in four seconds at cruise) makes plane labels the harder half.
+
+Answer:
