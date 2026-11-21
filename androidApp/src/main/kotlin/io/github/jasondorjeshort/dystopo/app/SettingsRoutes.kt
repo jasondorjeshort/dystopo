@@ -88,7 +88,7 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   `showDivergence=1|0` (default on: "Show trail disagreements"), synced as `app.showDivergence` `on`/`off`; the
  *   markers go or come at once, and off stops the run after a recording (`POST /divergence/run` still runs).
  *   T311, the Flights layer (Settings › Map options, `aircraft/AircraftLayer`): `aircraft=1|0` (default off: "Flight
- *   tracking"), `aircraftRefreshS=10|20|30|60` (default 20) and `aircraftAirports=both|codes|cities` (default both),
+ *   tracking"), `aircraftRefreshS=10|20|30|60|120|180` (default 20; T316: 120 and 180) and `aircraftAirports=both|codes|cities` (default both),
  *   synced as `app.<key>`; turning it on polls at once, off forgets every aircraft. `GET /aircraft` shows the effect.
  *   T314: `aircraftRouteLines=selected|all` (default selected: "Flight tracking: Route lines"), synced as
  *   `app.aircraftRouteLines`; the map's faint lines follow at once (`GET /aircraft` › `routeLines`).

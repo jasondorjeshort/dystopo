@@ -41,7 +41,7 @@ import io.github.jasondorjeshort.dystopo.app.help.HelpText
 
 /**
  * T311: what the Flights layer shows over the map: the tapped aircraft's card at the bottom, above the credit line (its
- * call sign as the title, then origin > destination, type, altitude, speed, distance, bearing and angle from the phone,
+ * call sign as the title, then origin > destination, type, altitude, the height above the ground (T316), speed, distance, bearing and angle from the phone,
  * the position's age and the credit; the finding's order), and a one-line status under the search box and the online column while the feed
  * has something to say ([AircraftLayer.message]: offline, stopped, the day's limit, waiting). The card's layout id is
  * `aircraftCard` (`OverlayIds.AIRCRAFT_CARD`), the status line's `flightsStatus`.
@@ -148,9 +148,13 @@ internal val AIRCRAFT_HELP: List<HelpText> = listOf(
         needs = "an aircraft tapped on the map (Settings › Map options › Flight tracking on)",
         show = { AircraftLayer.drawn.minByOrNull { it.distanceM ?: 0.0 }?.let { AircraftLayer.select(it.hex) } },
     ) {
-        "Aircraft from a volunteer receiver network. The route comes from schedule data on this phone and shows only when " +
-            "the aircraft fits it. Track: solid as seen, dotted estimated, dashed ahead. Hollow: its position is over 30 s " +
-            "old; gone after a minute. Heights are above sea level, or pressure altitude without a GPS geoid height."
+        // T316: shorter, so the hollow and gone times follow the refresh setting (1.5 and 2.5 intervals, at least 30 and
+        // 60 s) and the height above the ground's "About" is explained (pressure altitude can be hundreds of metres off).
+        "Aircraft from volunteer receivers; a route from schedule data shows only if it fits. Track: solid seen, dotted " +
+            "estimated, dashed ahead. ${AircraftText.staleWords(AppSettings.AIRCRAFT_REFRESH_S.value)} " +
+            "(${AircraftText.refreshLabel(AppSettings.AIRCRAFT_REFRESH_S.value)} refresh). Heights above sea level, or " +
+            "pressure altitude: off by up to ${if (it == io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET) "a thousand feet" else "hundreds of metres"}, " +
+            "so \"About\" above the ground."
     },
 )
 

@@ -214,6 +214,137 @@ class AircraftTest {
         assertNotNull(v.elevationDeg)
     }
 
+    // --- T316: the times scale with the refresh interval, today's constants the floors ---
+
+    @Test
+    fun theStaleDropAndMoveCapTimesScaleWithTheInterval() {
+        assertEquals(listOf(10, 20, 30, 60, 120, 180), AircraftRules.REFRESH_CHOICES_S)
+        assertEquals(20, AircraftRules.REFRESH_DEFAULT_S, "the default stays 20 s")
+        // At 20 s (and by default) today's 30, 60 and 30 s.
+        for (s in listOf(10, 20)) {
+            assertEquals(30.0, AircraftRules.staleS(s), "stale at $s s")
+            assertEquals(60.0, AircraftRules.dropS(s), "drop at $s s")
+            assertEquals(30.0, AircraftRules.moveCapS(s), "move cap at $s s")
+            assertEquals(90.0, AircraftRules.trailS(s), "trail at $s s")
+        }
+        assertEquals(AircraftRules.STALE_S, AircraftRules.staleS())
+        assertEquals(AircraftRules.DROP_S, AircraftRules.dropS())
+        assertEquals(AircraftRules.MOVE_CAP_S, AircraftRules.moveCapS())
+        assertEquals(180.0, AircraftRules.staleS(120)); assertEquals(300.0, AircraftRules.dropS(120)); assertEquals(120.0, AircraftRules.moveCapS(120))
+        assertEquals(270.0, AircraftRules.staleS(180)); assertEquals(450.0, AircraftRules.dropS(180)); assertEquals(180.0, AircraftRules.moveCapS(180))
+        assertEquals(360.0, AircraftRules.trailS(180), "the trail reaches the last report")
+        assertEquals(720, AircraftRules.historyMax(20)); assertEquals(720, AircraftRules.historyMax(180)); assertEquals(1440, AircraftRules.historyMax(10))
+        assertEquals(AircraftRules.HISTORY_MAX, AircraftRules.historyMax())
+    }
+
+    @Test
+    fun aPosition100sOldIsDrawnFilledAt180sAndDroppedAt20s() {
+        fun tracker(refreshS: Int) = AircraftTracker().also {
+            it.onFetch(AircraftFetch.Ok(AircraftPoll(0, listOf(report(seenPos = 0.0))), 100, null), 0, null, refreshS)
+        }
+        val at180 = tracker(180).view(100_000, null, null, refreshS = 180).single()
+        assertFalse(at180.stale, "100 s old at 180 s: not hollow")
+        near(100.0, at180.movedS, 1e-9, "moved up the whole 100 s (the cap is 180 s)")
+        near(400 * 0.514444 * 100, AircraftGeo.distanceM(46.8, -121.7, at180.lat, at180.lon), 1.0)
+        assertFalse(at180.label.contains("ago"), "no age on a filled label: ${at180.label}")
+        assertEquals(0, tracker(20).view(100_000, null, null, refreshS = 20).size, "100 s old at 20 s: dropped")
+        assertEquals(0, tracker(20).view(100_000, null, null).size, "and by default")
+        val at120 = tracker(120).view(100_000, null, null, refreshS = 120).single()
+        assertFalse(at120.stale, "100 s old at 120 s: filled (stale after 180 s)")
+        // 180 s: hollow past 270 s, dropped past 450 s.
+        val t = tracker(180)
+        assertFalse(t.view(270_000, null, null, refreshS = 180).single().stale)
+        assertTrue(t.view(271_000, null, null, refreshS = 180).single().stale)
+        assertEquals(1, t.view(450_000, null, null, refreshS = 180).size)
+        assertEquals(0, t.view(451_000, null, null, refreshS = 180).size)
+        // A poll at 180 s does not drop what a 20 s rule would: onFetch prunes with its own interval.
+        val u = tracker(180)
+        u.onFetch(AircraftFetch.Ok(AircraftPoll(170_000, emptyList()), 100, null), 170_000, null, 180)
+        assertEquals(1, u.count, "kept through a poll that did not report it")
+        // The history keeps 720 at 20 s.
+        val h = AircraftTracker()
+        for (i in 0 until 730) h.onFetch(AircraftFetch.Ok(AircraftPoll(i * 20_000L, listOf(report().copy(lat = 46.0 + i * 0.001))), 100, null), i * 20_000L, null, 20)
+        assertEquals(720, h.history("abc123").size)
+    }
+
+    // --- T316: the height above the ground under each aircraft ---
+
+    @Test
+    fun theHeightAboveTheGround() {
+        val geo = assertNotNull(AboveGround.of(3000.0, AltitudeKind.GEOMETRIC, 1000.0))
+        near(2000.0, geo.meters, 1e-9); assertFalse(geo.approximate, "geometric: not approximate")
+        val baro = assertNotNull(AboveGround.of(3000.0, AltitudeKind.BAROMETRIC, 1000.0))
+        assertTrue(baro.approximate, "pressure altitude only: approximate")
+        assertNull(AboveGround.of(3000.0, AltitudeKind.GEOMETRIC, null), "no ground: no line")
+        assertNull(AboveGround.of(3000.0, AltitudeKind.GEOMETRIC, Double.NaN), "NaN ground: no line")
+        assertNull(AboveGround.of(900.0, AltitudeKind.GEOMETRIC, 1000.0), "below the ground: no line")
+        assertNull(AboveGround.of(1000.0, AltitudeKind.BAROMETRIC, 1000.0), "at the ground: no line")
+        assertNull(AboveGround.of(null, AltitudeKind.NONE, 1000.0), "no altitude")
+        assertNull(AboveGround.of(1200.0, AltitudeKind.GROUND, 1000.0), "on the ground")
+        assertEquals("4,210 m above the ground", AircraftText.aboveGroundLine(AboveGround(4213.4, false), ContourUnits.METERS))
+        assertEquals("About 4,200 m above the ground", AircraftText.aboveGroundLine(AboveGround(4213.4, true), ContourUnits.METERS))
+        assertEquals("6,560 ft above the ground", AircraftText.aboveGroundLine(AboveGround(2000.0, false), ContourUnits.FEET))
+        assertEquals("About 6,600 ft above the ground", AircraftText.aboveGroundLine(AboveGround(2000.0, true), ContourUnits.FEET))
+        assertEquals("About 40 m above the ground", AircraftText.aboveGroundLine(AboveGround(42.0, true), ContourUnits.METERS), "under 100: to 10")
+    }
+
+    @Test
+    fun theGroundIsSampledOncePerReportedPositionAndTheCardSaysIt() {
+        val t = AircraftTracker()
+        val r = report(seenPos = 0.0) // 30,000 ft geometric, 29,900 ft pressure
+        t.onFetch(AircraftFetch.Ok(AircraftPoll(0, listOf(r)), 100, null), 0, -20.0)
+        assertEquals(listOf(AircraftTracker.GroundAsk("abc123", 46.8, -121.7)), t.groundNeeded())
+        assertNull(t.view(1000, null, null).single().groundM, "not sampled yet: no line")
+        t.setGround("abc123", 46.8, -121.7, 1500.0)
+        assertEquals(emptyList(), t.groundNeeded(), "sampled once for this position")
+        val a = t.view(5000, null, null).single()
+        assertEquals(1500.0, a.groundM)
+        val h = assertNotNull(a.aboveGround)
+        near(30000 * 0.3048 + 20.0 - 1500.0, h.meters, 1e-6)
+        val lines = AircraftText.card(a, ContourUnits.METERS, AirportNaming.BOTH, AircraftText.CREDIT)
+        val alt = lines.indexOfFirst { it.startsWith("9,164 m") }
+        assertTrue(alt >= 0, "$lines")
+        assertEquals("7,660 m above the ground", lines[alt + 1], "the line under the altitude")
+        // A new reported position asks again and shows no line until sampled; no data there stays no line.
+        t.onFetch(AircraftFetch.Ok(AircraftPoll(20_000, listOf(r.copy(lat = 46.9))), 100, null), 20_000, -20.0)
+        assertEquals(listOf(AircraftTracker.GroundAsk("abc123", 46.9, -121.7)), t.groundNeeded())
+        assertNull(t.view(21_000, null, null).single().groundM)
+        t.setGround("abc123", 46.9, -121.7, null)
+        assertEquals(emptyList(), t.groundNeeded())
+        val none = t.view(22_000, null, null).single()
+        assertNull(none.aboveGround)
+        assertFalse(AircraftText.card(none, ContourUnits.METERS, AirportNaming.BOTH, AircraftText.CREDIT).any { "above the ground" in it })
+        // Pressure altitude only (no undulation): "About".
+        val p = AircraftTracker()
+        p.onFetch(AircraftFetch.Ok(AircraftPoll(0, listOf(r)), 100, null), 0, null)
+        p.setGround("abc123", 46.8, -121.7, 1500.0)
+        assertEquals("About 7,600 m above the ground", AircraftText.card(p.view(0, null, null).single(), ContourUnits.METERS, AirportNaming.BOTH, AircraftText.CREDIT).first { "above the ground" in it })
+        val json = AircraftJson.now(p.view(0, null, null).single())
+        assertEquals(1500.0, json["groundM"]); assertEquals(7614.0, json["aboveGroundM"]); assertEquals(true, json["aboveGroundApproximate"])
+    }
+
+    @Test
+    fun theLimitLineSaysHowLongTheRequestsLast() {
+        val noon = 20_000L * AircraftQuota.DAY_MS + 12 * 3_600_000L // 12:00 UTC, 12 h to midnight
+        assertEquals(2.78, kotlin.math.round(AircraftRules.hoursLeft(500, 20) * 100) / 100)
+        assertEquals(25.0, AircraftRules.hoursLeft(500, 180))
+        assertEquals(0.0, AircraftRules.hoursLeft(-3, 20))
+        assertEquals("about 480 requests left today (UTC), about 3 h at this rate", AircraftText.quotaLine(480, false, 20, noon))
+        assertEquals("about 100 requests left today (UTC), about 33 min at this rate", AircraftText.quotaLine(100, false, 20, noon))
+        assertEquals("about 400 requests left today (UTC), about 7 h at this rate", AircraftText.quotaLine(400, false, 60, noon))
+        assertEquals("about 400 requests left today (UTC), enough for the rest of the day at this rate", AircraftText.quotaLine(400, false, 120, noon))
+        assertEquals("about 0 requests left today (UTC)", AircraftText.quotaLine(0, false, 20, noon))
+        assertEquals("Daily flight data limit reached; about 0 requests left today (UTC)", AircraftText.quotaLine(0, true, 20, noon))
+        assertEquals(listOf("10 s", "20 s", "30 s", "60 s", "2 min", "3 min"), AircraftRules.REFRESH_CHOICES_S.map { AircraftText.refreshLabel(it) })
+        assertEquals(
+            "1 h 23 min at 10 s, 2 h 47 min at 20 s, 4 h 10 min at 30 s, 8 h 20 min at 60 s, " +
+                "16 h 40 min at 2 min and a whole day at 3 min",
+            AircraftText.lastsList(),
+        )
+        assertEquals("Hollow after 30 s without a position, gone after 60 s", AircraftText.staleWords(20))
+        assertEquals("Hollow after 4 min 30 s without a position, gone after 7 min 30 s", AircraftText.staleWords(180))
+    }
+
     // --- the feed's states and the day's allowance ---
 
     @Test

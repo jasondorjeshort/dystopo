@@ -109,6 +109,18 @@ object AircraftText {
         return trend?.let { "$base, $it" } ?: base
     }
 
+    /**
+     * T316: the card's line under the altitude: "4,210 m above the ground" from a geometric altitude (to 10 m or 10 ft),
+     * "About 4,200 m above the ground" from pressure altitude (to 100 m or 100 ft), in the units setting (ADR 0022).
+     */
+    fun aboveGroundLine(h: AboveGround, units: ContourUnits): String {
+        val v = UnitFormat.elevationValue(h.meters, units).toDouble()
+        val step = if (h.approximate && v >= 100.0) 100.0 else 10.0
+        val n = (kotlin.math.round(v / step) * step).roundToLong().coerceAtLeast(if (v >= 5.0) 10 else 0)
+        val text = grouped(n) + (if (units == ContourUnits.FEET) " ft" else " m") + " above the ground"
+        return if (h.approximate) "About $text" else text
+    }
+
     /** Ground speed in the units setting's road unit: "520 mph" or "837 km/h". */
     fun speedLine(knots: Double?, units: ContourUnits): String? {
         knots ?: return null
@@ -135,6 +147,64 @@ object AircraftText {
         return if (s < 120) "Position $s s ago" else "Position ${s / 60} min ago"
     }
 
+    /** T316: a refresh choice's label: "20 s", "60 s", "2 min", "3 min" (the owner's words for the two new choices). */
+    fun refreshLabel(s: Int): String = if (s >= 120 && s % 60 == 0) "${s / 60} min" else "$s s"
+
+    /** T316: a span of seconds as the help says it: "30 s", "90 s", "3 min", "4 min 30 s". */
+    fun seconds(s: Double): String {
+        val n = s.roundToLong()
+        return when {
+            n < 120 -> "$n s"
+            n % 60 == 0L -> "${n / 60} min"
+            else -> "${n / 60} min ${n % 60} s"
+        }
+    }
+
+    /** T316: how long the day's requests last, as the refresh row's help says it: "1 h 23 min", "16 h 40 min", "a whole day". */
+    fun lasts(hours: Double): String {
+        if (hours >= 24.0) return "a whole day"
+        val min = (hours * 60).roundToLong()
+        val h = min / 60
+        val m = min % 60
+        return when {
+            h == 0L -> "$m min"
+            m == 0L -> "$h h"
+            else -> "$h h $m min"
+        }
+    }
+
+    /**
+     * T316: how long a day's requests last at each choice, for the refresh row's help: "1 h 23 min at 10 s, ..., 16 h 40
+     * min at 2 min and a whole day at 3 min".
+     */
+    fun lastsList(choices: List<Int> = AircraftRules.REFRESH_CHOICES_S, daily: Int = AircraftRules.DAILY_REQUESTS): String {
+        val parts = choices.map { "${lasts(AircraftRules.hoursLeft(daily, it))} at ${refreshLabel(it)}" }
+        return if (parts.size < 2) parts.joinToString() else parts.dropLast(1).joinToString(", ") + " and " + parts.last()
+    }
+
+    /**
+     * T316: the refresh row's line: "about 480 requests left today (UTC), about 3 h at this rate", the hours those
+     * requests last at [refreshS] ("about 40 min" under an hour; "enough for the rest of the day at this rate" when they
+     * outlast the UTC day at [nowMs]); while a 429's pause holds ([limited]) the limit's words; none left, no rate.
+     */
+    fun quotaLine(left: Int, limited: Boolean, refreshS: Int, nowMs: Long): String {
+        if (limited) return "${FeedState.LIMITED.message}; about 0 requests left today (UTC)"
+        val base = "about $left requests left today (UTC)"
+        if (left <= 0) return base
+        val hours = AircraftRules.hoursLeft(left, refreshS)
+        val untilMidnightH = (AircraftQuota.DAY_MS - nowMs.mod(AircraftQuota.DAY_MS)) / 3_600_000.0
+        val rate = when {
+            hours >= untilMidnightH -> "enough for the rest of the day"
+            hours < 1.0 -> "about ${(hours * 60).roundToLong().coerceAtLeast(1)} min"
+            else -> "about ${hours.roundToLong()} h"
+        }
+        return "$base, $rate at this rate"
+    }
+
+    /** T316: the card help's hollow and gone times at [refreshS]: "Hollow after 30 s without a position, gone after 60 s". */
+    fun staleWords(refreshS: Int): String =
+        "Hollow after ${seconds(AircraftRules.staleS(refreshS))} without a position, gone after ${seconds(AircraftRules.dropS(refreshS))}"
+
     /** "35000" as "35,000". */
     fun grouped(v: Long): String {
         val s = abs(v).toString()
@@ -157,6 +227,7 @@ object AircraftText {
         if (a.route?.plausible == true) estimatedFrom?.let { estimatedLine(it, naming) } else null,
         typeLine(a.report),
         altitudeLine(a.altitudeM, a.altitudeKind, a.report.verticalRateFpm, units, a.report.altBaroFt),
+        a.aboveGround?.let { aboveGroundLine(it, units) }, // T316
         speedLine(a.report.groundSpeedKt, units),
         fromYou(a.distanceM, a.bearingDeg, a.elevationDeg, units),
         age(a.ageS),

@@ -11,7 +11,8 @@ import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
  * /settings` keys (`aircraft`, `aircraftRefreshS`, `aircraftAirports`; `SettingsRoutes.kt`).
  * - `GET /aircraft`: `on`, `state` (`waiting`, `live`, `offline`, `stopped`, `limited`) and its `message` (the status line
  *   shown, null when none), `pausedBecause` (`off`, `stopped (<state>)` in the background, `horizonViewOpen`, null while
- *   it polls), `source` (`adsb.lol` or the replay's name) and `credit`, `refreshS`, `airportNames`, `query` (the last
+ *   it polls), `source` (`adsb.lol` or the replay's name) and `credit`, `refreshS` (T316: with the interval's `staleS`,
+ *   `dropS` and `moveCapS`, and `hoursLeft`, how long the day's requests left last at it), `airportNames`, `query` (the last
  *   request's rounded centre, radius and path), `lastUrl`, `lastResponseMs`, `lastCount`, `requests` (live requests this
  *   run), `skippedLimited`, `quota` (`utcDay`, `spentToday`, `leftToday`, `daily`, `limited`, `limitedForS`) and
  *   `quotaLine` (the settings row's line), `observer` (`heightM`, `undulationM`, `undulationOverride`; no position),
@@ -21,7 +22,10 @@ import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
  *   `reportedLat`, `reportedLon`, `movedS`, `altitudeM` (EGM2008), `altitudeKind` (`geometric`, `barometric`, `ground`,
  *   `none`), `altGeomFt`, `altBaroFt`, `onGround`, `trackDeg`, `groundSpeedKt`, `verticalRateFpm`, `ageS`, `stale`,
  *   `distanceKm`, `bearingDeg`, `elevationDeg` (from the phone), `route` (`airports`, `plausible`, `leg`, `origin`,
- *   `destination`, `crossTrackKm`, `toleranceKm`, `reason`), `label`, `trailPoints`. Feed data is answered from memory;
+ *   `destination`, `crossTrackKm`, `toleranceKm`, `reason`), `label`, `trailPoints`; T316: `groundM` (the DEM pack's
+ *   ground where it last reported, EGM2008; null without a tile there), `aboveGroundM` and `aboveGroundApproximate` (the
+ *   card's "above the ground" line: null with no ground, on or below it; approximate from pressure altitude), with the
+ *   poller's `groundSamples` and `lastGroundMs` (the last poll's sampling time). Feed data is answered from memory;
  *   nothing of it is stored. T314, the route lines: `routeLines` (the setting, `selected` or `all`; `POST /settings`
  *   key `aircraftRouteLines`), `estimatedPastPoints` (the selected flight's dotted estimate, 0 when none), `estimatedFrom`
  *   (its origin's code) and `estimatedPastWhyNot` (why none: `route not plausible`, `track starts at the origin`,

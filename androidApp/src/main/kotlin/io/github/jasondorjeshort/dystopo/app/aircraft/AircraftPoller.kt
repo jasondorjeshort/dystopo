@@ -218,7 +218,7 @@ object AircraftPoller {
         }
         val list = synchronized(lock) {
             tracker.checkStalled(now, refreshS)
-            tracker.view(now, observer(), routes, AppSettings.AIRCRAFT_AIRPORTS.value)
+            tracker.view(now, observer(), routes, AppSettings.AIRCRAFT_AIRPORTS.value, refreshS) // T316: the times scale with it
         }
         publish(AircraftView(list, state, message, now, owners()))
     }
@@ -245,7 +245,30 @@ object AircraftPoller {
             lastResponseMs = fetch.ms
             lastUrl = fetch.url
             lastCount = fetch.poll.aircraft.size
+            sampleGround()
         }
+    }
+
+    @Volatile var groundSamples = 0L
+        private set
+    @Volatile var lastGroundMs: Long? = null
+        private set
+
+    /**
+     * T316: the ground under each aircraft's newly reported position, from the active DEM pack ([Trips.elevationAt],
+     * EGM2008; null where no tile is held), sampled here on the poll thread once per reported position (the tracker keeps
+     * it until the next report) and off the tracker's lock, so the once-a-second view never waits for a tile.
+     */
+    private fun sampleGround() {
+        val asks = synchronized(lock) { tracker.groundNeeded() }
+        if (asks.isEmpty()) return
+        val t0 = SystemClock.elapsedRealtime()
+        for (g in asks) {
+            val m = runCatching { io.github.jasondorjeshort.dystopo.app.trips.Trips.elevationAt(g.lat, g.lon) }.getOrNull()
+            synchronized(lock) { tracker.setGround(g.hex, g.lat, g.lon, m) }
+        }
+        groundSamples += asks.size
+        lastGroundMs = SystemClock.elapsedRealtime() - t0
     }
 
     /** The live feed, counting the day's requests; none while a 429's pause holds or the phone has no network. */
@@ -328,11 +351,20 @@ object AircraftPoller {
 
     private fun prefs() = DystopoApp.instance.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** "about 480 requests left today (UTC)", the line under the refresh setting (ADR 0023: a visible limit). */
+    /**
+     * "about 480 requests left today (UTC), about 3 h at this rate", the line under the refresh setting (ADR 0023: a
+     * visible limit; T316: the hours at the current interval, [AircraftText.quotaLine]).
+     */
     fun quotaLine(now: Long = System.currentTimeMillis()): String {
         val q = quota()
-        return if (q.isLimited(now)) "${FeedState.LIMITED.message}; about 0 requests left today (UTC)"
-        else "about ${q.left(now)} requests left today (UTC)"
+        return AircraftText.quotaLine(q.left(now), q.isLimited(now), AppSettings.AIRCRAFT_REFRESH_S.value, now)
+    }
+
+    /** T316: how many hours the day's requests left last at the current interval (0 while a 429's pause holds). */
+    fun hoursLeft(now: Long = System.currentTimeMillis()): Double {
+        val q = quota()
+        if (q.isLimited(now)) return 0.0
+        return io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.hoursLeft(q.left(now), AppSettings.AIRCRAFT_REFRESH_S.value)
     }
 
     fun quotaJson(now: Long = System.currentTimeMillis()): Map<String, Any?> = quota().json(now)
@@ -350,7 +382,7 @@ object AircraftPoller {
         val q = quota()
         if (seconds <= 0) q.limitedUntilMs = 0 else q.limited(System.currentTimeMillis(), seconds)
         saveQuota(q)
-        if (seconds > 0) synchronized(lock) { tracker.onFetch(AircraftFetch.Limited(seconds), System.currentTimeMillis(), null) }
+        if (seconds > 0) synchronized(lock) { tracker.onFetch(AircraftFetch.Limited(seconds), System.currentTimeMillis(), null, AppSettings.AIRCRAFT_REFRESH_S.value) }
     }
 
     /** Plays [text] (the replay file) from now; null goes back to the live feed. Forgets what was drawn. */
@@ -366,10 +398,16 @@ object AircraftPoller {
         "on" to on, "state" to state.json, "message" to message, "pausedBecause" to pausedBecause, "owners" to owners().sorted(),
         "source" to (replay?.name ?: "adsb.lol"), "credit" to credit,
         "refreshS" to AppSettings.AIRCRAFT_REFRESH_S.value, "airportNames" to AppSettings.AIRCRAFT_AIRPORTS.value.key,
+        // T316: the times at this interval and how long the day's requests last at it
+        "staleS" to io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.staleS(AppSettings.AIRCRAFT_REFRESH_S.value),
+        "dropS" to io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.dropS(AppSettings.AIRCRAFT_REFRESH_S.value),
+        "moveCapS" to io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.moveCapS(AppSettings.AIRCRAFT_REFRESH_S.value),
+        "hoursLeft" to Math.round(hoursLeft(now) * 100) / 100.0,
         "query" to lastQuery?.json(), "queryOwner" to lastOwner, "lastUrl" to lastUrl, "lastResponseMs" to lastResponseMs, "lastCount" to lastCount,
         "requests" to requests, "skippedLimited" to skippedLimited, "quota" to quotaJson(now), "quotaLine" to quotaLine(now),
         "observer" to observer()?.let { o -> linkedMapOf("heightM" to Math.round(o.heightM), "undulationM" to o.undulationM, "undulationOverride" to undulationOverride) },
         "routes" to routesJson(), "ticks" to ticks, "forceOffline" to forceOffline,
+        "groundSamples" to groundSamples, "lastGroundMs" to lastGroundMs, // T316: the ground under each aircraft
     )
 }
 
