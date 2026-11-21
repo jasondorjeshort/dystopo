@@ -28,3 +28,16 @@ labels it only by a heading. This idea is the other half, and the two should be 
 
 - Whether a moved point should snap back to the fix after a while (it is easy to leave the app showing a stale place).
 - The distance wording for very short distances ("40 m N of you" vs "Your location").
+
+Plan: built in the same task as, or straight after, `2026-11-19-the-sky-from-a-long-pressed-point.md` (its Plan
+supplies the point mode, the hidden satellites and "Back to here"); this pass adds the place line and two more ways
+in. The line sits just below the horizon in `app/horizon/HorizonScreen.kt`, always shown: "Your location" when the
+point is the fix or within 50 m of it, "At <name>" when the point is a named feature (a tapped peak, or the
+long-press card's feature), otherwise "<distance> <16-point compass> of you" (units per ADR 0022), recomputed as the
+fix moves; the moved-point form is tinted differently from "Your location". Ways in: a named peak's card in the
+Horizon view offers "View from here" (the line then reads "At <peak>"), and in Horizon mode a "View from map centre"
+action. A moved point is not persisted: the app reopens at the fix (no timed snap-back, which would change the view
+under the user). The line's text is a pure function in `shared` (`horizon/`) with a unit test (fix, 40 m, 12 km SSE,
+named). Debug: `GET /horizon` reports `point` and `placeLine` (KDoc of `HorizonRoutes.kt`). Verify: the emulator's
+frames at the fix, at Rainier's summit from a peak tap and from the map centre, `android-ui.py`'s horizon step. New
+strings in the report (ADR 0031). Out of scope: the Panorama view.
