@@ -23,3 +23,10 @@ after the aircraft layer, so this waits for it.
 - Names of features below the horizon: the same open question as the window-seat idea.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: build "the view from that plane" inside the Panorama view's first task or as its own task after it, and does
+the view freeze at the tap or follow the aircraft? Recommended: its own task after the Panorama view lands (your
+words: Panorama after the airplane tracks), freezing at the tap first; a moving observer at 10 km needs the downward
+band and long range the window-seat idea also wants, and the two should share that work.
+
+Answer:
