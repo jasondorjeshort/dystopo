@@ -23,3 +23,10 @@ replay source) takes a third implementation; the aircraft model and card follow 
 - Whether owning such a device is common in the audience; the owner may know.
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
+
+Question: support external ADS-B receivers over their own Wi-Fi (GDL90 or SBS), the one way to fully offline traffic?
+Recommended: only if you or testers own such a device; the protocols are public and the source interface takes a
+third implementation cleanly, but Android's binding to a no-internet Wi-Fi and no device to test against make it a
+speculative pass. If yes, SBS first (plain text, testable with the replay source), then GDL90.
+
+Answer:
