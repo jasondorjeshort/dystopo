@@ -121,6 +121,32 @@ object HorizonData {
         return SunDay(key, sun, marks, SystemClock.elapsedRealtime() - t0).also { sunDay = it }
     }
 
+    // ---- T317: a chosen point ----
+
+    /** A long-press within this of a named feature (metres, or a fingertip at the map's zoom when wider) is on it: T197's 100 m. */
+    const val FEATURE_PRESS_M = io.github.jasondorjeshort.dystopo.readout.KnownHeights.NEAR_FIX_M
+
+    /**
+     * The named feature (a peak, a saddle, a pass: the active pack's `mountain_peak` features of
+     * [Viewshed.KNOWN_HEIGHT_CLASSES], at z13 then z12 as T197 reads them) nearest to [lat], [lon] within [radiusM], or null
+     * (none, or no offline map). Off the main thread: a few tiles read.
+     */
+    fun featureAt(lat: Double, lon: Double, radiusM: Double): io.github.jasondorjeshort.dystopo.dem.Peak? = try {
+        val tiles = { z: Int, x: Int, y: Int -> app.tiles.packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) } }
+        io.github.jasondorjeshort.dystopo.readout.KnownHeights.READ_ZOOMS
+            .flatMap { z -> Viewshed.readPeaks(tiles, lat, lon, radiusM, zoom = z, classes = Viewshed.KNOWN_HEIGHT_CLASSES) }
+            .map { it to io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(lat, lon, it.lat, it.lon) }
+            .filter { it.second <= radiusM }.minByOrNull { it.second }?.first
+    } catch (e: Exception) {
+        android.util.Log.w("Dystopo", "horizon feature lookup failed", e)
+        null
+    }
+
+    /** The view's point for a press at [lat], [lon]: on the named feature (its own place and name) when within [radiusM], else the press. */
+    fun pointFor(lat: Double, lon: Double, radiusM: Double): io.github.jasondorjeshort.dystopo.horizon.HorizonPoint =
+        featureAt(lat, lon, radiusM)?.let { io.github.jasondorjeshort.dystopo.horizon.HorizonPoint(it.lat, it.lon, it.name) }
+            ?: io.github.jasondorjeshort.dystopo.horizon.HorizonPoint(lat, lon)
+
     // ---- T312: Flights ----
 
     /** The poller's owner name while the Horizon view asks for flights. */
