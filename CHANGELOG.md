@@ -4,6 +4,16 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.37-alpha (2026-11-21)
+
+### 2026-11-21
+
+- T313: The sweep's drive step (a duplicate helper name in android-ui.py)
+- T311 round 3: Routes for flights near their airports (arriving and departing aircraft; flight numbers with leading zeros or a letter)
+- T312 round 2: Flights in the Horizon view at large text and sideways; names clear of the compass letters; the toggles on one row
+- T311 round 2: The map's controls above the flight card; the card whole when sideways; the aircraft's kind on the card
+- T311 follow-up: NOTICES.md credits the flight data sources
+
 ## v0.1.36-alpha (2026-11-20, preliminary)
 
 ### 2026-11-20
