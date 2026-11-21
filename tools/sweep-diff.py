@@ -2,6 +2,19 @@
 
     python -I tools/sweep-diff.py <previous sweep folder> <this sweep folder> [--first <screen names>]
         [--leave-out <names>] [--leave-unknown] [--channel chrome|""] [--frac 0.004] [--pixel 40] [--width 270]
+    python -I tools/sweep-diff.py --check-first <screen name>... [--sweep <sweep folder>]      # T319, below
+
+T319, --check-first: for each screen name (as -First takes them, matched as part of a frame's path), the sweep part and
+step that save a frame of that name and whether a sweep with no -Only runs that part (`tools/sweep.ps1 -ListParts`,
+`default` true; without PowerShell its $runOrder read from the text). Two sources: the --sweep folder's frames as the diff
+pairs them (`ui/<part>/`, `a11y/`, `first-run/`, `device/` for the device tour...), and a static scan of the tools in the
+tree this file sits in, for frames new since that sweep: tools/android-ui.py's `part_<name>` functions, their
+`run.step(<name>, <fn>)` steps (and Run.step's own frame named after the step), and the names given to `screencap`,
+`save` and `settle_map`, followed through the helpers a step calls; tools/android-a11y.py's SCREENS at each scale of its
+--font-scales default (`<screen>-<scale>`). Nothing is run on a device. Prints one JSON object: `ok`, `missingCount`,
+`missing`, and per name `part`, `step`, `inSweep`, `sweepFrames` and the static `writers`; exit 1 when a name is saved by
+no part the sweep runs (a debug part such as `flights` is named, and still missing), 2 on an error. A frame a task adds
+exists only on its branch, so it is checked there; the uses are in the wave skill (Plan and launch, step 1).
 
 Pairs each PNG of the two folders by its path relative to the folder (the device tour's views, the ui/<part>/ sets of
 the release parts, first-run and its direct run, the release smoke views, the world tour's renders, the demo and live
@@ -64,12 +77,14 @@ has no Pillow; Playwright is already needed by the sheet). Prints changes.json's
 1 on a --first name that matched nothing, 2 on an error (also written into summary.json as a failed `diff`).
 """
 import argparse
+import ast
 import fnmatch
 import html
 import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 
@@ -483,7 +498,274 @@ def png_size(path):
     return None, None
 
 
+# --- T319: --check-first, the screen names a wave means to show checked against the frames the sweep writes -------------
+
+UI_TOOL, A11Y_TOOL = "android-ui.py", "android-a11y.py"
+# The device helpers that save a frame, and which argument names it: Device.screencap(name), Device.save(name, raster),
+# android-firstrun.py's settle_map(dev, name, ...).
+FRAME_CALLS = {"screencap": 0, "save": 0, "settle_map": 1}
+FOLDER_PART = {"device": "device-tour"}  # a sweep folder's top directory that is not named after its part
+MIN_LITERAL = 3  # a frame pattern with fewer known characters than this (f"{step}-{name}") matches anything: left out
+
+
+def _str_of(node, env):
+    """A frame name's expression as text: constants and the env's bound strings, `*` for a part not known here; None
+    when it is no string at all."""
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name):
+        v = env.get(node.id)
+        return v if isinstance(v, str) else "*"
+    if isinstance(node, ast.JoinedStr):
+        out = []
+        for v in node.values:
+            if isinstance(v, ast.Constant):
+                out.append(str(v.value))
+            elif isinstance(v, ast.FormattedValue) and isinstance(v.value, ast.Name) and isinstance(env.get(v.value.id), str):
+                out.append(env[v.value.id])
+            else:
+                out.append("*")
+        return "".join(out)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        a, b = _str_of(node.left, env), _str_of(node.right, env)
+        return None if a is None or b is None else a + b
+    return None
+
+
+def _bind(fn, call, env):
+    """The callee's parameters bound to the call's constant (or env-bound) string arguments, over its defaults."""
+    args = fn.args
+    params = [a.arg for a in args.posonlyargs + args.args]
+    bound = {}
+    for p, d in zip(params[len(params) - len(args.defaults):], args.defaults):
+        s = _str_of(d, {})
+        if s is not None and "*" not in s:
+            bound[p] = s
+    for p, a in zip(params, call.args if call is not None else []):
+        s = _str_of(a, env)
+        bound[p] = s if s is not None else "*"
+    for kw in call.keywords if call is not None else []:
+        if kw.arg:
+            s = _str_of(kw.value, env)
+            bound[kw.arg] = s if s is not None else "*"
+    return bound
+
+
+class UiScan:
+    """The frames each part and step of tools/android-ui.py saves, read from its source (nothing is run): a part is a
+    top-level `part_<name>`, a step is `run.step(<name>, <fn>)` (also over a loop of (name, fn) pairs), and a frame is
+    the name given to FRAME_CALLS, followed through the functions a step calls with the strings it passes them.
+    Run.step itself saves a frame named after the step when the step returns none (`stepShot`)."""
+
+    def __init__(self, source):
+        tree = ast.parse(source)
+        self.top = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+    @staticmethod
+    def nested(fn):
+        return {n.name: n for n in ast.walk(fn) if isinstance(n, ast.FunctionDef) and n is not fn}
+
+    def frames(self, node, env, scope, depth=0, seen=None):
+        """The frame names saved by `node` (a function, lambda or expression) and what it calls, as text with `*`."""
+        seen = set() if seen is None else seen
+        out = []
+        for c in ast.walk(node):
+            if not isinstance(c, ast.Call):
+                continue
+            f = c.func
+            name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
+            if isinstance(f, ast.Attribute) and name in FRAME_CALLS and len(c.args) > FRAME_CALLS[name]:
+                s = _str_of(c.args[FRAME_CALLS[name]], env)
+                if s is not None:
+                    out.append(s)
+                continue
+            if isinstance(f, ast.Name) and depth < 8:
+                callee = scope.get(name) or self.top.get(name)
+                if callee is None:
+                    continue
+                env2 = _bind(callee, c, env)
+                key = (name, tuple(sorted(env2.items())))
+                if key in seen:
+                    continue
+                seen.add(key)
+                inner = {**scope, **self.nested(callee)} if callee is not self.top.get(name) else {**self.top, **self.nested(callee)}
+                out += self.frames(callee, env2, inner, depth + 1, seen)
+        return out
+
+    def step_calls(self, part):
+        """(step name, the step's fn expression) of a part function, in source order."""
+        out = []
+        for node in ast.walk(part):
+            if isinstance(node, ast.For) and isinstance(node.target, ast.Tuple) and len(node.target.elts) == 2 \
+                    and isinstance(node.iter, (ast.Tuple, ast.List)):
+                nv, fv = node.target.elts
+                uses = [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                        and c.func.attr == "step" and len(c.args) >= 2 and isinstance(c.args[0], ast.Name)
+                        and isinstance(nv, ast.Name) and c.args[0].id == nv.id]
+                if uses:
+                    for elt in node.iter.elts:
+                        if isinstance(elt, ast.Tuple) and len(elt.elts) == 2 and isinstance(elt.elts[0], ast.Constant):
+                            out.append((elt.elts[0].value, elt.elts[1]))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "step" \
+                    and len(node.args) >= 2 and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                out.append((node.args[0].value, node.args[1]))
+        return out
+
+    def writers(self):
+        """[{part, step, frame, stepShot?}]: every frame each part's steps save; a frame of the part outside any step has
+        step None."""
+        out = []
+        for fname, fn in self.top.items():
+            if not fname.startswith("part_"):
+                continue
+            part = fname[len("part_"):]
+            scope = {**self.top, **self.nested(fn)}
+            stepped = set()
+            for step, expr in self.step_calls(fn):
+                target = expr
+                if isinstance(expr, ast.Name) and expr.id in scope:
+                    target = scope[expr.id]
+                    names = self.frames(target, _bind(target, None, {}), {**scope, **self.nested(target)})
+                else:
+                    names = self.frames(expr, {}, scope)
+                for n in dict.fromkeys(names):
+                    out.append({"part": part, "step": step, "frame": n})
+                    stepped.add(n)
+                out.append({"part": part, "step": step, "frame": step, "stepShot": True})
+            for n in dict.fromkeys(self.frames(fn, {}, scope)):
+                if n not in stepped:
+                    out.append({"part": part, "step": None, "frame": n})
+        return [w for w in out if len(w["frame"].replace("*", "").replace("-", "")) >= MIN_LITERAL]
+
+
+def a11y_writers(source):
+    """The a11y part's frames: `<n>-<screen>-<scale>.png` for each name of SCREENS and each scale of --font-scales'
+    default, read from tools/android-a11y.py's source; the step is the screen."""
+    tree = ast.parse(source)
+    screens, scales = [], []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "SCREENS" for t in node.targets):
+            for sub in ast.walk(node.value):
+                if isinstance(sub, ast.Tuple) and sub.elts and isinstance(sub.elts[0], ast.Constant) \
+                        and isinstance(sub.elts[0].value, str) and len(sub.elts) == 4:
+                    screens.append(sub.elts[0].value)
+                if isinstance(sub, ast.ListComp) and isinstance(sub.elt, ast.Tuple) and isinstance(sub.elt.elts[0], ast.JoinedStr):
+                    gen = sub.generators[0]
+                    if isinstance(gen.target, ast.Name) and isinstance(gen.iter, (ast.Tuple, ast.List)):
+                        for v in gen.iter.elts:
+                            if isinstance(v, ast.Constant):
+                                screens.append(_str_of(sub.elt.elts[0], {gen.target.id: v.value}))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument" \
+                and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "--font-scales":
+            for kw in node.keywords:
+                if kw.arg == "default" and isinstance(kw.value, ast.Constant):
+                    scales = [s.strip() for s in kw.value.value.split(",") if s.strip()]
+    return [{"part": "a11y", "step": s, "frame": f"{s}-{k}"} for s in screens for k in scales or ["1.0"]]
+
+
+def static_writers(tools_dir):
+    """Every frame the tree's android-ui.py and android-a11y.py save, by part and step (`source` the tool)."""
+    out = []
+    for tool, read in ((UI_TOOL, lambda s: UiScan(s).writers()), (A11Y_TOOL, a11y_writers)):
+        try:
+            with open(os.path.join(tools_dir, tool), encoding="utf-8") as f:
+                src = f.read()
+        except OSError:
+            continue
+        out += [{**w, "source": tool} for w in read(src)]
+    return out
+
+
+def sweep_parts(tools_dir, run=subprocess.run):
+    """(the parts a sweep with no -Only runs, where the list came from): `tools/sweep.ps1 -ListParts`' parts with
+    `default` true; without PowerShell, the script's $runOrder read from its text (matrix and the phone parts are opt-in)."""
+    script = os.path.join(tools_dir, "sweep.ps1")
+    for exe in ("powershell", "pwsh"):
+        try:
+            p = run([exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-ListParts"], capture_output=True,
+                    text=True, timeout=120)
+            j = json.loads(p.stdout)
+            return [x["name"] for x in j["parts"] if x.get("default")], "sweep.ps1 -ListParts"
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+            continue
+    try:
+        with open(script, encoding="utf-8-sig") as f:
+            m = re.search(r"^\$runOrder\s*=\s*@\(([^)]*)\)", f.read(), re.M)
+    except OSError:
+        m = None
+    names = re.findall(r"'([\w-]+)'", m.group(1)) if m else []
+    return [n for n in names if n != "matrix" and not n.startswith("phone-")], "sweep.ps1 $runOrder (text)"
+
+
+def part_of(rel):
+    """The sweep part a frame of a sweep folder belongs to: ui/<part>/..., else the top directory (device/ is the device
+    tour's); None for a file at the top."""
+    bits = rel.split("/")
+    if bits[0] == "ui" and len(bits) > 2:
+        return bits[1]
+    return FOLDER_PART.get(bits[0], bits[0]) if len(bits) > 1 else None
+
+
+def frame_stem(rel):
+    """A frame's name without its step number, scale or extension: ui/features/33-horizon-point.png -> horizon-point."""
+    base = re.sub(r"^\d+-", "", os.path.splitext(os.path.basename(rel))[0])
+    return re.sub(r"-failed$", "", base)
+
+
+def _key(s):
+    return s.lower().replace(" ", "-")
+
+
+def name_hits(name, frame):
+    """Whether a --first name matches a static frame name as it would match the frame's path (a part of it)."""
+    n, f = _key(name), _key(frame)
+    if "*" not in f:
+        return n in f
+    if fnmatch.fnmatchcase(n, "*" + f + "*") or fnmatch.fnmatchcase(n, f):
+        return True
+    return any(len(lit) >= 4 and n in lit for lit in f.split("*"))
+
+
+def check_first(names, sweep=None, tools_dir=HERE, parts=None):
+    """T319: for each screen name, the part and step that save a frame it matches and whether the sweep runs that part.
+    From the sweep folder's frames (shots(), as the diff pairs them: a match there is a frame a sweep did write) and the
+    static scan of the tools in `tools_dir` (frames new since that sweep). `missingCount` counts the names no part the
+    sweep runs writes."""
+    if parts is None:
+        parts, parts_from = sweep_parts(tools_dir)
+    else:
+        parts_from = "given"
+    runs = set(parts)
+    static = static_writers(tools_dir)
+    frames = shots(sweep) if sweep else []
+    out = []
+    for n in names:
+        writers = []
+        for rel in frames:
+            if matches_first(rel, [n]):
+                part, stem = part_of(rel), frame_stem(rel)
+                if part == "a11y":
+                    m = re.match(r"^(.+)-\d+\.\d+$", stem)
+                    step = m.group(1) if m else None
+                else:
+                    step = next((w["step"] for w in static if w["part"] == part and w["frame"] == stem and w["step"]), None)
+                writers.append({"part": part, "step": step, "frame": rel, "inSweep": True, "source": "sweep"})
+        for w in static:
+            if name_hits(n, w["frame"]):
+                writers.append({**w, "inSweep": w["part"] in runs})
+        best = next((w for w in writers if w["inSweep"]), writers[0] if writers else None)
+        out.append({"name": n, "part": best and best["part"], "step": best and best["step"],
+                    "inSweep": bool(best and best["inSweep"]),
+                    "sweepFrames": [w["frame"] for w in writers if w["source"] == "sweep"][:8],
+                    "writers": [w for w in writers if w["source"] != "sweep"][:12]})
+    missing = [r["name"] for r in out if not r["inSweep"]]
+    return {"ok": not missing, "missingCount": len(missing), "missing": missing, "sweep": sweep, "parts": parts_from,
+            "names": out}
+
+
 def main():
+    if "--check-first" in sys.argv[1:]:
+        return main_check_first()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("prev", help="the previous sweep folder")
     ap.add_argument("this", help="this sweep folder (changes.png and changes.json are written here)")
@@ -535,6 +817,30 @@ def main():
     print(json.dumps(entry or {k: report[k] for k in ("paired", "count", "added", "removed", "firstMissing", "firstUnchanged",
                                                       "leftOut", "unknown")}, indent=2))
     return code
+
+
+def main_check_first():
+    ap = argparse.ArgumentParser(description="T319: which sweep part and step write a frame of each screen name")
+    ap.add_argument("--check-first", nargs="+", required=True, metavar="NAME", help="screen names, as -First takes them "
+                    "(commas also split)")
+    ap.add_argument("--sweep", default="", help="a sweep folder whose frames are read too (the last sweep's)")
+    a = ap.parse_args()
+    names = [n.strip() for v in a.check_first for n in v.split(",") if n.strip()]
+    sweep = os.path.abspath(a.sweep) if a.sweep else None
+    if sweep and not os.path.isdir(sweep):
+        print(json.dumps({"error": f"not a folder: {sweep}"}))
+        return 2
+    try:
+        report = check_first(names, sweep)
+    except (OSError, SyntaxError) as e:
+        print(json.dumps({"error": f"{type(e).__name__}: {str(e)[:300]}"}))
+        return 2
+    for r in report["names"]:
+        if not r["inSweep"]:
+            where = f"only {r['part']} ({r['step']}), which the sweep does not run" if r["part"] else "no part"
+            print(f"[sweep-diff] --check-first {r['name']}: {where}", file=sys.stderr)
+    print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
 
 
 # T288: the diff's own line in steps.tsv and entry in summary.json. tools/sweep.ps1 appends the line after a run; a rerun of

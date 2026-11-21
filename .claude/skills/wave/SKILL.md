@@ -43,7 +43,11 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    written as the JSON the verifier passes to `tools/verify-task.ps1 -Checks`, or "none". A task that adds a screen, a Settings row or a card line names in its Done when the
    sweep step that opens it, new or existing (`tools/android-ui.py` `features`, the a11y screens):
    wave 33's row, help and card line were in no sheet, and the sweep's `-First` matched nothing
-   without saying so. Make the Owns lines disjoint; two tasks that must touch one file go in different
+   without saying so. `python -I tools/sweep-diff.py --check-first <names> [--sweep <folder>]` says
+   which part and step save each name's frame and exits 1 when the sweep runs none (T319); a frame a
+   task adds exists only on its branch, so it is run on the existing steps a Done when names at
+   planning, by the implementer on the task's own frames on its branch before hand-over, and by the
+   coordinator on the `-First` list before a sweep. Make the Owns lines disjoint; two tasks that must touch one file go in different
    waves, or one task owns the file and the other records a follow-up. A file several tasks append to in
    one wave (a settings registry, a dispatch block, a speech file) takes each task's block at the end
    under a comment naming the task, closed by the task's own sentinel line (`// end Tnn`) after its
