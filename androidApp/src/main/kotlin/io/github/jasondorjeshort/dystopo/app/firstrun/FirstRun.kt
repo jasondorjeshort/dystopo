@@ -301,6 +301,20 @@ internal object FirstRunCardState {
      */
     var fixedPx = 0
 
+    /**
+     * T323: where the first filled action ends in the body (px from the body's top: the heading, the sentence and the button
+     * whole), 0 until measured. The rule keeps this much of the body before the ladder hides anything ([OverlayCard.keep]).
+     */
+    var actionEndPx = 0
+    var headTopRoot = Float.NaN
+    var actionBottomRoot = Float.NaN
+    fun headTop(y: Float) { headTopRoot = y; refreshActionEnd() }
+    fun actionBottom(y: Float) { actionBottomRoot = y; refreshActionEnd() }
+    private fun refreshActionEnd() {
+        // Both are in root coordinates and move together with the scroll, so their difference does not depend on it.
+        if (!headTopRoot.isNaN() && !actionBottomRoot.isNaN() && actionBottomRoot > headTopRoot) actionEndPx = Math.round(actionBottomRoot - headTopRoot)
+    }
+
     /** T320: how far the card's body scrolls, px (0 while it shows whole or is not up). */
     fun scrollMaxPx(): Int = scroll?.maxValue?.takeIf { it != Int.MAX_VALUE } ?: 0
 }

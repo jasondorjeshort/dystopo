@@ -490,7 +490,7 @@ class OverlayLayoutTest {
     // ---- T320: the first-run card, a bottom card the rule places ----
 
     /** The first-run card as `MapLayout` reads it at the curve's [k]: whole, its least (the fixed part and two lines), its fixed part. */
-    private fun firstRun(k: Float) = OverlayCard(600f * k, 136f * k, 100f * k, 460f)
+    private fun firstRun(k: Float) = OverlayCard(600f * k, 136f * k, 100f * k, 460f, keep = 170f * k) // T323: keep, the heading and the whole filled action
 
     private val topBlock = listOf(OverlayIds.SEARCH, OverlayIds.SETTINGS_ROW, OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY, OverlayIds.COMPASS)
     private val lower = listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.LOCK)
@@ -513,9 +513,9 @@ class OverlayLayoutTest {
         for (id in lower) o[id]?.rect?.let { r -> if (r.left < card.right && r.right > card.left) assertTrue(r.bottom <= card.top, "$id $r under the card $card at $at") }
         // The yield order: the fits and the ladder take no more than with the card at its least (its body scrolls first).
         val c = i.firstRun!!
-        val atLeast = OverlayLayout.place(i.copy(firstRun = c.copy(natural = c.least)))
+        val atLeast = OverlayLayout.place(i.copy(firstRun = c.copy(natural = c.keep)))
         fun shown(p: OverlayPlacement) = (topBlock + lower).count { p.isShown(it) } + p.entriesDrawn
-        assertTrue(shown(o) >= shown(atLeast), "the ladder walked with the card at ${card.height} over its least ${c.least} at $at")
+        assertTrue(shown(o) >= shown(atLeast), "the ladder walked with the card at ${card.height} over its keep ${c.keep} at $at")
         // Whole, or scrolling and saying so (narrower than it was measured at, it is taller: the rule keeps its area).
         if (e.state == OverlayState.SHOWN) assertTrue(card.height + 0.01f >= c.natural, "$card shown whole under its height ${c.natural} at $at")
         else assertNotNull(e.reason, at)
@@ -553,8 +553,15 @@ class OverlayLayoutTest {
             val card = assertNotNull(o[OverlayIds.FIRST_RUN_CARD]?.rect, at)
             // Its least where the room holds it (upright); on its side at 2.0 it takes all the room under the top block and
             // the ladder has taken the scale bar's line (its whole content then scrolls in the app, `FirstRunCard.kt`).
-            if (card.height < i.firstRun!!.least - 0.01f) {
-                assertTrue(landscape && scale == 2f, "the card under its least at $at: $card")
+            // T323: the card keeps its heading and whole filled action (keep) wherever the room holds it, the ladder hiding
+            // what it must (the readout strip first); below that only when the room itself is less.
+            if (landscape && scale == 1f) {
+                assertTrue(card.height + 0.01f >= i.firstRun!!.keep, "the card $card under its keep at $at")
+                assertTrue(!o.isShown(OverlayIds.STRIP), "the readout yields at $at")
+                assertNotNull(o[OverlayIds.STRIP]?.reason, at)
+            }
+            if (card.height < i.firstRun!!.keep - 0.01f) {
+                assertTrue(landscape && scale == 2f, "the card under its keep at $at: $card")
                 assertTrue(!o.isShown(OverlayIds.STRIP) && !o.isShown(OverlayIds.SCALE_BAR), "the ladder walked to its end at $at")
             }
             // The chips stay: the card stands under them upright, beside their column on its side.

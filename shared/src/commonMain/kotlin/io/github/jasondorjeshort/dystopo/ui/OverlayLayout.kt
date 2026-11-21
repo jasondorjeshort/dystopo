@@ -24,12 +24,15 @@ enum class OverlayState(val code: String) { SHOWN("shown"), COMPACT("compact"), 
  * T239: [drawn], where the card's own code drew it, until the cards are placed by the rule too (Layout C): the rule then
  * keeps the card at that rectangle and lays the chips, the online column and the two lower columns around it (see
  * [OverlayLayout]). With [OverlayInput.cardsDrawn] a card without it (up, not drawn yet) is left out.
+ *
+ * T323: [keep], for the first-run card only: what the rule keeps of the card (its fixed part, heading and whole filled
+ * action) before the ladder hides anything; the card goes below it, down toward [least], only when the room itself is less.
  */
-data class OverlayCard(val natural: Float, val least: Float, val headline: Float, val width: Float, val drawn: OverlayRect? = null) {
+data class OverlayCard(val natural: Float, val least: Float, val headline: Float, val width: Float, val drawn: OverlayRect? = null, val keep: Float = least) {
     internal fun at(w: Float): OverlayCard {
         if (drawn != null) return this
         val k = if (w <= 0f || w >= width) 1f else width / w
-        return OverlayCard(natural * k, least * k, headline * k, min(w, width))
+        return OverlayCard(natural * k, least * k, headline * k, min(w, width), keep = keep * k)
     }
 }
 
@@ -792,8 +795,8 @@ object OverlayLayout {
      * the bottom of the top block across its span (Search, the settings row, the online column, the chips, a navigation or
      * warning card, as placed without it), its bottom on the frame's (above the switch and the credit line) or on a drawn
      * bottom card or track panel. The lower columns stand on it as they stand on any drawn card, so its height is the yield
-     * order's: it shrinks toward its least (its body scrolls) before the chips' fits or the ladder take anything, and from
-     * there it grows only while that takes nothing more; what the room still cannot hold is hidden by the ladder with its
+     * order's: it shrinks toward [OverlayCard.keep] (its body scrolls) before the chips' fits or the ladder take anything, and from
+     * there it grows only while that takes nothing more; below that only when the room itself is less (then toward its least); what the room still cannot hold is hidden by the ladder with its
      * reason. Not even a sliver of room: the card is hidden ([REASON_NO_ROOM]).
      */
     private fun arrangeFirstRun(i: OverlayInput, rungs: List<Rung>, held: OverlayLatch?): OverlayPlacement {
@@ -821,7 +824,7 @@ object OverlayLayout {
         val c = card.at(w)
         fun at(h: Float) = arrangeDrawn(i.copy(firstRun = c.copy(width = w, drawn = OverlayRect(x, bottom - h, x + w, bottom))), rungs, held)
         val high = min(c.natural, room)
-        val low = min(c.least, high)
+        val low = min(maxOf(c.keep, c.least), high) // T323: the whole filled action first; the ladder hides what it must before the card goes lower
         // The least the fits and the ladder take for any height from the card's least up (a card's top can cost the online
         // column where a lower one costs the readout, so the count is sampled rather than assumed to rise with the height),
         // and the tallest card that costs no more: the highest sample, then up to the next one by halves.
