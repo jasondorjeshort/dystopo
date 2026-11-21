@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.39-alpha (2026-11-21)
+
 ### 2026-11-21
 
 - T318: The sweep's a11y findings after wave 43
