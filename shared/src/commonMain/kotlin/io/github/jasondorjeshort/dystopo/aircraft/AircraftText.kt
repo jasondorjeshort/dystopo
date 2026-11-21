@@ -42,6 +42,13 @@ object AircraftText {
 
     private fun city(a: Airport) = a.city ?: a.name
 
+    /**
+     * T314: the card's line for the dotted estimate before the app saw the aircraft: "Dotted: estimated path from SEA"
+     * (the city with [AirportNaming.CITIES]).
+     */
+    fun estimatedLine(from: Airport, naming: AirportNaming): String =
+        "Dotted: estimated path from ${if (naming == AirportNaming.CITIES) city(from) else from.code}"
+
     /** The map label: the call sign (else registration, else the hex code), the route when plausible, the age when stale. */
     fun label(r: AircraftReport, m: RoutePlausibility.Match?, naming: AirportNaming, staleAgeS: Double?): String {
         val name = r.callSign ?: r.registration ?: r.hex.uppercase()
@@ -138,11 +145,15 @@ object AircraftText {
         return (if (v < 0) "-" else "") + sb
     }
 
-    /** The card's lines in the finding's order (call sign is the title), [credit] last. */
-    fun card(a: AircraftNow, units: ContourUnits, naming: AirportNaming, credit: String): List<String> = listOfNotNull(
+    /**
+     * The card's lines in the finding's order (call sign is the title), [credit] last; T314: [estimatedFrom], the origin
+     * of the dotted estimate when the map draws one, adds [estimatedLine] after the route's hedge.
+     */
+    fun card(a: AircraftNow, units: ContourUnits, naming: AirportNaming, credit: String, estimatedFrom: Airport? = null): List<String> = listOfNotNull(
         a.report.emergency?.let { "${it.line} (squawk ${it.squawk})" },
         routeCard(a.route?.takeIf { it.plausible }, naming),
         if (a.route?.plausible == true) ROUTE_HEDGE else null,
+        if (a.route?.plausible == true) estimatedFrom?.let { estimatedLine(it, naming) } else null,
         typeLine(a.report),
         altitudeLine(a.altitudeM, a.altitudeKind, a.report.verticalRateFpm, units, a.report.altBaroFt),
         speedLine(a.report.groundSpeedKt, units),
