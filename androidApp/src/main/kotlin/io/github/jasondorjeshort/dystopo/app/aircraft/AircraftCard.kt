@@ -148,9 +148,11 @@ internal val AIRCRAFT_HELP: List<HelpText> = listOf(
         needs = "an aircraft tapped on the map (Settings › Map options › Flight tracking on)",
         show = { AircraftLayer.drawn.minByOrNull { it.distanceM ?: 0.0 }?.let { AircraftLayer.select(it.hex) } },
     ) {
-        "Aircraft from a volunteer receiver network. The route comes from schedule data on this phone and shows only when " +
-            "the aircraft fits it. Track: solid as seen, dotted estimated, dashed ahead. Hollow: its position is over 30 s " +
-            "old; gone after a minute. Heights are above sea level, or pressure altitude without a GPS geoid height."
+        // T316: shorter, so the hollow and gone times can follow the refresh setting (1.5 and 2.5 intervals, at least 30 and 60 s).
+        "Aircraft from volunteer receivers. A route from schedule data shows only when the aircraft fits it. Track: solid " +
+            "as seen, dotted estimated, dashed ahead. Hollow: position ${AircraftText.staleWords(AppSettings.AIRCRAFT_REFRESH_S.value)} " +
+            "(${AircraftText.refreshLabel(AppSettings.AIRCRAFT_REFRESH_S.value)} refresh). " +
+            "Heights are above sea level, or pressure altitude without a GPS geoid height."
     },
 )
 

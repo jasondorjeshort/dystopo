@@ -100,14 +100,30 @@ enum class AltitudeKind(val json: String) {
 
 /** The layer's fixed rules (the finding's common practice; T311's task text). */
 object AircraftRules {
-    /** A position older than this is drawn hollow, with its age (seconds). */
+    /** A position older than this is drawn hollow, with its age (seconds): the floor of [staleS]. */
     const val STALE_S = 30.0
 
-    /** A position older than this is dropped (seconds; tar1090 drops at 58 s). */
+    /** A position older than this is dropped (seconds; tar1090 drops at 58 s): the floor of [dropS]. */
     const val DROP_S = 60.0
 
-    /** Between polls an aircraft is moved along its track by its speed for at most this long (seconds). */
+    /** Between polls an aircraft is moved along its track by its speed for at most this long (seconds): the floor of [moveCapS]. */
     const val MOVE_CAP_S = 30.0
+
+    /** T316: a position is stale after this many refresh intervals, dropped after [DROP_INTERVALS] (the idea's Plan). */
+    const val STALE_INTERVALS = 1.5
+    const val DROP_INTERVALS = 2.5
+
+    /**
+     * T316: the position's age past which it is drawn hollow at a refresh of [refreshS] seconds: 1.5 intervals, at least
+     * [STALE_S] (30 s at 10 and 20 s, 45 s at 30 s, 90 s at 60 s, 180 s at 120 s, 270 s at 180 s).
+     */
+    fun staleS(refreshS: Int = REFRESH_DEFAULT_S): Double = maxOf(STALE_S, STALE_INTERVALS * refreshS)
+
+    /** T316: the age past which an aircraft is dropped: 2.5 intervals, at least [DROP_S] (60 s at 20 s, 450 s at 180 s). */
+    fun dropS(refreshS: Int = REFRESH_DEFAULT_S): Double = maxOf(DROP_S, DROP_INTERVALS * refreshS)
+
+    /** T316: how long an aircraft is moved along its track between polls: one interval, at least [MOVE_CAP_S]. */
+    fun moveCapS(refreshS: Int = REFRESH_DEFAULT_S): Double = maxOf(MOVE_CAP_S, refreshS.toDouble())
 
     /** A feed with no answer for this many refresh intervals (and at least this long) reads "Flight data stopped". */
     const val STOPPED_INTERVALS = 3
@@ -116,19 +132,31 @@ object AircraftRules {
     /** The trail drawn behind each aircraft (seconds; tar1090's temporary trails are 90 s). */
     const val TRAIL_S = 90.0
 
-    /** At most this many positions kept per aircraft for the tapped one's track (a 20 s poll: 4 hours). */
+    /** T316: the trail's span at a refresh of [refreshS]: two intervals, at least [TRAIL_S], so it always reaches the last report. */
+    fun trailS(refreshS: Int = REFRESH_DEFAULT_S): Double = maxOf(TRAIL_S, 2.0 * refreshS)
+
+    /** At most this many positions kept per aircraft for the tapped one's track (a 20 s poll: 4 hours): the floor of [historyMax]. */
     const val HISTORY_MAX = 720
+
+    /** T316: the span the tapped aircraft's track keeps at any refresh (seconds: 4 hours). */
+    const val HISTORY_S = 4 * 3600
+
+    /** T316: positions kept per aircraft at a refresh of [refreshS]: 4 hours of polls, at least [HISTORY_MAX] (1,440 at 10 s). */
+    fun historyMax(refreshS: Int = REFRESH_DEFAULT_S): Int = maxOf(HISTORY_MAX, HISTORY_S / refreshS.coerceAtLeast(1))
 
     /** Labels from this map zoom (tar1090 shows labels from zoom 8) or while at most [LABEL_MAX_COUNT] are in view (RadarBox: 250). */
     const val LABEL_MIN_ZOOM = 8.0
     const val LABEL_MAX_COUNT = 250
 
-    /** The refresh interval's choices and default (seconds; the finding's recommendation 7). */
-    val REFRESH_CHOICES_S = listOf(10, 20, 30, 60)
+    /** The refresh interval's choices and default (seconds; the finding's recommendation 7; T316: 2 and 3 minutes, the owner's). */
+    val REFRESH_CHOICES_S = listOf(10, 20, 30, 60, 120, 180)
     const val REFRESH_DEFAULT_S = 20
 
     /** adsb.lol's daily allowance without a key, per IP (requests a UTC day). */
     const val DAILY_REQUESTS = 500
+
+    /** T316: how long [requests] last at one every [refreshS] seconds, in hours (500 at 20 s: 2.78). */
+    fun hoursLeft(requests: Int, refreshS: Int): Double = requests.coerceAtLeast(0) * refreshS.toDouble() / 3600.0
 
     /** Aircraft on the ground are drawn only from this map zoom (an airport's apron reads at about z13). */
     const val GROUND_MIN_ZOOM = 13.0

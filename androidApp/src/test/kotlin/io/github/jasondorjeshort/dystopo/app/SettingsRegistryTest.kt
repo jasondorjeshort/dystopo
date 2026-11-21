@@ -399,6 +399,14 @@ class SettingsRegistryTest {
         assertEquals(io.github.jasondorjeshort.dystopo.aircraft.AirportNaming.CITIES, AppSettings.AIRCRAFT_AIRPORTS.value)
         val refused = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("aircraftRefreshS" to "15")))
         assertTrue("aircraftRefreshS" in refused.message, refused.message)
+        // T316: 2 and 3 minutes accepted, posted and synced; 15 still refused (above).
+        for (v in listOf(120, 180)) {
+            val ok = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("aircraftRefreshS" to "$v")), "T316: $v accepted")
+            assertEquals(v, ok[AppSettings.AIRCRAFT_REFRESH_S])
+            val viaSync = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(SettingsSync.plan(mapOf("app.aircraftRefreshS" to "$v"), emptyMap(), SettingsRoutes.KEYS).params))
+            assertEquals(v, viaSync[AppSettings.AIRCRAFT_REFRESH_S], "T316: $v through sync")
+        }
+        assertTrue("120, 180" in refused.message, refused.message)
         val synced = SettingsSync.plan(mapOf("app.aircraft" to "off", "app.aircraftRefreshS" to "10"), emptyMap(), SettingsRoutes.KEYS)
         val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))
         assertEquals(false, back[AppSettings.AIRCRAFT])

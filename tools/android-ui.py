@@ -26,7 +26,9 @@ Parts:
                before T308): T309: the map's "Map | Horizon" switch opens the Horizon view (Settings > Navigation and
                tracking > Horizon view before; frames `horizon` and `horizon-scrolled`, `gps` and `gps-plot` before T308),
                the view's "Map" segment takes it away; no crash. T311: the `flights` step (flights_step): Settings > Map
-               options at Flight tracking (frame `flights-row`, the refresh row's "about N requests left today (UTC)"),
+               options at Flight tracking (frame `flights-row`, the refresh row's "about N requests left today (UTC)";
+               T316: its six choices with 2 min and 3 min, ", about N h at this rate", and the refresh help pop-up
+               naming how long each choice lasts, frame `flights-refresh-help`),
                its help pop-up (frame `flights-help`), then with airplane mode on, Flight tracking On and the map's
                "Flights: No flight data: offline" (frame `flights-offline`); airplane mode and the setting put back.
                T312: the `horizonflights` step (horizon_flights_step): the Sky range row (frame `sky-range-row`), then
@@ -45,7 +47,8 @@ Parts:
                from SEA" (`flights-estimated`, Route lines: Selected flight), then Route lines: All flights with the
                faint lines on the other routed flights (`flights-all`; GET /aircraft's routeLinesDrawn, faintLines and
                the faint source's times), put back to Selected; the card at font scale 2.0
-               (`flights-card-font2`) and in landscape (`flights-card-landscape`), then the live feed with airplane mode
+               (`flights-card-font2`) and in landscape (`flights-card-landscape`), T316: at a 180 s refresh a minute after
+               its poll, every flight filled and moved up past 30 s (`flights-slow`), then the live feed with airplane mode
                on (`flights-offline`); every setting, the font scale, the rotation and the network put back.
   horizonflights (T312, debug build: --serial, --port) the Horizon view's Flights layer on T311's replay fixture
                from the emulator's fix at Paradise: the plot (frame `horizon-flights-plot`), the list
@@ -1936,7 +1939,9 @@ def horizon_step(dev):
 
 FLIGHTS_ROW = "^Flight tracking$"
 FLIGHTS_OFFLINE = "^Flights: No flight data: offline$"
-FLIGHTS_QUOTA = r"^about \d+ requests left today \(UTC\)$"
+# T316: with how long the requests last at this rate ("about 3 h", "about 40 min" or "enough for the rest of the day").
+FLIGHTS_QUOTA = r"^about \d+ requests left today \(UTC\)(, (about \d+ (h|min)|enough for the rest of the day) at this rate)?$"
+FLIGHTS_REFRESH_CHOICES = ("10 s", "20 s", "30 s", "60 s", "2 min", "3 min")  # T316: 2 and 3 minutes
 ROUTE_LINES_ROW = "^Flight tracking: Route lines$"  # T314
 
 
@@ -1984,7 +1989,40 @@ def flights_step(dev):
             raise RuntimeError(f"no Flight tracking row on Map options (texts: {dev.texts(nodes)[-20:]})")
         _q, nodes = scroll_row(dev, FLIGHTS_QUOTA, swipes=3)
         out["quotaLine"] = next((t for t in dev.texts(nodes) if re.match(FLIGHTS_QUOTA, t)), None)
+        # T316: the refresh row's six choices in the frame, 2 min and 3 min the new ones.
+        _c, nodes = scroll_row(dev, "^3 min$", swipes=2)
+        texts = dev.texts(nodes)
+        out["refreshChoices"] = [t for t in FLIGHTS_REFRESH_CHOICES if t in texts]
+        out["quotaLine"] = out["quotaLine"] or next((t for t in texts if re.match(FLIGHTS_QUOTA, t)), None)
         out["frames"]["row"] = dev.screencap("flights-row")[0]
+        if out["refreshChoices"] != list(FLIGHTS_REFRESH_CHOICES):
+            errors.append(f"refresh choices {out['refreshChoices']}")
+        if not out["quotaLine"]:
+            errors.append(f"no requests-left line matching {FLIGHTS_QUOTA}")
+        # T316: the refresh row's help names how long each choice lasts.
+        helpn = dev.find("^Help: Flight tracking: Refresh$", nodes)
+        if helpn:
+            dev.tap(helpn)
+            time.sleep(1)
+            hn = dev.nodes()
+            out["refreshHelp"] = next((t for t in dev.texts(hn) if "a whole day at 3 min" in t), None)
+            out["frames"]["refreshHelp"] = dev.screencap("flights-refresh-help")[0]
+            if not out["refreshHelp"]:
+                errors.append("the refresh help pop-up did not say how long each choice lasts")
+            ok = dev.find("^OK$", hn)
+            if ok:
+                dev.tap(ok)
+            else:
+                dev.shell("input", "keyevent", "KEYCODE_BACK")
+            time.sleep(1)
+        else:
+            errors.append("no help icon on the Flight tracking: Refresh row")
+        w, h, _d = screen(dev)
+        for _ in range(3):  # T316: back down to the Flight tracking row if the choices scrolled it away
+            if dev.wait_for(FLIGHTS_ROW, 1)[0]:
+                break
+            dev.shell("input", "swipe", str(w // 2), str(h * 2 // 5), str(w // 2), str(h * 3 // 5), "600")
+            time.sleep(1)
         row, nodes = dev.wait_for(FLIGHTS_ROW, 5)
         helpn = dev.find("^Help: Flight tracking$", nodes)
         if not helpn:
@@ -2108,6 +2146,7 @@ def part_flights(args):
         code, st = srv.call("GET", "/settings")
         before["aircraft"] = (st or {}).get("aircraft")
         before["routeLines"] = (st or {}).get("aircraftRouteLines")  # T314
+        before["refreshS"] = (st or {}).get("aircraftRefreshS")  # T316
         before["font"] = dev.shell("settings", "get", "system", "font_scale", check_ok=False).strip()
         before["accel"] = dev.shell("settings", "get", "system", "accelerometer_rotation", check_ok=False).strip()
         before["rotation"] = dev.shell("settings", "get", "system", "user_rotation", check_ok=False).strip()
@@ -2237,7 +2276,34 @@ def part_flights(args):
         time.sleep(3)
         return r
 
+    def slow():
+        """T316: POST /settings takes 120 and 180; at 180 s, a minute after the poll the setting change made, the flights
+        are drawn filled (stale only past 270 s, moved up for up to 180 s) and GET /aircraft reports the interval's times
+        and the hours the day's requests last."""
+        srv.call("POST", "/aircraft?select=none")
+        c120, s120 = srv.call("POST", "/settings?aircraftRefreshS=120")
+        c180, s180 = srv.call("POST", "/settings?aircraftRefreshS=180")
+        srv.call("POST", "/camera?lat=46.86&lon=-121.45&zoom=8.6&bearing=0")
+        _c, r0 = srv.call("GET", "/aircraft")
+        time.sleep(60)
+        png = dev.screencap("flights-slow")[0]
+        _c, r = srv.call("GET", "/aircraft")
+        a = (r or {}).get("aircraft") or []
+        ages = [x.get("ageS") or 0 for x in a]
+        checks = {"accepted120": c120 == 200 and (s120 or {}).get("aircraftRefreshS") == 120,
+                  "accepted180": c180 == 200 and (s180 or {}).get("aircraftRefreshS") == 180,
+                  "refreshS": (r or {}).get("refreshS") == 180, "staleS": (r or {}).get("staleS") == 270.0,
+                  "dropS": (r or {}).get("dropS") == 450.0, "moveCapS": (r or {}).get("moveCapS") == 180.0,
+                  "hoursLeft": isinstance((r or {}).get("hoursLeft"), (int, float)),
+                  "drawn": len(a) >= 5, "betweenPolls": bool(ages) and min(ages) > 30,
+                  "filled": (r or {}).get("stale") == 0, "movedPast30": any((x.get("movedS") or 0) > 30 for x in a)}
+        ok = all(checks.values())
+        return {"ok": ok, "png": png, "checks": checks, "count": len(a), "ages": ages, "movedS": [x.get("movedS") for x in a],
+                "hoursLeft": (r or {}).get("hoursLeft"), "quotaLine": (r or {}).get("quotaLine"), "pollsBefore": (r0 or {}).get("lastResponseMs"),
+                **({} if ok else {"error": f"checks {checks}"})}
+
     def offline():
+        srv.call("POST", f"/settings?aircraftRefreshS={before.get('refreshS') or 20}")  # T316: back from 180 s
         srv.call("POST", "/aircraft?select=none")
         _c, b = srv.call("GET", "/aircraft")
         spent_before = (b or {}).get("requests", 0)
@@ -2253,12 +2319,13 @@ def part_flights(args):
                 **({} if ok else {"error": f"offline line {bool(n)}, state {(r or {}).get('state')}, requests spent offline {spent}"})}
 
     try:
-        for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("track", track), ("estimated", estimated), ("all", all_lines), ("font2", font2), ("landscape", landscape), ("offline", offline)):
+        for name, fn in (("setup", setup), ("map", mapview), ("card", card()), ("track", track), ("estimated", estimated), ("all", all_lines), ("font2", font2), ("landscape", landscape), ("slow", slow), ("offline", offline)):
             run.step(name, fn)
     finally:
         srv.call("POST", "/aircraft?select=none")
         srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
         srv.call("POST", f"/settings?aircraftRouteLines={before.get('routeLines') or 'selected'}")  # T314
+        srv.call("POST", f"/settings?aircraftRefreshS={before.get('refreshS') or 20}")  # T316
         if before.get("aircraft") is not True:
             srv.call("POST", "/settings?aircraft=0")
     return run.report()

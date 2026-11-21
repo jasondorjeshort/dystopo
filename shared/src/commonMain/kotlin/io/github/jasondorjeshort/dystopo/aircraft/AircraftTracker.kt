@@ -36,7 +36,7 @@ data class TrackPoint(val lat: Double, val lon: Double, val altitudeM: Double?, 
 /** T311: one aircraft as the layer draws it now. */
 data class AircraftNow(
     val report: AircraftReport,
-    /** Moved up along its track by its speed for [movedS] (at most [AircraftRules.MOVE_CAP_S]). */
+    /** Moved up along its track by its speed for [movedS] (at most [AircraftRules.moveCapS] of the refresh). */
     val lat: Double,
     val lon: Double,
     val movedS: Double,
@@ -97,7 +97,9 @@ class AircraftTracker {
 
     /**
      * Takes a poll's outcome at [nowMs]. [undulationM] (the phone's, null without a fix that gives it) converts every
-     * geometric altitude of the poll; [refreshS] the interval, for when a run of failures reads as a stopped feed.
+     * geometric altitude of the poll; [refreshS] the interval, for when a run of failures reads as a stopped feed, how
+     * many positions each aircraft keeps ([AircraftRules.historyMax]) and when an unseen one is dropped
+     * ([AircraftRules.dropS]; T316).
      */
     fun onFetch(fetch: AircraftFetch, nowMs: Long, undulationM: Double?, refreshS: Int = AircraftRules.REFRESH_DEFAULT_S) {
         lastFetchMs = nowMs
@@ -122,7 +124,8 @@ class AircraftTracker {
                             s.altitude = alt
                             if (at > s.posAtMs && (s.history.lastOrNull()?.let { it.lat != r.lat || it.lon != r.lon } != false)) {
                                 s.history.addLast(TrackPoint(r.lat, r.lon, alt.meters, at))
-                                while (s.history.size > AircraftRules.HISTORY_MAX) s.history.removeFirst()
+                                val keep = AircraftRules.historyMax(refreshS)
+                                while (s.history.size > keep) s.history.removeFirst()
                             }
                             s.posAtMs = at
                         }
@@ -145,7 +148,7 @@ class AircraftTracker {
                 if (failures >= AircraftRules.STOPPED_INTERVALS || since >= stopAfter) state = FeedState.STOPPED
             }
         }
-        prune(nowMs)
+        prune(nowMs, refreshS)
     }
 
     /** A feed that has not answered since [nowMs] minus the stop time (a poll that hangs) reads as stopped. */
@@ -155,29 +158,41 @@ class AircraftTracker {
         if ((nowMs - lastOkMs) / 1000.0 >= stopAfter) state = FeedState.STOPPED
     }
 
-    private fun prune(nowMs: Long) {
+    private fun prune(nowMs: Long, refreshS: Int) {
+        val drop = AircraftRules.dropS(refreshS)
         val it = seen.values.iterator()
-        while (it.hasNext()) if ((nowMs - it.next().posAtMs) / 1000.0 > AircraftRules.DROP_S) it.remove()
+        while (it.hasNext()) if ((nowMs - it.next().posAtMs) / 1000.0 > drop) it.remove()
     }
 
     val count: Int get() = seen.size
 
-    /** The aircraft as drawn at [nowMs]: moved up, aged, with routes and angles; dropped ones left out. */
-    fun view(nowMs: Long, observer: Observer?, routes: RouteTable?, naming: AirportNaming = AirportNaming.DEFAULT): List<AircraftNow> {
-        prune(nowMs)
-        return seen.values.map { s -> now(s, nowMs, observer, routes, naming) }
+    /**
+     * The aircraft as drawn at [nowMs]: moved up, aged, with routes and angles; dropped ones left out. T316: [refreshS]
+     * the interval, for the stale, drop, move-cap and trail times ([AircraftRules.staleS], [AircraftRules.dropS],
+     * [AircraftRules.moveCapS], [AircraftRules.trailS]; the default keeps the 20 s behaviour).
+     */
+    fun view(
+        nowMs: Long,
+        observer: Observer?,
+        routes: RouteTable?,
+        naming: AirportNaming = AirportNaming.DEFAULT,
+        refreshS: Int = AircraftRules.REFRESH_DEFAULT_S,
+    ): List<AircraftNow> {
+        prune(nowMs, refreshS)
+        return seen.values.map { s -> now(s, nowMs, observer, routes, naming, refreshS) }
     }
 
     /** All positions the layer kept for [hex] since it first saw it, oldest first (the tapped aircraft's solid track). */
     fun history(hex: String): List<TrackPoint> = seen[hex]?.history?.toList().orEmpty()
 
-    private fun now(s: Seen, nowMs: Long, observer: Observer?, routes: RouteTable?, naming: AirportNaming): AircraftNow {
+    private fun now(s: Seen, nowMs: Long, observer: Observer?, routes: RouteTable?, naming: AirportNaming, refreshS: Int): AircraftNow {
         val r = s.report
         val age = ((nowMs - s.posAtMs) / 1000.0).coerceAtLeast(0.0)
-        val move = moveUp(r, age)
+        val cap = AircraftRules.moveCapS(refreshS)
+        val move = moveUp(r, age, cap)
         val lat = move.first
         val lon = move.second
-        val moved = if (lat == r.lat && lon == r.lon) 0.0 else minOf(age, AircraftRules.MOVE_CAP_S)
+        val moved = if (lat == r.lat && lon == r.lon) 0.0 else minOf(age, cap)
         val match = r.callSign?.let { cs -> routes?.lookup(cs) }?.let { RoutePlausibility.check(it, lat, lon, r.trackDeg, r.groundSpeedKt, r.onGround, r.verticalRateFpm) }
         var dist: Double? = null
         var bearing: Double? = null
@@ -189,8 +204,8 @@ class AircraftTracker {
             val h = s.altitude.meters
             if (h != null) elev = AircraftGeo.elevationAngleDeg(d, observer.heightM, h)
         }
-        val stale = age > AircraftRules.STALE_S
-        val trailFrom = nowMs - (AircraftRules.TRAIL_S * 1000).toLong()
+        val stale = age > AircraftRules.staleS(refreshS)
+        val trailFrom = nowMs - (AircraftRules.trailS(refreshS) * 1000).toLong()
         val trail = s.history.filter { it.atMs >= trailFrom } + TrackPoint(lat, lon, s.altitude.meters, nowMs)
         return AircraftNow(
             r, lat, lon, moved, s.altitude.meters, s.altitude.kind, age, stale, match, dist, bearing, elev,
@@ -199,12 +214,12 @@ class AircraftTracker {
     }
 
     companion object {
-        /** The aircraft's position moved along its track by its ground speed for its age, at most [AircraftRules.MOVE_CAP_S]. */
-        fun moveUp(r: AircraftReport, ageS: Double): Pair<Double, Double> {
+        /** The aircraft's position moved along its track by its ground speed for its age, at most [capS] (T316: the refresh's [AircraftRules.moveCapS]). */
+        fun moveUp(r: AircraftReport, ageS: Double, capS: Double = AircraftRules.MOVE_CAP_S): Pair<Double, Double> {
             val track = r.trackDeg ?: return r.lat to r.lon
             val gs = r.groundSpeedKt ?: return r.lat to r.lon
             if (r.onGround || gs <= 0.0 || ageS <= 0.0) return r.lat to r.lon
-            val t = minOf(ageS, AircraftRules.MOVE_CAP_S)
+            val t = minOf(ageS, capS)
             return AircraftGeo.move(r.lat, r.lon, track, gs * AircraftRules.KNOT_TO_MPS * t)
         }
 

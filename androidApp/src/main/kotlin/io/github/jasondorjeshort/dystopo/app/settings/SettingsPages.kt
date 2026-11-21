@@ -479,7 +479,8 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             @Suppress("UNUSED_VARIABLE") val tick = io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.revision
             val s = AppSettings.AIRCRAFT_REFRESH_S.value
             Setting(row.label, io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.quotaLine(), help = "settings.aircraftRefresh") {
-                for (c in io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.REFRESH_CHOICES_S) Option("$c s", s == c) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.AIRCRAFT_REFRESH_S, c)) }
+                // T316: "2 min" and "3 min" (the owner's choices) beside 10 to 60 s.
+                for (c in io.github.jasondorjeshort.dystopo.aircraft.AircraftRules.REFRESH_CHOICES_S) Option(io.github.jasondorjeshort.dystopo.aircraft.AircraftText.refreshLabel(c), s == c) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.AIRCRAFT_REFRESH_S, c)) }
             }
         }
         SettingsRow.AIRCRAFT_AIRPORTS -> {
@@ -946,9 +947,10 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "same way. Nothing is asked while the app is in the background."
         },
         HelpText("settings.aircraftRefresh", "Flight tracking: Refresh", at(SettingsGroup.MAP, "Flight tracking: Refresh"), show = page(SettingsGroup.MAP)) {
-            "How often the flight positions are asked for while the map shows. The source allows about 500 requests a day from " +
-                "one internet address, counted in UTC days; the line under the title counts this phone's. Between requests the " +
-                "aircraft move on along their tracks."
+            // T316: how long the day's requests last at each choice.
+            "How often flight positions are asked for while the map shows. The source allows about 500 requests a UTC day " +
+                "from one internet address; the line under the title counts this phone's. They last about " +
+                io.github.jasondorjeshort.dystopo.aircraft.AircraftText.lastsList() + "."
         },
         HelpText("settings.aircraftAirports", "Flight tracking: Airport names", at(SettingsGroup.MAP, "Flight tracking: Airport names"), show = page(SettingsGroup.MAP)) {
             "How airports read. Codes and cities puts codes on the map's labels (SEA > DEN) and both on the flight card " +

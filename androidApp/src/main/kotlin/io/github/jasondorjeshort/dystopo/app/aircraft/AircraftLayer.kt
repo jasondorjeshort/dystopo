@@ -70,8 +70,9 @@ import java.util.zip.GZIPInputStream
  * app is in the foreground with the map showing, it asks [AircraftPoller] (owner `map`) for its view's centre and a
  * radius reaching the view's corners; the poller reads the live feed (adsb.lol, [AdsbLolSource]) every refresh interval
  * for that centre rounded to 0.1°, or plays a recorded file ([ReplaySource], `POST /aircraft/replay`, debug builds), and
- * once a second hands over the aircraft moved up along their tracks ([AircraftTracker], at most 30 s), stale ones hollow
- * with their age, ones past 60 s gone.
+ * once a second hands over the aircraft moved up along their tracks ([AircraftTracker]), stale ones hollow with their
+ * age, old ones gone (T316: the move cap, the stale and the drop times scale with the refresh interval, at least 30, 30
+ * and 60 s; `AircraftRules`).
  *
  * Drawn on the map in a GeoJSON source and four layers of its own, added on every style load (as
  * [io.github.jasondorjeshort.dystopo.app.divergence.DivergenceLayer]): each aircraft a silhouette turned to its track
