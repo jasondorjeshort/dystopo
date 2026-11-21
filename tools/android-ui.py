@@ -1870,7 +1870,9 @@ def horizon_step(dev):
     (`switchMapPx`, `switchViewPx`), and that at the end of the scroll no text of the view lies under it (`underSwitch`).
     The emulator's fix at Paradise (inside the pushed Rainier pack) gives the view its terrain horizon, the peaks and the
     sun's path; the satellites' count and the peaks' line are reported (`satellitesLine`, `peaksLine`), never failed,
-    since an emulator's GNSS may report none at first and the first sweep on a just-booted emulator can take minutes."""
+    since an emulator's GNSS may report none at first and the first sweep on a just-booted emulator can take minutes.
+    T317: the view at the fix carries the place line "Your location"; then `sky_from_here` (the frame `horizon-point`,
+    opened from the long-press card at Mount Rainier's summit, and "Back to here")."""
     t0 = time.time()
     n, nodes, backs = back_until(dev, HORIZON_SEGMENT)
     if not n:
@@ -1929,9 +1931,70 @@ def horizon_step(dev):
         errors.append(f"the switch on the view {on_view} is not the map's {on_map}")
     if under:
         errors.append(f"at the end of the scroll under the switch: {under[:5]}")
-    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled, "end": end_png}, "toggles": toggles, "openedBy": "switch", "backs": backs,
+    # T317: the view at the fix says so ("Your location"); then the sky from a long-pressed point (sky_from_here).
+    if PLACE_HERE not in texts:
+        errors.append(f"no {PLACE_HERE!r} line at the fix")
+    sky = sky_from_here(dev)
+    if sky.get("error"):
+        errors.append(sky["error"])
+    return {"ok": not errors, "png": png, "frames": {"horizon": png, "scrolled": scrolled, "end": end_png, **sky.pop("frames", {})}, "toggles": toggles, "openedBy": "switch", "backs": backs,
             "switchMapPx": on_map, "switchViewPx": on_view, "endSwipes": swipes, "underSwitch": under,
-            "satellitesLine": sats, "peaksLine": peaks, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
+            "satellitesLine": sats, "peaksLine": peaks, "skyFromHere": sky, "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
+
+
+# T317: the sky from a long-pressed point.
+SUMMIT = (46.8529, -121.7604)  # Mount Rainier's summit (Columbia Crest), a public place
+SKY_FROM_HERE = "^Sky from here$"
+BACK_TO_HERE = "^Back to here$"
+PLACE_HERE = "Your location"
+PLACE_MOVED = r"^(At .+|.+ (N|NNE|NE|ENE|E|ESE|SE|SSE|S|SSW|SW|WSW|W|WNW|NW|NNW) of you|-?\d+\.\d+, -?\d+\.\d+)$"
+
+
+def sky_from_here(dev):
+    """T317: the map at Mount Rainier's summit, a long-press at its centre, the card's "Sky from here": the Horizon view
+    opens for that point (the frame `horizon-point`): the place line under the plot names it ("At Mount Rainier, ... of
+    you", or the distance and compass point), "Back to here" beside it, the Satellites (and Flights) toggles shown without
+    a tick and disabled, no satellites list. "Back to here" returns to the fix ("Your location"); the view's "Map" segment
+    then closes it. The terrain's sweep at the summit is waited for (up to 90 s: a just-booted emulator is slow)."""
+    out = {"frames": {}}
+    w, h, d = screen(dev)
+    open_map(dev, *SUMMIT, 13)
+    time.sleep(5)  # the link's camera move ends before the press
+    long_press(dev, *to_screen(*SUMMIT, *SUMMIT, 13, w, h, d))
+    action, nodes = dev.wait_for(SKY_FROM_HERE, 10)
+    if not action:
+        return {**out, "error": f"no {SKY_FROM_HERE} on the long-press card (texts: {dev.texts(nodes)[:25]})"}
+    dev.tap(action)
+    back, nodes = dev.wait_for(BACK_TO_HERE, 20)
+    if not back:
+        return {**out, "error": f"no 'Back to here' after Sky from here (texts: {dev.texts(nodes)[:25]})"}
+    deadline = time.time() + 90
+    while time.time() < deadline and any(t.startswith("Working out the terrain horizon") or t.startswith("Finding the peaks") for t in dev.texts(nodes)):
+        time.sleep(2)
+        nodes = dev.nodes()
+    time.sleep(2)
+    nodes = dev.nodes()
+    texts = dev.texts(nodes)
+    out["frames"]["point"] = dev.screencap("horizon-point")[0]
+    place = next((t for t in texts if re.match(PLACE_MOVED, t)), None)
+    toggles = sorted(t for t in texts if re.match(HORIZON_TOGGLES, t))
+    out.update({"placeLine": place, "toggles": toggles, "satellitesListed": any(re.search(r"^\d+ used of \d+ in view|^No satellites heard", t) for t in texts),
+                "movedNote": any(t.startswith("Satellites and flights show only") for t in texts)})
+    errors = []
+    if not place:
+        errors.append(f"no place line naming the point (texts: {texts[:20]})")
+    if "✓ Satellites" in toggles or out["satellitesListed"]:
+        errors.append("the satellites show at a chosen point")
+    dev.tap(back)
+    here, nodes = dev.wait_for("^" + PLACE_HERE + "$", 10)
+    out["backReturned"] = bool(here) and dev.find(BACK_TO_HERE, nodes) is None
+    if not out["backReturned"]:
+        errors.append("Back to here did not return to Your location")
+    m = dev.find(MAP_SEGMENT, nodes)
+    if m:
+        dev.tap(m)
+        time.sleep(1)
+    return {**out, **({"error": "; ".join(errors)} if errors else {})}
 
 
 # --- features: Flight tracking (T311) ----------------------------------------------------------------------------
