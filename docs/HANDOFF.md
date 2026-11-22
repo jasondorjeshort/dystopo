@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-22, at commit e7690a9d, by main session (wave 45 open: T324, T325, T326 and T328 merged, T327 in flight)
+Updated: 2026-11-22, at commit b9873fb0, by main session (wave 45: all five tasks merged, the closing sweep next)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the open wave in `docs/TASKS.md`
 ("## Wave 45": its paragraphs settle the choices and the order), the last closed wave's record
 `docs/tasks/wave-44.md`, and the ideas (`node .claude/hooks/queue-list.js ideas`).
@@ -9,13 +9,13 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the open wave
 ## Now
 
 - **Wave 45 is open** (planned 2026-11-21 on the owner's word, after its critic: LAUNCH AFTER EDITS, answered in the wave paragraph): pass two of the Panorama view (ADR 0064) as a chain, T324 (the scene, the aim and the gestures' arithmetic in `shared`), T325 (the Horizon view's pane cut into parts two views can host; its Close button goes), T326 (the third segment, the lens plot, drag, tilt and zoom), T327 (the other layers, a row that turns the view, the edge arrow), and T328 (a launch crash keeps its stack; the start-up walker that throws).
-- **Merged:** T324 (e8f17be5), T325 (74a5c2a7), T328 (cce2267e) and T326 (e7690a9d, one fix round: the credit line's rule, choice (h), revised), each logged and cleaned up. **In flight:** T327's implementer (Opus-class), the wave's last task; no branch pushed yet (`git branch -r --list 'origin/task/*'` tells). If a session resumes with no agent alive, a pushed `task/T327` goes to a verifier with the branch's own commit messages as the report; an unpushed one is relaunched from the task text and the three merge bodies its brief names (T324's, T325's, T326's).
+- **All five merged:** T324 (e8f17be5), T325 (74a5c2a7), T328 (cce2267e), T326 (e7690a9d, one fix round: the credit line's rule, choice (h), revised) and T327 (b9873fb0, MERGE WITH NOTES), each logged; ADR 0064's second prediction recorded (held). No task agent is in flight. T327's cleanup chore and the closing sweep are the next launches; if a session resumes with neither alive, check `git branch -r --list 'origin/task/*'`, `E:\dystopo-avd` and the newest `out\sweep-<date>` folder first.
 - **Cost:** the 7-day meter read 7 at planning (reset 2026-11-28 03:00 UTC), the 5-hour meter 4; the wave is figured at 8.5. The hold is 97.
 - The live viewer on 8765 is wanted and was answering at the launch (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; at most two Gradle agents and two emulators, a verifier counting as one.
 
 ## Next
 
-1. As T327 reports: a Sonnet-class verifier (`brief` skill, `verifier.md`) that also checks the GNSS hold and the poller's owner with the Panorama open (T326's Interacts with line), then the merge sequence of the `wave` skill; record ADR 0064's second prediction at the merge.
+1. Done: T327 verified, merged and logged.
 2. Close the wave: the README status, the sweep with `-First` on the Panorama frames (`sweep-diff.py --check-first` on the exact names first), v0.1.41-alpha by the `release` skill, costs by `tools/agent-cost.py`, the record `docs/tasks/wave-45.md` [no-check: written at the close].
 3. Then, without asking again (the owner, 2026-11-22: "After this release we can go ahead and build the next one."): plan wave 46 by the `wave` skill, its critic first, and run it. Panorama pass three (Follow the phone, the steering setting, the named offset); triage of the ideas of 2026-11-21 still untriaged and the 20 answered Questions into Plans; the reroute's amendment to ADR 0040; the routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`.
 

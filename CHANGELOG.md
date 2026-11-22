@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-22
 
+- T327: The Panorama's other layers, a list row that turns the view, and the edge arrow
 - T326: The Panorama view on the phone: the third segment, the lens plot, drag, tilt and zoom
 - T328: A launch crash keeps its stack, and the start-up walker that throws is found
 - T325: The Horizon view's pane becomes parts two views can host, and its Close button goes

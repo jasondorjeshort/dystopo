@@ -99,6 +99,11 @@ strip as the view's main form.
   with the test file untouched, and T321's verifier compared a build of the commit before the wave with
   the wave's on one emulator at the same fix, time and layers: the same 8 names, the same 5 leaders.
 - Prediction, check when pass two is merged: no file of `shared/.../horizon/` had to fork for the lens
-  (one placement, one layer list), and the Horizon view's sweep step still passes unchanged.
+  (one placement, one layer list), and the Horizon view's sweep step still passes unchanged. Outcome
+  2026-11-22: held. Pass two (T324 to T327, wave 45) added files to the package and forked none:
+  `HorizonLabels.place` gained one optional argument (a forced name kept inside the lens's view), the round
+  plot's call and its pin test unchanged, and the flights' names on the lens are `placeLayers`' second pass.
+  The release `horizon` step passed on T326's and T327's branches; its only edits were the wave's own (the
+  switch's spoken label with a third segment, and no Close button, T325).
 - Prediction, check when the camera option is proposed: it adds a backdrop and a field-of-view match to
   the Panorama screen and no new view.
