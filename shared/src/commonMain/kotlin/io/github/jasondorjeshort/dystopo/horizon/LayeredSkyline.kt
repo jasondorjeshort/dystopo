@@ -3,6 +3,9 @@ package io.github.jasondorjeshort.dystopo.horizon
 import io.github.jasondorjeshort.dystopo.dem.Horizon
 import io.github.jasondorjeshort.dystopo.dem.HorizonProfile
 import io.github.jasondorjeshort.dystopo.dem.Terrain
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.time.TimeSource
 
 /**
@@ -24,6 +27,24 @@ class LayeredSkyline(val rangesM: List<Double>, val profiles: List<HorizonProfil
     fun layerAt(elDeg: Double, azDeg: Double): Int {
         for (i in profiles.indices) if (elDeg <= profiles[i].angleAt(azDeg)) return i
         return -1
+    }
+
+    /**
+     * T324: each skyline's bins as unit directions (east, north, up per bin, flat), computed once: the Panorama's scene
+     * turns them into the lens's axes on every frame of a drag ([PanoramaScene]), so the trigonometry is done here once.
+     */
+    val directions: List<DoubleArray> by lazy {
+        profiles.map { p ->
+            DoubleArray(3 * p.size).also { d ->
+                for (i in 0 until p.size) {
+                    val el = p.angleDeg[i] * PI / 180
+                    val az = p.bearingDeg(i) * PI / 180
+                    d[3 * i] = cos(el) * sin(az)
+                    d[3 * i + 1] = cos(el) * cos(az)
+                    d[3 * i + 2] = sin(el)
+                }
+            }
+        }
     }
 
     companion object {

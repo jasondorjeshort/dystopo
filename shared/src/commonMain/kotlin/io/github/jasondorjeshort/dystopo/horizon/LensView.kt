@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.horizon
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -67,6 +68,34 @@ class LensView(
         val z = dot(fwd, e, n, u)
         if (z <= MIN_Z) return null
         return RimPt(cx + focalPx * dot(right, e, n, u) / z, cy - focalPx * dot(up, e, n, u) / z)
+    }
+
+    /** T324: the unit direction ([e] east, [n] north, [u] up) in the camera's axes (right, up, forward) into [out]. */
+    fun toCamera(e: Double, n: Double, u: Double, out: DoubleArray) {
+        out[0] = dot(right, e, n, u)
+        out[1] = dot(up, e, n, u)
+        out[2] = dot(fwd, e, n, u)
+    }
+
+    /**
+     * T324: the x (px) where true bearing [azDeg] crosses the row [y]: the pixel of that row whose ray lies in the bearing's
+     * vertical half-plane, or null when no ray of the row has that bearing. Exact, so the bearing tape's ticks need no
+     * search.
+     */
+    fun xOnRow(azDeg: Double, y: Double): Double? {
+        val az = azDeg * DEG
+        // The bearing's vertical plane has the normal (cos az, -sin az, 0); the ray fwd + right sx + up sy lies in it.
+        val ne = cos(az)
+        val nn = -sin(az)
+        val sy = -(y - cy) / focalPx
+        val nr = ne * right[0] + nn * right[1]
+        if (abs(nr) < 1e-12) return null
+        val sx = -(ne * fwd[0] + nn * fwd[1] + sy * (ne * up[0] + nn * up[1])) / nr
+        // The half-plane: the ray's level part points along the bearing, not opposite it.
+        val de = fwd[0] + right[0] * sx + up[0] * sy
+        val dn = fwd[1] + right[1] * sx + up[1] * sy
+        if (de * sin(az) + dn * cos(az) <= 0) return null
+        return cx + focalPx * sx
     }
 
     /** Whether [p] is on the view. */

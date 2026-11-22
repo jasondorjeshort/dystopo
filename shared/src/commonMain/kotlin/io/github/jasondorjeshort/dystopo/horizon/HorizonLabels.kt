@@ -178,11 +178,16 @@ object HorizonLabels {
      * first free place, else at the first. The rest without a free place are left out (the list has them). [first] goes
      * before everything (a picked label). T312: [forceClosest] false places the closest by rank like the rest (the aircraft
      * pass: no forced name over a peak's).
+     *
+     * T324: with [keepIn] (the Panorama's view less its tape), a forced name with no free place takes the nearest place
+     * wholly inside [keepIn] that is over no other name and none of [blocked]; failing that, its fallback box is moved
+     * the least way into [keepIn] (a leader line to its mark when it ends up far from it), so it is never clipped by the
+     * view's edge or hidden under the tape. Without it (the round plot) a forced name keeps T309's fallback.
      */
     fun place(
         g: LabelProjection, ranked: List<Scored>, width: (String) -> Double, ascent: Double, descent: Double,
         blocked: List<RimBox> = emptyList(), lines: List<List<RimPt>> = emptyList(), first: HorizonLabel? = null,
-        forceClosest: Boolean = true,
+        forceClosest: Boolean = true, keepIn: RimBox? = null,
     ): List<Placed> {
         val placed = ArrayList<Placed>()
         val pad = 2 * g.dp
@@ -227,7 +232,16 @@ object HorizonLabels {
             val mark = RimBox(at.x - 6 * g.dp, at.y - 6 * g.dp, at.x + 6 * g.dp, at.y + 5 * g.dp)
             if (!forced && placed.any { it.box.overlaps(mark) }) continue
             // A forced name with no free place takes the nearest that is over no other name, else the first inward.
-            var chosen: Placed? = if (forced) places.firstOrNull { p -> placed.none { it.box.overlaps(p.box) } } ?: inward.first() else null
+            var chosen: Placed? = when {
+                !forced -> null
+                keepIn == null -> places.firstOrNull { p -> placed.none { it.box.overlaps(p.box) } } ?: inward.first()
+                else -> places.firstOrNull { p -> keepIn.holds(p.box) && placed.none { it.box.overlaps(p.box) } && blocked.none { it.overlaps(p.box) } }
+                    ?: (places.firstOrNull { p -> placed.none { it.box.overlaps(p.box) } } ?: inward.first()).let { p ->
+                        val dx = shift(p.box.left, p.box.right, keepIn.left, keepIn.right)
+                        val dy = shift(p.box.top, p.box.bottom, keepIn.top, keepIn.bottom)
+                        placeAt(p.x + dx, p.y + dy)
+                    }
+            }
             for (p in places) {
                 val box = p.box
                 val free = !box.overlaps(mark) && placed.none { it.box.overlaps(box) || it.mark.overlaps(box) || (it.leader != null && box.crosses(it.leader)) } &&
@@ -241,6 +255,13 @@ object HorizonLabels {
             if (chosen != null && (forced || placed.none { it.box.overlaps(chosen.box) })) placed += chosen
         }
         return placed
+    }
+
+    /** T324: how far to move the span [lo]..[hi] so it lies within [min]..[max] (aligned to [min] when it is wider). */
+    private fun shift(lo: Double, hi: Double, min: Double, max: Double): Double = when {
+        lo < min || hi - lo > max - min -> min - lo
+        hi > max -> max - hi
+        else -> 0.0
     }
 
     /** T312: the two passes' names: [peaks] as [place] put them alone, then [aircraft] around them. */
@@ -274,6 +295,9 @@ data class RimPt(val x: Double, val y: Double)
 data class RimBox(val left: Double, val top: Double, val right: Double, val bottom: Double) {
     fun overlaps(o: RimBox): Boolean = left < o.right && o.left < right && top < o.bottom && o.top < bottom
     fun contains(p: RimPt): Boolean = p.x in left..right && p.y in top..bottom
+
+    /** T324: whether [o] lies wholly inside this box. */
+    fun holds(o: RimBox): Boolean = o.left >= left && o.right <= right && o.top >= top && o.bottom <= bottom
 
     /** Whether the line through [pts] touches this box (a vertex inside, or a segment crossing it). */
     fun crosses(pts: List<RimPt>): Boolean {
