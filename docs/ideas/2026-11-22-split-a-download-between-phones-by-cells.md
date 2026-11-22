@@ -11,3 +11,5 @@ Status: **untriaged and not sanity-checked** (an idea of the coordinator's own, 
 A group heading into the back country splits a region's cells between phones and swaps them in the car park, so the trip's maps arrive without every phone downloading the lot over one weak connection. A moonshot.
 
 **What exists already (to be checked):** **Exists in part:** phone-to-phone records between attested installs (ADR 0051) and "from a nearby phone" as a map source; cells as the unit (ADR 0060). Their joining is the idea.
+
+Waits: ADR 0051's stage 1b and ADR 0060's cell downloads both built; the split respects the tile source's terms (the owner, 2026-11-22, by multiple choice at triage).
