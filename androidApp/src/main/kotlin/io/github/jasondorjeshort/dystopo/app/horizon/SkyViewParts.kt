@@ -85,15 +85,15 @@ fun PlaceRow(place: PlaceLine, showBack: Boolean, pal: GnssPalette, night: Boole
 }
 
 /**
- * T325: the heading row that stays while the pane scrolls: the view's [title] and the help pop-up [helpKey] (a key of the
- * help registry), then [trailing] at the row's end.
+ * T325: the heading row that stays while the pane scrolls: the view's [title] and the help pop-up [help] (a key of the
+ * help registry, passed as `help = "key"` from the file that declares its text), then [trailing] at the row's end.
  */
 @Composable
-fun SkyViewHeading(title: String, helpKey: String, pal: GnssPalette, trailing: @Composable RowScope.() -> Unit = {}) {
+fun SkyViewHeading(title: String, help: String, pal: GnssPalette, trailing: @Composable RowScope.() -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             BasicText(title, Modifier.weight(1f, fill = false), style = TextStyle(color = pal.ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
-            HelpIcon(helpKey)
+            HelpIcon(help)
         }
         trailing()
     }

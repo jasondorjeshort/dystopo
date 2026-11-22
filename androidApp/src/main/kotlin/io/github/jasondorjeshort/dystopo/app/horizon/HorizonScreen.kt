@@ -330,7 +330,7 @@ fun HorizonScreen() {
                     PlaceRow(place, moved, pal, night)
                     // The heading stays while the rest scrolls: the title and its help. T325: no Close (the owner, 2026-11-21): the
                     // switch's "Map" and Back are the ways out.
-                    SkyViewHeading(HorizonText.TITLE, "horizon.view", pal)
+                    SkyViewHeading(HorizonText.TITLE, help = "horizon.view", pal = pal)
                     picked?.let { p -> PickedPeak(p, pal, units) }
                     Column(
                         Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),
@@ -341,9 +341,9 @@ fun HorizonScreen() {
                         if (orientation == SkyPlotOrientation.PHONE && heading == null) BasicText(GnssText.NORTH_UP_NO_COMPASS, style = TextStyle(color = pal.muted, fontSize = 13.sp))
                         TerrainLine(h, pos, units, pal)
                         // T312: Flights before Peaks: a short live list, where the Peaks list runs to dozens of rows.
-                        flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units) }
-                        if (layers.peaks) PeaksSection(h, peaks, selected, pal, units)
-                        if (layers.sun) SunSection(pos != null, sunDay, sunNow, fn, pal, night, tick)
+                        flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units, help = "horizon.flights") }
+                        if (layers.peaks) PeaksSection(h, peaks, selected, pal, units, help = "horizon.peaks")
+                        if (layers.sun) SunSection(pos != null, sunDay, sunNow, fn, pal, night, tick, help = "horizon.sun")
                         if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { clock.bump() }
                         if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
                     }

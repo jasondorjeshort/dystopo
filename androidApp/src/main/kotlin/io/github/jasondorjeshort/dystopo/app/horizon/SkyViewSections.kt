@@ -36,6 +36,8 @@ import java.time.LocalDate
 
 // T325: the sections of the sky view's scrolling area, each on its own, cut from HorizonScreen.kt with no change in what
 // they draw (the Satellites section is `app/gnss/`'s SatellitesSection). A host shows a section for each layer it offers.
+// Each takes its help key as `help` (the registry's test finds a text by `help = "key"` in the file that declares it,
+// the host's: HORIZON_HELP's `horizon.peaks`, `horizon.sun` and `horizon.flights` are HorizonScreen.kt's).
 
 /** T308: the sun's path colour: a warm amber, legible on the day and the night paper (the plot's path and the Sun section's legend). */
 internal fun sunColour(night: Boolean): Color = if (night) Color(0xFFE6A84E) else Color(0xFFB8641A)
@@ -58,9 +60,9 @@ private fun SectionHead(title: String, pal: GnssPalette, extra: String? = null, 
  * T325: [h] the horizon the peaks were found on, [peaks] those found, [selected] the picked key.
  */
 @Composable
-fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: String?, pal: GnssPalette, units: ContourUnits) {
+fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: String?, pal: GnssPalette, units: ContourUnits, help: String) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        SectionHead(HorizonText.PEAKS, pal) { HelpIcon("horizon.peaks") }
+        SectionHead(HorizonText.PEAKS, pal) { HelpIcon(help) }
         val line = when {
             h == null -> HorizonText.PEAKS_WORKING
             h.profile == null -> HorizonText.PEAKS_NO_TERRAIN
@@ -97,9 +99,9 @@ fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: Str
  * user's units, the kind and an emergency's line; a tap opens its card ([HorizonUi.selectedFlight], [selected] its hex).
  */
 @Composable
-fun FlightsSection(f: HorizonData.Flights, havePosition: Boolean, selected: String?, pal: GnssPalette, units: ContourUnits) {
+fun FlightsSection(f: HorizonData.Flights, havePosition: Boolean, selected: String?, pal: GnssPalette, units: ContourUnits, help: String) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        SectionHead(HorizonText.FLIGHTS, pal) { HelpIcon("horizon.flights") }
+        SectionHead(HorizonText.FLIGHTS, pal) { HelpIcon(help) }
         val line = when {
             !havePosition -> HorizonText.FLIGHTS_NO_POSITION
             f.list.isNotEmpty() -> HorizonText.flightsCount(f.list.size, f.range, units)
@@ -154,14 +156,14 @@ fun FlightsSection(f: HorizonData.Flights, havePosition: Boolean, selected: Stri
  * [fn] the horizon's angle at a bearing (null: no terrain), [tick] the view's clock (read so the section is read again).
  */
 @Composable
-fun SunSection(havePosition: Boolean, day: HorizonData.SunDay?, now: io.github.jasondorjeshort.dystopo.nav.Sun.Position?, fn: ((Double) -> Double)?, pal: GnssPalette, night: Boolean, tick: Int) {
+fun SunSection(havePosition: Boolean, day: HorizonData.SunDay?, now: io.github.jasondorjeshort.dystopo.nav.Sun.Position?, fn: ((Double) -> Double)?, pal: GnssPalette, night: Boolean, tick: Int, help: String) {
     @Suppress("UNUSED_VARIABLE") val t = tick
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val dateText = day?.let { d ->
             val date = LocalDate.of(d.sun.year, d.sun.month, d.sun.day)
             if (HorizonUi.date == null) HorizonText.TODAY else date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.getDefault()))
         }
-        SectionHead(HorizonText.SUN, pal, dateText) { HelpIcon("horizon.sun") }
+        SectionHead(HorizonText.SUN, pal, dateText) { HelpIcon(help) }
         if (!havePosition || day == null) {
             BasicText(HorizonText.SUN_NO_POSITION, style = TextStyle(color = pal.ink, fontSize = 14.sp))
             return@Column
