@@ -95,7 +95,9 @@ names over it (then item 3 goes and the camera ideas close), or if the owner, se
 strip as the view's main form.
 
 - Prediction, check when T322 is merged: the round plot's placed names at Paradise are the same before
-  and after, and `HorizonViewTest.kt` was not edited.
+  and after, and `HorizonViewTest.kt` was not edited. Outcome 2026-11-21: held. T322's pin test passed
+  with the test file untouched, and T321's verifier compared a build of the commit before the wave with
+  the wave's on one emulator at the same fix, time and layers: the same 8 names, the same 5 leaders.
 - Prediction, check when pass two is merged: no file of `shared/.../horizon/` had to fork for the lens
   (one placement, one layer list), and the Horizon view's sweep step still passes unchanged.
 - Prediction, check when the camera option is proposed: it adds a backdrop and a field-of-view match to
