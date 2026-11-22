@@ -252,19 +252,19 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.activity.ActivityChipOverlay() // T263: the current activity's chip, under Routes
         StartupTrace.composing("compose AttributionLine")
         // T315: beside the "Map | Horizon" switch at its right, inside the same insets as the switch's anchor. T326 (wave 45's
-        // choice (h)): beside the three segments while the text fits whole there, else above the switch across the window.
+        // choice (h)): beside the three segments with 240 dp of room there, else above the switch across the window
+        // (`OverlayLayout.creditAbove`, the layout rule's own test), its line cap kept either way.
         androidx.compose.foundation.layout.BoxWithConstraints(
             Modifier.fillMaxSize().navigationBarsPadding().windowInsetsPadding(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.anchorInsets),
         ) {
             val start = io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.creditStartDp
-            val above = start > 0f && io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.above
+            val above = start > 0f && io.github.jasondorjeshort.dystopo.ui.OverlayLayout.creditAbove((maxWidth - start.dp - 12.dp).value)
             AttributionLine(
                 attribution,
                 Modifier.align(Alignment.BottomStart).padding(
                     start = 6.dp + (if (above) 0f else start).dp, top = 6.dp, end = 6.dp,
                     bottom = 6.dp + (if (above) io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.reserveDp else 0f).dp,
                 ),
-                roomBeside = if (start > 0f) maxWidth - start.dp - 12.dp else null,
             )
         }
         StartupTrace.composing("compose OnlineOverlay")

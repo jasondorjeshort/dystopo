@@ -24,13 +24,12 @@ class OverlayLayoutTest {
     }
 
     /**
-     * T326: the credit line's text as the app measures it (`about/AttributionLine.kt`): [oneLine] dp wide on one line, so
-     * many lines at a width (the words break short of it: a tenth more), each [lineDp] tall, at most [maxLines]; whole when
-     * it needs no more. The Rainier pack's credit with the Flights layer's notice, near enough.
+     * T326: the credit line as `about/AttributionLine.kt` draws it: [oneLine] dp wide on one line, so many lines at a width
+     * (the words break short of it: a tenth more), each [lineDp] tall, capped at [maxLines] (ellipsised past it). The Rainier
+     * pack's credit with the Flights layer's notice, near enough.
      */
     private class CreditText(val oneLine: Float, val lineDp: Float, val maxLines: Int) {
         fun lines(room: Float): Int = kotlin.math.ceil(oneLine * 1.1f / room.coerceAtLeast(1f)).toInt().coerceAtLeast(1)
-        fun whole(room: Float): Boolean = lines(room) <= maxLines
         fun size(room: Float): OverlaySize = OverlaySize(minOf(oneLine * 1.1f, room), minOf(lines(room), maxLines) * lineDp + 4f)
     }
 
@@ -43,19 +42,17 @@ class OverlayLayoutTest {
         val k = curve(scale)
         val chip = minOf(k, 1.3f)
         fun card(natural: Float, least: Float, headline: Float, width: Float) = OverlayCard(natural * k, least * k, headline * k, minOf(width, w - 16f))
-        // T326: the credit beside the switch while its text fits whole there, else above it across the window (choice h).
+        // T326: the credit beside the switch with 240 dp of room there, else above it across the window (choice h).
         val insetRight = if (landscape) 48f else 0f
-        val text = creditText(k)
         val beside = OverlayLayout.creditRoomBeside(w, 0f, insetRight, switchSize(chip).width)
-        val above = !text.whole(beside)
-        val credit = text.size(if (above) OverlayLayout.creditRoomAcross(w, 0f, insetRight) else beside)
+        val credit = creditText(k).size(if (OverlayLayout.creditAbove(beside)) OverlayLayout.creditRoomAcross(w, 0f, insetRight) else beside)
         return OverlayInput(
             windowWidth = w, windowHeight = h,
             insetTop = 24f, insetBottom = if (landscape) 0f else 48f, insetRight = if (landscape) 48f else 0f,
             fontScale = scale,
             search = OverlaySize(OverlayLayout.SEARCH_WIDTH, 40f * chip),
             topRow = OverlaySize(150f * chip, 36f * chip),
-            credit = credit, creditAbove = above,
+            credit = credit,
             online = if (online) OverlaySize(140f * chip, 66f * chip) else null,
             trackBar = OverlaySize(170f * chip, 36f * chip),
             routes = OverlaySize(70f * chip, 36f * chip),
@@ -224,16 +221,10 @@ class OverlayLayoutTest {
         assertEquals(OverlayLayout.REASON_SCROLLS, o[OverlayIds.WARNING_CARD]?.reason)
         // T326: at 2.0 the credit line stands above the three-segment switch (choice h); that band is taken from the ladder,
         // in its order, the warning having scrolled first.
-        assertTrue(i.creditAbove)
+        assertTrue(OverlayLayout.creditAbove(i))
         assertTrue(o.isShown(OverlayIds.POSITION))
         if (!o.isShown(OverlayIds.SCALE_BAR)) assertTrue(!o.isShown(OverlayIds.LOCK) && !o.isShown(OverlayIds.ORIENTATION))
-        // With the credit beside a switch that leaves it room (the two segments' 150 dp), the buttons and the scale bar stay.
-        val beside = i.copy(horizonSwitch = OverlaySize(150f * 1.3f, 48f * 1.3f), creditAbove = false, credit = OverlaySize(190f, 36f))
-        val b = OverlayLayout.place(beside)
-        assertEquals(OverlayLayout.REASON_SCROLLS, b[OverlayIds.WARNING_CARD]?.reason)
-        assertTrue(b.isShown(OverlayIds.LOCK))
-        assertTrue(b.isShown(OverlayIds.SCALE_BAR))
-        assertEquals(4, b.entriesDrawn)
+        if (!o.isShown(OverlayIds.ORIENTATION)) assertTrue(!o.isShown(OverlayIds.LOCK))
     }
 
     @Test
@@ -309,44 +300,52 @@ class OverlayLayoutTest {
             // The credit line beside it at its right (T326: or above it, choice h); everything else above it (no other element
             // reaches its band at the left).
             val credit = p[OverlayIds.CREDIT]!!.rect!!
-            if (i.creditAbove) assertTrue(credit.bottom <= anchor.top, "credit above: $credit $at")
+            val creditAbove = OverlayLayout.creditAbove(i)
+            if (creditAbove) assertTrue(credit.bottom <= anchor.top, "credit above: $credit $at")
             else assertTrue(credit.left >= anchor.right, "credit beside: $credit $at")
             for (e in p.elements) {
                 val r = e.rect ?: continue
                 if (e.id == OverlayIds.HORIZON_SWITCH || e.id == OverlayIds.CREDIT) continue
                 assertTrue(r.bottom <= anchor.top, "${e.id} above the switch: $r $anchor $at")
-                if (i.creditAbove) assertTrue(r.bottom <= credit.top, "${e.id} above the credit line: $r $credit $at")
+                if (creditAbove) assertTrue(r.bottom <= credit.top, "${e.id} above the credit line: $r $credit $at")
             }
         }
     }
 
     /**
-     * T326's Done when (choice h): with the wider switch the credit line's width is never under its text's in any cell: beside
-     * the switch where the text fits whole there, else above it across the window, and whole there.
+     * T326's Done when (choice h as revised): the credit line stands beside the switch where the room there is 240 dp or
+     * more, else above it across the window; its room is never under 240 dp in any cell, and its width never under its own.
      */
     @Test
-    fun theCreditLineIsNeverCutShortForTheSwitch() {
+    fun theCreditLineHas240DpOrStandsAboveTheSwitch() {
         var above = 0
         var beside = 0
         grid { i, o, at ->
+            val sw = OverlayLayout.switchRect(i)!!
             for (p in listOf(o, OverlayLayout.place(drawnFrom(i)))) {
                 val credit = p[OverlayIds.CREDIT]!!.rect!!
-                assertTrue(credit.width + 0.01f >= i.credit.width, "the credit line $credit under its text's width ${i.credit.width} at $at")
+                assertTrue(credit.width + 0.01f >= i.credit.width, "the credit line $credit under its width ${i.credit.width} at $at")
                 assertEquals(i.credit.height, credit.height, 0.01f, at)
-                val text = creditText(curve(i.fontScale))
-                assertTrue(text.whole(credit.width), "the credit's text not whole in $credit at $at")
-                assertTrue(credit.right <= i.windowWidth - i.insetRight + 0.01f, at)
+                val room = i.windowWidth - i.insetRight - 6f - credit.left
+                assertTrue(room + 0.01f >= OverlayLayout.CREDIT_BESIDE_MIN, "the credit's room $room under 240 dp at $at")
+                if (OverlayLayout.creditAbove(i)) assertTrue(credit.bottom <= sw.top, at) else assertTrue(credit.left >= sw.right, at)
             }
-            if (i.creditAbove) above++ else beside++
+            if (OverlayLayout.creditAbove(i)) above++ else beside++
         }
-        // Both arms are taken by the grid: beside on the wider windows at 1.0, above at 2.0 on a narrow phone.
         assertTrue(above > 0 && beside > 0, "above $above beside $beside")
-        // The common phone (411 x 914): at 2.0 upright the credit stands above the three segments.
-        val at2 = input(411f, 914f, false, 2f, 0, 1, false, true)
-        assertTrue(at2.creditAbove)
-        val o = OverlayLayout.place(at2)
-        assertTrue(o[OverlayIds.CREDIT]!!.rect!!.bottom <= o[OverlayIds.HORIZON_SWITCH]!!.rect!!.top)
-        assertEquals(emptyList(), o.overlaps())
+        // The common phone: above at 411 wide (both scales), beside at 914 wide (both scales, the cutout's inset at the left).
+        for (scale in listOf(1f, 2f)) {
+            val up = input(411f, 914f, false, scale, 0, 1, false, true)
+            assertTrue(OverlayLayout.creditAbove(up), "411 wide at $scale")
+            val o = OverlayLayout.place(up)
+            assertTrue(o[OverlayIds.CREDIT]!!.rect!!.bottom <= o[OverlayIds.HORIZON_SWITCH]!!.rect!!.top)
+            assertEquals(emptyList(), o.overlaps())
+            val side = input(914f, 411f, true, scale, 0, 1, false, true).copy(insetLeft = 48f)
+            assertTrue(!OverlayLayout.creditAbove(side), "914 wide at $scale")
+            val s = OverlayLayout.place(side)
+            assertTrue(s[OverlayIds.CREDIT]!!.rect!!.left >= s[OverlayIds.HORIZON_SWITCH]!!.rect!!.right)
+            assertEquals(emptyList(), s.overlaps())
+        }
     }
 
     @Test

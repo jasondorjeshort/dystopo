@@ -21,7 +21,7 @@ import io.github.jasondorjeshort.dystopo.horizon.SkyView
  * - `GET /panorama`: `open` (the Panorama showing), `showing` (`map`, `horizon` or `panorama`), `aim` (`bearingDeg`,
  *   `tiltDeg`, `fovDeg`, `opening`: where the opening's bearing came from, `peak`, `heading`, `heading-late` or `north`),
  *   `plot` (`rectPx` in the Compose root, `widthPx`, `heightPx`, `dp`, `widthDp`, `heightDp`, `levelY` (px from the plot's
- *   top, null off the view), `zoomButtonsPx`), `listPx` (the pane's scrolling list), `headingScrolls`, `drawn` (the
+ *   top, null off the view), `zoomButtonsPx` (in the Compose root, as `rectPx`)), `listPx` (the pane's scrolling list), `headingScrolls`, `drawn` (the
  *   layout, the place line, the layers, the steps wanted), `place` (`point`, `placeLine`), `range` (`viewRangeKm`),
  *   `names` (each placed: `name`, `x`, `y`, `markX`, `markY`, `dominant`, `distanceKm`, `bearingDeg`, `angleDeg`, `leader`),
  *   `leftOut` (`name`, `reason`: `behind the viewer`, `off the view`, `no room`), `dominant` and `closest` (the candidates'),
@@ -159,7 +159,10 @@ object PanoramaRoutes {
                     "rectPx" to PanoramaUi.plotPx, "widthPx" to w, "heightPx" to h, "dp" to dp,
                     "widthDp" to Math.round(w / dp), "heightDp" to Math.round(h / dp),
                     "levelY" to scene?.level?.let { r1(it[1]) },
-                    "zoomButtonsPx" to PanoramaScene.zoomButtons(w, h, dp).map { b -> listOf(b.left, b.top, b.right, b.bottom).map { Math.round(it) } },
+                    // In the Compose root, as rectPx and the other rectangles.
+                    "zoomButtonsPx" to PanoramaUi.plotPx?.let { r ->
+                        PanoramaScene.zoomButtons(w, h, dp).map { b -> listOf(b.left + r[0], b.top + r[1], b.right + r[0], b.bottom + r[1]).map { Math.round(it) } }
+                    },
                 )
             },
             "listPx" to PanoramaUi.listPx, "switchPx" to PanoramaUi.switchPx, "headingScrolls" to PanoramaUi.headingScrolls,

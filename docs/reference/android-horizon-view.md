@@ -24,12 +24,12 @@ on the Horizon view and on the Panorama view, whatever cards are up, in both ori
 
 - **On the map** the switch is not on the layout rule's ladder and never hides: the rule reserves its rectangle in its
   frame (`OverlayLayout.switchRect`, `horizonSwitch` in `GET /layout`), the credit line stands beside it at its right, and
-  the scale bar, the readout strip and the position buttons stand above it. T326 (wave 45's choice (h)): where the
-  credit's text does not fit whole beside the three segments at its two lines (three with the Flights layer's notice),
-  measured in `about/AttributionLine.kt` (`OverlayLayout.creditRoomBeside`, `AttributionInsets.above`), the credit line
-  stands above the switch across the window with as many lines as its text needs, and the lower controls above it
-  (`OverlayInput.creditAbove`); it is never cut short for the switch. With the Rainier pack on a 411 dp phone it stands
-  above at font scale 1.0 (two lines, three with the flights' notice) and at 2.0 (five lines with the notice). The cards and panels drawn by their own code
+  the scale bar, the readout strip and the position buttons stand above it. T326 (wave 45's choice (h), revised after
+  its verifier): where the room beside the three segments is under 240 dp (`OverlayLayout.CREDIT_BESIDE_MIN`,
+  `creditRoomBeside`, `creditAbove`: pure, no text measured), the credit line stands above the switch across the window
+  and the lower controls above it; with 240 dp or more it stays beside the switch. Either way it keeps its line cap (two
+  lines, three with the Flights layer's notice, ellipsised; a tap opens the full credits). On a 411 dp phone it stands
+  above at every font scale; at 914 dp on its side it is beside. The cards and panels drawn by their own code
   (the route card, the trip card, the update offer, the flights card, the track panels, the first-run card) stand on
   `AttributionInsets.bottom`, the higher of the credit line and the switch (`ViewSwitch.floorDp`). T309's ladder rung and
   T310's `firstRunCard` hiding are gone; so is the switch's height in the route card's cap (`BottomPanels.mapRowDp`), which

@@ -76,13 +76,6 @@ data class OverlayInput(
      */
     val horizonSwitch: OverlaySize? = null,
     /**
-     * T326 (wave 45's choice (h)): the credit's text does not fit whole in the room beside the switch
-     * ([OverlayLayout.creditRoomBeside], measured by the app at its maximum lines), so the credit line stands above the
-     * switch across the window, [credit] its size there, and the map's lower controls stand above it. It is never cut
-     * short for the switch.
-     */
-    val creditAbove: Boolean = false,
-    /**
      * T257: how many of [strip]'s first entries outrank the scale bar (the readout's own four, the course by its point);
      * the rest (the pressure, the extended readout's, the course's degrees) are left out before the scale bar yields,
      * and never come back once it has. Past [strip]'s size: every entry outranks it, as before T257.
@@ -291,15 +284,28 @@ object OverlayLayout {
     }
 
     /**
-     * T326: the width the credit line's text has beside the switch (dp, its plate's padding in): from the switch's right
-     * edge and [CREDIT_PAD] to [CREDIT_PAD] short of the right inset. The app measures the credit's text at this width and
-     * its maximum lines; when it does not fit whole, [OverlayInput.creditAbove].
+     * T326 (wave 45's choice (h), as revised after its verifier): the least room beside the switch the credit line stands
+     * in (dp); with less it stands above the switch across the window. Either way it keeps its line cap (two lines, three
+     * with the flights' notice; a tap opens the full credits).
+     */
+    const val CREDIT_BESIDE_MIN = 240f
+
+    /**
+     * T326: the width the credit line has beside the switch (dp, its plate's padding in): from the switch's right edge and
+     * [CREDIT_PAD] to [CREDIT_PAD] short of the right inset.
      */
     fun creditRoomBeside(windowWidth: Float, insetLeft: Float, insetRight: Float, switchWidth: Float): Float =
         (windowWidth - insetRight - CREDIT_PAD - (min(windowWidth, insetLeft + SWITCH_EDGE + switchWidth) + CREDIT_PAD)).coerceAtLeast(0f)
 
-    /** T326: the width the credit line's text has above the switch, across the window (dp, its plate's padding in). */
+    /** T326: the width the credit line has above the switch, across the window (dp, its plate's padding in). */
     fun creditRoomAcross(windowWidth: Float, insetLeft: Float, insetRight: Float): Float = (windowWidth - insetRight - insetLeft - 2 * CREDIT_PAD).coerceAtLeast(0f)
+
+    /** T326 (choice h): whether the credit line stands above the switch: the room beside it ([creditRoomBeside]) is under [CREDIT_BESIDE_MIN]. */
+    fun creditAbove(roomBeside: Float): Boolean = roomBeside < CREDIT_BESIDE_MIN
+
+    /** T326: [creditAbove] for [i] (false while no switch is up). */
+    fun creditAbove(i: OverlayInput): Boolean =
+        i.horizonSwitch != null && creditAbove(creditRoomBeside(i.windowWidth, i.insetLeft, i.insetRight, i.horizonSwitch.width))
 
     /** T315: [switchRect] of [i]'s switch, or null while it is not up. */
     fun switchRect(i: OverlayInput): OverlayRect? = i.horizonSwitch?.let { switchRect(i.windowWidth, i.windowHeight, i.insetLeft, i.insetBottom, it) }
@@ -422,8 +428,8 @@ object OverlayLayout {
         val safeB = i.windowHeight - i.insetBottom
         val sw = switchRect(i)
         sw?.let { out += OverlayElement(OverlayIds.HORIZON_SWITCH, it, OverlayState.SHOWN) }
-        // T326 (choice h): beside the switch while its text fits whole there, else above it across the window.
-        val above = sw != null && i.creditAbove
+        // T326 (choice h): beside the switch with CREDIT_BESIDE_MIN of room there, else above it across the window.
+        val above = sw != null && creditAbove(i)
         val creditL = (if (above) safeL else sw?.right ?: safeL) + CREDIT_PAD
         val creditW = min(i.credit.width, (safeR - creditL - CREDIT_PAD).coerceAtLeast(0f))
         val creditBottom = if (above) sw!!.top - CREDIT_PAD else safeB - CREDIT_PAD

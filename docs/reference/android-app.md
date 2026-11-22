@@ -268,7 +268,7 @@ The viewshed from a point (`app/viewshed/`, the shared core `shared/.../dem/View
 
 ## The Horizon view (T307, T308, T309, T315)
 
-The map's "Map | Horizon | Panorama" switch (T309, `controls/ViewSwitch.kt`: Map selected; T326: three segments, the third opening the Panorama view, `android-panorama-view.md`, and the credit line above the switch where its text is not whole beside it; T315: at one anchor in every view, the window's bottom-left corner, with the credit line beside it and the map's lower controls above it, `horizonSwitch` in `GET /layout`, never hidden) and Settings › Navigation and tracking › "Horizon view ›" open the Horizon view (T308; T307's GPS view, now its Satellites layer): the sky plot with the land's skyline, the peaks in view, the sun's path and the satellites, each a layer with a toggle. Everything about it: `android-horizon-view.md`.
+The map's "Map | Horizon | Panorama" switch (T309, `controls/ViewSwitch.kt`: Map selected; T326: three segments, the third opening the Panorama view, `android-panorama-view.md`, and the credit line above the switch, across the window, where the room beside it is under 240 dp, its line cap kept; T315: at one anchor in every view, the window's bottom-left corner, with the credit line beside it and the map's lower controls above it, `horizonSwitch` in `GET /layout`, never hidden) and Settings › Navigation and tracking › "Horizon view ›" open the Horizon view (T308; T307's GPS view, now its Satellites layer): the sky plot with the land's skyline, the peaks in view, the sun's path and the satellites, each a layer with a toggle. Everything about it: `android-horizon-view.md`.
 
 ## Flights on the map (T311)
 
