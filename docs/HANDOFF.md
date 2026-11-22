@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-22, at commit b9873fb0, by main session (wave 45: all five tasks merged, the closing sweep next)
+Updated: 2026-11-22, at commit f02242f4, by main session (wave 45: the closing sweep red on one step of its own, T336 in flight; wave 46 on the board, not launched)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the open wave in `docs/TASKS.md`
 ("## Wave 45": its paragraphs settle the choices and the order), the last closed wave's record
 `docs/tasks/wave-44.md`, and the ideas (`node .claude/hooks/queue-list.js ideas`).
@@ -9,15 +9,15 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the open wave
 ## Now
 
 - **Wave 45 is open** (planned 2026-11-21 on the owner's word, after its critic: LAUNCH AFTER EDITS, answered in the wave paragraph): pass two of the Panorama view (ADR 0064) as a chain, T324 (the scene, the aim and the gestures' arithmetic in `shared`), T325 (the Horizon view's pane cut into parts two views can host; its Close button goes), T326 (the third segment, the lens plot, drag, tilt and zoom), T327 (the other layers, a row that turns the view, the edge arrow), and T328 (a launch crash keeps its stack; the start-up walker that throws).
-- **All five merged:** T324 (e8f17be5), T325 (74a5c2a7), T328 (cce2267e), T326 (e7690a9d, one fix round: the credit line's rule, choice (h), revised) and T327 (b9873fb0, MERGE WITH NOTES), each logged; ADR 0064's second prediction recorded (held). No task agent is in flight. T327's cleanup chore and the closing sweep are the next launches; if a session resumes with neither alive, check `git branch -r --list 'origin/task/*'`, `E:\dystopo-avd` and the newest `out\sweep-<date>` folder first.
-- **Cost:** the 7-day meter read 7 at planning (reset 2026-11-28 03:00 UTC), the 5-hour meter 4; the wave is figured at 8.5. The hold is 97.
+- **All five merged and logged:** T324 (e8f17be5), T325 (74a5c2a7), T328 (cce2267e), T326 (e7690a9d) and T327 (b9873fb0); ADR 0064's second prediction held. **The closing sweep** `out/sweep-20261122-w45` (main 11a94519, 96 min, `-Prev out/sweep-20261121-w44`) was red on `features` alone: the step `panorama` wants 347 degrees at Mount Rainier and the app, agreeing with itself in both views' frames, said 343. Every other part green, no launch crash, no flake; its figures are in its `summary.json` for the close's log entry. **T336** (added at the close; Sonnet implementer launched, worktree `dystopo-wt/T336` [no-check: a sibling folder], AVD `dystopo35-T336`, console 5650, host 8996) makes the step read the bearing from the row it taps. If a session resumes with no agent alive, check `git branch -r --list 'origin/task/*'` and `E:\dystopo-avd` first.
+- **Cost:** the 7-day meter read 7 at wave 45's planning and 14 when wave 46 went on the board (reset 2026-11-28 03:00 UTC); wave 45 is figured at 8.5, wave 46 at 10. The hold is 97.
 - The live viewer on 8765 is wanted and was answering at the launch (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; at most two Gradle agents and two emulators, a verifier counting as one.
 
 ## Next
 
-1. Done: T327 verified, merged and logged.
-2. Close the wave: the README status, the sweep with `-First` on the Panorama frames (`sweep-diff.py --check-first` on the exact names first), v0.1.41-alpha by the `release` skill, costs by `tools/agent-cost.py`, the record `docs/tasks/wave-45.md` [no-check: written at the close].
-3. Then, without asking again (the owner, 2026-11-22: "After this release we can go ahead and build the next one."): plan wave 46 by the `wave` skill, its critic first, and run it. Panorama pass three (Follow the phone, the steering setting, the named offset); triage of the ideas of 2026-11-21 still untriaged and the 20 answered Questions into Plans; the reroute's amendment to ADR 0040; the routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`.
+1. T336: a Sonnet verifier on its branch (`check`, `python -I tools/test_android_ui.py`, the delta; the device run is step 2's), the merge sequence, the log, the cleanup chore.
+2. Close wave 45: a sweep agent reruns `-Only features -RerunOf out\sweep-20261122-w45` on `main` into a second folder; green, then v0.1.41-alpha by the `release` skill, the close's log entry with the first sweep's figures, costs by `tools/agent-cost.py` (T324 to T328, T336), the allowance sentence's closing reading, and the chore that writes `docs/tasks/wave-45.md` [no-check: written at the close] and lifts the follow-ups to Later.
+3. Then, without asking again (the owner, 2026-11-22: "After this release we can go ahead and build the next one."): launch wave 46 as its paragraph on the board orders it ("## Wave 46": its critic is answered there; T329, T332 and T335 first, the two chains after). The triage of 2026-11-22 is committed, one idea per commit. At T331's merge ADR 0064 takes a dated line (the offset is a heading correction, not kept between sessions); at T330's, Owner actions pending takes the real-phone check of the filter's constants.
 
 ## Waiting on user
 
