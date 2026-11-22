@@ -32,6 +32,13 @@ import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.options.SunPoint
 import io.github.jasondorjeshort.dystopo.app.options.SunShade
 import io.github.jasondorjeshort.dystopo.app.routing.RouteSession
+import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
+import io.github.jasondorjeshort.dystopo.app.horizon.HorizonData
+import io.github.jasondorjeshort.dystopo.dem.Horizon
+import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
+import io.github.jasondorjeshort.dystopo.horizon.SightKind
+import io.github.jasondorjeshort.dystopo.horizon.SightLine
 import java.util.Locale
 
 /**
@@ -62,6 +69,10 @@ import java.util.Locale
  * T251: a press on the position marker names it in the card's first line ([mark], `MapController.puckMark`: "Your position
  * (GPS, ±8 m)", "Your position, roughly (a poor GPS fix, ±120 m)", "No position, last known 7 min ago"), with the marks'
  * help ([MAP_MARKS_HELP]) beside it.
+ *
+ * T334: with a fresh fix, a line under the coordinates says whether the place is in view from it ([sight],
+ * shared `horizon/SightLine`): "In view, 12.4 mi NNW", "Hidden by a ridge 3.1 mi away, 40 m below the line of sight",
+ * "Cannot tell from here"; worked out off the main thread. `GET /map/longpress` › `sight` has the answer and its figures.
  */
 object LongPressMenu {
     private var pointState by mutableStateOf<Pair<Double, Double>?>(null)
@@ -78,9 +89,13 @@ object LongPressMenu {
                 sun = null
                 knownRuns.incrementAndGet() // T197
                 known = null
+                sightRuns.incrementAndGet() // T334
+                sight = null
+                sightInfo = null
             } else if (moved || sun == null) {
                 startSun()
                 startKnown(v.first, v.second) // T197
+                startSight(v.first, v.second) // T334
             }
         }
 
@@ -168,6 +183,82 @@ object LongPressMenu {
         }
     }
     // end T197
+
+    // T334: "Can I see it from here?", the card's line for the open point, worked out on its own thread when the card opens.
+    /** The card's sight line: null while there is no fresh fix (no line drawn), else its text, [SightUi.working] until it is known. */
+    var sight by mutableStateOf<SightUi?>(null)
+        private set
+    @Volatile private var sightInfo: Map<String, Any?>? = null
+    private val sightRuns = java.util.concurrent.atomic.AtomicInteger()
+
+    /** What the card draws for the sight line: [text], muted while [working]. */
+    class SightUi(val text: String, val working: Boolean)
+
+    /** True while the sight line is being worked out (`POST /map/longpress` waits on it). */
+    val sightWorking: Boolean get() = sightInfo?.get("state") == "working"
+
+    /**
+     * Stands on the fix the card's "I am at" reads ([LiveReadout.freshFix]); the place is the named peak, saddle or pass
+     * under the finger (its tagged height) or the pressed point. The fix's kept horizon ([Gnss.horizon], within
+     * [Gnss.HORIZON_MOVE_M] of the fix) answers when it can; else one ray over the terrain read out to the place.
+     */
+    private fun startSight(lat: Double, lon: Double) {
+        val run = sightRuns.incrementAndGet()
+        val fix = LiveReadout.freshFix()
+        if (fix == null) {
+            sight = null
+            sightInfo = mapOf("state" to "noFix")
+            return
+        }
+        sight = SightUi(SightLine.WORKING, true)
+        sightInfo = mapOf("state" to "working")
+        val app = DystopoApp.instance
+        val metersPerDp = runCatching { app.map.map?.projection?.getMetersPerPixelAtLatitude(lat) }.getOrNull()
+        val radius = maxOf(HorizonData.FEATURE_PRESS_M, (metersPerDp ?: 0.0) * FINGER_DP)
+        val units = AppSettings.units
+        Thread({
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val info: Map<String, Any?> = try {
+                val peak = HorizonData.featureAt(lat, lon, radius)
+                val pLat = peak?.lat ?: lat
+                val pLon = peak?.lon ?: lon
+                val kept = Gnss.horizon?.takeIf { it.profile != null && TrackStats.distanceM(it.lat, it.lon, fix.lat, fix.lon) < Gnss.HORIZON_MOVE_M }
+                val s = if (kept != null) {
+                    SightLine.of(kept.profile, kept.terrain, fix.lat, fix.lon, pLat, pLon, peak?.eleM)
+                } else {
+                    val d = TrackStats.distanceM(fix.lat, fix.lon, pLat, pLon)
+                    val terrain = if (d < HorizonPlace.HERE_M || d > Horizon.DEFAULT_RANGE_M) null else terrainTo(fix.lat, fix.lon, d)
+                    SightLine.of(null, terrain, fix.lat, fix.lon, pLat, pLon, peak?.eleM)
+                }
+                linkedMapOf<String, Any?>("state" to "done") + s.json(units) + linkedMapOf(
+                    "place" to linkedMapOf("lat" to pLat, "lon" to pLon, "name" to peak?.name),
+                    "fix" to linkedMapOf("lat" to fix.lat, "lon" to fix.lon, "source" to fix.source, "time" to fix.time),
+                    "keptHorizon" to (kept != null),
+                    "ms" to android.os.SystemClock.elapsedRealtime() - t0,
+                )
+            } catch (e: Exception) {
+                android.util.Log.w("Dystopo", "sight line failed", e)
+                linkedMapOf("state" to "done", "kind" to SightKind.CANNOT_TELL.key, "text" to SightLine.CANNOT_TELL, "error" to e.javaClass.simpleName, "ms" to android.os.SystemClock.elapsedRealtime() - t0)
+            }
+            main.post {
+                if (run != sightRuns.get()) return@post
+                sight = (info["text"] as? String)?.let { SightUi(it, false) }
+                sightInfo = info
+            }
+        }, "dystopo-sight-line").apply { isDaemon = true }.start()
+    }
+
+    /** The terrain from the fix out to [distanceM] and a little past (the offline map's elevation, as the fix's sweep reads it), or null with none. */
+    private fun terrainTo(lat: Double, lon: Double, distanceM: Double): io.github.jasondorjeshort.dystopo.dem.Terrain? {
+        val p = DystopoApp.instance.tiles.shade.pyramidAt(lat, lon) ?: return null
+        val zoom = minOf(p.maxZoom, io.github.jasondorjeshort.dystopo.tiles.ShadeTiles.POINT_ZOOM)
+        val range = minOf(Horizon.DEFAULT_RANGE_M, distanceM + SIGHT_MARGIN_M)
+        return Horizon.terrainAround(lat, lon, zoom, range, tileSize = p.tileSize) { w -> p.window(w.zoom, w.x0, w.y0, w.width, w.height) }
+    }
+
+    /** The terrain for a ray is read this far past the place, so its coverage reaches it. */
+    private const val SIGHT_MARGIN_M = 500.0
+    // end T334
 
     private fun startSun() {
         val (lat, lon) = point ?: return
@@ -298,6 +389,7 @@ object LongPressMenu {
         "sun" to sun?.json(), // T188: the sun line and the terrain day behind it
         "knownHeight" to (if (point != null) knownInfo else null), // T197: "I am at <name>, <height>" and why (not)
         "mark" to mark, // T251: the position marker's name when the press is on it
+        "sight" to (if (point != null) sightInfo else null), // T334: "Can I see it from here?"
     )
 }
 
@@ -334,6 +426,9 @@ internal fun LongPressCard() {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(String.format(Locale.US, "%.5f, %.5f", p.first, p.second), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 12.sp))
             HelpIcon("longPress.menu") // T109: dropping a waypoint, which was hard to find
+        }
+        LongPressMenu.sight?.let { s -> // T334: "Can I see it from here?", with a fix
+            BasicText(s.text, Modifier.fillMaxWidth(), style = TextStyle(color = if (s.working) Muted else Ink, fontSize = 13.sp))
         }
         PointLines()
         // The actions; a new entry goes in this row in its place in [LongPressMenu.ACTIONS].
@@ -377,7 +472,9 @@ internal val LONG_PRESS_HELP: List<HelpText> = listOf(
         "A long-press on the map opens this card. Route to here plans a route from where you are to the point. " +
             "Waypoint here marks it with a waypoint you can name. Route " +
             "from here starts a route there: long-press again where it ends. What can I see from here " +
-            "shows the ground and peaks in view; Sky from here, the sky there." // T317
+            "shows the ground and peaks in view; Sky from here, the sky there. " + // T317
+            "With a GPS fix, the line under the coordinates says whether the point is in view from where you are, " +
+            "or how far off the ridge that hides it is." // T334
     },
     // T188: the sun line.
     HelpText("longPress.sun", "Sun at this point", "The map: long-press anywhere, the sun line", show = { LongPressMenu.showAtCentre() }) {

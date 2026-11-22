@@ -105,6 +105,9 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   here", "Waypoint here", "Route from here", Cancel), or while a route waits for its end (or, after Choose on map,
  *   its start) passes straight to the route; `POST /map/longpress/to|waypoint|route|cancel` taps the card's entries
  *   (`to` is Route to here, `route` Route from here); `GET /map/longpress` its state (`lastAction`, `actions`).
+ *   T334: `sight`, the card's "Can I see it from here?" line (`state` `noFix|working|done`, `kind`
+ *   `inView|hidden|cannotTell|here`, `text`, `by` `horizon|ray`, `why`, the figures, `place`, `fix`, `keptHorizon`, `ms`);
+ *   `POST /map/longpress` waits for it up to `wait` ms (default 10000, `wait=0` answers at once).
  * - `POST /tracks/import` with a GPX body (`?name=` names a track the file leaves unnamed), or
  *   `POST /tracks/import?file=<name>` for a file in `files/tracks/`; `GET /tracks/files` lists those.
  *   Tracks keep their ids from `dystopo:id`; ids already stored are skipped.
@@ -142,6 +145,9 @@ object TrackRoutes {
     private val trackPath = Regex("^/tracks/($UUID|-)(\\.gpx|/waypoint|/export|/show|/profile)?$")
     private val waypointPath = Regex("^/tracks/waypoints/($UUID)(/select)?$")
 
+    /** T334: how long `POST /map/longpress` waits for the card's sight line by default (ms). */
+    private const val SIGHT_WAIT_MS = 10_000L
+
     fun handle(app: DystopoApp, r: Request): Response? {
         if (r.path != "/tracks" && !r.path.startsWith("/tracks/") && !r.path.startsWith("/location") && r.path != "/waypoint" && !r.path.startsWith("/map/longpress")) return null
         io.github.jasondorjeshort.dystopo.app.tracking.ActivityPicker.handle(app, r)?.let { return it } // T172: the picker, a track's activity
@@ -177,7 +183,12 @@ object TrackRoutes {
             "POST" to "/map/longpress" -> {
                 val lat = p.d("lat") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
                 val lon = p.d("lon") ?: return Response.json(mapOf("error" to "lat and lon required"), 400)
-                return Response.json(app.map.onMain { LongPressMenu.longPress(lat, lon); LongPressMenu.json() })
+                app.map.onMain { LongPressMenu.longPress(lat, lon) }
+                // T334: the answer waits for the card's sight line, at most `wait` ms (0: at once).
+                val until = android.os.SystemClock.elapsedRealtime() + (p.d("wait")?.toLong() ?: SIGHT_WAIT_MS).coerceIn(0L, 60_000L)
+                while (LongPressMenu.sightWorking && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(50)
+                // end T334
+                return Response.json(app.map.onMain { LongPressMenu.json() })
             }
             "POST" to "/map/longpress/to", "POST" to "/map/longpress/waypoint", "POST" to "/map/longpress/route", "POST" to "/map/longpress/cancel" -> {
                 val action = r.path.substringAfterLast('/')
