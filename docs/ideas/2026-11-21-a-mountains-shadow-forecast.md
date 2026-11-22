@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-21-one-clock-for-the-whole-app-past-and-future.md]
+related: [2026-11-21-one-clock-for-the-whole-app-past-and-future.md, 2026-11-21-a-viewpoint-finder-where-a-peak-can-be-seen-from.md]
 ---
 
 # A mountain's shadow forecast: when a peak's shadow falls across the sky, and where to stand to see it

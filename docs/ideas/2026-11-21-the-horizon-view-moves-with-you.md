@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md]
+related: [2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-21-the-view-from-a-routes-high-point.md]
 ---
 
 # The Horizon view moves with you along a route, refreshed as cost allows

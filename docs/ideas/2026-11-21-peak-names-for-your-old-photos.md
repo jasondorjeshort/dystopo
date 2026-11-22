@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-10-29-viewshed-and-peak-labels.md, 2026-11-21-one-clock-for-the-whole-app-past-and-future.md]
+related: [2026-10-29-viewshed-and-peak-labels.md, 2026-11-21-one-clock-for-the-whole-app-past-and-future.md, 2026-11-02-horizon-match-fix-from-the-camera.md]
 ---
 
 # Peak names for your old photos, offline, from the photo's place and time
@@ -19,3 +19,5 @@ The owner, 2026-11-21: "Definitely, eventually."
 
 - Picking the photo: Android's photo picker, no storage permission; EXIF location is stripped by some share paths.
 - It is the Panorama view at a chosen point and a chosen time, so it waits for the Panorama view and the one-clock idea.
+- 2026-11-21: a photo with no place in it (stripped EXIF) is the horizon-match idea's search run on a still image;
+  recorded there (`2026-11-02-horizon-match-fix-from-the-camera.md`).

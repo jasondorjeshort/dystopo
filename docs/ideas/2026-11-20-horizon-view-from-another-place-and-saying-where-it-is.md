@@ -17,4 +17,9 @@ What T321 left:
   result" as the map's selection; a tapped waypoint (its sheet open) does not yet count for the switch.
 - **"View from map centre"** in Horizon mode (pan the map, then see the sky from its centre): the switch with a selection
   replaced it as the main way in; whether it is still wanted beside it is open.
+- **Hop history** (2026-11-21, the coordinator's list after wave 44, recorded on the owner's "we can record them
+  all"). Back steps through the places you looked from, not only to your own: "View from here" on a peak, then on a
+  second peak seen from it, then Back returns to the first. Today Back and "Back to here" both go straight to the fix
+  (`HorizonUi.back()`). The last hops return without a sweep, since `Gnss.horizons` keeps `HORIZON_KEEP` of them; the
+  place line still says where each step stands, and "Back to here" stays the one-tap way home.
 - The Panorama view's segment calls the same rule (`ViewSwitch.openAtSelection`) when it is built.

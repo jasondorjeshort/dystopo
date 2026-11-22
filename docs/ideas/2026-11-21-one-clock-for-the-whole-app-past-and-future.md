@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md]
+related: [2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-21-when-the-sun-or-moon-stands-on-a-named-peak.md]
 ---
 
 # One clock for the whole app: set a time, and the map, the Horizon view and the Panorama show then
@@ -28,3 +28,8 @@ with "Back to now"; nothing persists across launches.
   of "Sky from here" share one band.
 - Which layers can honestly show the past or future (sun, moon, shade: yes; satellites: needs orbits; flights: no).
 - Benchmark first (ADR 0039): how planners and astronomy apps set and show a non-current time.
+- 2026-11-21, the coordinator's "sunlit map at a chosen hour" after wave 44, recorded on the owner's "we can record
+  them all": the hour is built (T188's slider covers one day at the view's centre, shade tiles by the minute); what
+  this clock adds is the date. One answer deserves a line of its own under it: "will this campsite get morning sun",
+  as a row at a long-pressed point for the set date ("Direct sun 8:10 AM to 4:35 PM"), from `Sun.onTerrain` on that
+  point's horizon, which the Horizon view's sun path already uses where the view stands.
