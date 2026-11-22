@@ -54,6 +54,8 @@ private val Accent = Color(0xFF7A4E2D)
 private val Line = Color(0xFFE2D8C6)
 private val Red = Color(0xFFB0302A)
 private val Link = Color(0xFF2C7BB6)
+/** T332: the outside line's action, darker than [Link] so it reads at 4.5:1 or more over the translucent paper (about 7:1). */
+private val DeepLink = Color(0xFF1B5E8C)
 
 private class CardUi(val server: String,val progress: String?, val importing: Boolean, val direct: Boolean, val notice: String? = null)
 
@@ -131,7 +133,7 @@ fun FirstRunCard(message: MapMessage?) {
                             action,
                             Modifier.heightIn(min = 48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { PacksUi.visible = true }
                                 .wrapContentHeight().padding(horizontal = 12.dp),
-                            style = TextStyle(color = Link, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
+                            style = TextStyle(color = DeepLink, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
                         )
                     }
                 }

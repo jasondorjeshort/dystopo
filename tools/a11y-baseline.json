@@ -34,6 +34,8 @@
 {"screen": "longpress:1.0", "kind": "contrast", "label": "What can I see from here", "boundsDp": [171, 761, 324, 790]},
 {"screen": "longpress:1.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 189, 84]},
 {"screen": "longpress:2.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 142, 88]},
+{"screen": "map-outside:1.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 189, 84]},
+{"screen": "map-outside:2.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 142, 88]},
 {"screen": "map:1.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 189, 84]},
 {"screen": "map:2.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 142, 88]},
 {"screen": "navigation:1.0", "kind": "contrast", "label": "Head NW # mi to rejoin", "boundsDp": [76, 180, 255, 198]},
