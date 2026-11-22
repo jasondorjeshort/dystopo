@@ -20,6 +20,7 @@ them, on the same branch.
 | `android-app.md` | What the app serves, the build and emulator scripts, the settings sheet's groups, the device tour, the loopback token and the debug port | 2026-10-14 |
 | `android-emulator.md` | Several emulators side by side, host virtualization, GPU and API quirks, the server a task emulator uses, first-boot load | 2026-10-14 |
 | `android-horizon-view.md` | The Horizon view (T307, T308): the square sky plot and its layers (satellites, peaks on the skyline, the sun's path and terrain times), the toggles, the debug routes' use | 2026-11-19 |
+| `android-panorama-view.md` | The Panorama view (T326): the switch's third segment, the lens plot over the Horizon view's pane, the aim at opening, steering, the terrain and sweeps to the view range | 2026-11-22 |
 | `android-debug-routes.md` | Every debug route family (health, screenshot, camera, stats, settings, storage, packs, routes, navigation, areas, probe) | 2026-10-12 |
 | `android-phone-over-adb.md` | The owner's phone over wireless adb: connecting, the debug build's signing, reading the debug port, and how coders request phone tests | 2026-10-28 |
 | `android-tracks-and-sync.md` | Tracks and GPX, phone-to-phone sync and the relay, sync with the server | 2026-10-12 |

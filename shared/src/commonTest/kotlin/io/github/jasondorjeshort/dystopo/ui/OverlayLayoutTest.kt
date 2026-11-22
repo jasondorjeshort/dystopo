@@ -36,8 +36,8 @@ class OverlayLayoutTest {
 
     private fun creditText(k: Float) = CreditText(330f * k, 13f * k, 3)
 
-    /** T326: the switch's three segments ("Map | Horizon | Panorama", 262 dp at 1.0 on an emulator), capped as the chips are. */
-    private fun switchSize(chip: Float) = OverlaySize(262f * chip, 48f * chip)
+    /** T326: the switch's three segments ("Map | Horizon | Panorama", 249 dp at 1.0 and 294 at 2.0 on an emulator), capped as the chips are. */
+    private fun switchSize(chip: Float) = OverlaySize(249f * chip, 48f * chip)
 
     private fun input(w: Float, h: Float, landscape: Boolean, scale: Float, cards: Int, buttons: Int, offCentre: Boolean, online: Boolean): OverlayInput {
         val k = curve(scale)

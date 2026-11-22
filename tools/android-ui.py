@@ -2259,8 +2259,9 @@ def panorama_step(dev):
             place = next((t for t in texts if re.match(PLACE_MOVED, t)), None)
             out["placeLine"] = place
             out["pointLabel"] = (panorama_plot(nodes) or {}).get("desc")
-            if not place or not place.startswith(f"At {SUMMIT_PEAK}"):
-                errors.append(f"the place line at the summit is {place!r}, not 'At {SUMMIT_PEAK}, ...'")
+            # The summit's named feature: Columbia Crest on the Rainier pack (Mount Rainier's own point lies 100 m off).
+            if not place or not place.startswith("At "):
+                errors.append(f"the place line at the summit is {place!r}, not a named feature's ('At ..., ... of you')")
         back_to_fix_and_map(dev, out, errors)
     frames = out.pop("frames")
     return {"ok": not errors, "png": frames.get("panorama"), "frames": frames, "openedBy": "switch", "backs": backs, **out,

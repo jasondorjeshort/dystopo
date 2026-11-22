@@ -17,13 +17,19 @@ The owner, 2026-11-20: "Yeah, I want this as a real button." A two-segment "Map 
 the survey in `docs/ideas/2026-11-19-the-horizon-view-beside-the-map-view.md` put it at the bottom). T315, the owner: the
 toggle "in the same place in every view". One anchor, defined in `ViewSwitch.kt`: the window's bottom-left corner, 8 dp in
 from the left inset and 8 dp up from the bottom inset (the system bars and the display cutout), each segment at least 48 dp
-tall, its text at map chrome's capped font scale (`MapChrome`), the segments in the order `ViewSwitch.SEGMENTS` (a third,
-the Panorama view, goes at the end; the anchor grows to the right). The same rectangle on the map (Map selected) and on the
-Horizon view (Horizon selected), whatever cards are up, in both orientations and at every font scale.
+tall, its text at map chrome's capped font scale (`MapChrome`), the segments in the order `ViewSwitch.SEGMENTS`. T326:
+three segments, "Map | Horizon | Panorama" (`SkyView`; the Panorama view is `android-panorama-view.md`); the anchor grew
+to the right, 249 dp at font scale 1.0 and 294 dp at 2.0 (capped at 1.3). The same rectangle on the map (Map selected),
+on the Horizon view and on the Panorama view, whatever cards are up, in both orientations and at every font scale.
 
 - **On the map** the switch is not on the layout rule's ladder and never hides: the rule reserves its rectangle in its
   frame (`OverlayLayout.switchRect`, `horizonSwitch` in `GET /layout`), the credit line stands beside it at its right, and
-  the scale bar, the readout strip and the position buttons stand above it. The cards and panels drawn by their own code
+  the scale bar, the readout strip and the position buttons stand above it. T326 (wave 45's choice (h)): where the
+  credit's text does not fit whole beside the three segments at its two lines (three with the Flights layer's notice),
+  measured in `about/AttributionLine.kt` (`OverlayLayout.creditRoomBeside`, `AttributionInsets.above`), the credit line
+  stands above the switch across the window with as many lines as its text needs, and the lower controls above it
+  (`OverlayInput.creditAbove`); it is never cut short for the switch. With the Rainier pack on a 411 dp phone it stands
+  above at font scale 1.0 (two lines, three with the flights' notice) and at 2.0 (five lines with the notice). The cards and panels drawn by their own code
   (the route card, the trip card, the update offer, the flights card, the track panels, the first-run card) stand on
   `AttributionInsets.bottom`, the higher of the credit line and the switch (`ViewSwitch.floorDp`). T309's ladder rung and
   T310's `firstRunCard` hiding are gone; so is the switch's height in the route card's cap (`BottomPanels.mapRowDp`), which
@@ -39,9 +45,11 @@ location on the map and switch to horizon view we want the horizon from THAT loc
 at the map's selected place when there is one (`ViewSwitch.openAtSelection`, by `HorizonPlace.switchFrom`, one rule a
 Panorama segment calls too): an open long-press card first (as its "Sky from here": on a named feature within a fingertip,
 at the feature and named; the card closes), else a search result's marker while it is on the map (named; the marker
-stays), else the fix. A peak picked inside the view is not the map's selection. Each segment is a tab (`selectable`, `Role.Tab`), tags
-`horizonSwitch.map` and `horizonSwitch.horizon`; the group's label "Map or horizon view". Debug: `POST /horizon/switch?to=map|horizon`
-answers both rectangles (`map`, `view`). No compass shortcut: MapLibre's compass shows only while the map is turned, and its
+stays), else the fix. A peak picked inside the view is not the map's selection. T326: "Panorama" from the map does the
+same; between Horizon and Panorama the view changes and keeps its place and a picked peak (`HorizonPlace.switchAction`).
+Each segment is a tab (`selectable`, `Role.Tab`), tags `horizonSwitch.map`, `horizonSwitch.horizon` and
+`horizonSwitch.panorama`; the group's label "Map, horizon or panorama view". Debug:
+`POST /horizon/switch?to=map|horizon|panorama` answers both rectangles (`map`, `view`), `showing` and `viewPx`. No compass shortcut: MapLibre's compass shows only while the map is turned, and its
 tap resets north. Every map frame of a sweep made before T315 differs by it (the switch, the credit line and every lower
 control moved).
 
