@@ -55,7 +55,12 @@ import java.time.LocalDate
  *   map or on the view); answers `{to, open}` and the switch's place: `map` (the map's switch as `GET /layout` reads it:
  *   `rectPx`, `state`, `reason`) and `view` (the view's own, `drawn.switchPx`). T321: "Horizon" opens the view at the map's
  *   selection as a tap does (`ViewSwitch.openAtSelection`: an open long-press card, else a search result's marker, else the
- *   fix); the answer adds `from` (`longPress`, `search` or `fix`) and `point` (null at the fix).
+ *   fix); the answer adds `from` (`longPress`, `search` or `fix`) and `point` (null at the fix). T326: `to=panorama` too, the
+ *   switch's third segment ("Map | Horizon | Panorama"): from the map it opens the Panorama at the map's selection by the
+ *   same call, from the Horizon view it changes the view and keeps the place and a picked peak; the answer adds `showing`
+ *   (`map`, `horizon` or `panorama`) and `viewPx` (the showing sky view's own switch; `view` stays the Horizon view's).
+ *   `open` stays true for either sky view (`HorizonUi.open`, the one open state); the Panorama's own routes are
+ *   `app/panorama/PanoramaRoutes.kt`'s.
  */
 object HorizonRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -110,12 +115,10 @@ object HorizonRoutes {
                 answer(app, r)
             }
             "POST" to "/horizon/switch" -> {
-                val horizon = when (r.query["to"]) {
-                    "horizon" -> true
-                    "map" -> false
-                    else -> return Response.json(mapOf("error" to "to=map or to=horizon"), 400)
-                }
-                app.map.onMain { io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.select(horizon) }
+                val to = io.github.jasondorjeshort.dystopo.horizon.SkyView.of(r.query["to"])
+                    ?: return Response.json(mapOf("error" to "to=map, to=horizon or to=panorama"), 400)
+                val horizon = to != io.github.jasondorjeshort.dystopo.horizon.SkyView.MAP
+                app.map.onMain { io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.select(to) }
                 // T321: from a long-press card the view opens once its named feature is looked up (a thread of its own).
                 val until = SystemClock.elapsedRealtime() + 10_000
                 while (horizon && !app.map.onMain { HorizonUi.open } && SystemClock.elapsedRealtime() < until) Thread.sleep(100)
@@ -156,6 +159,9 @@ object HorizonRoutes {
             "point" to HorizonUi.point?.let { p -> linkedMapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name) },
             "map" to map?.let { s -> linkedMapOf("rectPx" to s.rectPx?.map { Math.round(it) }, "state" to s.state, "reason" to s.reason) },
             "view" to if (HorizonUi.open) HorizonUi.switchPx else null,
+            // T326: the view showing and the sky view's own switch (the Horizon view's or the Panorama's).
+            "showing" to io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.showing.key,
+            "viewPx" to if (!HorizonUi.open) null else if (HorizonUi.view == io.github.jasondorjeshort.dystopo.horizon.SkyView.PANORAMA) io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.switchPx else HorizonUi.switchPx,
         )
     }
 

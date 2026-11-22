@@ -190,6 +190,7 @@ class Routes(private val app: DystopoApp) {
         // T308
         io.github.jasondorjeshort.dystopo.app.horizon.HorizonRoutes.handle(app, r)?.let { return it } // GET|POST /horizon, POST /horizon/ui
         // end T308
+        io.github.jasondorjeshort.dystopo.app.panorama.PanoramaRoutes.handle(app, r)?.let { return it } // T326: GET|POST /panorama
         // T311
         io.github.jasondorjeshort.dystopo.app.aircraft.AircraftRoutes.handle(app, r)?.let { return it } // GET|POST /aircraft, POST /aircraft/replay
         // end T311

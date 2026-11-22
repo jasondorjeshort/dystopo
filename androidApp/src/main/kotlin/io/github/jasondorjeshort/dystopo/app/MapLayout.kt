@@ -643,6 +643,7 @@ object MapLayout {
             routes = dp(c.sizeOf(nameOf(OverlayIds.ROUTES))),
             activity = dp(c.sizeOf(nameOf(OverlayIds.ACTIVITY))), // T263
             horizonSwitch = dp(c.sizeOf(nameOf(OverlayIds.HORIZON_SWITCH))), // T309; T315: the rule reserves its anchor
+            creditAbove = io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.above, // T326: over the switch when not whole beside it
             compass = if (turned) CompassView.sizePx()?.let { OverlaySize(it[0] / d, it[1] / d) } else null,
             scaleBar = dp(c.sizeOf(nameOf(OverlayIds.SCALE_BAR))),
             strip = if (stripUp) StripLayout.entrySizesPx.map { OverlaySize(it[0] / d, it[1] / d) } else emptyList(),

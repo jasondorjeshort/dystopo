@@ -57,19 +57,23 @@ private fun SectionHead(title: String, pal: GnssPalette, extra: String? = null, 
 /**
  * T309: the peaks in view or just out of sight: how many, then each (name, height, distance, bearing) closest first; a tap
  * picks one ([HorizonUi.selected], the key [HorizonUi.keyOf]), bold while the plot names it ([HorizonUi.namedKeys]).
- * T325: [h] the horizon the peaks were found on, [peaks] those found, [selected] the picked key.
+ * T325: [h] the horizon the peaks were found on, [peaks] those found, [selected] the picked key. T326: [rangeM] the host's
+ * reach, as the count's line says it (the Horizon view's 30 km, the Panorama's view range).
  */
 @Composable
-fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: String?, pal: GnssPalette, units: ContourUnits, help: String) {
+fun PeaksSection(
+    h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: String?, pal: GnssPalette, units: ContourUnits, help: String,
+    rangeM: Double = io.github.jasondorjeshort.dystopo.dem.Horizon.DEFAULT_RANGE_M,
+) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionHead(HorizonText.PEAKS, pal) { HelpIcon(help) }
         val line = when {
             h == null -> HorizonText.PEAKS_WORKING
             h.profile == null -> HorizonText.PEAKS_NO_TERRAIN
             peaks == null -> HorizonText.PEAKS_WORKING
-            peaks.reason == HorizonText.PEAKS_NONE -> HorizonText.peaksNone(units)
+            peaks.reason == HorizonText.PEAKS_NONE -> HorizonText.peaksNone(units, rangeM)
             peaks.reason != null -> peaks.reason
-            else -> HorizonText.peaksCount(peaks.candidates.size, units)
+            else -> HorizonText.peaksCount(peaks.candidates.size, units, rangeM)
         }
         BasicText(line, style = TextStyle(color = pal.ink, fontSize = 14.sp))
         val named = HorizonUi.namedKeys

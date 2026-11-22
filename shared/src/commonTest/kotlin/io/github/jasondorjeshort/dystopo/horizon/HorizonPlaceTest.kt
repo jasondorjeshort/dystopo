@@ -133,4 +133,67 @@ class HorizonPlaceTest {
         val summit = HorizonPlace.pointOf(io.github.jasondorjeshort.dystopo.dem.Peak("Mount Rainier", "peak", 46.8529, -121.7604, 4392.0))
         assertTrue(HorizonPlace.line(summit, lat, lon, ContourUnits.METERS).text.endsWith(" NNW of you"))
     }
+
+    // ---- T326: the switch for three views ----
+
+    private val summit = HorizonPoint(46.8529, -121.7604, "Mount Rainier")
+
+    @Test
+    fun theMapToThePanoramaOpensAtTheMapsSelection() {
+        val map = SkyState(SkyView.MAP, null, null)
+        assertEquals(SwitchAction.OPEN_AT_SELECTION, HorizonPlace.switchAction(SkyView.MAP, SkyView.PANORAMA))
+        // With a selection (a long-press card or a search marker, as switchFrom picks it): the view stands there.
+        assertEquals(SkyState(SkyView.PANORAMA, summit, null), HorizonPlace.switched(map, SkyView.PANORAMA, summit))
+        // With none: at the fix.
+        assertEquals(SkyState(SkyView.PANORAMA, null, null), HorizonPlace.switched(map, SkyView.PANORAMA, null))
+        // The Horizon segment by the same rule.
+        assertEquals(SkyState(SkyView.HORIZON, summit, null), HorizonPlace.switched(map, SkyView.HORIZON, summit))
+    }
+
+    @Test
+    fun betweenTheSkyViewsThePlaceAndThePickStay() {
+        val horizon = SkyState(SkyView.HORIZON, summit, "Little Tahoma@1023")
+        assertEquals(SwitchAction.KEEP_PLACE, HorizonPlace.switchAction(SkyView.HORIZON, SkyView.PANORAMA))
+        // The map's selection is not read again: a different one passed in changes nothing.
+        val pano = HorizonPlace.switched(horizon, SkyView.PANORAMA, HorizonPoint(1.0, 2.0))
+        assertEquals(SkyState(SkyView.PANORAMA, summit, "Little Tahoma@1023"), pano)
+        assertEquals(horizon, HorizonPlace.switched(pano, SkyView.HORIZON, null))
+        // At the fix with a pick, the same.
+        val atFix = SkyState(SkyView.PANORAMA, null, "Mount Rainier@3470")
+        assertEquals(atFix.copy(view = SkyView.HORIZON), HorizonPlace.switched(atFix, SkyView.HORIZON, summit))
+    }
+
+    @Test
+    fun theMapSegmentLetsBothGo() {
+        for (v in listOf(SkyView.HORIZON, SkyView.PANORAMA)) {
+            assertEquals(SwitchAction.CLOSE, HorizonPlace.switchAction(v, SkyView.MAP))
+            assertEquals(SkyState(SkyView.MAP, null, null), HorizonPlace.switched(SkyState(v, summit, "Mount Rainier@3470"), SkyView.MAP, summit))
+            // The segment already shown does nothing.
+            assertEquals(SwitchAction.NONE, HorizonPlace.switchAction(v, v))
+            val s = SkyState(v, summit, "Mount Rainier@3470")
+            assertEquals(s, HorizonPlace.switched(s, v, null))
+        }
+        assertEquals(SwitchAction.NONE, HorizonPlace.switchAction(SkyView.MAP, SkyView.MAP))
+        assertEquals(listOf("Map", "Horizon", "Panorama"), SkyView.entries.map { it.label })
+        assertEquals(SkyView.PANORAMA, SkyView.of("panorama"))
+        assertNull(SkyView.of("camera"))
+    }
+
+    @Test
+    fun theOpeningsBearing() {
+        // A picked peak wins, at the fix or elsewhere, over a heading.
+        assertEquals(347.0, HorizonPlace.openingBearing(347.0, atFix = true, headingDeg = 170.0))
+        assertEquals(12.5, HorizonPlace.openingBearing(372.5, atFix = false, headingDeg = null))
+        // At the fix with a heading: the heading.
+        assertEquals(170.0, HorizonPlace.openingBearing(null, atFix = true, headingDeg = 170.0))
+        assertEquals(350.0, HorizonPlace.openingBearing(null, atFix = true, headingDeg = -10.0))
+        // Neither: north; a heading away from the fix is not the view's direction.
+        assertEquals(0.0, HorizonPlace.openingBearing(null, atFix = true, headingDeg = null))
+        assertEquals(0.0, HorizonPlace.openingBearing(null, atFix = false, headingDeg = 170.0))
+        // The pick's bearing from its key.
+        assertEquals(347.0, HorizonPlace.bearingOfKey("Mount Rainier@3470")!!, 1e-9)
+        assertEquals(0.5, HorizonPlace.bearingOfKey("A@B@5")!!, 1e-9)
+        assertNull(HorizonPlace.bearingOfKey(null))
+        assertNull(HorizonPlace.bearingOfKey("no bearing"))
+    }
 }

@@ -116,7 +116,9 @@ fun FirstRunCard(fallback: String?) {
         // T320: the layout rule places and sizes the card (`OverlayLayout`, a bottom card under the whole top block, the
         // lower controls standing on it) through its control node; the paddings here only hold it for the first frame,
         // before the rule has measured it: under the search box (T220), above the update offer (T106) and the switch (T315).
-        val above = maxOf(io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.floorDp.dp)
+        // T326: the switch's floor, or the credit line's top where it stands above the switch (choice h).
+        val floor = if (io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.floorDp > 0f) io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.bottom else 0.dp
+        val above = maxOf(io.github.jasondorjeshort.dystopo.app.MapInsets.updateCardTop, floor)
         val scroll = rememberScrollState()
         FirstRunCardState.scroll = scroll
         Column(

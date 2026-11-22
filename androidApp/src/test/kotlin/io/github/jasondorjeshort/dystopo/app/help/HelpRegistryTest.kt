@@ -190,6 +190,9 @@ class HelpRegistryTest {
             // T314: Flight tracking: Route lines.
             "settings.aircraftRouteLines",
             // end T314
+            // T326: the Panorama view and its Peaks.
+            "panorama.view", "panorama.peaks",
+            // end T326
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

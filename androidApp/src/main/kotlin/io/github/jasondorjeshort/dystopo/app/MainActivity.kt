@@ -81,6 +81,7 @@ class MainActivity : ComponentActivity() {
             io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
             io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.prepare() // T307, T308: the Horizon view's Compose state, on the main thread
             io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.prepare() // T315: the switch's anchor state (both views read it)
+            io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.prepare() // T326: the Panorama's aim, on the main thread
             io.github.jasondorjeshort.dystopo.app.aircraft.AircraftUiState.prepare() // T311: the Flights layer's Compose state (its ticker reads it)
             app.map.attach(mapView, styleJson = { app.tiles.style() })
         }
@@ -249,13 +250,22 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.trips.TripControls() // T60: Routes list, trip card, route editor overlay
         io.github.jasondorjeshort.dystopo.app.activity.ActivityChipOverlay() // T263: the current activity's chip, under Routes
         StartupTrace.composing("compose AttributionLine")
-        // T315: beside the "Map | Horizon" switch at its right, inside the same insets as the switch's anchor.
-        AttributionLine(
-            attribution,
-            Modifier.align(Alignment.BottomStart).navigationBarsPadding()
-                .windowInsetsPadding(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.anchorInsets)
-                .padding(start = 6.dp + io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.creditStartDp.dp, top = 6.dp, end = 6.dp, bottom = 6.dp),
-        )
+        // T315: beside the "Map | Horizon" switch at its right, inside the same insets as the switch's anchor. T326 (wave 45's
+        // choice (h)): beside the three segments while the text fits whole there, else above the switch across the window.
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.fillMaxSize().navigationBarsPadding().windowInsetsPadding(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.anchorInsets),
+        ) {
+            val start = io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.creditStartDp
+            val above = start > 0f && io.github.jasondorjeshort.dystopo.app.about.AttributionInsets.above
+            AttributionLine(
+                attribution,
+                Modifier.align(Alignment.BottomStart).padding(
+                    start = 6.dp + (if (above) 0f else start).dp, top = 6.dp, end = 6.dp,
+                    bottom = 6.dp + (if (above) io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.reserveDp else 0f).dp,
+                ),
+                roomBeside = if (start > 0f) maxWidth - start.dp - 12.dp else null,
+            )
+        }
         StartupTrace.composing("compose OnlineOverlay")
         io.github.jasondorjeshort.dystopo.app.online.OnlineOverlay() // T38: online indicator, Download this region
         StartupTrace.composing("compose SearchOverlay")
@@ -287,6 +297,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         io.github.jasondorjeshort.dystopo.app.share.ShareOverlay() // T54: Share screen (LAN listener + NSD while open)
         io.github.jasondorjeshort.dystopo.app.share.QrScannerOverlay() // T57: the Share screen's QR scanner
         io.github.jasondorjeshort.dystopo.app.horizon.HorizonScreen() // T307, T308: the Horizon view (Settings > Navigation and tracking > Horizon view)
+        io.github.jasondorjeshort.dystopo.app.panorama.PanoramaScreen() // T326: the Panorama view, the switch's third segment
         StartupTrace.composing("compose GlanceView and HelpHost")
         io.github.jasondorjeshort.dystopo.app.readout.GlanceView() // T210: the glance view (a tap on the readout bar), over every screen but help
         io.github.jasondorjeshort.dystopo.app.help.HelpHost() // T109, T115: the open help pop-up, last so it is over every screen above

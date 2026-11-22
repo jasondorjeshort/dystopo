@@ -39,6 +39,13 @@ object AttributionInsets {
 
     /** T315: the higher of the credit line and the map's "Map | Horizon" switch beside it (`controls/ViewSwitch.kt`). */
     val bottom: Dp get() = maxOf(credit, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.floorDp.dp)
+
+    /**
+     * T326 (wave 45's choice (h)): the credit's text does not fit whole beside the three-segment switch (measured at its
+     * maximum lines in the room beside it, `OverlayLayout.creditRoomBeside`), so it stands above the switch across the
+     * window and the map's lower controls stand above it ([bottom] is then the credit's top). Never cut short for the switch.
+     */
+    var above by mutableStateOf(false)
 }
 
 /**
@@ -61,7 +68,7 @@ object CreditLine {
 }
 
 @Composable
-fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
+fun AttributionLine(fallback: String, modifier: Modifier = Modifier, roomBeside: Dp? = null) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val view = io.github.jasondorjeshort.dystopo.app.MapViewport.bounds // T49: recompose when the view moves
@@ -72,10 +79,19 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
         ?: credits?.takeIf { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing }?.compact // T311: the feed's notice with no pack open
         ?: HtmlText.toPlain(fallback)
     androidx.compose.runtime.SideEffect { CreditLine.composed(text) }
+    val style = TextStyle(color = Color(0xFF3B2A1A), fontSize = 11.sp)
+    val maxLines = if (io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing) 3 else 2 // T311: room for the flights notice (ODbL) at the end
+    // T326 (choice h): whole beside the switch ([roomBeside], the plate's padding in), or above it across the window.
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val above = roomBeside?.let { room ->
+        val px = with(density) { (room - 12.dp).roundToPx() }.coerceAtLeast(1)
+        measurer.measure(text, style, maxLines = maxLines, constraints = androidx.compose.ui.unit.Constraints(maxWidth = px)).hasVisualOverflow
+    } ?: false
+    androidx.compose.runtime.SideEffect { if (AttributionInsets.above != above) AttributionInsets.above = above }
     BasicText(
         text,
-        style = TextStyle(color = Color(0xFF3B2A1A), fontSize = 11.sp),
-        maxLines = if (io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing) 3 else 2, // T311: room for the flights notice (ODbL) at the end
+        style = style,
+        maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
             .control("creditLine") // T238

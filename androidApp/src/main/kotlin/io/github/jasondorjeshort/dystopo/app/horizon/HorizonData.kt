@@ -83,19 +83,36 @@ object HorizonData {
         val profile = h.profile ?: return none(HorizonText.PEAKS_NO_TERRAIN)
         val terrain = h.terrain ?: return none(HorizonText.PEAKS_NO_TERRAIN)
         return try {
-            var tiles = 0
-            val found = Viewshed.readPeaks({ z, x, y ->
-                app.tiles.packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) }?.also { tiles++ }
-            }, h.lat, h.lon, profile.rangeM)
+            val (found, tiles) = readPeaksAt(h.lat, h.lon, profile.rangeM, null)
             if (tiles == 0) return none(HorizonText.PEAKS_NO_MAP)
-            val all = Viewshed.peaks(terrain, profile, found)
-            val labels = PeakRim.labels(all)
-            val candidates = labels.map { it.ref as PeakView }
-            Peaks(h, all, candidates, HorizonLabels.rank(labels), tiles, if (candidates.isEmpty()) HorizonText.PEAKS_NONE else null, SystemClock.elapsedRealtime() - t0)
+            peaksOn(h, terrain, profile, found, tiles, t0)
         } catch (e: Exception) {
             android.util.Log.w("Dystopo", "horizon peaks failed", e)
             none("${HorizonText.PEAKS_NO_MAP} (${e.javaClass.simpleName})")
         }
+    }
+
+    /**
+     * T326: the named peaks of the active packs within [rangeM] of [lat], [lon] (at [zoom], else the round plot's default),
+     * and the tiles read: the Panorama reads them once per place and range (its `viewRange`, to 100 km; [Viewshed.peakZoom]).
+     */
+    fun readPeaksAt(lat: Double, lon: Double, rangeM: Double, zoom: Int?): Pair<List<io.github.jasondorjeshort.dystopo.dem.Peak>, Int> {
+        var tiles = 0
+        val read = { z: Int, x: Int, y: Int -> app.tiles.packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) }?.also { tiles++ } }
+        val found = if (zoom == null) Viewshed.readPeaks(read, lat, lon, rangeM) else Viewshed.readPeaks(read, lat, lon, rangeM, zoom)
+        return found to tiles
+    }
+
+    /**
+     * T326: [found] tested on [terrain] and [profile] (the Panorama's farthest skyline, as devtool `panorama` tests them),
+     * as the Peaks section and the names read them: the candidates closest first and ranked. [h] is the horizon they belong to.
+     */
+    fun peaksOn(h: Gnss.HorizonState, terrain: io.github.jasondorjeshort.dystopo.dem.Terrain, profile: io.github.jasondorjeshort.dystopo.dem.HorizonProfile, found: List<io.github.jasondorjeshort.dystopo.dem.Peak>, tiles: Int, t0: Long = SystemClock.elapsedRealtime()): Peaks {
+        if (tiles == 0) return Peaks(h, emptyList(), emptyList(), emptyList(), 0, HorizonText.PEAKS_NO_MAP, SystemClock.elapsedRealtime() - t0)
+        val all = Viewshed.peaks(terrain, profile, found)
+        val labels = PeakRim.labels(all)
+        val candidates = labels.map { it.ref as PeakView }
+        return Peaks(h, all, candidates, HorizonLabels.rank(labels), tiles, if (candidates.isEmpty()) HorizonText.PEAKS_NONE else null, SystemClock.elapsedRealtime() - t0)
     }
 
     /** The sun's day at a point: [marks] the hour dots in the phone's zone. */
