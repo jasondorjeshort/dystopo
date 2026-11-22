@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-22
 
+- T334: "Can I see it from here?": one line on the long-press card
 - T333: A note while recording when the GPS signal stays unusually weak
 - T330: The Panorama follows the phone: the sensor, the steering setting and its button
 - T332: The no-map messages ask whether the phone holds a map: found by reproduction, then one rule

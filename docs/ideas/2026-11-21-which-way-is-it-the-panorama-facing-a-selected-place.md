@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md, 2026-11-21-can-i-see-it-from-here-one-line-for-a-selected-place.md]
+related: [2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md]
 ---
 
 # "Which way is it?": the Panorama at your location, facing a place chosen on the map
