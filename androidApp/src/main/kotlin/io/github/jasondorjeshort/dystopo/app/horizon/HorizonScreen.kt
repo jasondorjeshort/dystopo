@@ -1,16 +1,11 @@
 package io.github.jasondorjeshort.dystopo.app.horizon
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -23,11 +18,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -47,39 +40,24 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.testTag
 import io.github.jasondorjeshort.dystopo.app.AppSettings
-import io.github.jasondorjeshort.dystopo.app.ClockFormat
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
-import io.github.jasondorjeshort.dystopo.app.controls.Heading
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
-import io.github.jasondorjeshort.dystopo.app.gnss.Button
 import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.app.gnss.GnssPalette
 import io.github.jasondorjeshort.dystopo.app.gnss.GnssText
 import io.github.jasondorjeshort.dystopo.app.gnss.GnssUi
-import io.github.jasondorjeshort.dystopo.app.gnss.LegendItem
-import io.github.jasondorjeshort.dystopo.app.gnss.Mark
-import io.github.jasondorjeshort.dystopo.app.gnss.MarkIcon
 import io.github.jasondorjeshort.dystopo.app.gnss.OrientationRow
 import io.github.jasondorjeshort.dystopo.app.gnss.PlotGeometry
 import io.github.jasondorjeshort.dystopo.app.gnss.SatellitesSection
 import io.github.jasondorjeshort.dystopo.app.gnss.SkyPlot
 import io.github.jasondorjeshort.dystopo.app.gnss.plotSats
-import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup
 import io.github.jasondorjeshort.dystopo.dem.PeakView
@@ -89,12 +67,10 @@ import io.github.jasondorjeshort.dystopo.horizon.HorizonLayer
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLabels
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
 import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
-import io.github.jasondorjeshort.dystopo.horizon.PlaceLine
 import io.github.jasondorjeshort.dystopo.horizon.PeakRim
 import io.github.jasondorjeshort.dystopo.horizon.RimBox
 import io.github.jasondorjeshort.dystopo.horizon.RimGeometry
 import io.github.jasondorjeshort.dystopo.horizon.RimPt
-import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import java.time.LocalDate
 import kotlin.math.hypot
@@ -140,7 +116,7 @@ object HorizonUi {
     /**
      * T317: the point the view is drawn for in place of the fix ("Sky from here" on the long-press card, `POST /horizon/ui?lat=&lon=`),
      * or null at the fix. In memory only (the app reopens at the fix), never snapped back on a timer; "Back to here" and
-     * Close let it go. T321: also a picked peak's "View from here" ([viewFrom]) and the switch's "Horizon" with a place
+     * the switch's "Map" let it go. T321: also a picked peak's "View from here" ([viewFrom]) and the switch's "Horizon" with a place
      * selected on the map (`ViewSwitch.openAtSelection`); with nothing selected the switch opens at the fix.
      */
     var point by mutableStateOf<io.github.jasondorjeshort.dystopo.horizon.HorizonPoint?>(null)
@@ -226,35 +202,23 @@ object HorizonUi {
     fun keyOf(p: PeakView): String = "${p.peak.name}@${Math.round(p.bearingDeg * 10)}"
 }
 
-/** T308: the sun's path colour on the plot: a warm amber, legible on the day and the night paper. */
-private fun sunColour(night: Boolean): Color = if (night) Color(0xFFE6A84E) else Color(0xFFB8641A)
-
 /**
  * T308: the Horizon view, the map view's counterpart (the owner, 2026-11-19): the sky around the point as a square plot
  * with its circle ([SkyPlot]: the land's skyline, rings, N E S W, turned by the "Sky plot" setting), fixed at the top in
  * portrait and at the left in landscape, its side `min(width, height)` of the window inside the system bars; the rest of
- * the screen a heading with Close that stays, over an area that scrolls: the layer toggles (Satellites, Peaks, Sun; each
+ * the screen a heading that stays (T325: no Close; the switch's "Map" and Back leave), over an area that scrolls: the layer toggles (Satellites, Peaks, Sun; each
  * a synced setting, all on by default), the plot's orientation and terrain line, then each layer's content: the peaks on
  * the skyline, the sun's day, and the satellites (T307's summary, "Check my GPS" and list, last because the list is long).
  * While open and started it holds the compass for "Follow the phone"; it holds the GNSS only while Satellites is on (off,
  * the position is the map's own fix). A second each it reads everything again. T317: at a chosen point ([HorizonUi.point])
  * the horizon, peaks and sun are the point's, Satellites and Flights do not draw, and the place line ([PlaceRow]) says where
- * the view stands, with "Back to here".
+ * the view stands, with "Back to here". T325: the pane is built of parts a second sky view hosts around its own plot
+ * (`SkyViewParts.kt`, `SkyViewSections.kt`) and the effects are one call ([SkyViewEffects]); this screen keeps the round
+ * plot, its names and marks, the "Sky plot" row and `GET /horizon`'s `drawn`.
  */
 @Composable
 fun HorizonScreen() {
     if (!HorizonUi.open) return
-    val owner = LocalLifecycleOwner.current
-    var started by remember { mutableStateOf(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
-    DisposableEffect(owner) {
-        val observer = LifecycleEventObserver { _, e ->
-            if (e == Lifecycle.Event.ON_START) started = true
-            if (e == Lifecycle.Event.ON_STOP) started = false
-        }
-        owner.lifecycle.addObserver(observer)
-        onDispose { owner.lifecycle.removeObserver(observer) }
-    }
-    var tick by remember { mutableStateOf(0) }
     @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
     // T312: the Flights layer and its button only while Flight tracking (T311's setting) is on.
     val tracking = AppSettings.AIRCRAFT.value
@@ -263,45 +227,17 @@ fun HorizonScreen() {
     val moved = point != null
     val layers = HorizonPlace.layers(AppSettings.horizonLayers.effective(tracking), moved)
     val skyRange = AppSettings.skyRange
-    DisposableEffect(started) {
-        Heading.setGnssWanted(started)
-        onDispose { Heading.setGnssWanted(false) }
-    }
-    DisposableEffect(started, layers.satellites) {
-        Gnss.hold("view", started && layers.satellites)
-        onDispose { Gnss.hold("view", false) }
-    }
-    BackHandler {
-        when {
-            GnssUi.confirmReset -> GnssUi.confirmReset = false
-            GnssUi.menuOpen -> GnssUi.menuOpen = false
-            HorizonUi.selectedFlight != null -> HorizonUi.selectedFlight = null
-            HorizonUi.selected != null -> HorizonUi.selected = null
-            HorizonUi.point != null -> HorizonUi.back() // T317: Back first returns to the fix, as "Back to here"
-            else -> HorizonUi.close()
-        }
-    }
-    LaunchedEffect(Unit) {
-        while (true) {
-            io.github.jasondorjeshort.dystopo.app.Foreground.delay(1000)
-            tick++
-        }
-    }
-    @Suppress("UNUSED_VARIABLE") val t = tick
     val night = AppSettings.mapOptions.night
     val pal = remember(night) { GnssPalette(night) }
-    // Light status-bar icons over the night paper while the view is open (the activity keeps dark ones for the light map).
-    val view = androidx.compose.ui.platform.LocalView.current
-    DisposableEffect(night) {
-        val window = (view.context as? android.app.Activity)?.window
-        val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
-        val was = bars?.isAppearanceLightStatusBars
-        bars?.isAppearanceLightStatusBars = !night
-        onDispose { if (was != null) bars.isAppearanceLightStatusBars = was }
-    }
     val units = AppSettings.units
     val orientation = AppSettings.skyPlot
     val fix = Gnss.position()
+    // T325: the effects (the compass, the GNSS hold, Back's ladder, the clock, the status bar's icons, the flights' poller),
+    // one call a second view makes too; its tick, read here, reads everything again each second.
+    val clock = SkyViewEffects(
+        SkyViewHolds(satellites = layers.satellites, flightsAt = fix?.takeIf { layers.flights }?.let { it.latitude to it.longitude }, skyRange = skyRange), night,
+    )
+    val tick = clock.tick
     // T317: the point the view describes (the chosen one, else the fix), and the place line saying which.
     val pos = HorizonPlace.source(point, fix?.latitude, fix?.longitude)
     val place = HorizonPlace.line(point, fix?.latitude, fix?.longitude, units)
@@ -317,16 +253,8 @@ fun HorizonScreen() {
     val sunNow = pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.first, it.second, now) }
     val sunDay = if (layers.sun && pos != null) HorizonData.sunFor(h?.takeIf { it.profile != null }, pos.first, pos.second, HorizonUi.date, now) else null
     val peaks = if (layers.peaks && h != null) HorizonData.peaksFor(h) else null
-    // T312: the poll's centre is the phone's position rounded to 0.1 degree (the poller rounds; a new key only when it moves that far).
-    val centre = fix?.let { Math.round(it.latitude * 10) to Math.round(it.longitude * 10) }
-    DisposableEffect(started, layers.flights, centre, skyRange) {
-        if (started && layers.flights && fix != null) {
-            io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.request(HorizonData.FLIGHTS_OWNER, fix.latitude, fix.longitude, HorizonData.radiusNm(skyRange))
-        }
-        onDispose { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.release(HorizonData.FLIGHTS_OWNER) }
-    }
     val flights = if (layers.flights) HorizonData.flightsFor(h, fix, skyRange, now) else null
-    val pickedFlight = HorizonUi.selectedFlight?.let { hex -> io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.view.value.aircraft.firstOrNull { it.hex == hex } }
+    val pickedFlight = pickedFlight()
     val selected = HorizonUi.selected
     val picked = peaks?.candidates?.firstOrNull { HorizonUi.keyOf(it) == selected }
     val scroll = rememberScrollState()
@@ -400,38 +328,23 @@ fun HorizonScreen() {
                     // T317: the place line, just below the horizon (the plot) in portrait and at the pane's top in landscape,
                     // always shown; at a chosen point tinted apart with "Back to here", so another place's sky is never read as yours.
                     PlaceRow(place, moved, pal, night)
-                    // The heading stays while the rest scrolls: the title, its help and Close.
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                            BasicText(HorizonText.TITLE, Modifier.weight(1f, fill = false), style = TextStyle(color = pal.ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
-                            HelpIcon("horizon.view")
-                        }
-                        Button(GnssText.CLOSE, pal) { HorizonUi.close() }
-                    }
+                    // The heading stays while the rest scrolls: the title and its help. T325: no Close (the owner, 2026-11-21): the
+                    // switch's "Map" and Back are the ways out.
+                    SkyViewHeading(HorizonText.TITLE, help = "horizon.view", pal = pal)
                     picked?.let { p -> PickedPeak(p, pal, units) }
                     Column(
                         Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Toggles(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), pal)
-                        if (moved) BasicText(HorizonText.MOVED_LAYERS, Modifier.testTag("horizonMovedLayers"), style = TextStyle(color = pal.muted, fontSize = 13.sp))
+                        LayerToggles(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), moved, pal)
                         OrientationRow(orientation, pal)
                         if (orientation == SkyPlotOrientation.PHONE && heading == null) BasicText(GnssText.NORTH_UP_NO_COMPASS, style = TextStyle(color = pal.muted, fontSize = 13.sp))
-                        BasicText(
-                            when {
-                                horizon != null -> GnssText.horizonLine(horizon.angleDeg[horizon.highest], horizon.bearingDeg(horizon.highest), horizon.distanceM[horizon.highest], h.source, units)
-                                h != null -> h.reason ?: GnssText.NO_TERRAIN
-                                pos == null -> GnssText.NO_POSITION
-                                else -> GnssText.HORIZON_WORKING
-                            },
-                            style = TextStyle(color = pal.ink, fontSize = 13.sp),
-                        )
-                        if (horizon != null) LegendItem(pal, GnssText.LEGEND_TERRAIN) { MarkIcon(Mark.CIRCLE, null, pal.ink, band = pal.band) }
+                        TerrainLine(h, pos, units, pal)
                         // T312: Flights before Peaks: a short live list, where the Peaks list runs to dozens of rows.
-                        flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units) }
-                        if (layers.peaks) PeaksSection(h, peaks, selected, pal, units)
-                        if (layers.sun) SunSection(pos != null, sunDay, sunNow, fn, pal, night, tick)
-                        if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { tick++ }
+                        flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units, help = "horizon.flights") }
+                        if (layers.peaks) PeaksSection(h, peaks, selected, pal, units, help = "horizon.peaks")
+                        if (layers.sun) SunSection(pos != null, sunDay, sunNow, fn, pal, night, tick, help = "horizon.sun")
+                        if (layers.satellites) SatellitesSection(sats, plotted, summary, fn, pal, units, tick) { clock.bump() }
                         if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
                     }
                 }
@@ -446,11 +359,11 @@ fun HorizonScreen() {
             // T312: T311's flight card, hosted here (the view is drawn above the map, so the map's card would open underneath):
             // over the content pane's lower part, beside or under the square, so the dot it names stays in view.
             pickedFlight?.let { a ->
-                io.github.jasondorjeshort.dystopo.app.aircraft.FlightCard(
-                    a, { HorizonUi.selectedFlight = null },
+                FlightCardHost(
+                    a,
                     (if (landscape) Modifier.align(Alignment.BottomEnd).width(maxWidth - side) else Modifier.align(Alignment.BottomCenter).fillMaxWidth())
                         .heightIn(max = (if (landscape) maxHeight else maxHeight - side) * 0.9f).padding(8.dp)
-                        .padding(bottom = if (landscape) 0.dp else switchRoom - 8.dp).testTag("horizonFlightCard"), // T315: above the switch in portrait
+                        .padding(bottom = if (landscape) 0.dp else switchRoom - 8.dp), // T315: above the switch in portrait
                 )
             }
             SideEffect {
@@ -633,9 +546,6 @@ internal fun altitudeColour(m: Double?): Color {
     return c(stops.last().second)
 }
 
-/** T312: the emergency ring's colour (the shape carries the meaning; the red adds to it). */
-private val EMERGENCY = Color(0xFFD0021B)
-
 /**
  * T312: the Flights layer on the plot: each flight's tail (its last 90 s, thin, in its altitude colour; dashed while
  * hollow), its dot (filled in the altitude colour with an ink edge; hollow, the sky's colour inside an altitude-coloured
@@ -691,236 +601,6 @@ private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondor
     HorizonUi.flightMarks = marks
 }
 
-/** The layer toggles: one row of toggle buttons (the owner's words), wrapping at large text; T312: [buttons] those shown. */
-@Composable
-private fun Toggles(layers: HorizonLayers, buttons: List<HorizonLayer>, disabled: Set<HorizonLayer>, pal: GnssPalette) {
-    @OptIn(ExperimentalLayoutApi::class)
-    // Round 2 (T312): 6 dp gaps and 10 dp padding, so "Show:" and the four buttons fit one row at the default font on a
-    // 411 dp phone (14 dp and 8 dp wrapped Flights onto a row of its own); larger text still wraps.
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
-            BasicText("${HorizonText.LAYERS}:", style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
-        }
-        for (l in buttons) {
-            val on = layers[l]
-            // T317: at a chosen point Satellites and Flights are disabled: no tick, muted, not tappable (their settings kept).
-            val enabled = l !in disabled
-            Box(
-                Modifier.heightIn(min = 48.dp).semantics { this.selected = on }.clickable(enabled = enabled, role = Role.Switch) { HorizonUi.setLayer(l, !on) },
-                contentAlignment = Alignment.Center,
-            ) {
-                BasicText(
-                    (if (on) "✓ " else "") + l.label,
-                    style = TextStyle(color = if (on) pal.paper else if (enabled) pal.ink else pal.muted, fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium),
-                    modifier = Modifier.background(if (on) pal.ink else if (enabled) pal.card else pal.paper, RoundedCornerShape(16.dp))
-                        .border(1.dp, if (on) pal.ink else pal.line, RoundedCornerShape(16.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                )
-            }
-        }
-    }
-}
-
-/** T317: the moved place line's tint: the sun's amber, a fill and a stronger edge, legible on the day and the night paper. */
-private fun movedFill(night: Boolean): Color = if (night) Color(0xFF4A3412) else Color(0xFFFBE2AE)
-private fun movedEdge(night: Boolean): Color = if (night) Color(0xFFE6A84E) else Color(0xFFB8641A)
-
-/**
- * T317: where the view stands, always shown: "Your location" beside a dot in the link colour at the fix; at a chosen point
- * the line ("At Mount Rainier, 7.6 km NNW of you", "12 km SSE of you") bold on an amber band with "Back to here", so a moved
- * view is never read as the phone's own. A point within 50 m of the fix reads "Your location" but keeps "Back to here".
- */
-@Composable
-private fun PlaceRow(place: PlaceLine, showBack: Boolean, pal: GnssPalette, night: Boolean) {
-    if (!showBack) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("horizonPlaceLine"), verticalAlignment = Alignment.CenterVertically) {
-            androidx.compose.foundation.Canvas(Modifier.size(10.dp)) { drawCircle(pal.link) }
-            BasicText(place.text, Modifier.padding(start = 8.dp), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-        }
-        return
-    }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-            .background(if (place.moved) movedFill(night) else pal.card, RoundedCornerShape(10.dp))
-            .border(2.dp, if (place.moved) movedEdge(night) else pal.line, RoundedCornerShape(10.dp))
-            .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        BasicText(place.text, Modifier.weight(1f).testTag("horizonPlaceLine"), style = TextStyle(color = pal.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold))
-        Box(Modifier.padding(start = 8.dp).testTag("horizonBackToHere")) { Button(HorizonText.BACK, pal, filled = true) { HorizonUi.back() } }
-    }
-}
-
-/**
- * The peak a tap picked, under the heading (it stays while the list scrolls); a tap on its line or Back lets it go. T321:
- * "View from here" beside the line, a target of its own (a button at least 48 dp tall), stands the view on the peak; above
- * font scale 1.3 it goes under the line, at its end (beside it, at 2.0 the line wrapped to five lines in a third of the width).
- */
-@Composable
-private fun PickedPeak(p: PeakView, pal: GnssPalette, units: ContourUnits) {
-    val line: @Composable (Modifier) -> Unit = { m ->
-        Row(
-            m.heightIn(min = 48.dp).clickable(role = Role.Button) { HorizonUi.selected = null }.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BasicText(HorizonText.peakLine(p.peak.name, p.eleM, p.distanceM, p.bearingDeg, units, !PeakRim.inSight(p)), Modifier.weight(1f), style = TextStyle(color = pal.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-            BasicText("×", Modifier.padding(start = 8.dp).semantics { contentDescription = HorizonText.PEAK_CLEAR }, style = TextStyle(color = pal.ink, fontSize = 20.sp))
-        }
-    }
-    val button: @Composable () -> Unit = { Box(Modifier.testTag("horizonViewFromHere")) { Button(HorizonText.VIEW_FROM_HERE, pal) { HorizonUi.viewFrom(p) } } }
-    val frame = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).background(pal.card, RoundedCornerShape(10.dp)).border(1.dp, pal.link, RoundedCornerShape(10.dp))
-    if (LocalDensity.current.fontScale > 1.3f) {
-        Column(frame.padding(end = 6.dp, bottom = 4.dp), horizontalAlignment = Alignment.End) {
-            line(Modifier.fillMaxWidth())
-            button()
-        }
-    } else {
-        Row(frame.padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            line(Modifier.weight(1f))
-            button()
-        }
-    }
-}
-
-@Composable
-private fun SectionHead(title: String, pal: GnssPalette, extra: String? = null, help: @Composable () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        BasicText(title, style = TextStyle(color = pal.ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold))
-        extra?.let { BasicText("  $it", style = TextStyle(color = pal.muted, fontSize = 14.sp)) }
-        help()
-    }
-}
-
-/** T309: the peaks in view or just out of sight: how many, then each (name, height, distance, bearing) closest first; a tap picks one. */
-@Composable
-private fun PeaksSection(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: String?, pal: GnssPalette, units: ContourUnits) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        SectionHead(HorizonText.PEAKS, pal) { HelpIcon("horizon.peaks") }
-        val line = when {
-            h == null -> HorizonText.PEAKS_WORKING
-            h.profile == null -> HorizonText.PEAKS_NO_TERRAIN
-            peaks == null -> HorizonText.PEAKS_WORKING
-            peaks.reason == HorizonText.PEAKS_NONE -> HorizonText.peaksNone(units)
-            peaks.reason != null -> peaks.reason
-            else -> HorizonText.peaksCount(peaks.candidates.size, units)
-        }
-        BasicText(line, style = TextStyle(color = pal.ink, fontSize = 14.sp))
-        val named = HorizonUi.namedKeys
-        for (p in peaks?.candidates.orEmpty()) {
-            val key = HorizonUi.keyOf(p)
-            val chosen = key == selected
-            Column(
-                Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { this.selected = chosen }
-                    .clickable(role = Role.Button) { HorizonUi.selected = if (chosen) null else key }.padding(vertical = 4.dp),
-            ) {
-                BasicText(
-                    p.peak.name, style = TextStyle(color = if (chosen) pal.link else pal.ink, fontSize = 15.sp, fontWeight = if (key in named || chosen) FontWeight.Bold else FontWeight.Normal),
-                )
-                BasicText(
-                    "${UnitFormat.elevation(p.eleM, units)} · ${UnitFormat.distance(p.distanceM, units)} · ${GnssText.compassPoint(p.bearingDeg)} ${Math.round(p.bearingDeg) % 360}°" +
-                        if (PeakRim.inSight(p)) "" else " · ${HorizonText.JUST_OUT_OF_SIGHT}",
-                    style = TextStyle(color = pal.muted, fontSize = 13.sp),
-                )
-            }
-        }
-    }
-}
-
-/**
- * T312: the flights on the plot, closest first (as the Peaks list): how many, or the feed's state; then each: a dot as the
- * plot draws it (an emergency's ring too), the label (bold when picked), and distance, bearing, angle, altitude in the
- * user's units, the kind and an emergency's line; a tap opens its card.
- */
-@Composable
-private fun FlightsSection(f: HorizonData.Flights, havePosition: Boolean, selected: String?, pal: GnssPalette, units: ContourUnits) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        SectionHead(HorizonText.FLIGHTS, pal) { HelpIcon("horizon.flights") }
-        val line = when {
-            !havePosition -> HorizonText.FLIGHTS_NO_POSITION
-            f.list.isNotEmpty() -> HorizonText.flightsCount(f.list.size, f.range, units)
-            f.message != null -> f.message
-            else -> HorizonText.flightsNone(f.range, units)
-        }
-        BasicText(line, style = TextStyle(color = pal.ink, fontSize = 14.sp))
-        // A feed that is offline, stopped or limited says so above the rows it still holds.
-        if (f.list.isNotEmpty() && f.message != null) BasicText(f.message, style = TextStyle(color = pal.muted, fontSize = 13.sp))
-        for (s in f.list) {
-            val chosen = s.hex == selected
-            val emergency = s.aircraft.report.emergency
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { this.selected = chosen }
-                    .clickable(role = Role.Button) { HorizonUi.selectedFlight = if (chosen) null else s.hex }.padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                androidx.compose.foundation.Canvas(Modifier.size(24.dp)) {
-                    val c = Offset(size.width / 2, size.height / 2)
-                    val r = 4.5.dp.toPx()
-                    val colour = altitudeColour(s.aircraft.altitudeM)
-                    if (s.hollow) {
-                        drawCircle(pal.sky, r, c)
-                        drawCircle(colour, r - 1.dp.toPx(), c, style = Stroke(2.dp.toPx()))
-                    } else {
-                        drawCircle(colour, r, c)
-                        drawCircle(pal.ink, r, c, style = Stroke(1.dp.toPx()))
-                    }
-                    if (emergency != null) drawCircle(EMERGENCY, r + 4.dp.toPx(), c, style = Stroke(2.dp.toPx()))
-                }
-                Column(Modifier.weight(1f).padding(start = 6.dp)) {
-                    BasicText(
-                        s.label + (emergency?.let { " · ${it.line} (${it.squawk})" } ?: ""),
-                        style = TextStyle(color = if (chosen) pal.link else pal.ink, fontSize = 15.sp, fontWeight = if (chosen || emergency != null) FontWeight.Bold else FontWeight.Normal),
-                    )
-                    BasicText(
-                        listOfNotNull(
-                            HorizonText.kind(s.aircraft.report.kind),
-                            HorizonText.flightLine(s.distanceM, s.bearingDeg, s.elevationDeg, HorizonData.altitudeText(s, units), s.hidden, s.aircraft.ageS.takeIf { s.stale }, units),
-                        ).joinToString(" · "),
-                        style = TextStyle(color = pal.muted, fontSize = 13.sp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** The sun's day: where it is now, when it clears and leaves the terrain (and any gaps), and the flat horizon's times. */
-@Composable
-private fun SunSection(havePosition: Boolean, day: HorizonData.SunDay?, now: io.github.jasondorjeshort.dystopo.nav.Sun.Position?, fn: ((Double) -> Double)?, pal: GnssPalette, night: Boolean, tick: Int) {
-    @Suppress("UNUSED_VARIABLE") val t = tick
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        val dateText = day?.let { d ->
-            val date = LocalDate.of(d.sun.year, d.sun.month, d.sun.day)
-            if (HorizonUi.date == null) HorizonText.TODAY else date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.getDefault()))
-        }
-        SectionHead(HorizonText.SUN, pal, dateText) { HelpIcon("horizon.sun") }
-        if (!havePosition || day == null) {
-            BasicText(HorizonText.SUN_NO_POSITION, style = TextStyle(color = pal.ink, fontSize = 14.sp))
-            return@Column
-        }
-        val style = TextStyle(color = pal.ink, fontSize = 14.sp)
-        val c = { ms: Long -> ClockFormat.text(ms) }
-        if (HorizonUi.date == null && now != null) BasicText(HorizonText.sunNow(now.apparentAltitudeDeg, now.azimuthDeg, fn?.let { it(now.azimuthDeg) > now.apparentAltitudeDeg } ?: false), style = style)
-        val td = day.sun.terrain
-        if (day.sun.onTerrain) {
-            when {
-                td.alwaysUp -> BasicText(HorizonText.SUN_ALL_DAY, style = style)
-                td.sunlit.isEmpty() -> BasicText(HorizonText.SUN_NEVER, style = style)
-                else -> {
-                    BasicText(HorizonText.terrainTimes(td.sunriseMs?.let(c), td.sunsetMs?.let(c)), style = style.copy(fontWeight = FontWeight.SemiBold))
-                    for (g in td.gaps) BasicText(HorizonText.gap(c(g.span.startMs), c(g.span.endMs), g.bearingDeg), style = style)
-                    BasicText(HorizonText.sunMinutes(td.sunMinutes), style = style)
-                }
-            }
-        } else BasicText(HorizonText.SUN_FLAT_ONLY, style = TextStyle(color = pal.muted, fontSize = 13.sp))
-        BasicText(HorizonText.flat(td.flat.sunriseMs?.let(c), td.flat.sunsetMs?.let(c)), style = style)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            androidx.compose.foundation.Canvas(Modifier.width(28.dp).heightIn(min = 14.dp)) {
-                drawLine(sunColour(night), Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.5.dp.toPx(), cap = StrokeCap.Round)
-            }
-            BasicText(HorizonText.SUN_LEGEND, Modifier.weight(1f), style = TextStyle(color = pal.muted, fontSize = 13.sp))
-        }
-    }
-}
 
 /** T308: the Horizon view's help pop-ups (one paragraph each, no app named). */
 internal val HORIZON_HELP: List<HelpText> = run {

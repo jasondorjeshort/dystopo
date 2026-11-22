@@ -1874,8 +1874,8 @@ def under_switch(nodes, rect):
 def horizon_step(dev):
     """T307, T308, T309: from the map, the "Horizon" segment of the map's "Map | Horizon" switch tapped (T309; Settings >
     Navigation and tracking > Horizon view before it, a path the step no longer takes): the Horizon view opens over the map
-    with the square sky plot at the top (at the left on a phone on its side) and, beside or below it, the heading with
-    Close, the layer toggles (Satellites, Peaks, Sun), the plot's orientation and each layer's content (the frame
+    with the square sky plot at the top (at the left on a phone on its side) and, beside or below it, the heading (the
+    title and its help; T325: no Close, the "Map" segment and Back leave), the layer toggles (Satellites, Peaks, Sun), the plot's orientation and each layer's content (the frame
     `horizon`); the area under the heading scrolled once (`horizon-scrolled`: the plot unmoved, the lists below) and then
     to its end (`horizon-end`); the view's "Map" segment takes it away. T315: the switch stands at one anchor in every
     view, the window's bottom-left corner: the step asserts that the switch's rectangle on the view is the map's
@@ -2666,8 +2666,8 @@ def part_horizonflights(args):
             # The screen as laid out now (screen() reads the unrotated size; landscape turns it).
             w = max((x["bounds"][2] for x in nodes if x["bounds"]), default=1080)
             h = max((x["bounds"][3] for x in nodes if x["bounds"]), default=2400)
-            close = [x for x in nodes if x["text"] == "Close" and x["bounds"]]
-            under = min((x["bounds"][3] for x in close), default=int(h * 0.5))  # the heading's bottom: the scroll area starts there
+            title = [x for x in nodes if x["text"] == "Horizon view" and x["bounds"]]  # T325: the heading has no Close now
+            under = min((x["bounds"][3] for x in title), default=int(h * 0.5))  # the heading's bottom: the scroll area starts there
             # The count line high in the scroll area, so rows show under it (landscape's pane is short above the switch).
             counted = any(re.match(r"^\d+ flights? |^No flight", x["text"] or "") and x["bounds"] and x["bounds"][1] < under + h * 0.25 for x in nodes)
             if counted:
