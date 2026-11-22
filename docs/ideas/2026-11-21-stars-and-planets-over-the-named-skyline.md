@@ -28,3 +28,12 @@ not sanity checked.
   do the full sky well; the case for it here is the skyline and the names, so the smallest useful form comes first.
 - The layer means little by day: shown only when the sun is down, or with the one-clock idea set to tonight.
 - Which star table and its terms, checked before a proposal.
+
+Question: are stars and planets wanted on the two sky views, and how far: the bright stars and the planets only, or
+constellation lines and more? Recommended: yes, in the smallest form, and not yet. After the Moon layer (its Plan is
+queued, `2026-11-20-the-moon-on-the-horizon-view.md`) and Follow the phone (the Panorama's pass three), one pass for a
+few hundred bright stars and five planets as a Night layer whose names join the placement, no lines. Before it, a
+read-only pass (ADR 0044) picks the star table and its terms for `sources.json`. You chose your own places as the
+next layer on 2026-11-21, and this comes after that.
+
+Answer:
