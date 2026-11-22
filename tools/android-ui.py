@@ -2145,7 +2145,7 @@ def horizon_from_peak(dev):
 # --- features: the Panorama view (T326) ---------------------------------------------------------------------------
 
 PANORAMA_TITLE = "^Panorama view$"
-PANORAMA_PLOT = r"^Panorama from: "  # the plot's spoken label: the place line, then "Facing NNW 347°, 60° across"
+PANORAMA_PLOT = r"^Panorama from: "  # the plot's spoken label: the place line, then "Facing NNW 343°, 60° across"
 ZOOM_IN = "^Zoom in$"
 PANORAMA_WORKING = ("Working out the skyline", "Finding the peaks")
 
@@ -2156,7 +2156,7 @@ def panorama_plot(nodes):
 
 
 def panorama_facing(desc):
-    """T326: (compass and degrees, field of view) from the plot's spoken label, e.g. ("NNW 347°", 60)."""
+    """T326: (compass and degrees, field of view) from the plot's spoken label, e.g. ("NNW 343°", 60)."""
     m = re.search(r"Facing (\S+ \d+°), (\d+)° across", desc or "")
     return (m.group(1), int(m.group(2))) if m else (None, None)
 
@@ -2180,7 +2180,7 @@ def panorama_step(dev):
     the field of view (`panorama-zoomed`); the view's "Map" segment closes it. Then a long-press at Mount Rainier's summit
     and the segment: the Panorama opens there (the frame `panorama-point`: the amber place line "At Mount Rainier, ... of
     you" with "Back to here"), "Back to here" returns to the fix, "Map" closes it. T327: before "Map", a tap on Mount
-    Rainier's row in the Peaks list turns the view to it (`panorama-target`: facing about 347 degrees), swipes turn it off the
+    Rainier's row in the Peaks list turns the view to it (`panorama-target`: facing the bearing its second line gives, T336, within 3 degrees), swipes turn it off the
     view and the edge arrow stands with its line ("Mount Rainier, 40° left"; `panorama-arrow`), and a tap on the arrow turns
     the view back to it (the arrow gone)."""
     t0 = time.time()
@@ -2283,6 +2283,20 @@ def panorama_bearing(desc):
     return int(m.group(1)) if m else None
 
 
+def row_bearing(line):
+    """T336: the bearing (degrees) a Peaks row's second line gives, "14409 ft · 4.7 mi · NNW 343°" -> 343, or None."""
+    m = re.search(r"\b[NSEW]{1,3} (\d{1,3})°", line or "")
+    return int(m.group(1)) if m and int(m.group(1)) < 360 else None
+
+
+def row_second_line(nodes, row):
+    """T336: the text of the node just under a Peaks row's name node (its sibling: same left edge, nearest below), or None."""
+    rb = row["bounds"]
+    below = [x for x in nodes if x["text"] and x is not row and x["bounds"] and abs(x["bounds"][0] - rb[0]) <= 8
+             and rb[3] - 4 <= x["bounds"][1] <= rb[3] + (rb[3] - rb[1])]
+    return min(below, key=lambda x: x["bounds"][1])["text"] if below else None
+
+
 def bearing_apart(a, b):
     d = abs(a - b) % 360
     return min(d, 360 - d)
@@ -2314,15 +2328,21 @@ def panorama_target_and_arrow(dev, out, errors):
     if not row:
         errors.append(f"no {PANORAMA_TARGET_PEAK!r} row in the Peaks list (texts: {dev.texts(nodes)[:30]})")
         return nodes
+    line = row_second_line(nodes, row)
+    wanted = row_bearing(line)
+    out["target"] = {"rowLine": line, "bearingWanted": wanted}
+    if wanted is None:
+        errors.append(f"the {PANORAMA_TARGET_PEAK!r} row's line has no bearing (line {line!r}); the step reads the bearing wanted from it")
+        return nodes
     before = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
     dev.tap(row)
     time.sleep(1.5)  # the turn's 300 ms and a frame
     nodes = dev.nodes()
     out["frames"]["target"] = dev.screencap("panorama-target")[0]
     turned = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
-    out["target"] = {"bearingBefore": before, "bearingAfter": turned}
-    if turned is None or bearing_apart(turned, 347) > 3:
-        errors.append(f"the row did not turn the view to {PANORAMA_TARGET_PEAK} (facing {turned}, wanted about 347)")
+    out["target"].update({"bearingBefore": before, "bearingAfter": turned})
+    if turned is None or bearing_apart(turned, wanted) > 3:
+        errors.append(f"the row did not turn the view to {PANORAMA_TARGET_PEAK} (facing {turned}, wanted {wanted} within 3)")
     # Two swipes right to left across the plot: the view turns right, Mount Rainier leaves at the left.
     y = (pb[1] + pb[3]) // 2
     arrow = None
@@ -2345,8 +2365,8 @@ def panorama_target_and_arrow(dev, out, errors):
     nodes = dev.nodes()
     back = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
     out["arrowTapped"] = {"bearing": back, "arrowGone": dev.find(PANORAMA_ARROW, nodes) is None}
-    if back is None or bearing_apart(back, 347) > 3 or not out["arrowTapped"]["arrowGone"]:
-        errors.append(f"the arrow's tap did not turn the view back to {PANORAMA_TARGET_PEAK} (facing {back}, arrow gone {out['arrowTapped']['arrowGone']})")
+    if back is None or bearing_apart(back, wanted) > 3 or not out["arrowTapped"]["arrowGone"]:
+        errors.append(f"the arrow's tap did not turn the view back to {PANORAMA_TARGET_PEAK} (facing {back}, wanted {wanted} within 3, arrow gone {out['arrowTapped']['arrowGone']})")
     return nodes
 # end T327
 
