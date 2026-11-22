@@ -25,7 +25,7 @@
   "updater": {"ceilingMs": 31, "medianMs": [10, 12, 11, 12, 9, 10, 10, 12, 11], "kept": "2026-11-13"},
   "viewport": {"ceilingMs": 17, "medianMs": [1, 1, 1, 1, 1, 1, 1, 1, 1]},
   "camera": {"ceilingMs": 32, "medianMs": [14, 14, 15, 13, 12, 14, 14, 12, 13], "kept": "2026-11-13"},
-  "mapview": {"ceilingMs": 87, "medianMs": [58, 61, 57, 58, 55, 56, 54, 54, 57], "kept": "2026-11-13"},
+  "mapview": {"ceilingMs": 138, "medianMs": [58, 61, 57, 58, 55, 56, 54, 54, 57], "raised": "T338, 2026-11-22: from 87 (medians 54 to 61 in the T306 sweeps); v0.1.41-alpha's own tag read mapview medians 99, 110 and 106 on this host, the same as wave 46's head, so the host is slower and no change of ours; 110 (the largest) x 1.25 rounded up", "kept": "2026-11-13"},
   "activity": {"ceilingMs": 64, "medianMs": [43, 43, 42, 42, 39, 40, 37, 39, 39], "kept": "2026-11-13"},
   "start": {"ceilingMs": 43, "medianMs": [21, 22, 21, 22, 21, 21, 20, 18, 18], "kept": "2026-11-13"},
   "resume": {"ceilingMs": 16, "medianMs": [0, 0, 0, 0, 0, 0, 0, 0, 0]},
