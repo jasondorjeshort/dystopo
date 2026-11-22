@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -134,6 +135,17 @@ fun PanoramaPlot(
     val pending = PanoramaUi.aim == null
     LaunchedEffect(openings, pending, wPx > 0) {
         if (!pending || wPx <= 0) return@LaunchedEffect
+        // T330 (choice (j)): in Follow the opening is the phone's attitude at once (its first sample writes the aim); Drag's
+        // opening stands only when no sample came within the compass's wait, and the first sample later replaces it.
+        if (PanoramaFollow.following) {
+            val until = PanoramaUi.openedAtMs + PanoramaUi.HEADING_WAIT_MS
+            while (PanoramaUi.aim == null && SystemClock.elapsedRealtime() < until) kotlinx.coroutines.delay(20)
+            if (PanoramaUi.aim != null) {
+                PanoramaUi.openingSource = "attitude"
+                PanoramaUi.turnToTarget()
+                return@LaunchedEffect
+            }
+        }
         val pickedBearing = HorizonPlace.bearingOfKey(HorizonUi.selected)
         val atFix = HorizonUi.point == null
         val heading = GnssUi.headingDeg()
@@ -160,11 +172,24 @@ fun PanoramaPlot(
     val sky = work?.finest
     val gesturing = PanoramaUi.gesturing
     val zoomCorner = PanoramaScene.zoomCorner(wPx, hPx, d)
-    val scene = remember(aim, wPx, hPx, sky, ranked, picked, gesturing) {
+    // T330: the third button, "Follow phone" (choice (g)), above the zoom buttons, present only on a phone with an attitude
+    // sensor; names keep off its box, and the edge arrow off the corner the three stand in.
+    val sensor = io.github.jasondorjeshort.dystopo.app.controls.Heading.attitudeAvailable
+    val following = PanoramaFollow.following
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val followW = remember(density, measurer) {
+        measurer.measure(PanoramaStrings.FOLLOW_PHONE, TextStyle(fontSize = FOLLOW_TEXT_SP.sp, fontWeight = FontWeight.Medium)).size.width + 2 * FOLLOW_PAD_DP * d
+    }
+    val followBox = if (sensor && aim != null) followButtonBox(wPx, hPx, d, followW) else null
+    val corner = followBox?.let { io.github.jasondorjeshort.dystopo.horizon.RimBox(minOf(zoomCorner.left, it.left - PanoramaScene.ZOOM_MARGIN_DP * d), it.top - PanoramaScene.ZOOM_MARGIN_DP * d, wPx, hPx) } ?: zoomCorner
+    val keepOff = listOfNotNull(zoomCorner, followBox)
+    // T330 (choice (c)): while the followed attitude moves the names keep their offsets, as in a drag; placed when it rests.
+    val holding = gesturing || (aim?.follow == true && PanoramaFollow.moving)
+    val scene = remember(aim, wPx, hPx, sky, ranked, picked, holding, keepOff) {
         if (aim == null || sky == null || wPx <= 0 || hPx <= 0) null else {
             val t0 = System.nanoTime()
-            val held = if (gesturing) PanoramaUi.scene?.takeIf { it.lens.width == wPx && it.lens.height == hPx }?.names else null
-            val s = PanoramaScene.build(aim, wPx, hPx, d, sky, ranked, nameText, tapeText, listOf(zoomCorner), picked = picked, held = held)
+            val held = if (holding) PanoramaUi.scene?.takeIf { it.lens.width == wPx && it.lens.height == hPx }?.names else null
+            val s = PanoramaScene.build(aim, wPx, hPx, d, sky, ranked, nameText, tapeText, keepOff, picked = picked, held = held)
             PanoramaUi.sceneBuilt(s, (System.nanoTime() - t0) / 1e6)
             s
         }
@@ -173,7 +198,7 @@ fun PanoramaPlot(
     // The spoken label starts with the place line, then the bearing and the field of view, then the names drawn.
     val description = listOfNotNull(
         "${PanoramaStrings.PLACE_LABEL}: $placeText",
-        aim?.let { PanoramaStrings.facing(it.bearingDeg, it.fovDeg) },
+        aim?.let { if (it.follow) PanoramaStrings.following(it.bearingDeg, it.tiltDeg, it.fovDeg) else PanoramaStrings.facing(it.bearingDeg, it.fovDeg) }, // T330
         scene?.names?.takeIf { it.isNotEmpty() }?.let { n -> "${HorizonText.PEAKS}: " + n.take(5).joinToString(", ") { it.label.name } },
     ).joinToString("; ")
     val touchSlop = LocalViewConfiguration.current.touchSlop
@@ -188,7 +213,8 @@ fun PanoramaPlot(
             Modifier.fillMaxSize()
                 .semantics {
                     contentDescription = description
-                    customActions = listOf(
+                    // T330: the four turn and look actions are Drag's; in Follow the phone turns the view.
+                    if (aim?.follow != true) customActions = listOf(
                         CustomAccessibilityAction(PanoramaStrings.TURN_LEFT) { PanoramaUi.steer { a, _ -> a.copy(bearingDeg = PanoramaAim.wrapDeg(a.bearingDeg - PanoramaUi.turnStepDeg(a))) }; true },
                         CustomAccessibilityAction(PanoramaStrings.TURN_RIGHT) { PanoramaUi.steer { a, _ -> a.copy(bearingDeg = PanoramaAim.wrapDeg(a.bearingDeg + PanoramaUi.turnStepDeg(a))) }; true },
                         CustomAccessibilityAction(PanoramaStrings.LOOK_UP) { PanoramaUi.steer { a, _ -> a.copy(tiltDeg = (a.tiltDeg + PanoramaUi.TILT_STEP_DEG).coerceIn(PanoramaAim.MIN_TILT_DEG, PanoramaAim.MAX_TILT_DEG)) }; true },
@@ -256,7 +282,8 @@ fun PanoramaPlot(
                     }
                 },
         ) {
-            drawSky(aim, tints)
+            val t0 = System.nanoTime() // T330: the draw pass's time (task (5))
+            drawSky(aim, tints, scene?.lens)
             if (scene != null) {
                 drawGround(scene, tints, pal, sky!!.profiles.size)
                 drawLensLayers(scene, lensLayers, pal, namePaint, nameText)
@@ -266,6 +293,8 @@ fun PanoramaPlot(
                 PanoramaUi.lensMarks = emptyList()
                 PanoramaUi.flightMarks = emptyList()
             }
+            val t1 = System.nanoTime()
+            PanoramaUi.drawn((t1 - t0) / 1e6, t1)
         }
         // T327: the edge arrow while the target is off the view (a 48 dp target whose tap turns the view to it).
         val target = PanoramaUi.targets.target
@@ -275,11 +304,14 @@ fun PanoramaPlot(
             io.github.jasondorjeshort.dystopo.horizon.OffView.of(
                 scene.lens, dir.first, dir.second, target.name,
                 io.github.jasondorjeshort.dystopo.horizon.RimBox(m, scene.tape.box.bottom + m, wPx - m, hPx - m),
+                follow = aim?.follow == true, // T330: by the screen's axes in Follow
             )
         } else null
         PanoramaUi.arrow = arrow
         if (arrow == null) PanoramaUi.arrowPx = null
-        else EdgeArrow(arrow, pal, wPx, hPx, zoomCorner)
+        else EdgeArrow(arrow, pal, wPx, hPx, corner)
+        // T330: "Follow phone" (choice (g)): one label with an on and off state, 48 dp tall, above the zoom buttons; flips the setting.
+        if (followBox == null) PanoramaUi.followPx = null else FollowButton(followBox, following, pal)
         // The zoom buttons (48 dp each, stacked at the lower right: PanoramaScene.zoomButtons), the pinch's one-finger equal.
         if (aim != null) for ((i, b) in PanoramaScene.zoomButtons(wPx, hPx, d).withIndex()) {
             val inward = i == 0
@@ -315,10 +347,21 @@ fun PanoramaPlot(
     }
 }
 
-/** The sky: the paper's light at the level line to a cool tone 60 degrees up, along the centre column. */
-private fun DrawScope.drawSky(aim: PanoramaAim?, tints: PanoramaTints) {
+/**
+ * The sky: the paper's light at the level line to a cool tone 60 degrees up, along the centre column. T330: a rolled
+ * Follow aim runs the gradient between where the level and 60 degrees up fall on [lens] (straight up the sky, at any roll).
+ */
+private fun DrawScope.drawSky(aim: PanoramaAim?, tints: PanoramaTints, lens: io.github.jasondorjeshort.dystopo.horizon.LensView? = null) {
     if (aim == null) {
         drawRect(tints.skyLow)
+        return
+    }
+    if (aim.follow && lens != null && aim.rollDeg != 0.0) {
+        val a = lens.project(0.0, aim.bearingDeg)
+        val b = lens.project(60.0, aim.bearingDeg)
+        if (a != null && b != null && hypot(a.x - b.x, a.y - b.y) > 1) {
+            drawRect(Brush.linearGradient(listOf(tints.skyLow, tints.skyHigh), start = Offset(a.x.toFloat(), a.y.toFloat()), end = Offset(b.x.toFloat(), b.y.toFloat())))
+        } else drawRect(if (aim.tiltDeg > 30) tints.skyHigh else tints.skyLow)
         return
     }
     val f = PanoramaAim.focal(size.width.toDouble(), aim.fovDeg)
@@ -489,3 +532,53 @@ private fun EdgeArrow(a: io.github.jasondorjeshort.dystopo.horizon.OffViewArrow,
         if (right) BasicText(glyph, Modifier.clearAndSetSemantics { }, style = style.copy(color = pal.link, fontSize = 16.sp))
     }
 }
+
+// T330
+/** "Follow phone"'s text size (sp) and its inner padding at each side (dp). */
+private const val FOLLOW_TEXT_SP = 14
+private const val FOLLOW_PAD_DP = 12.0
+
+/** "Follow phone"'s box (plot px): [widthPx] wide, 48 dp tall, right-aligned with the zoom buttons and a margin above them. */
+internal fun followButtonBox(width: Double, height: Double, dp: Double, widthPx: Double): io.github.jasondorjeshort.dystopo.horizon.RimBox {
+    val zin = PanoramaScene.zoomButtons(width, height, dp)[0]
+    val bottom = zin.top - PanoramaScene.ZOOM_MARGIN_DP * dp
+    return io.github.jasondorjeshort.dystopo.horizon.RimBox(zin.right - widthPx, bottom - PanoramaScene.ZOOM_BUTTON_DP * dp, zin.right, bottom)
+}
+
+/**
+ * T330: the plot's third button (wave 46's choice (g)): "Follow phone", a switch whose on state is drawn filled in the link
+ * colour; a tap flips the synced setting `panoramaSteering` (the row in Settings › Navigation and tracking is its other
+ * place). Upright in its corner at any roll (it is not drawn through the lens).
+ */
+@Composable
+private fun FollowButton(b: io.github.jasondorjeshort.dystopo.horizon.RimBox, on: Boolean, pal: GnssPalette) {
+    val density = LocalDensity.current
+    val shape = RoundedCornerShape(12.dp)
+    Box(
+        Modifier.offset { IntOffset(b.left.roundToInt(), b.top.roundToInt()) }
+            .size(with(density) { (b.right - b.left).toFloat().toDp() }, PanoramaScene.ZOOM_BUTTON_DP.dp)
+            .testTag("panoramaFollow")
+            .onGloballyPositioned { c ->
+                val at = c.positionInRoot()
+                PanoramaUi.followPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
+            }
+            .background(if (on) pal.link else pal.card.copy(alpha = 0.9f), shape).border(1.dp, if (on) pal.link else pal.line, shape)
+            .toggleable(value = on, role = Role.Switch) { setSteering(if (it) PanoramaSteering.FOLLOW else PanoramaSteering.DRAG) },
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            PanoramaStrings.FOLLOW_PHONE, maxLines = 1,
+            style = TextStyle(color = if (on) pal.card else pal.ink, fontSize = FOLLOW_TEXT_SP.sp, fontWeight = FontWeight.Medium),
+        )
+    }
+}
+
+/** T330: sets `panoramaSteering` as its row does (off the main thread, then the screens read it again). */
+internal fun setSteering(to: PanoramaSteering) {
+    Thread({
+        io.github.jasondorjeshort.dystopo.app.SettingsRoutes(io.github.jasondorjeshort.dystopo.app.DystopoApp.instance)
+            .apply(io.github.jasondorjeshort.dystopo.app.SettingsRoutes.Parsed.Ok.of(io.github.jasondorjeshort.dystopo.app.AppSettings.PANORAMA_STEERING, to))
+        io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.map.onMain { io.github.jasondorjeshort.dystopo.app.SettingsUi.revision++ }
+    }, "dystopo-panorama-steering").start()
+}
+// end T330

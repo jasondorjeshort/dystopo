@@ -119,15 +119,17 @@ internal fun DrawScope.drawSunOnLens(lens: LensView, day: HorizonData.SunDay?, n
 internal fun DrawScope.drawSatellitesOnLens(lens: LensView, sats: List<PlotSat>, pal: GnssPalette, marks: MutableList<LensMark>): Map<String, Any?> {
     val svid = android.graphics.Paint().apply { isAntiAlias = true; textSize = 10.5f * density; color = pal.ink.toArgb() }
     val drawn = ArrayList<String>()
+    val px = LinkedHashMap<String, List<Int>>() // T330: each mark on the view, plot px (Follow's pass through the zenith)
     for (ps in sats) {
         val p = lens.at(ps.sat.elevationDeg, ps.sat.azimuthDeg) ?: continue
         satelliteMark(ps, p, pal, svid)
         if (lens.onView(RimPt(p.x.toDouble(), p.y.toDouble()))) {
             drawn += ps.sat.id
+            px[ps.sat.id] = listOf(Math.round(p.x), Math.round(p.y))
             marks += LensMark(TargetKind.SATELLITE, ps.sat.id, HorizonText.satelliteName(ps.sat), p)
         }
     }
-    return linkedMapOf("listed" to sats.size, "onView" to drawn.size, "ids" to drawn)
+    return linkedMapOf("listed" to sats.size, "onView" to drawn.size, "ids" to drawn, "px" to px)
 }
 
 /**

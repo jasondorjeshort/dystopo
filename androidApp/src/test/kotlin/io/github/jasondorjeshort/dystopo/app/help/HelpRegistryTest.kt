@@ -196,6 +196,9 @@ class HelpRegistryTest {
             // T327: the Panorama's Sun and Flights.
             "panorama.sun", "panorama.flights",
             // end T327
+            // T330: Panorama steering.
+            "settings.panoramaSteering",
+            // end T330
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

@@ -88,6 +88,30 @@ object PanoramaStrings {
     /** The plot's spoken label after the place line: "Facing NNW 347°, 60° across". */
     fun facing(bearingDeg: Double, fovDeg: Double): String =
         "Facing ${GnssText.compassPoint(bearingDeg)} ${Math.round(bearingDeg) % 360}°, ${Math.round(fovDeg)}° across"
+
+    // T330: Follow (wave 46's choices (a), (g); the wording is the coordinator's and the owner's to change, ADR 0031).
+    const val STEERING = "Panorama steering"
+    const val STEERING_LINE = "how the Panorama view turns: by dragging it, or with the phone as you point it"
+    const val STEERING_NO_SENSOR = "this phone has no motion sensor to follow, so the Panorama view turns by dragging"
+    const val STEERING_HELP = "Drag turns the Panorama view with your finger. Follow phone turns it with the phone, as you " +
+        "point it at the land, and keeps the screen on while it does. The view's Follow phone button switches between the two."
+    const val FOLLOW_PHONE = "Follow phone"
+    const val FOLLOWING = "Following the phone"
+
+    /** T330: the tilt in the plot's spoken label in Follow: "12° up", "5° down", "level" (under half a degree). */
+    fun tilt(tiltDeg: Double): String {
+        val t = Math.round(tiltDeg)
+        return when {
+            t > 0 -> "$t° up"
+            t < 0 -> "${-t}° down"
+            else -> "level"
+        }
+    }
+
+    /** T330: the plot's spoken label after the place line in Follow: "Following the phone; Facing NNW 347°, 12° up, 60° across". */
+    fun following(bearingDeg: Double, tiltDeg: Double, fovDeg: Double): String =
+        "$FOLLOWING; Facing ${GnssText.compassPoint(bearingDeg)} ${Math.round(bearingDeg) % 360}°, ${tilt(tiltDeg)}, ${Math.round(fovDeg)}° across"
+    // end T330
 }
 
 /**
@@ -122,10 +146,14 @@ fun PanoramaScreen() {
     // The compass for the opening's bearing (choice c); T327: the GNSS held while Satellites draws and the flights' poller
     // asked (owner `horizon`) while Flights draws, as the Horizon view holds them (the one open state, choice i); both off
     // at a chosen point (HorizonPlace.layers). Back lets go of the target first (PanoramaTargets.Back).
+    // T330 (choice (a)): Follow when the setting says so and the phone has an attitude sensor (a synced follow acts as Drag
+    // on a phone with none); then the attitude is held instead of the heading sensor Drag's opening takes.
+    val follow = PanoramaSteering.follows(AppSettings.panoramaSteering, io.github.jasondorjeshort.dystopo.app.controls.Heading.attitudeAvailable)
     val clock = SkyViewEffects(
-        SkyViewHolds(compass = true, satellites = layers.satellites, flightsAt = fix?.takeIf { layers.flights }?.let { it.latitude to it.longitude }, skyRange = skyRange), night,
+        SkyViewHolds(compass = !follow, satellites = layers.satellites, flightsAt = fix?.takeIf { layers.flights }?.let { it.latitude to it.longitude }, skyRange = skyRange), night,
         back = { PanoramaUi.apply(PanoramaTargets.Back) },
     )
+    FollowEffects(follow, clock.started)
     val tick = clock.tick
     val pos = HorizonPlace.source(point, fix?.latitude, fix?.longitude)
     val place = HorizonPlace.line(point, fix?.latitude, fix?.longitude, units)
@@ -294,6 +322,34 @@ fun PanoramaScreen() {
         // The switch at its anchor, Panorama selected, over the content (T315's one placement).
         AnchoredViewSwitch(SkyView.PANORAMA, ViewSwitchColours(pal.card, pal.ink, pal.line), Modifier.testTag(ViewSwitch.TAG_ON_VIEW)) { r, _ ->
             PanoramaUi.switchPx = r.map { Math.round(it) }
+        }
+    }
+}
+
+/**
+ * T330: Follow's effects while the Panorama is open: [PanoramaFollow.following] written; the attitude source started while
+ * following and [started] (the activity in the foreground), stopped otherwise and when the view closes; leaving Follow sets
+ * the aim back to Drag's limits at once (choice (e): the roll to zero, the tilt held, the bearing and the field of view
+ * kept); the screen kept on while following and no longer (choice (a)).
+ */
+@Composable
+private fun FollowEffects(follow: Boolean, started: Boolean) {
+    androidx.compose.runtime.DisposableEffect(follow) {
+        PanoramaFollow.following = follow
+        if (!follow) PanoramaUi.aim?.takeIf { it.follow }?.let { PanoramaUi.aim = it.toDrag() }
+        onDispose { PanoramaFollow.following = false }
+    }
+    androidx.compose.runtime.DisposableEffect(follow, started) {
+        if (follow && started) PanoramaFollow.start() else PanoramaFollow.stop()
+        onDispose { PanoramaFollow.stop() }
+    }
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(follow) {
+        view.keepScreenOn = follow
+        PanoramaUi.keepScreenOn = follow
+        onDispose {
+            view.keepScreenOn = false
+            PanoramaUi.keepScreenOn = false
         }
     }
 }

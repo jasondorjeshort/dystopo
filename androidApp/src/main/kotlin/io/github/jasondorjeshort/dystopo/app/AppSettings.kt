@@ -685,6 +685,16 @@ object AppSettings {
         { io.github.jasondorjeshort.dystopo.aircraft.RouteLinesMode.of(it.toString()) },
         { "$KEY_AIRCRAFT_ROUTE_LINES must be selected or all (got $it)" }))
     // end T314
+    // T330: how the Panorama view is steered (wave 46's choice (g); ADR 0064 and ADR 0044: the apps split), `drag` (the
+    // default) or `follow` (the phone's attitude); a stored value this build does not know reads as the default. Synced
+    // (ADR 0033: one key added). Row: Settings › Navigation and tracking, under Sky range; the plot's "Follow phone" flips it.
+    const val KEY_PANORAMA_STEERING = "panoramaSteering"
+    val PANORAMA_STEERING = add(Setting(KEY_PANORAMA_STEERING, io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.of(it) }),
+        { io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.of(it.toString()) },
+        { "$KEY_PANORAMA_STEERING must be drag or follow (got $it)" }))
+    val panoramaSteering: io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering get() = PANORAMA_STEERING.value
+    // end T330
 }
 
 /**
