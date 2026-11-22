@@ -185,4 +185,68 @@ object UnitFormat {
         val sign = if (v < 0 && n != 0L) "-" else ""
         return if (digits == 0) "$sign$whole" else "$sign$whole.$frac"
     }
+
+    // T337: air pressure, in the user's [PressureUnit] (its own setting, apart from feet and metres). Every place that
+    // shows a pressure reads it through these, from hPa; stored and exported numbers stay hPa.
+
+    /** A pressure reading of [hPa] in [unit]: "1013 mbar", "1013 hPa", "29.92 inHg", "760 mmHg". */
+    fun pressure(hPa: Double, unit: PressureUnit): String = "${pressureValue(hPa, unit)} ${unit.symbol}"
+
+    /** Just the number of [pressure]: whole mbar, hPa and mmHg, inHg to two decimals. */
+    fun pressureValue(hPa: Double, unit: PressureUnit): String = fixed(unit.of(hPa), unit.readingDecimals)
+
+    /**
+     * A change of pressure (its size, without a sign): "4.6 mbar", "4.6 hPa", "0.14 inHg", "3.5 mmHg" (a tenth of mbar,
+     * hPa and mmHg, a hundredth of inHg).
+     */
+    fun pressureChange(hPa: Double, unit: PressureUnit): String = "${fixed(abs(unit.of(hPa)), unit.changeDecimals)} ${unit.symbol}"
+
+    /**
+     * A threshold as a round number in [unit], without its symbol: the pressure-fall warning's 3, 4 and 6 hPa read "3",
+     * "4" and "6" in mbar and hPa, "0.09", "0.12" and "0.18" in inHg, "2.3", "3" and "4.5" in mmHg (to a tenth, a
+     * trailing ".0" dropped).
+     */
+    fun pressureThreshold(hPa: Double, unit: PressureUnit): String = when (unit) {
+        PressureUnit.MBAR, PressureUnit.HPA -> fixed(hPa, 0)
+        PressureUnit.INHG -> fixed(unit.of(hPa), 2)
+        PressureUnit.MMHG -> fixed(unit.of(hPa), 1).removeSuffix(".0")
+    }
+    // end T337
 }
+
+// T337
+/**
+ * The unit air pressure reads in (T337; the owner, 2026-11-14 and 2026-11-22): its own setting, apart from feet and
+ * metres, millibar by default for every install ([DEFAULT]); ADR 0022's regional seeding does not reach it. mbar and hPa
+ * are the same number, only the word differs. [key] is the stored, synced and posted value; [hPaPer] the size of one
+ * unit in hPa; [label] the settings row's choice. Stored and exported pressures stay hPa ([UnitFormat.pressure] formats).
+ */
+enum class PressureUnit(val key: String, val symbol: String, val label: String, val hPaPer: Double, val readingDecimals: Int, val changeDecimals: Int) {
+    MBAR("mbar", "mbar", "mbar", 1.0, 0, 1),
+    HPA("hpa", "hPa", "hPa", 1.0, 0, 1),
+    INHG("inhg", "inHg", "inHg", HPA_PER_INHG, 2, 2),
+    MMHG("mmhg", "mmHg", "mmHg", HPA_PER_MMHG, 0, 1);
+
+    /** [hPa] in this unit. */
+    fun of(hPa: Double): Double = hPa / hPaPer
+
+    /** The unit a second line shows in the scale bar's both-units mode: inHg under the others, mbar under inHg. */
+    val other: PressureUnit get() = if (this == INHG) MBAR else INHG
+
+    companion object {
+        val DEFAULT = MBAR
+
+        /** A key or a symbol, any case ("mbar", "hPa", "INHG", "mmhg"); null for anything else. */
+        fun of(raw: String?): PressureUnit? {
+            val s = raw?.trim()?.lowercase() ?: return null
+            return entries.firstOrNull { it.key == s || it.symbol.lowercase() == s }
+        }
+    }
+}
+
+/** hPa in one inch of mercury (at 0 °C, standard gravity). */
+const val HPA_PER_INHG = 33.8638866667
+
+/** hPa in one millimetre of mercury (at 0 °C, standard gravity). */
+const val HPA_PER_MMHG = 1.33322387415
+// end T337

@@ -10,6 +10,7 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
 import io.github.jasondorjeshort.dystopo.readout.ReadoutValue
 import io.github.jasondorjeshort.dystopo.readout.ValueState
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.PressureUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -148,24 +149,42 @@ class StripTextTest {
         val ext = all.copy(accuracy = all.accuracy.copy(shown = true), fixAge = all.fixAge.copy(shown = true))
         val items = StripText.items(withP, ext, ContourUnits.METERS, trend = "↘", trendLabel = "falling slowly", trendSlot = true, pressureDrawn = true)
         assertEquals(listOf("elevation", "climb", "speed", "course", "pressure", "accuracy", "fix age"), items.map { it.caption })
-        assertEquals(listOf("1650 m", "↓360 m/h", "4.5 km/h", "WSW 245°", "842 hPa", "5 m", "3 s"), items.map { it.full })
+        assertEquals(listOf("1650 m", "↓360 m/h", "4.5 km/h", "WSW 245°", "842 mbar", "5 m", "3 s"), items.map { it.full }) // T337: mbar by default
         // The trend's arrow goes with the pressure while it is drawn; the elevation keeps the known height's slot.
         assertEquals(listOf(null, null, null, null, "↘", null, null), items.map { it.trend })
         assertTrue(items[0].pinSlot && !items[0].trendSlot && items[4].trendSlot)
         assertEquals("WSW", items[3].compact)
         assertEquals("WNW", items[3].compactTemplate)
-        assertEquals("elevation 1650 m · climb ↓360 m/h · speed 4.5 km/h · course WSW · pressure 842 hPa, pressure falling slowly",
+        assertEquals("elevation 1650 m · climb ↓360 m/h · speed 4.5 km/h · course WSW · pressure 842 mbar, pressure falling slowly",
             StripText.line(items.take(5), short = true))
         // No barometer: no pressure entry, the arrow back beside the elevation.
         val noBaro = StripText.items(withP, ext, ContourUnits.FEET, trend = "↘", trendSlot = true, pressureDrawn = false)
         assertEquals(listOf("5414 ft", "↓1180 ft/h", "3.0 mph", "WSW 245°", "15 ft", "3 s"), noBaro.map { it.full })
         assertEquals("↘", noBaro[0].trend)
-        // Before a sample, a dash; inHg in feet units, hPa under it in both-units mode.
+        // Before a sample, a dash; T337: in the pressure unit whatever the units (mbar by default, on feet too), inHg
+        // under it in both-units mode, mbar under inHg.
         val dash = StripText.items(walk, all, ContourUnits.FEET, both = true, pressureDrawn = true).last()
-        assertEquals("– inHg", dash.full)
+        assertEquals("– mbar", dash.full)
         assertEquals("dash", dash.state)
-        assertEquals("1088 hPa", dash.otherTemplate)
+        assertEquals("88.88 inHg", dash.otherTemplate)
+        val dashInHg = StripText.items(walk, all, ContourUnits.FEET, both = true, pressureDrawn = true, pressure = PressureUnit.INHG).last()
+        assertEquals("– inHg", dashInHg.full)
+        assertEquals("1088 mbar", dashInHg.otherTemplate)
     }
+
+    // T337
+    /** T337: the strip's pressure in each of the four units, feet or metres alike, and its template wide enough for each. */
+    @Test
+    fun thePressureReadsInItsOwnUnit() {
+        val withP = walk.copy(pressure = v(ReadoutEntry.PRESSURE, 842.3))
+        for (u in ContourUnits.entries) {
+            fun read(p: PressureUnit) = StripText.items(withP, all, u, pressureDrawn = true, pressure = p).single { it.entry == ReadoutEntry.PRESSURE }
+            assertEquals(listOf("842 mbar", "842 hPa", "24.87 inHg", "632 mmHg"), PressureUnit.entries.map { read(it).full }, "$u")
+            assertEquals("842 mbar", StripText.items(withP, all, u, pressureDrawn = true).single { it.entry == ReadoutEntry.PRESSURE }.full, "$u: mbar by default")
+            assertEquals(listOf("1088 mbar", "1088 hPa", "88.88 inHg", "1088 mmHg"), PressureUnit.entries.map { read(it).template.full }, "$u")
+        }
+    }
+    // end T337
 
     @Test
     fun everyEntrysWidestTextFitsItsTemplate() { // T257: the template tests, every entry and option
@@ -190,17 +209,18 @@ class StripTextTest {
                 5 -> o.with(ReadoutEntry.COURSE, o.course.copy(degrees = false, magnetic = true))
                 else -> o
             }
-            for ((e, vs) in values) {
+            for ((e, vs) in values) for (p in PressureUnit.entries) { // T337: every pressure unit
+                if (e != ReadoutEntry.PRESSURE && p != PressureUnit.DEFAULT) continue
                 val oe = o.with(e, o[e].copy(shown = true))
-                val t = StripText.template(e, oe, u)
+                val t = StripText.template(e, oe, u, p)
                 for (x in vs) for (decl in listOf(null, 15.2)) {
-                    val l = io.github.jasondorjeshort.dystopo.readout.ReadoutText.of(ReadoutValue(e, ValueState.SHOWN, x, if (e == ReadoutEntry.CLIMB) 0.05 else 3.0), oe, u, decl)!!
+                    val l = io.github.jasondorjeshort.dystopo.readout.ReadoutText.of(ReadoutValue(e, ValueState.SHOWN, x, if (e == ReadoutEntry.CLIMB) 0.05 else 3.0), oe, u, decl, p)!!
                     val text = when {
                         e != ReadoutEntry.CLIMB || l.text == "0" -> l.text
                         l.text.startsWith("-") -> StripText.DOWN + l.text.removePrefix("-")
                         else -> StripText.UP + l.text
                     }
-                    val where = "$a $u v$variant $e $x"
+                    val where = "$a $u v$variant $e $x $p"
                     assertTrue(text.length <= t.text.length, "$where: '$text' wider than '${t.text}'")
                     assertTrue(l.unit.length <= t.unit.length, "$where: unit '${l.unit}' wider than '${t.unit}'")
                     assertTrue((l.plusMinus?.length ?: 0) <= (t.plusMinus?.length ?: 0), "$where: '${l.plusMinus}' against '${t.plusMinus}'")

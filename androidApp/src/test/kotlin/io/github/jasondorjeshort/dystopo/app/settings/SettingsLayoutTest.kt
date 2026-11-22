@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  */
 class SettingsLayoutTest {
     /** The tasks that added a row after T103 (T126: spoken directions; T143: diagnostics; T145: problem reports; T164: route times; T163: the turn-around clock's two rows; T172: recording). */
-    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172", "T161", "T176", "T177", "T178", "T187", "T182", "T183", "T184", "T194", "T197", "T203", "T213", "T257", "T263", "T282", "T307", "T311", "T312", "T314", "T330") // T330: Panorama steering; T314: Route lines; T312: Sky range; T311: the Flights rows; T307: GPS status and Sky plot; T282: Plan drives for; T263: the ask-which-activity switch; T213: the trail disagreements' switch; T203: the terrain estimate's switch; T194: the spoken terrain shade row; T161: the readout rows; T176: the position button rows; T177: the readout bar rows; T178: the pressure-fall warning; T187: the water rows; T182: the view range; T183: the printed sheet; T184: the route time form
+    private val AFTER_T103 = setOf("T126", "T143", "T145", "T164", "T163", "T172", "T161", "T176", "T177", "T178", "T187", "T182", "T183", "T184", "T194", "T197", "T203", "T213", "T257", "T263", "T282", "T307", "T311", "T312", "T314", "T330", "T337") // T337: Pressure units; T330: Panorama steering; T314: Route lines; T312: Sky range; T311: the Flights rows; T307: GPS status and Sky plot; T282: Plan drives for; T263: the ask-which-activity switch; T213: the trail disagreements' switch; T203: the terrain estimate's switch; T194: the spoken terrain shade row; T161: the readout rows; T176: the position button rows; T177: the readout bar rows; T178: the pressure-fall warning; T187: the water rows; T182: the view range; T183: the printed sheet; T184: the route time form
     /** Every row of the settings sheet before T103, top to bottom, by its heading as drawn. */
     private val beforeT103 = listOf(
         "Sources", "Updates", "Storage", "Units", "Text size", "Contour warm-up", "Route snap",
@@ -56,6 +56,7 @@ class SettingsLayoutTest {
                 "Flight tracking", "Flight tracking: Refresh", "Flight tracking: Airport names",
                 // end T311
                 "Flight tracking: Route lines", // T314 (after the Flights rows)
+                "Pressure units", // T337 (Units and display, right under Units)
                 "Navigation: Spoken directions",
                 "Route times", // T164
                 "Navigation: Turn back by", "Navigation: Turn-back margin", // T163
@@ -122,6 +123,18 @@ class SettingsLayoutTest {
         }
         assertEquals(6, Regex("""\bOnOff\(""").findAll(options).count(), "the layers' row, Shade, Drainage, Airport gates (T230), Night and the scale bar's both units")
     }
+
+    // T337
+    /** T337: Pressure units is the Units and display page's second row, right under Units, and the page's line names it. */
+    @Test
+    fun pressureUnitsStandRightUnderUnits() {
+        assertEquals(listOf(SettingsRow.UNITS, SettingsRow.PRESSURE_UNIT, SettingsRow.TEXT_SIZE), SettingsLayout.rows(SettingsGroup.DISPLAY))
+        val display = groups().first { it["id"] == "display" }
+        assertEquals(listOf("Units", "Pressure units", "Text size"), rows(display).map { it["label"] })
+        assertEquals("pressureUnit", rows(display)[1]["id"])
+        assertTrue("pressure" in SettingsGroup.DISPLAY.summary, SettingsGroup.DISPLAY.summary)
+    }
+    // end T337
 
     @Test
     fun groupsAndIds() {

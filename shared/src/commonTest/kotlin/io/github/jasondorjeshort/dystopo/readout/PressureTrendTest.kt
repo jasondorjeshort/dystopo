@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.readout
 
+import io.github.jasondorjeshort.dystopo.render.PressureUnit
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -227,11 +228,33 @@ class PressureTrendTest {
         assertEquals(FallWarning.OFF, FallWarning.parse("Off"))
         assertNull(FallWarning.parse("5"))
         val t = run("still-fall").threeHour!!
-        assertTrue(PressureText.body(t, inHg = false).matches(Regex("Down 4\\.\\d hPa in 3 hours \\(sea-level equivalent\\)\\. Weather may turn worse; check your plans\\.")), PressureText.body(t, false))
-        assertTrue(PressureText.body(t, inHg = true).startsWith("Down 0.1"), PressureText.body(t, true))
-        assertEquals("Weather station nearby: down 3.1 hPa in 3 hours.", PressureText.station(-3.1, false))
-        assertEquals("Weather station nearby: steady over 3 hours.", PressureText.station(0.0, false))
+        val hPa = io.github.jasondorjeshort.dystopo.render.PressureUnit.HPA
+        val inHg = io.github.jasondorjeshort.dystopo.render.PressureUnit.INHG
+        assertTrue(PressureText.body(t, hPa).matches(Regex("Down 4\\.\\d hPa in 3 hours \\(sea-level equivalent\\)\\. Weather may turn worse; check your plans\\.")), PressureText.body(t, hPa))
+        assertTrue(PressureText.body(t, inHg).startsWith("Down 0.1"), PressureText.body(t, inHg))
+        assertEquals("Weather station nearby: down 3.1 hPa in 3 hours.", PressureText.station(-3.1, hPa))
+        assertEquals("Weather station nearby: steady over 3 hours.", PressureText.station(0.0, hPa))
     }
+
+    // T337
+    /** T337: the warning's words in each pressure unit (mbar the default), and the thresholds as round numbers in each. */
+    @Test
+    fun theWordsReadInThePressureUnit() {
+        val t = run("still-fall").threeHour!!
+        assertTrue(PressureText.body(t, PressureUnit.MBAR).matches(Regex("Down 4\\.\\d mbar in 3 hours \\(sea-level equivalent\\)\\. Weather may turn worse; check your plans\\.")), PressureText.body(t, PressureUnit.MBAR))
+        assertTrue(PressureText.body(t, PressureUnit.MMHG).matches(Regex("Down 3\\.\\d mmHg in 3 hours .*")), PressureText.body(t, PressureUnit.MMHG))
+        assertEquals("4.6 mbar", PressureText.amount(-4.6, PressureUnit.MBAR))
+        assertEquals("4.6 hPa", PressureText.amount(4.6, PressureUnit.HPA))
+        assertEquals("0.14 inHg", PressureText.amount(-4.6, PressureUnit.INHG))
+        assertEquals("3.5 mmHg", PressureText.amount(-4.6, PressureUnit.MMHG))
+        assertEquals("Weather station nearby: up 0.09 inHg in 3 hours.", PressureText.station(3.1, PressureUnit.INHG))
+        assertEquals("Weather station nearby: down 2.3 mmHg in 3 hours.", PressureText.station(-3.1, PressureUnit.MMHG))
+        assertEquals("3 mbar, Standard at 4, Fewer at 6", PressureText.thresholds(PressureUnit.MBAR))
+        assertEquals("3 hPa, Standard at 4, Fewer at 6", PressureText.thresholds(PressureUnit.HPA))
+        assertEquals("0.09 inHg, Standard at 0.12, Fewer at 0.18", PressureText.thresholds(PressureUnit.INHG))
+        assertEquals("2.3 mmHg, Standard at 3, Fewer at 4.5", PressureText.thresholds(PressureUnit.MMHG))
+    }
+    // end T337
 
     @Test
     fun theReportsTemperatureAndTendency() {

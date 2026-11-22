@@ -202,6 +202,9 @@ class HelpRegistryTest {
             // T333: the recording panel's weak-signal line.
             "tracks.weakSignal",
             // end T333
+            // T337: Pressure units.
+            "settings.pressureUnit",
+            // end T337
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

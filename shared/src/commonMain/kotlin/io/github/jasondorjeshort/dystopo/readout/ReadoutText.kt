@@ -3,6 +3,7 @@ package io.github.jasondorjeshort.dystopo.readout
 import io.github.jasondorjeshort.dystopo.model.Activity
 import io.github.jasondorjeshort.dystopo.nav.Wmm
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.PressureUnit
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import kotlin.math.abs
 import kotlin.math.roundToLong
@@ -30,8 +31,8 @@ data class ReadoutLabel(val text: String, val unit: String, val plusMinus: Strin
  * T257: the course reads as a compass point of sixteen and whole degrees, "SSE 163°" (the owner, 2026-11-07; the survey
  * of 2026-11-09 found degrees the instrument form and the point the glance form, and nothing against both), degrees true
  * unmarked; with [EntryOptions.magnetic] degrees magnetic marked "M" where the WMM gives a declination ([declination]),
- * else true marked "T", so the two are never mixed silently. The pressure in whole hPa, or inHg to two decimals in feet
- * units; the GNSS accuracy in whole metres or feet; the fix age in seconds, minutes or hours. A climb past four digits
+ * else true marked "T", so the two are never mixed silently. The pressure in its own unit (T337: [PressureUnit], mbar by
+ * default, apart from feet and metres; whole mbar, hPa or mmHg, inHg to two decimals); the GNSS accuracy in whole metres or feet; the fix age in seconds, minutes or hours. A climb past four digits
  * reads in thousands ("↑12k ft/h", a replayed jump's figure; T238's note), so it never outgrows the bar's template.
  */
 object ReadoutText {
@@ -61,10 +62,10 @@ object ReadoutText {
     }
 
     /** T257: hPa in one inch of mercury. */
-    const val HPA_PER_INHG = 33.8638866667
+    const val HPA_PER_INHG = io.github.jasondorjeshort.dystopo.render.HPA_PER_INHG
 
-    /** T257: the pressure unit: "hPa" in metric units, "inHg" in feet units (ADR 0022). */
-    fun pressureUnit(units: ContourUnits): String = if (units == ContourUnits.FEET) "inHg" else "hPa"
+    /** T337: the pressure's unit is its own setting ([PressureUnit]), not the feet-or-metres choice. */
+    fun pressureUnit(pressure: PressureUnit): String = pressure.symbol
 
     /** T250: what a value reads when the data is insufficient (the climb's window filling, too uncertain to tell, no fix). */
     const val UNKNOWN = "?"
@@ -87,7 +88,7 @@ object ReadoutText {
     }
 
     /** [v]'s value in the entry's unit (speed in its unit, pace in seconds per km or mi, climb per hour or minute, metres or feet). */
-    fun convert(entry: ReadoutEntry, v: Double, options: ReadoutOptions, units: ContourUnits): Double = when (entry) {
+    fun convert(entry: ReadoutEntry, v: Double, options: ReadoutOptions, units: ContourUnits, pressure: PressureUnit = PressureUnit.DEFAULT): Double = when (entry) {
         ReadoutEntry.SPEED -> when {
             options.speed.pace -> if (v <= 0) Double.POSITIVE_INFINITY else (if (units == ContourUnits.FEET) UnitFormat.METERS_PER_MILE else 1000.0) / v
             options.knots -> v / MPS_PER_KN
@@ -100,33 +101,34 @@ object ReadoutText {
         }
         ReadoutEntry.COURSE -> v
         ReadoutEntry.ELEVATION, ReadoutEntry.ACCURACY -> if (units == ContourUnits.FEET) v * UnitFormat.FEET_PER_METER else v
-        ReadoutEntry.PRESSURE -> if (units == ContourUnits.FEET) v / HPA_PER_INHG else v
+        ReadoutEntry.PRESSURE -> pressure.of(v) // T337
         ReadoutEntry.FIX_AGE -> v
     }
 
     /**
      * T177 (T161's follow-up, the scale bar's both-units mode): the other unit system's text for [value] ("5414 ft"
      * under "1650 m"), or null where there is none: course, speed in knots, a hidden value. A dash or a zero reads so in
-     * the other unit too.
+     * the other unit too. T337: the pressure's other unit is [PressureUnit.other] (inHg, or mbar under inHg).
      */
-    fun other(value: ReadoutValue, options: ReadoutOptions, units: ContourUnits): ReadoutLabel? {
+    fun other(value: ReadoutValue, options: ReadoutOptions, units: ContourUnits, pressure: PressureUnit = PressureUnit.DEFAULT): ReadoutLabel? {
         if (value.entry == ReadoutEntry.COURSE || value.entry == ReadoutEntry.FIX_AGE) return null
         if (value.entry == ReadoutEntry.SPEED && options.knots && !options.speed.pace) return null
-        return of(value, options, if (units == ContourUnits.FEET) ContourUnits.METERS else ContourUnits.FEET)
+        return of(value, options, if (units == ContourUnits.FEET) ContourUnits.METERS else ContourUnits.FEET, pressure = pressure.other)
     }
 
     /**
      * [value] as text, or null when it is [ValueState.HIDDEN]. T250: [ValueState.UNKNOWN] reads [UNKNOWN] ("? m/h").
      * T257: [declinationDeg] (from [declination] at the fix) turns a course into magnetic when its options ask for it.
+     * T337: [pressure] the pressure's unit (its own setting; mbar by default).
      */
-    fun of(value: ReadoutValue, options: ReadoutOptions, units: ContourUnits, declinationDeg: Double? = null): ReadoutLabel? {
+    fun of(value: ReadoutValue, options: ReadoutOptions, units: ContourUnits, declinationDeg: Double? = null, pressure: PressureUnit = PressureUnit.DEFAULT): ReadoutLabel? {
         val e = value.entry
         val unit = when (e) {
             ReadoutEntry.SPEED -> speedUnit(options, units)
             ReadoutEntry.CLIMB -> climbUnit(options.activity, units)
             ReadoutEntry.COURSE -> "°"
             ReadoutEntry.ELEVATION, ReadoutEntry.ACCURACY -> if (units == ContourUnits.FEET) "ft" else "m"
-            ReadoutEntry.PRESSURE -> pressureUnit(units)
+            ReadoutEntry.PRESSURE -> pressureUnit(pressure)
             ReadoutEntry.FIX_AGE -> "s"
         }
         if (value.state == ValueState.HIDDEN) return null
@@ -140,11 +142,11 @@ object ReadoutText {
         if (value.state == ValueState.DASH || v == null) return if (e == ReadoutEntry.COURSE) ReadoutLabel(DASH + courseSign, "", null) else ReadoutLabel(DASH, unit, null)
         if (e == ReadoutEntry.COURSE) return course(v, value.sigma, options, declinationDeg)
         if (e == ReadoutEntry.FIX_AGE) return age(v)
-        val x = convert(e, v, options, units)
+        val x = convert(e, v, options, units, pressure)
         val text = when {
             e == ReadoutEntry.SPEED && options.speed.pace -> pace(x)
             e == ReadoutEntry.SPEED && x < HALF_STEPS_BELOW -> halves(x)
-            e == ReadoutEntry.PRESSURE && units == ContourUnits.FEET -> hundredths(x)
+            e == ReadoutEntry.PRESSURE -> io.github.jasondorjeshort.dystopo.render.UnitFormat.pressureValue(v, pressure) // T337: the one formatter
             e == ReadoutEntry.CLIMB -> climbText(step(x, stepOf(e, options, units)))
             else -> step(x, stepOf(e, options, units)).let { if (it == 0L) "0" else it.toString() }
         }
@@ -197,11 +199,6 @@ object ReadoutText {
 
     /** T257: climbs from this figure on read in thousands ([climbText]). */
     const val CLIMB_THOUSANDS_FROM = 10_000L
-
-    private fun hundredths(x: Double): String {
-        val h = (x * 100).roundToLong()
-        return "${h / 100}.${(h % 100).toString().padStart(2, '0')}"
-    }
 
     private fun stepOf(e: ReadoutEntry, options: ReadoutOptions, units: ContourUnits): Long = when {
         e != ReadoutEntry.CLIMB -> 1

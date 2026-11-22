@@ -227,7 +227,7 @@ object LiveReadout {
 
     /** T177: the bar before the first [refresh] answered: every shown entry a dash. */
     fun placeholder(): List<StripItem> =
-        StripText.items(null, AppSettings.readoutOptions(activity()), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits, trendSlot = trendSlot(), pressureDrawn = pressureDrawn())
+        StripText.items(null, AppSettings.readoutOptions(activity()), AppSettings.units, io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits, trendSlot = trendSlot(), pressureDrawn = pressureDrawn(), pressure = AppSettings.pressureUnit)
 
     /** T178: an arrow of the barometer's trend can appear beside the elevation (the switch on, a barometer present). */
     private fun trendSlot(): Boolean = AppSettings.readoutBarometer && Barometer.present
@@ -283,6 +283,9 @@ object LiveReadout {
                 "pressure" to linkedMapOf(
                     "drawn" to (s?.pressureDrawn ?: pressureDrawn()), "hPa" to rawHPa?.let { Math.round(it * 100) / 100.0 }, "source" to rawSource,
                     "ageS" to rawHPa?.let { (SystemClock.elapsedRealtime() - rawAt) / 1000 },
+                    // T337: the unit it reads in (its own setting) and the reading in it; `hPa` stays the number as measured.
+                    "unit" to (s?.pressure ?: AppSettings.pressureUnit).key,
+                    "text" to rawHPa?.let { io.github.jasondorjeshort.dystopo.render.UnitFormat.pressure(it, s?.pressure ?: AppSettings.pressureUnit) },
                 ),
             ),
             "activity" to (s?.options?.activity ?: activity()).code,
@@ -293,7 +296,7 @@ object LiveReadout {
             "drawn" to s?.items?.map { it.json() },
             "line" to s?.line,
             "gap" to s?.gapText,
-            "text" to s?.let { snap -> ReadoutEntry.entries.associate { e -> e.code to ReadoutText.of(snap.readout[e], snap.options, snap.units, snap.declinationDeg)?.full } },
+            "text" to s?.let { snap -> ReadoutEntry.entries.associate { e -> e.code to ReadoutText.of(snap.readout[e], snap.options, snap.units, snap.declinationDeg, snap.pressure)?.full } },
             "readout" to s?.readout?.json(),
             "barometerSensor" to b + mapOf(
                 "wanted" to (s?.barometerWanted ?: false),
@@ -394,6 +397,7 @@ object LiveReadout {
         val e = ensure()
         val r = e.readout(System.currentTimeMillis() + offsetMs)
         val units = AppSettings.units
+        val pressureUnit = AppSettings.pressureUnit // T337
         val o = e.options
         val visible = composed && StripLayout.shown && Foreground.started
         val fusing = visible && barometerUsed(e.profile, o)
@@ -408,8 +412,8 @@ object LiveReadout {
         val withPressure = r.copy(pressure = pressureValue(o))
         val decl = if (o.course.magnetic) lastFix?.let { ReadoutText.declination(it.lat, it.lon, System.currentTimeMillis()) } else null
         val drawnP = pressureDrawn()
-        val items = StripText.items(withPressure, o, units, both, PressureWatch.arrow, PressureWatch.arrowLabel, trendSlot(), decl, drawnP) // T178: the trend's arrow
-        snapshot = Snapshot(withPressure, o, units, items, StripText.gap(r.gapS), wanted, both, decl, drawnP)
+        val items = StripText.items(withPressure, o, units, both, PressureWatch.arrow, PressureWatch.arrowLabel, trendSlot(), decl, drawnP, pressureUnit) // T178: the trend's arrow
+        snapshot = Snapshot(withPressure, o, units, items, StripText.gap(r.gapS), wanted, both, decl, drawnP, pressureUnit)
     }
 
     /**
@@ -437,6 +441,8 @@ object LiveReadout {
         val declinationDeg: Double? = null,
         /** T257: the pressure entry is drawn ([pressureDrawn]). */
         val pressureDrawn: Boolean = false,
+        /** T337: the unit the pressure reads in ([AppSettings.pressureUnit]). */
+        val pressure: io.github.jasondorjeshort.dystopo.render.PressureUnit = io.github.jasondorjeshort.dystopo.render.PressureUnit.DEFAULT,
     ) {
         /** The strip as one line of text (what `GET /readout` `line` and the strip's description say); T197: the mark's words last. */
         val line: String? get() = items.takeIf { it.isNotEmpty() }?.let { l ->

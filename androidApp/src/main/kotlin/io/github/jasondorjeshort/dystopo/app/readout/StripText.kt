@@ -9,6 +9,7 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutText
 import io.github.jasondorjeshort.dystopo.readout.ReadoutValue
 import io.github.jasondorjeshort.dystopo.readout.ValueState
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.PressureUnit
 
 /**
  * T161: one entry of the bar as drawn: a small [caption] over the [value] and its [unit] (and the ± when asked for).
@@ -80,7 +81,7 @@ data class StripItem(
  * first readout), a dash only while the barometer and the GNSS contradict and the barometer is out for it.
  *
  * T257: the course reads "SSE 163°" ([ReadoutText.course]; magnetic "M" when chosen and known), then come the pressure
- * (hPa or inHg, with the trend's arrow) and the extended readout's GNSS accuracy and fix age, in that order, so the bar
+ * (T337: in its own unit, mbar, hPa, inHg or mmHg, with the trend's arrow) and the extended readout's GNSS accuracy and fix age, in that order, so the bar
  * leaves out the fix age, the accuracy and the pressure before the course, the speed, the climb and the elevation; the
  * course's degrees go before any entry ([StripItem.compact]). The pressure is drawn only on a phone with a barometer
  * (or while a replay feeds one), a dash until a sample comes.
@@ -119,11 +120,12 @@ object StripText {
      * [both]: the scale bar's both-units mode, each item with the other system's text under it. T178: [trend] and
      * [trendLabel] the barometer's trend arrow and words beside the elevation, [trendSlot] whether one can appear (T257:
      * beside the pressure while it is drawn). T257: [declinationDeg] the WMM's at the fix for a magnetic course,
-     * [pressureDrawn] whether the pressure entry is drawn (a barometer present).
+     * [pressureDrawn] whether the pressure entry is drawn (a barometer present). T337: [pressure] the pressure's unit
+     * (its own setting, mbar by default).
      */
     fun items(
         r: Readout?, o: ReadoutOptions, units: ContourUnits, both: Boolean = false, trend: String? = null, trendLabel: String? = null,
-        trendSlot: Boolean = false, declinationDeg: Double? = null, pressureDrawn: Boolean = false,
+        trendSlot: Boolean = false, declinationDeg: Double? = null, pressureDrawn: Boolean = false, pressure: PressureUnit = PressureUnit.DEFAULT,
     ): List<StripItem> {
         val out = ArrayList<StripItem>()
         val gap = gap(r?.gapS)
@@ -142,8 +144,8 @@ object StripText {
                 ValueState.UNKNOWN -> StripItem.STATE_UNKNOWN
                 else -> StripItem.STATE_DASH
             }
-            val label = ReadoutText.of(drawn, o, units, declinationDeg) ?: continue
-            val other = if (both) ReadoutText.other(drawn, o, units) else null
+            val label = ReadoutText.of(drawn, o, units, declinationDeg, pressure) ?: continue
+            val other = if (both) ReadoutText.other(drawn, o, units, pressure) else null
             val first = out.isEmpty()
             out += StripItem(
                 entry = e,
@@ -154,9 +156,9 @@ object StripText {
                 dimmed = v?.dimmed ?: false,
                 state = state,
                 other = other?.let { joined(arrow(e, state, it.text), it.unit) },
-                template = template(e, o, units),
+                template = template(e, o, units, pressure),
                 captionTemplate = if (first) longer(caption(e, o), GAP_TEMPLATE) else caption(e, o),
-                otherTemplate = if (other != null) template(e, o, otherUnits).let { joined(it.text, it.unit) } else null,
+                otherTemplate = if (other != null) template(e, o, otherUnits, pressure.other).let { joined(it.text, it.unit) } else null,
                 trend = if (e == arrowOn && trendSlot) trend else null, // T178
                 trendLabel = if (e == arrowOn && trendSlot && trend != null) trendLabel else null,
                 trendSlot = e == arrowOn && trendSlot,
@@ -181,11 +183,11 @@ object StripText {
      * The widest text [e] shows in [units] (T177): elevation up to five digits in feet (the highest summits) and four in
      * metres, the climb an arrow and four digits (T257: or three and "k"), speed "88.5" (three digits by road, rail and
      * air), pace "88:80", course "WNW 388°" (T257; "W" the widest letter, the mark after it when magnetic is chosen),
-     * the pressure "1088" hPa or "88.88" inHg, the accuracy four digits, the fix age "88 min", and the ± when asked
-     * for. Digits are equally wide in the bar's font, so 8s stand for any.
+     * the pressure "1088" in mbar or hPa (T337: and mmHg, three digits at most), "88.88" in inHg, the accuracy four digits,
+     * the fix age "88 min", and the ± when asked for. Digits are equally wide in the bar's font, so 8s stand for any.
      */
-    fun template(e: ReadoutEntry, o: ReadoutOptions, units: ContourUnits): ReadoutLabel {
-        val unit = ReadoutText.of(ReadoutValue(e, ValueState.DASH), o, units)?.unit.orEmpty()
+    fun template(e: ReadoutEntry, o: ReadoutOptions, units: ContourUnits, pressure: PressureUnit = PressureUnit.DEFAULT): ReadoutLabel {
+        val unit = ReadoutText.of(ReadoutValue(e, ValueState.DASH), o, units, pressure = pressure)?.unit.orEmpty()
         val value = when (e) {
             ReadoutEntry.ELEVATION -> if (units == ContourUnits.FEET) "28888" else "8888"
             ReadoutEntry.CLIMB -> "${UP}8880"
@@ -195,7 +197,7 @@ object StripText {
                 else -> "88.5"
             }
             ReadoutEntry.COURSE -> courseTemplate(o, o.course.degrees)
-            ReadoutEntry.PRESSURE -> if (units == ContourUnits.FEET) "88.88" else "1088"
+            ReadoutEntry.PRESSURE -> if (pressure == PressureUnit.INHG) "88.88" else "1088" // T337
             ReadoutEntry.ACCURACY -> "8888" // a network fix can be off by a kilometre or more
             ReadoutEntry.FIX_AGE -> "88"
         }

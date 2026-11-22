@@ -11,7 +11,7 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage"), // T115: titles from Screens
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements, flight tracking"), // T223: names what the page holds; T311: flight tracking
-    DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
+    DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, pressure units, text size"), // T337: pressure units
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning, Horizon view, sky range, Panorama steering"), // T223: names what the page holds; T308: Horizon view; T312: sky range; T330: Panorama steering
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
     ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, technical details, problem reports, contour warm-up, credits"),
@@ -35,6 +35,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     OFFLINE_AREAS("offlineAreas", SettingsGroup.DATA, Screens.OFFLINE_MAPS, "SettingsPages", "T103"), // T235: the list's name; the id stays (ADR 0053)
     MAP_OPTIONS("mapOptions", SettingsGroup.MAP, "Map", "MapOptionsSection", "T47"),
     UNITS("units", SettingsGroup.DISPLAY, "Units", "SettingsPages", "T33"),
+    // T337: the unit air pressure reads in, right under Units (the owner, 2026-11-22: easy to find)
+    PRESSURE_UNIT(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_PRESSURE_UNIT, SettingsGroup.DISPLAY, "Pressure units", "SettingsPages", "T337"),
+    // end T337
     TEXT_SIZE("textSize", SettingsGroup.DISPLAY, "Text size", "SettingsPages", "T33"),
     ROUTE_SNAP("routeSnap", SettingsGroup.NAVIGATION, "Route snap", "SettingsPages", "T57"),
     NAV_SPEECH("navSpeech", SettingsGroup.NAVIGATION, "Navigation: Spoken directions", "SettingsPages", "T126"),

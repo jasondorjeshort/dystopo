@@ -109,6 +109,9 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * the course is drawn as its point alone), `extended`, `course` (`degrees`, `north` `true` or `magnetic`,
  * `declinationDeg`, `mark` null, `M` or `T`) and `pressure` (`drawn`, `hPa`, `source` `sensor` or `replay`, `ageS`);
  * `bar.fields` add `compact`; `readout` adds `pressure`, `accuracy` and `fixAge`; `options` the three new entries.
+ * T337: `pressureUnit` (the pressure's own unit, `mbar`, `hpa`, `inhg` or `mmhg`; `POST /settings?pressureUnit=`) and
+ * `bar.pressure` adds `unit` and `text` (the reading in it; `hPa` stays the number as measured); `trend.card` adds
+ * `pressureUnit`, the unit its lines read in.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
  * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).

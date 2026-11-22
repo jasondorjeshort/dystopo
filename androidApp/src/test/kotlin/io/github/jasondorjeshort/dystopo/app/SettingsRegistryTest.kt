@@ -70,6 +70,7 @@ class SettingsRegistryTest {
         "horizonFlights" to false, "skyRange" to "overhead", // T312
         "aircraftRouteLines" to "all", // T314
         "panoramaSteering" to "follow", // T330
+        "pressureUnit" to "inhg", // T337
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -115,6 +116,9 @@ class SettingsRegistryTest {
     // T330 (ADR 0033: one key added, synced): Panorama steering.
     private val t330Keys = listOf("panoramaSteering")
     // end T330
+    // T337 (ADR 0033: one key added, synced): Pressure units.
+    private val t337Keys = listOf("pressureUnit")
+    // end T337
     private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot") +
         t308Keys + t308Keys.map { "app.$it" } +
         // T311 (ADR 0033: three keys added, synced): Flight tracking, its refresh and airport names.
@@ -127,8 +131,11 @@ class SettingsRegistryTest {
         t314Keys + t314Keys.map { "app.$it" } +
         // end T314
         // T330
-        t330Keys + t330Keys.map { "app.$it" }
+        t330Keys + t330Keys.map { "app.$it" } +
         // end T330
+        // T337
+        t337Keys + t337Keys.map { "app.$it" }
+        // end T337
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -139,11 +146,12 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one")
-        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1, t257Synced().size)
-        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one, T337 one")
+        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1, t257Synced().size)
+        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys && it.removePrefix("app.") !in t337Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
         assertEquals("all", SettingsSync.current()["app.aircraftRouteLines"], "T314: the seeded all syncs as all")
         assertEquals("follow", SettingsSync.current()["app.panoramaSteering"], "T330: the seeded follow syncs as follow")
+        assertEquals("inhg", SettingsSync.current()["app.pressureUnit"], "T337: the seeded inhg syncs as inhg")
         assertEquals(listOf("on", "30", "codes"), t311Keys.map { SettingsSync.current()["app.$it"] }, "T311: the seeded Flights settings sync as stored")
         assertEquals(listOf("off", "overhead"), t312Keys.map { SettingsSync.current()["app.$it"] }, "T312: the seeded toggle and sky range sync as stored")
         assertEquals(listOf("off", "off", "off"), t308Keys.map { SettingsSync.current()["app.$it"] }, "T308: the seeded toggles sync as off")
@@ -483,4 +491,45 @@ class SettingsRegistryTest {
         assertTrue(!s.follows(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.DRAG, sensor = true))
     }
     // end T330
+
+    // T337
+    /**
+     * T337: Pressure units is mbar for a fresh install, for one that saved feet (it read inHg before T337) and for one that
+     * saved metres (hPa before): ADR 0022's regional seeding does not reach it. Synced, posted and read back (the symbols
+     * too); a value outside the four is refused with the key named, and one stored that this build does not know reads as
+     * mbar. Its row stands right under Units.
+     */
+    @Test
+    fun pressureUnitIsMbarForEveryInstall() {
+        val mbar = io.github.jasondorjeshort.dystopo.render.PressureUnit.MBAR
+        for (store in listOf(mapOf<String, Any>("server" to ""), mapOf("server" to "", "units" to "ft", "unitsSource" to "user"), mapOf("server" to "", "units" to "m", "unitsSource" to "pack:rainier"))) {
+            val p = FakePrefs(store)
+            AppSettings.load(p)
+            assertEquals(mbar, AppSettings.pressureUnit, "$store")
+            assertEquals("mbar", AppSettings.json()["pressureUnit"], "$store")
+            assertEquals("mbar", SettingsSync.current()["app.pressureUnit"], "$store")
+            assertTrue(p.writes.none { it.first == "pressureUnit" }, "loading writes no unit: $store")
+        }
+        AppSettings.load(FakePrefs(mapOf("server" to "", "units" to "ft")))
+        assertEquals(io.github.jasondorjeshort.dystopo.render.ContourUnits.FEET, AppSettings.units, "feet stay feet")
+        assertTrue(AppSettings.PRESSURE_UNIT.synced)
+        for ((raw, want) in listOf("inhg" to "INHG", "inHg" to "INHG", "hPa" to "HPA", "mmhg" to "MMHG", "MBAR" to "MBAR")) {
+            val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("pressureUnit" to raw)), raw)
+            assertEquals(want, posted[AppSettings.PRESSURE_UNIT]!!.name, raw)
+        }
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("pressureUnit" to "mmhg")))
+        for ((s, v) in posted.plain) @Suppress("UNCHECKED_CAST") AppSettings.set(s as Setting<Any>, v)
+        assertEquals(io.github.jasondorjeshort.dystopo.render.PressureUnit.MMHG, AppSettings.pressureUnit)
+        assertEquals("mmhg", AppSettings.json()["pressureUnit"])
+        val refused = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("pressureUnit" to "psi")))
+        assertTrue("pressureUnit" in refused.message, refused.message)
+        AppSettings.load(FakePrefs(mapOf("server" to "", "pressureUnit" to "kpa")))
+        assertEquals(mbar, AppSettings.pressureUnit)
+        val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(SettingsSync.plan(mapOf("app.pressureUnit" to "inhg"), emptyMap(), SettingsRoutes.KEYS).params))
+        assertEquals(io.github.jasondorjeshort.dystopo.render.PressureUnit.INHG, back[AppSettings.PRESSURE_UNIT])
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.DISPLAY)
+        assertEquals(rows.indexOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.UNITS) + 1, rows.indexOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.PRESSURE_UNIT))
+        assertEquals("Pressure units", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.PRESSURE_UNIT.label)
+    }
+    // end T337
 }
