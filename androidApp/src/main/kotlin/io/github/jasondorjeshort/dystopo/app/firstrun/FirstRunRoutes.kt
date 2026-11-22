@@ -15,6 +15,10 @@ import io.github.jasondorjeshort.dystopo.app.packs.PackManager
  *   and the last server test. T220: what the card draws: `body` (the state's sentence), `choices` in order (`id`
  *   `download|look|server|import`, `label`, `sentence`, `weight` `filled|outlined|text`, `primary`), `primary` (the filled
  *   choice's id), `notNowLine`, `estimateBytes` (null: no fix or no source yet, and the card names no size).
+ *   T332: `noPack` is "the phone holds no map" ([MapMessage]: no open region and no downloaded area, once the area records
+ *   are read); `mapHolds` the rule's inputs (`opened`, `regions`, `areas`, `online`), `mapMessage` what the map chose last
+ *   (`opening`, `nothingHeld`, `nothingHeldOnline`, `outside`, `none`), `viewInside` (the last visible box shares a part
+ *   with a region or an area), `textShown` and `actionShown` (the centred line drawn instead of the card, and its action).
  * - `POST /firstrun/download[?lat=&lon=]`: "Download the map around me" (the device's fix unless given).
  * - T80 `POST /firstrun/show[?lat=&lon=]`: "Just look at the map" (camera to the fix, card aside, nothing saved).
  * - T80 `GET /firstrun/direct`: the phone's own source reading (`enabled`, `active`, session bytes and cap, requests,

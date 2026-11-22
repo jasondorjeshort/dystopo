@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.github.jasondorjeshort.dystopo.app.about.AttributionLine
+import io.github.jasondorjeshort.dystopo.app.firstrun.FirstRun
+import io.github.jasondorjeshort.dystopo.app.firstrun.MapMessage
 import io.github.jasondorjeshort.dystopo.app.launch.AppLaunch
 import io.github.jasondorjeshort.dystopo.launch.Gate
 import io.github.jasondorjeshort.dystopo.launch.Launch
@@ -108,27 +110,33 @@ class MainActivity : ComponentActivity() {
             // line and the no-pack message are recomposed from the current one.
             // T144: the credit line is made off the UI thread (a pack's attribution is its metadata, read once from the
             // file under the pack's read lock, which the tile threads hold); the composable only reads the result.
-            var shown by remember { mutableStateOf(Shown("Dystopo", app.tiles.let { t -> if (t.packs.dem == null && t.online == null) NO_PACK else null })) }
+            var attribution by remember { mutableStateOf("Dystopo") }
+            // T332: what the map says about its maps ([MapMessage]): asked again every half second, since the view moves,
+            // the packs reopen and areas finish downloading; the boxes are in memory and the camera is read here, on the UI thread.
+            var message by remember { mutableStateOf<MapMessage?>(FirstRun.mapMessage(app, null)) }
             LaunchedEffect(Unit) {
                 var current: TileService? = null
                 while (true) {
                     val t = app.tiles
                     if (t !== current) {
                         current = t
-                        shown = withContext(Dispatchers.Default) { Shown(attribution(t), if (t.packs.dem == null && t.online == null) NO_PACK else null) } // T38: no message in online mode
+                        attribution = withContext(Dispatchers.Default) { attribution(t) }
                     }
+                    val view = runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineView.currentOnMain(app)?.bounds }.getOrNull()
+                    val m = FirstRun.mapMessage(app, view)
+                    FirstRun.lastView = view
+                    FirstRun.lastMessage = m
+                    message = m
                     Foreground.delay(500) // T150: paused while the app is in the background
                 }
             }
-            MapScreen(mapView, shown.attribution, shown.message)
+            MapScreen(mapView, attribution, message)
         }
 
         StartupTrace.mark("permissions")
         val wanted = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (wanted.none { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) permissionRequest.launch(wanted)
     }
-
-    private class Shown(val attribution: String, val message: String?)
 
     /**
      * T162: the camera the map opens at ([OpenView]): a `dystopo://map` link first (T55), then the camera MapLibre
@@ -238,7 +246,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
+private fun MapScreen(mapView: MapView, attribution: String, message: MapMessage?) {
+    // T332: Recentre, the scale bar and the view switch hide only on a phone that holds no map with nothing online.
+    val controls = message?.hidesControls != true
     // T228: StartupTrace.composing names the first composition's steps, so a long splash is attributed (marks only, until the first frame).
     Box(Modifier.fillMaxSize()) {
         StartupTrace.composing("compose the map view")
@@ -276,11 +286,11 @@ private fun MapScreen(mapView: MapView, attribution: String, message: String?) {
         StartupTrace.composing("compose PressureCard")
         io.github.jasondorjeshort.dystopo.app.readout.PressureCard() // T178: the pressure-fall warning's card, under the search box and the nav card
         StartupTrace.composing("compose RecenterButton and ScaleBar")
-        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
-        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
-        if (message == null) io.github.jasondorjeshort.dystopo.app.controls.MapViewSwitch() // T309, T315: "Map | Horizon" at its anchor, the bottom-left corner (`controls/ViewSwitch.kt`)
+        if (controls) io.github.jasondorjeshort.dystopo.app.controls.RecenterButton() // T93, T100: recentre and orientation, lower right, under the cards and sheets below
+        if (controls) io.github.jasondorjeshort.dystopo.app.controls.ScaleBar() // T101: scale bar lower left, above the credit line and the bottom panels
+        if (controls) io.github.jasondorjeshort.dystopo.app.controls.MapViewSwitch() // T309, T315: "Map | Horizon" at its anchor, the bottom-left corner (`controls/ViewSwitch.kt`)
         StartupTrace.composing("compose FirstRunCard")
-        io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no pack), else the no-pack line
+        io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCard(message) // T79: the first-run card (no map held), else the no-map line; T332: or the outside line
         StartupTrace.composing("compose UpdateOverlay")
         io.github.jasondorjeshort.dystopo.app.update.UpdateOverlay() // T83: "Update to <version>" (Install, Not now) or why an update was refused
         io.github.jasondorjeshort.dystopo.app.aircraft.AircraftOverlay() // T311: the Flights layer's card (over the bottom controls) and status line

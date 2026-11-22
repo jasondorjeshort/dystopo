@@ -964,6 +964,39 @@ def end_first_run(c):
         c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
 
 
+# T332
+OUTSIDE_VIEW = (45.8326, 6.8652, 10)  # Mont Blanc (a public area of areas.json), outside the Rainier pack
+
+
+def scr_map_outside(c):
+    """T332: the phone holds the Rainier pack and the view is at Mont Blanc with no online source: "No offline map covers
+    this view" with "Go to my offline maps", Recentre, the scale bar and the switch kept. The online sources (the server
+    and the phone's own reading of the public sources) are turned off and put back by end_map_outside."""
+    s = c.srv.ok("GET", "/settings") or {}
+    d = c.srv.ok("GET", "/firstrun/direct") or {}
+    c.online_before = (s.get("server") or "", bool(d.get("enabled", True)))
+    c.srv.ok("POST", "/settings?server=")
+    c.srv.ok("POST", "/firstrun/direct?on=0")
+    c.srv.ok("POST", f"/camera?lat={OUTSIDE_VIEW[0]}&lon={OUTSIDE_VIEW[1]}&zoom={OUTSIDE_VIEW[2]}&bearing=0")
+    deadline = time.time() + 30
+    while True:
+        j = c.srv.ok("GET", "/firstrun") or {}
+        if j.get("mapMessage") == "outside" and j.get("actionShown"):
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"the outside line did not show: mapMessage {j.get('mapMessage')}, mapHolds {json.dumps(j.get('mapHolds'))}")
+        time.sleep(0.5)
+    time.sleep(1.0)
+
+
+def end_map_outside(c):
+    server, direct = getattr(c, "online_before", ("", True))
+    c.srv.call("POST", "/settings?server=" + urllib.parse.quote(server, safe=""))
+    c.srv.call("POST", f"/firstrun/direct?on={1 if direct else 0}")
+    c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
+# end T332
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -995,6 +1028,9 @@ SCREENS = [
     ("horizon-elsewhere", scr_horizon_elsewhere, end_horizon, "screen"),  # T321
     ("panorama", scr_panorama, end_panorama, "screen"),  # T326
     ("panorama-flights", scr_panorama_flights, end_panorama_flights, "screen"),  # T327
+    # T332
+    ("map-outside", scr_map_outside, end_map_outside, "map"),
+    # end T332
 ]
 
 
