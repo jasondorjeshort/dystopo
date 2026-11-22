@@ -18,3 +18,11 @@ then asks for.
 
 **What exists already (to be checked):** the trim-the-defaults idea (a one-off audit, not a standing list); the debug
 routes that report each setting's value (`GET /settings`); no ledger.
+
+Plan: one table, `docs/reference/beta-defaults.md` (with its line in `docs/reference/README.md`): per row the setting or aid, the
+constant it names (`File.kt` and the constant), its default now, its default at beta, and the owner's words with their date.
+Seed it only from what the owner has said flips (the zoom label's idea; any row of the trim-the-defaults idea that carries an
+answer); nothing guessed. A JVM test in `androidApp/src/test` (`BetaDefaultsTest`) parses the table and fails when a row's
+"now" differs from the constant, so a change to either alone fails. The `release` skill's first beta step names the table.
+Verify: the test passes, and fails after editing one row's value (say so in the report). Out of scope: flipping any default,
+the trim audit itself, the two-channels decision.
