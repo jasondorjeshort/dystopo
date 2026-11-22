@@ -58,3 +58,13 @@ From the owner (2026-11-22, v0.1.41-alpha, default map settings, Colorado, the s
 Possible plan (the coordinator's suggestion, not triaged): reproduce first on the emulator with the same two packs and the network on (`GET /stats`, `/features` at each
 zoom), then decide between a gap fix (the online source serves what no pack or overview can) and a profile or style
 change (the owner's eye, ADR 0031) as one task.
+
+Plan: reproduce on an emulator with a pack that starts at z8 (the two-pack fixture, or a public pack), online: at z5.5,
+z6.5, z7.5, z8.5 and z10 read `GET /stats`, `/features`, the chip's text and a screenshot, and which archive answers each
+tile. Expected from reading: the world overview (z0 to z5) is last in `Packs.osmPacks` (`androidApp/.../Packs.kt`, about
+lines 97 to 109) and answers overzoomed tiles at z6 and z7 ahead of the online vector source. If so, apply the owner's
+finest-first rule: where the online source is allowed, the overview answers only up to its own top zoom and the online
+source serves the tiles no pack holds; offline the overview overzooms as now. Relief: report the Hillshade and Contours
+defaults and whether relief draws at z8 with them on, with screenshots; changing a default, a layer's minimum zoom or the
+profile is not in this pass, it goes in the report for the owner's eye (ADR 0031). Verify: before and after screenshots at
+each zoom, the chip agreeing with the answering source; `./gradlew check` green. Out of scope: profile or style changes.
