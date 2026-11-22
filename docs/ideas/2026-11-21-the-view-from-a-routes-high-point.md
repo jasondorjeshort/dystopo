@@ -29,3 +29,17 @@ Recorded 2026-11-21 from the coordinator's list after wave 44, on the owner's "w
 - A route with several tops (two passes): one button per top, or the highest alone.
 - Which peak "first sight" is for: one picked from the peaks list, or the most prominent in range by default (T309).
 - The arrival hour needs the route's clock (`2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md`).
+
+Plan: two passes, "View from the top" first; this file stays for the second. Pass one, small: the route card
+(`app/routing/RouteControls.kt`, `CardActions`) gains "View from the top" on a plan whose profile has elevations: the
+Horizon view opens at the profile's highest sample (`PlannedRoute.profile`) as at any chosen point
+(`HorizonUi.openAt`; the amber place line reads "At the route's high point, ..."), and the switch's Panorama segment
+keeps the place. The highest sample alone, one button, no arrival hour. The card's debug route (`RouteRoutes.kt`)
+takes the action and `GET /route` names the point. Verify: a unit test of the pick (a flat route offers nothing, of
+two tops the higher); on the emulator a planned route at Rainier, the card and both views' frames viewed at the
+default text and at font scale 2.0. Strings in the report (ADR 0031). Pass two: "first sight" for one peak (by
+default the dominant summit seen from the top, T309's ranking): one ray per profile sample toward it (`RayMarch`,
+`Horizon.dropM`), the first sample in view marked on the route line and on the elevation profile, with a card line
+("Mount Rainier comes into view at mile 3.2"); its cost on a long route measured first. Out of scope in both: the
+sample with the most names in view, a button per top, the scrub along the route
+(`2026-11-21-the-horizon-view-moves-with-you.md`).
