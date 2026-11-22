@@ -11,3 +11,5 @@ Status: **untriaged and not sanity-checked** (an idea of the coordinator's own, 
 A map keeps itself fine near where the owner is, goes, or has saved routes, and coarse far away: a pack thins by distance from home, from tracks and from saved routes, so the budget follows the use.
 
 **What exists already (to be checked):** **Related ideas exist:** areas that update themselves by use (`2026-11-04`) and auto-download when zoomed in (`2026-10-13`); not the thinning of a held map.
+
+Waits: ADR 0060's cell downloads in a release (the owner, 2026-11-22, by multiple choice at triage).
