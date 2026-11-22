@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-22
 
+- T332: The no-map messages ask whether the phone holds a map: found by reproduction, then one rule
 - T329: The Panorama's lens rolls and looks anywhere: the phone's attitude, its filter and the heading correction in `shared`
 - T335: The sweep's diff step cannot be silent, and a launch check reads only its own launch
 
