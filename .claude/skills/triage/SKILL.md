@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Read every untriaged file in docs/ideas/ against the code it names and write one block into each — a Plan: where the work is settled and pass-sized, a Question: with a blank Answer: where a choice is the owner's. Also runs the ADR 0012 scan (fired triggers, due predictions, fitness lines). Writes no code, deletes only an idea the code already has, pushes nothing.
+description: Read every untriaged file in docs/ideas/ against the code it names and write one block into each — a Plan: where the work is settled and pass-sized, a Question: with a blank Answer: where a choice is the owner's. Also runs the ADR 0012 scan (fired triggers, due predictions, fitness lines). Ends by offering the owner new ideas, written only as the owner accepts them. Writes no code, deletes only an idea the code already has, pushes nothing.
 ---
 
 # Triage
@@ -57,7 +57,20 @@ no block. The format of a file and its three blocks is `docs/ideas/README.md`; r
    trade-off is unclear.
 4. Run `node .claude/hooks/queue-list.js ideas --untriaged --json` and parse it: the files that
    end in no `Plan:`, `Question:` or `Waits:`, oldest first. Files the stderr names with a `?` were
-   not read as untriaged; the report lists each with its field and value.
+   not read as untriaged; the report lists each with its field and value. Then list the files
+   whose last dated entry (`Came up again:`, `Use:`) was committed after their block:
+
+   ```
+   for f in $(grep -lE "^(Came up again|Use): " docs/ideas/*.md); do
+     e=$(git log -1 --format=%ct -G"^(Came up again|Use): " -- "$f")
+     b=$(git log -1 --format=%ct -G"^(Plan|Question|Waits):" -- "$f")
+     [ -n "$b" ] && [ "${e:-0}" -gt "$b" ] && echo "$f"
+   done
+   ```
+
+   A `Plan:` or a `Question:` with a blank `Answer:` may be reopened: steps 5 to 7 in the entry's
+   light, the new block replacing the old. A `Waits:` or an answered `Question:` is only flagged to
+   the owner in the report; the owner's answer alone changes it.
 5. For each: read the file, then the anchor it names (the file, route, command or screen), then
    enough around it to know what the change would touch. An idea whose anchor no longer exists is
    a `Question:` ("the anchor moved to X; still wanted?"), not a deletion.
@@ -77,14 +90,43 @@ no block. The format of a file and its three blocks is `docs/ideas/README.md`; r
 8. Commit each file alone, through whoever the policy lets commit (`.claude/hooks/policy.json`;
    in the base that is the `runner`, via the `commit` skill), with a one-line subject naming the
    idea and the block written; the body carries the reason a Question is the owner's. Do not push.
-9. Report: how many scan hits, step 2's lines and its pending count, step 3's line, how many files read, how many got a Plan, how many a Question, which were deleted as
-   already built, and anything you could not anchor.
+9. The brainstorm, offered on yes. Once the blocks are committed, the coordinator offers the owner
+   new ideas the session suggests (features, moonshots, process and tooling, research questions):
+   from the anchors just read, the owner's answers, research that came back, and the gaps the
+   blocks left. The formats and the bar's table are those `docs/ideas/README.md` gives.
+   - The offer: at most nine numbered lines, about three each near-term, intermediate and
+     moonshot, one or two lines each naming its anchor. A header above them states the open count
+     at the session's start (every file the listing prints, resting ideas included), the bar's
+     step, and `held back: N` (the owner may ask to see them).
+   - The cheap check before offering, a grep and not the sanity check (that stays with steps 5 and
+     6): the anchor exists; the tree does not already have it; a matching idea is searched for; the
+     list is read for one primitive split into several features. A match is offered as a
+     `Came up again:` entry on the existing file (with `New:` when it adds an angle) or as a `Use:`
+     line on the primitive's file, never as a file of its own.
+   - The bar rises one step per doubling of the open count. It is guidance: an offer below it is
+     allowed with a stated reason, and an idea below it is never dropped, only offered as an entry
+     or counted as held back.
+   - The owner answers per line: record, record at rest, fold into a named file, or no. Nothing is
+     written unasked. A recorded file carries the Source line as its first body line after the
+     title (source, the generating model and the recorder, the public trigger, "offered and
+     accepted by the owner; not sanity-checked", and `Moonshot.` when one). "Record at rest" ends it
+     in `Waits: at rest — "<quoted words>" (the owner, <date>)`, written only from the owner's own
+     words or the option they picked, never by default.
+   - A recurrence counts once per distinct session or source; an entry written in the session of a
+     triage that read the file is kept for its `New:` and does not count.
+   - Everything accepted goes in one commit; the next triage reads new files like any other. A
+     project's wave skill offers the same step at a wave's close or a release, and on a spark.
+10. Report: how many scan hits, step 2's lines and its pending count, step 3's line, how many files read, how many got a Plan, how many a Question, which were deleted as
+   already built, which step 4 reopened or flagged, anything you could not anchor, and how many
+   ideas the brainstorm offered, recorded, recorded at rest, and added as recurrence entries.
 
 ## Bounds
 
 - Triage writes blocks and nothing else: no code, no doc edits outside the idea file (except the
-  scan's idea files and their rows where `docs/ideas/README.md` carries a table), no deletion for taste.
-- A `Waits:` is the owner's to write. If a file already carries a `Waits:` or a `Question:` with
-  an `Answer:`, it is not yours; leave it.
+  scan's idea files and their rows where `docs/ideas/README.md` carries a table, and the ideas and
+  entries the owner accepted in step 9), no deletion for taste.
+- Triage never rewrites a `Waits:`: only the owner decides one, and an agent writes one only from
+  the owner's quoted words (step 9). A `Question:` with an `Answer:` is the owner's too; leave both,
+  and flag a newer entry on either (step 4).
 - One block per file. A file that needs both a Plan and a Question gets the Question; once the
   owner has answered, the next triage replaces that block with the Plan.
