@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.42-alpha (2026-11-22)
+
 ### 2026-11-22
 
 - T338: The launch budget's `mapview` ceiling raised to 138 ms (the host slower; no merge the cause)
