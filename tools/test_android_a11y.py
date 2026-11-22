@@ -264,11 +264,19 @@ _sleep = a11y.time.sleep
 a11y.time.sleep = lambda s: None
 try:
     ps = PanoSrv()
-    pano[0][1](type("C", (), {"srv": ps})())
-    assert ps.calls == [("POST", "/settings?aircraft=1"), ("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000")], ps.calls  # T327: the four toggles
+    ctx = type("C", (), {"srv": ps})()
+    pano[0][1](ctx)
+    # T327: the four toggles; T330: the steering setting read, then the view pinned in Drag (fixed by T331: T330 changed
+    # the screen and not this assertion).
+    assert ps.calls == [("POST", "/settings?aircraft=1"), ("GET", "/settings"), ("POST", "/settings?panoramaSteering=drag"),
+                        ("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000")], ps.calls
     ps.calls.clear()
-    pano[0][2](type("C", (), {"srv": ps})())
-    assert ps.calls == [("POST", "/horizon/switch?to=map"), ("POST", "/settings?aircraft=0")], ps.calls
+    pano[0][2](ctx)
+    assert ps.calls == [("POST", "/horizon/switch?to=map"), ("POST", "/settings?aircraft=0")], ps.calls  # PanoSrv's {} found no setting to put back
+    ctx.steering_found = "follow"
+    ps.calls.clear()
+    pano[0][2](ctx)
+    assert ps.calls[-1] == ("POST", "/settings?panoramaSteering=follow"), ps.calls
 finally:
     a11y.time.sleep = _sleep
 # end T326
