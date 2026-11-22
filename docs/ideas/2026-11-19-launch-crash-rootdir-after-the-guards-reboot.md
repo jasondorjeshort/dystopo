@@ -28,6 +28,11 @@ storage ready 27.9 s after `sys.boot_completed`), and the debug build crashed at
 `AssertionError` (PID 3422). Two sweeps out of two after that reboot: reproducible, so worth a pass before the
 emulator's memory line moves it to another part.
 
+2026-11-21: a third time, in wave 44's closing sweep `out/sweep-20261121-w44` [no-check: gitignored] (main at
+c464b55c): the guard's reboot before `a11y` (private 6.0 GB; 518 s; storage ready 6.3 s after `sys.boot_completed`),
+the same `AssertionError` 61 s into the part (PID 3278), no retry, and a green `-Only a11y` rerun. Still no stack
+kept.
+
 Plan: the message is Kotlin's own: the stdlib's `FileTreeWalk` asserts it when a directory it is about to enter is no
 longer a directory, so some `File.walk*()` in the app ran while another thread deleted or replaced that directory (or
 the guest's storage answered `isDirectory` inconsistently just after boot). Start-up walkers to check:
