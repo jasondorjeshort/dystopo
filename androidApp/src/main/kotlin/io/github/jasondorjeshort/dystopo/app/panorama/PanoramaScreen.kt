@@ -214,7 +214,7 @@ internal val PANORAMA_HELP: List<HelpText> = run {
                 "(your view range) drawn far to near, the level line dashed and the bearings along the top. Drag sideways to turn, " +
                 "up and down to tilt; pinch or the buttons zoom."
         },
-        HelpText("panorama.peaks", HorizonText.PEAKS, "$placed › ${HorizonText.PEAKS}", show = show) { units ->
+        HelpText("panorama.peaks", HorizonText.PEAKS, "$placed, its ${HorizonText.PEAKS} list", show = show) { units ->
             "Named peaks within your view range of ${UnitFormat.distance(AppSettings.viewRangeKm * 1000.0, units)} in view or just out of " +
                 "sight. The view names the highest on the skyline, then the closest; zoom in to name more. Tap a name or a row for its line; " +
                 "${HorizonText.VIEW_FROM_HERE} stands the view on its top."

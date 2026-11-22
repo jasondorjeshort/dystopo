@@ -45,6 +45,11 @@ object PanoramaData {
     var revision by mutableStateOf(0)
         private set
 
+    /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before the worker bumps it (T226). */
+    fun prepare() {
+        revision
+    }
+
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-panorama").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
     val sweepsRun = AtomicLong()
