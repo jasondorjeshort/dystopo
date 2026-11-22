@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-22
 
+- T328: A launch crash keeps its stack, and the start-up walker that throws is found
 - T325: The Horizon view's pane becomes parts two views can host, and its Close button goes
 
 ### 2026-11-21
