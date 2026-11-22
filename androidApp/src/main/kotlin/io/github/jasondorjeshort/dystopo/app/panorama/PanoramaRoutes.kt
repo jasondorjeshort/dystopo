@@ -128,6 +128,7 @@ object PanoramaRoutes {
                 val place = PanoramaData.kept.firstOrNull()
                 val s = PanoramaUi.scene
                 HorizonUi.open && HorizonUi.view == SkyView.PANORAMA && place != null && s != null && place.pending.isEmpty() &&
+                    place.rangeM == AppSettings.viewRangeKm * 1000.0 && place.skylines.isNotEmpty() &&
                     (place.peaks != null || place.reason != null) && PanoramaUi.wanted.all { place.skylines.containsKey(it) } &&
                     place.finest === place.skylines[place.skylines.keys.min()]
             }

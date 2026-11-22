@@ -241,6 +241,38 @@ finally:
     a11y.time.sleep = _sleep
 # end T321
 
+# T326: the Panorama view is a screen of its own: opened by the switch's route (its third segment), waited for until its
+# skyline and peaks are drawn, closed by the switch's "Map".
+pano = [s for s in a11y.SCREENS if s[0] == "panorama"]
+assert len(pano) == 1 and pano[0][3] == "screen" and pano[0][2] is a11y.end_panorama, pano
+
+
+class PanoSrv:
+    def __init__(self):
+        self.calls = []
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    ps = PanoSrv()
+    pano[0][1](type("C", (), {"srv": ps})())
+    assert ps.calls == [("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000")], ps.calls
+    ps.calls.clear()
+    pano[0][2](type("C", (), {"srv": ps})())
+    assert ps.calls == [("POST", "/horizon/switch?to=map")], ps.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T326
+
 tmp = tempfile.mkdtemp(prefix="t270-a11y-")
 try:
     text = a11y.baseline_text([dict(e1, kind="contrast"), e1], taken="2026-11-13")

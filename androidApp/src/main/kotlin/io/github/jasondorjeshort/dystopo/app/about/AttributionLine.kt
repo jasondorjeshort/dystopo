@@ -91,7 +91,9 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier, roomBeside:
     BasicText(
         text,
         style = style,
-        maxLines = maxLines,
+        // Above the switch, across the window, the line takes the lines its text needs: never cut short (at font scale 2.0
+        // on a 411 dp phone the flights' notice made four).
+        maxLines = if (above) Int.MAX_VALUE else maxLines,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
             .control("creditLine") // T238

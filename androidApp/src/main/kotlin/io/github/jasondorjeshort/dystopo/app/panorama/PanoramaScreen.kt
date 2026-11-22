@@ -62,7 +62,7 @@ import io.github.jasondorjeshort.dystopo.render.UnitFormat
 /** T326: the Panorama's words (ADR 0031: shown in the task's report; no other product named). */
 object PanoramaStrings {
     const val TITLE = "Panorama view"
-    const val WORKING = "Working out the skyline…"
+    const val WORKING = "Working out the skyline..."
     const val ZOOM_IN = "Zoom in"
     const val ZOOM_OUT = "Zoom out"
     const val TURN_LEFT = "Turn left"
@@ -159,11 +159,13 @@ fun PanoramaScreen() {
                     Box(Modifier.onGloballyPositioned { placeH = it.size.height }) { PlaceRow(place, moved, pal, night) }
                     if (!headingScrolls) heading()
                     Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).testTag("panoramaList")
+                        Modifier.weight(1f).fillMaxWidth()
                             .onGloballyPositioned { c ->
+                                // The list's viewport (before the scroll), as the screen shows it.
                                 val at = c.positionInRoot()
                                 PanoramaUi.listPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
                             }
+                            .verticalScroll(scroll).testTag("panoramaList")
                             .padding(bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),
                     ) {
                         if (headingScrolls) heading()

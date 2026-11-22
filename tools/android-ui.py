@@ -1834,6 +1834,7 @@ def drive_body(dev, pack, dem, osm, drive, out, st, errors):
 
 HORIZON_SEGMENT = "^Horizon$"  # app/controls/ViewSwitch.kt: the switch's segments "Map" and "Horizon" (T309)
 MAP_SEGMENT = "^Map$"
+PANORAMA_SEGMENT = "^Panorama$"  # T326: the third segment
 HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun|Flights)$"  # T312: Flights, shown while Flight tracking is on
 
 
@@ -1849,7 +1850,7 @@ def horizon_toggles(dev, nodes):
     return [n["text"] for n in nodes if n["text"] and re.match(HORIZON_TOGGLES, n["text"]) and in_button(n["bounds"])]
 
 
-SWITCH_LABEL = "Map or horizon view"  # app/controls/ViewSwitch.kt: the switch's spoken label, its whole rectangle (T315)
+SWITCH_LABEL = "Map, horizon or panorama view"  # app/controls/ViewSwitch.kt: the switch's spoken label, its whole rectangle (T315; T326: three segments)
 
 
 def switch_rects(nodes):
@@ -1866,7 +1867,7 @@ def under_switch(nodes, rect):
 
     def holds(b):
         return b[0] <= rect[0] and b[1] <= rect[1] and b[2] >= rect[2] and b[3] >= rect[3]
-    own = {SWITCH_LABEL, "Map", "Horizon"}
+    own = {SWITCH_LABEL, "Map", "Horizon", "Panorama"}
     return [n["text"] or n["desc"] for n in nodes if (n["text"] or n["desc"]) and (n["text"] or n["desc"]) not in own and n["bounds"]
             and inter(n["bounds"]) and not holds(n["bounds"])]
 
@@ -2139,6 +2140,131 @@ def horizon_from_peak(dev):
         errors.append(f"the place line after View from here is {place!r}, not 'At {SUMMIT_PEAK}, ...'")
     back_to_fix_and_map(dev, out, errors)
     return {**out, **({"error": "; ".join(errors)} if errors else {})}
+
+
+# --- features: the Panorama view (T326) ---------------------------------------------------------------------------
+
+PANORAMA_TITLE = "^Panorama view$"
+PANORAMA_PLOT = r"^Panorama from: "  # the plot's spoken label: the place line, then "Facing NNW 347°, 60° across"
+ZOOM_IN = "^Zoom in$"
+PANORAMA_WORKING = ("Working out the skyline", "Finding the peaks")
+
+
+def panorama_plot(nodes):
+    """T326: the Panorama plot's node (by its spoken label) or None."""
+    return next((n for n in nodes if n["desc"] and re.match(PANORAMA_PLOT, n["desc"]) and n["bounds"]), None)
+
+
+def panorama_facing(desc):
+    """T326: (compass and degrees, field of view) from the plot's spoken label, e.g. ("NNW 347°", 60)."""
+    m = re.search(r"Facing (\S+ \d+°), (\d+)° across", desc or "")
+    return (m.group(1), int(m.group(2))) if m else (None, None)
+
+
+def wait_panorama_ready(dev, nodes, seconds=120):
+    """T326: waits for the skyline and the peaks (the terrain to the view range is read and swept off the main thread;
+    a just-booted emulator is slow); the nodes."""
+    deadline = time.time() + seconds
+    while time.time() < deadline and (any(t.startswith(PANORAMA_WORKING) for t in dev.texts(nodes)) or not panorama_plot(nodes)):
+        time.sleep(2)
+        nodes = dev.nodes()
+    time.sleep(2)
+    return dev.nodes()
+
+
+def panorama_step(dev):
+    """T326: the switch's third segment, all by taps and one-finger swipes. From the map with nothing selected, "Panorama"
+    opens the Panorama view at the fix ("Your location"; the frame `panorama`: the layered skyline, the level line, the
+    bearing tape, the peaks named, the zoom buttons, the pane with "Panorama view", the Peaks toggle and list); a sideways
+    swipe across the plot turns the view (its spoken label's bearing changes; `panorama-turned`); "Zoom in" twice narrows
+    the field of view (`panorama-zoomed`); the view's "Map" segment closes it. Then a long-press at Mount Rainier's summit
+    and the segment: the Panorama opens there (the frame `panorama-point`: the amber place line "At Mount Rainier, ... of
+    you" with "Back to here"), "Back to here" returns to the fix, "Map" closes it."""
+    t0 = time.time()
+    out = {"frames": {}}
+    errors = []
+    n, nodes, backs = back_until(dev, PANORAMA_SEGMENT)
+    if not n:
+        return {"ok": False, "backs": backs, "error": f"no Panorama segment on the map after {backs} Back (texts: {dev.texts(nodes)[:25]})"}
+    on_map = switch_rects(nodes)
+    dev.tap(n)
+    title, nodes = dev.wait_for(PANORAMA_TITLE, 15)
+    if not title:
+        return {"ok": False, "error": f"no 'Panorama view' heading after the segment (texts: {dev.texts(nodes)[:25]})"}
+    nodes = wait_panorama_ready(dev, nodes)
+    texts = dev.texts(nodes)
+    out["frames"]["panorama"] = dev.screencap("panorama")[0]
+    plot = panorama_plot(nodes)
+    out["atFix"] = PLACE_HERE in texts and dev.find(BACK_TO_HERE, nodes) is None
+    if not out["atFix"]:
+        errors.append(f"the segment with nothing selected did not open at {PLACE_HERE!r}")
+    if not plot:
+        return {**out, "ok": False, "error": f"no Panorama plot (texts: {texts[:25]})"}
+    out["switchMapPx"], out["switchViewPx"] = on_map, switch_rects(nodes)
+    facing0 = panorama_facing(plot["desc"])
+    out["opening"] = {"facing": facing0[0], "fovDeg": facing0[1], "label": plot["desc"]}
+    out["peaksLine"] = next((t for t in texts if re.search(r"just out of sight within|^No named peak|^No offline map with peak", t)), None)
+    if facing0[1] != 60:
+        errors.append(f"the opening's field of view is {facing0[1]}, not 60")
+    # A one-finger swipe across the middle of the plot, right to left: the view turns (to the right).
+    b = plot["bounds"]
+    y = (b[1] + b[3]) // 2
+    dev.shell("input", "swipe", str(b[0] + (b[2] - b[0]) * 3 // 4), str(y), str(b[0] + (b[2] - b[0]) // 4), str(y), "700")
+    time.sleep(2)
+    nodes = dev.nodes()
+    out["frames"]["turned"] = dev.screencap("panorama-turned")[0]
+    facing1 = panorama_facing((panorama_plot(nodes) or {}).get("desc"))
+    out["turned"] = {"facing": facing1[0], "fovDeg": facing1[1]}
+    if facing1[0] is None or facing1[0] == facing0[0]:
+        errors.append(f"the swipe did not turn the view ({facing0[0]} then {facing1[0]})")
+    # "Zoom in" twice (the pinch's one-finger equal): the field of view narrows; the fine sweep for it is waited for.
+    for _ in range(2):
+        z = dev.find(ZOOM_IN, nodes)
+        if not z:
+            errors.append("no 'Zoom in' button on the plot")
+            break
+        dev.tap(z)
+        time.sleep(1.0)
+        nodes = dev.nodes()
+    nodes = wait_panorama_ready(dev, nodes, 60)
+    out["frames"]["zoomed"] = dev.screencap("panorama-zoomed")[0]
+    facing2 = panorama_facing((panorama_plot(nodes) or {}).get("desc"))
+    out["zoomed"] = {"facing": facing2[0], "fovDeg": facing2[1]}
+    if facing2[1] is None or facing1[1] is None or facing2[1] >= facing1[1]:
+        errors.append(f"Zoom in did not narrow the view ({facing1[1]} then {facing2[1]})")
+    m = dev.find(MAP_SEGMENT, nodes)
+    if m:
+        dev.tap(m)
+        time.sleep(1)
+    if dev.find(PANORAMA_TITLE):
+        errors.append("the Map segment did not close the Panorama view")
+    # The segment with a long-press card open at Mount Rainier's summit: the Panorama stands there (choice a).
+    w, h, d = screen(dev)
+    open_map(dev, *SUMMIT, 13)
+    time.sleep(5)  # the link's camera move ends before the press
+    long_press(dev, *to_screen(*SUMMIT, *SUMMIT, 13, w, h, d))
+    card, nodes = dev.wait_for(LONG_PRESS_CARD, 10)
+    seg = dev.find(PANORAMA_SEGMENT, nodes) if card else None
+    if not seg:
+        errors.append(f"no long-press card with the Panorama segment beside it at the summit (texts: {dev.texts(nodes)[:25]})")
+    else:
+        dev.tap(seg)
+        back, nodes = dev.wait_for(BACK_TO_HERE, 20)
+        if not back:
+            errors.append(f"the segment with a long-press card open did not open the Panorama there (texts: {dev.texts(nodes)[:25]})")
+        else:
+            nodes = wait_panorama_ready(dev, nodes)
+            texts = dev.texts(nodes)
+            out["frames"]["point"] = dev.screencap("panorama-point")[0]
+            place = next((t for t in texts if re.match(PLACE_MOVED, t)), None)
+            out["placeLine"] = place
+            out["pointLabel"] = (panorama_plot(nodes) or {}).get("desc")
+            if not place or not place.startswith(f"At {SUMMIT_PEAK}"):
+                errors.append(f"the place line at the summit is {place!r}, not 'At {SUMMIT_PEAK}, ...'")
+        back_to_fix_and_map(dev, out, errors)
+    frames = out.pop("frames")
+    return {"ok": not errors, "png": frames.get("panorama"), "frames": frames, "openedBy": "switch", "backs": backs, **out,
+            "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
 
 
 # --- features: Flight tracking (T311) ----------------------------------------------------------------------------
@@ -2932,6 +3058,7 @@ def part_features(args):
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev)),
+                     ("panorama", lambda: panorama_step(dev)),  # T326
                      ("flights", lambda: flights_step(dev)),  # T311: flights
                      ("horizonflights", lambda: horizon_flights_step(dev))):  # T312
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
