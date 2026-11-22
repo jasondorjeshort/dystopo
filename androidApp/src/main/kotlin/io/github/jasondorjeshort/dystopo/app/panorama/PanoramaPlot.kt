@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,6 +39,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
@@ -45,6 +47,7 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -111,8 +114,8 @@ class PanoramaTints(night: Boolean) {
 fun PanoramaPlot(
     plotW: Dp, plotH: Dp, pal: GnssPalette, night: Boolean, work: PanoramaData.Place?, ranked: List<HorizonLabels.Scored>,
     picked: HorizonLabel?, placeText: String, wanted: List<Double>,
-    /** The layers drawn over the terrain and the names, in order (T327's Sun, Satellites and Flights through the scene's lens). */
-    layers: List<DrawScope.(PanoramaScene) -> Unit> = emptyList(),
+    /** T327: the Sun, Satellites and Flights drawn through the scene's lens (null: none on). */
+    lensLayers: LensLayers? = null,
 ) {
     val density = LocalDensity.current
     val d = density.density.toDouble()
@@ -139,6 +142,9 @@ fun PanoramaPlot(
             else -> "north"
         }
         PanoramaUi.aim = PanoramaAim.opening(wPx, hPx, HorizonPlace.openingBearing(pickedBearing, atFix, heading))
+        // T327: a pick kept across the switch is the target at the opening (choice b): the view turns to it (a peak's
+        // bearing is the opening's already; the tilt follows when it would be off the view, and a kept flight is turned to).
+        PanoramaUi.turnToTarget()
         if (pickedBearing == null && atFix && heading == null) {
             // The compass started at the opening (SkyViewEffects holds it): its first reading within 1.5 s, if nobody steered.
             val until = PanoramaUi.openedAtMs + PanoramaUi.HEADING_WAIT_MS
@@ -218,21 +224,60 @@ fun PanoramaPlot(
                 }
                 .pointerInput(Unit) {
                     detectTapGestures { tap ->
-                        // The nearest name drawn (its box, or within 24 dp of it) picks its peak; a tap elsewhere lets it go.
+                        // The nearest name drawn (its box, or within 24 dp of it) picks its peak; T327: a flight's dot or name, a
+                        // satellite's mark or the sun's within 24 dp make it the target, the nearest winning; a tap elsewhere lets go.
+                        val reach = 24 * d
                         val names = PanoramaUi.scene?.names.orEmpty()
-                        val hit = names.minByOrNull { n -> hypot((n.placed.box.left + n.placed.box.right) / 2 - tap.x, (n.placed.box.top + n.placed.box.bottom) / 2 - tap.y) }
-                            ?.takeIf { n -> val b = n.placed.box; val r = 24 * d; tap.x >= b.left - r && tap.x <= b.right + r && tap.y >= b.top - r && tap.y <= b.bottom + r }
-                        val key = (hit?.label?.ref as? PeakView)?.let { HorizonUi.keyOf(it) }
-                        HorizonUi.selected = key?.takeIf { it != HorizonUi.selected }
+                        val hit = names.map { n -> n to hypot((n.placed.box.left + n.placed.box.right) / 2 - tap.x, (n.placed.box.top + n.placed.box.bottom) / 2 - tap.y) }
+                            .filter { (n, _) -> val b = n.placed.box; tap.x >= b.left - reach && tap.x <= b.right + reach && tap.y >= b.top - reach && tap.y <= b.bottom + reach }
+                            .minByOrNull { it.second }
+                        val flight = PanoramaUi.flightMarks.map { m -> m to m.distanceTo(tap).toDouble() }.filter { (m, dd) -> dd <= reach || m.box?.contains(tap) == true }.minByOrNull { it.second }
+                        val mark = PanoramaUi.lensMarks.map { m -> m to hypot((m.at.x - tap.x).toDouble(), (m.at.y - tap.y).toDouble()) }.filter { it.second <= reach }.minByOrNull { it.second }
+                        val best = listOfNotNull(hit?.let { 0 to it.second }, flight?.let { 1 to it.second }, mark?.let { 2 to it.second }).minByOrNull { it.second }?.first
+                        when (best) {
+                            0 -> {
+                                val key = (hit!!.first.label.ref as? PeakView)?.let { HorizonUi.keyOf(it) }
+                                HorizonUi.selected = key?.takeIf { it != HorizonUi.selected }
+                            }
+                            1 -> HorizonUi.selectedFlight = flight!!.first.hex.takeIf { it != HorizonUi.selectedFlight }
+                            2 -> mark!!.first.let { m ->
+                                if (m.kind == TargetKind.SUN) PanoramaUi.apply(PanoramaTargets.SunTapped(up = true))
+                                else PanoramaUi.apply(PanoramaTargets.SatelliteTapped(m.id, m.name))
+                            }
+                            else -> {
+                                HorizonUi.selected = null
+                                HorizonUi.selectedFlight = null
+                                val k = PanoramaUi.targets.target?.kind
+                                if (k == TargetKind.SUN || k == TargetKind.SATELLITE) PanoramaUi.apply(PanoramaTargets.LetGo)
+                            }
+                        }
                     }
                 },
         ) {
             drawSky(aim, tints)
             if (scene != null) {
-                drawScene(scene, tints, pal, namePaint, tapePaint, selected, sky!!.profiles.size)
-                for (l in layers) l(scene)
+                drawGround(scene, tints, pal, sky!!.profiles.size)
+                drawLensLayers(scene, lensLayers, pal, namePaint, nameText)
+                drawNames(scene, pal, namePaint, selected)
+                drawTape(scene, pal, tapePaint)
+            } else {
+                PanoramaUi.lensMarks = emptyList()
+                PanoramaUi.flightMarks = emptyList()
             }
         }
+        // T327: the edge arrow while the target is off the view (a 48 dp target whose tap turns the view to it).
+        val target = PanoramaUi.targets.target
+        val dir = PanoramaUi.targetDir
+        val arrow = if (scene != null && target != null && dir != null) {
+            val m = EDGE_MARGIN_DP * d
+            io.github.jasondorjeshort.dystopo.horizon.OffView.of(
+                scene.lens, dir.first, dir.second, target.name,
+                io.github.jasondorjeshort.dystopo.horizon.RimBox(m, scene.tape.box.bottom + m, wPx - m, hPx - m),
+            )
+        } else null
+        PanoramaUi.arrow = arrow
+        if (arrow == null) PanoramaUi.arrowPx = null
+        else EdgeArrow(arrow, pal, wPx, hPx, zoomCorner)
         // The zoom buttons (48 dp each, stacked at the lower right: PanoramaScene.zoomButtons), the pinch's one-finger equal.
         if (aim != null) for ((i, b) in PanoramaScene.zoomButtons(wPx, hPx, d).withIndex()) {
             val inward = i == 0
@@ -282,8 +327,8 @@ private fun DrawScope.drawSky(aim: PanoramaAim?, tints: PanoramaTints) {
     else drawRect(if (aim.tiltDeg > 30) tints.skyHigh else tints.skyLow)
 }
 
-/** The scene: the layers far to near, the ridges, the level line, the tape, the marks and the names on their plates. */
-private fun DrawScope.drawScene(scene: PanoramaScene, tints: PanoramaTints, pal: GnssPalette, namePaint: android.graphics.Paint, tapePaint: android.graphics.Paint, selected: String?, count: Int) {
+/** The ground: the layers far to near, the ridges, the level line. */
+private fun DrawScope.drawGround(scene: PanoramaScene, tints: PanoramaTints, pal: GnssPalette, count: Int) {
     val dp = density
     for (layer in scene.layers) {
         val tint = tints.layer(layer.index, count)
@@ -306,12 +351,26 @@ private fun DrawScope.drawScene(scene: PanoramaScene, tints: PanoramaTints, pal:
         drawLine(pal.ink.copy(alpha = 0.6f), Offset(l[0].toFloat(), l[1].toFloat()), Offset(l[2].toFloat(), l[3].toFloat()), 1.2f * dp,
             pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f * dp, 4f * dp)))
     }
-    // The tape: a plate along the top, its ticks and labels.
+}
+
+/** The bearing tape: a plate along the top, its ticks and labels (drawn last, over every layer). */
+private fun DrawScope.drawTape(scene: PanoramaScene, pal: GnssPalette, tapePaint: android.graphics.Paint) {
+    val dp = density
     val tape = scene.tape
     drawRect(pal.card.copy(alpha = 0.85f), Offset(tape.box.left.toFloat(), tape.box.top.toFloat()), Size((tape.box.right - tape.box.left).toFloat(), (tape.box.bottom - tape.box.top).toFloat()))
     for (t in tape.ticks) drawLine(pal.ink, Offset(t.x.toFloat(), t.top.toFloat()), Offset(t.x.toFloat(), t.bottom.toFloat()), 1f * dp)
     tapePaint.color = pal.ink.toArgb()
     for (l in tape.labels) drawContext.canvas.nativeCanvas.drawText(l.text, l.box.left.toFloat(), l.baseline.toFloat(), tapePaint)
+}
+
+/**
+ * The peaks: the candidates not named as small triangles, then each named one's triangle (solid in sight; T327: hollow, an
+ * outline with no fill, just out of sight, so it never shows as a pale patch on the ground), its leader, and its name on a
+ * plate. T327: the plate is the card's colour with a thin edge, so a name over the ground reads as a label, not as a pale
+ * blob lying over the ridge (T326's frame facing south on its side).
+ */
+private fun DrawScope.drawNames(scene: PanoramaScene, pal: GnssPalette, namePaint: android.graphics.Paint, selected: String?) {
+    val dp = density
     // The candidates not named: small triangles.
     val s = 5f * dp
     for (m in scene.marks) if (!m.named) drawPath(triangle(m.x.toFloat(), m.y.toFloat(), s * 0.55f), pal.muted.copy(alpha = 0.7f))
@@ -322,16 +381,17 @@ private fun DrawScope.drawScene(scene: PanoramaScene, tints: PanoramaTints, pal:
         val key = (n.label.ref as? PeakView)?.let { HorizonUi.keyOf(it) }
         val colour = if (key != null && key == selected) pal.link else pal.ink
         val tri = triangle(n.markX.toFloat(), n.markY.toFloat(), s)
-        if (n.label.outOfSight) {
-            drawPath(tri, pal.sky)
-            drawPath(tri, colour, style = Stroke(1.5f * dp))
-        } else drawPath(tri, colour)
+        if (n.label.outOfSight) drawPath(tri, colour, style = Stroke(1.5f * dp))
+        else drawPath(tri, colour)
     }
     for (n in scene.names) {
         val p = n.placed
         val key = (n.label.ref as? PeakView)?.let { HorizonUi.keyOf(it) }
         val chosen = key != null && key == selected
-        drawRoundRect(pal.sky.copy(alpha = 0.85f), Offset(p.box.left.toFloat(), p.box.top.toFloat()), Size((p.box.right - p.box.left).toFloat(), (p.box.bottom - p.box.top).toFloat()), CornerRadius(3f * dp))
+        val at = Offset(p.box.left.toFloat(), p.box.top.toFloat())
+        val size = Size((p.box.right - p.box.left).toFloat(), (p.box.bottom - p.box.top).toFloat())
+        drawRoundRect(pal.card.copy(alpha = 0.92f), at, size, CornerRadius(3f * dp))
+        drawRoundRect(if (chosen) pal.link else pal.line, at, size, CornerRadius(3f * dp), style = Stroke(1f * dp))
         namePaint.isFakeBoldText = chosen
         namePaint.color = (if (chosen) pal.link else pal.ink).toArgb()
         namePaint.textAlign = android.graphics.Paint.Align.CENTER
@@ -342,3 +402,88 @@ private fun DrawScope.drawScene(scene: PanoramaScene, tints: PanoramaTints, pal:
 }
 
 private fun triangle(x: Float, y: Float, s: Float) = Path().apply { moveTo(x, y - s); lineTo(x + s, y + s * 0.7f); lineTo(x - s, y + s * 0.7f); close() }
+
+/** T327: the edge arrow stands this far inside the plot's edges and under the tape, dp. */
+private const val EDGE_MARGIN_DP = 6.0
+
+/**
+ * T327: the Sun, Satellites and Flights through the scene's lens, under the peaks' names (the round plot's order: the
+ * flights under the names), writing what they drew (`GET /panorama` `layers`) and their marks for the taps.
+ */
+private fun DrawScope.drawLensLayers(scene: PanoramaScene, ll: LensLayers?, pal: GnssPalette, namePaint: android.graphics.Paint, nameText: PanoramaText) {
+    val marks = ArrayList<LensMark>()
+    val drawn = LinkedHashMap<String, Any?>()
+    var flights: List<io.github.jasondorjeshort.dystopo.app.horizon.FlightMark> = emptyList()
+    if (ll != null) {
+        if (ll.sunDay != null || ll.sunNow != null) drawn["sun"] = drawSunOnLens(scene.lens, ll.sunDay, ll.sunNow, pal, ll.night, marks)
+        if (ll.satellitesOn) drawn["satellites"] = drawSatellitesOnLens(scene.lens, ll.sats, pal, marks)
+        ll.flights?.let { f ->
+            val names = placeFlightNames(scene, f.list, ll.pickedFlight, nameText, if (PanoramaUi.gesturing) PanoramaUi.flightNames else null)
+            PanoramaUi.flightNames = names
+            val (fm, info) = drawFlightsOnLens(scene.lens, f, names, ll.pickedFlight, namePaint, pal)
+            flights = fm
+            drawn["flights"] = info
+        }
+    }
+    if (ll?.flights == null) PanoramaUi.flightNames = emptyList()
+    namePaint.color = pal.ink.toArgb()
+    PanoramaUi.lensMarks = marks
+    PanoramaUi.flightMarks = flights
+    PanoramaUi.layersDrawn = drawn
+}
+
+/**
+ * T327: the edge arrow ([OffView]'s point and line, T324): a plate with the arrow and its line ("Sun, 40° right") at the
+ * edge the target is off by, at least 48 dp tall, kept off the zoom buttons' corner; a tap turns the view to the target.
+ */
+@Composable
+private fun EdgeArrow(a: io.github.jasondorjeshort.dystopo.horizon.OffViewArrow, pal: GnssPalette, wPx: Double, hPx: Double, zoom: io.github.jasondorjeshort.dystopo.horizon.RimBox) {
+    val side = a.side
+    val glyph = when (side) {
+        io.github.jasondorjeshort.dystopo.horizon.OffSide.LEFT -> "◀"
+        io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT -> "▶"
+        io.github.jasondorjeshort.dystopo.horizon.OffSide.UP -> "▲"
+        io.github.jasondorjeshort.dystopo.horizon.OffSide.DOWN -> "▼"
+    }
+    val style = TextStyle(color = pal.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    androidx.compose.foundation.layout.Row(
+        Modifier
+            .layout { measurable, constraints ->
+                val p = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = (wPx * 0.7).roundToInt().coerceAtLeast(1)))
+                var x = when (side) {
+                    io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT -> a.x - p.width
+                    io.github.jasondorjeshort.dystopo.horizon.OffSide.LEFT -> a.x
+                    else -> a.x - p.width / 2.0
+                }.coerceIn(0.0, maxOf(0.0, wPx - p.width))
+                var y = when (side) {
+                    io.github.jasondorjeshort.dystopo.horizon.OffSide.UP -> a.y
+                    io.github.jasondorjeshort.dystopo.horizon.OffSide.DOWN -> a.y - p.height
+                    else -> a.y - p.height / 2.0
+                }.coerceIn(0.0, maxOf(0.0, hPx - p.height))
+                // Off the zoom buttons' corner: up above it at the right edge, else to its left.
+                if (x + p.width > zoom.left && y + p.height > zoom.top) {
+                    if (side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT) y = maxOf(0.0, zoom.top - p.height) else x = maxOf(0.0, zoom.left - p.width)
+                }
+                layout(constraints.maxWidth, constraints.maxHeight) { p.place(x.roundToInt(), y.roundToInt()) }
+            }
+            .onGloballyPositioned { c ->
+                val at = c.positionInRoot()
+                PanoramaUi.arrowPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
+            }
+            .testTag("panoramaArrow")
+            .heightIn(min = 48.dp)
+            .background(pal.card.copy(alpha = 0.94f), RoundedCornerShape(12.dp))
+            .border(1.5.dp, pal.link, RoundedCornerShape(12.dp))
+            .semantics(mergeDescendants = true) { contentDescription = a.text }
+            .clickable(role = Role.Button) { PanoramaUi.turnToTarget() }
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+    ) {
+        val text: @Composable () -> Unit = {
+            BasicText(a.text, Modifier.clearAndSetSemantics { }, style = style, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+        val mark: @Composable () -> Unit = { BasicText(glyph, Modifier.clearAndSetSemantics { }, style = style.copy(color = pal.link, fontSize = 16.sp)) }
+        if (side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT) { text(); mark() } else { mark(); text() }
+    }
+}

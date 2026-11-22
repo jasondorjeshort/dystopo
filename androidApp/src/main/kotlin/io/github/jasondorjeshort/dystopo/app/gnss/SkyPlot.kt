@@ -182,19 +182,24 @@ fun SkyPlot(
         extra?.invoke(this, g)
         sun(sunAzDeg, sunAltDeg, ::at, pal)
         // The satellites.
-        val r = 8.dp.toPx()
         val svid = android.graphics.Paint().apply { isAntiAlias = true; textSize = 10.5f.dp.toPx(); color = pal.ink.toArgb() }
-        for (ps in sats) {
-            val s = ps.sat
-            val p = at(s.elevationDeg, s.azimuthDeg)
-            val path = markPath(markOf(s.constellation), p, r)
-            if (s.tracked) drawPath(path, Cn0Ramp.of(s.cn0))
-            drawPath(path, pal.ink, style = Stroke(if (s.used) 3.dp.toPx() else 1.dp.toPx()))
-            if (ps.secondBand) drawCircle(pal.ink, r + 4.dp.toPx(), p, style = Stroke(1.dp.toPx()))
-            drawContext.canvas.nativeCanvas.drawText(s.svid.toString(), p.x + r + 3.dp.toPx(), p.y - r * 0.4f, svid)
-        }
+        for (ps in sats) satelliteMark(ps, at(ps.sat.elevationDeg, ps.sat.azimuthDeg), pal, svid)
         over?.invoke(this, g)
     }
+}
+
+/**
+ * One satellite's mark at [p]: its system's shape 8 dp across filled by [Cn0Ramp] when heard, a thick outline when used in
+ * the fix, a ring when heard on a second band, its number beside it in [svid]. T327: shared with the Panorama's lens.
+ */
+internal fun DrawScope.satelliteMark(ps: PlotSat, p: Offset, pal: GnssPalette, svid: android.graphics.Paint) {
+    val s = ps.sat
+    val r = 8.dp.toPx()
+    val path = markPath(markOf(s.constellation), p, r)
+    if (s.tracked) drawPath(path, Cn0Ramp.of(s.cn0))
+    drawPath(path, pal.ink, style = Stroke(if (s.used) 3.dp.toPx() else 1.dp.toPx()))
+    if (ps.secondBand) drawCircle(pal.ink, r + 4.dp.toPx(), p, style = Stroke(1.dp.toPx()))
+    drawContext.canvas.nativeCanvas.drawText(s.svid.toString(), p.x + r + 3.dp.toPx(), p.y - r * 0.4f, svid)
 }
 
 /**
@@ -230,7 +235,11 @@ private fun DrawScope.northMark(c: Offset, radius: Float, rotationDeg: Double, c
 
 private fun DrawScope.sun(azDeg: Double?, altDeg: Double?, at: (Double, Double) -> Offset, pal: GnssPalette) {
     if (azDeg == null || altDeg == null || altDeg < -0.5) return
-    val p = at(altDeg.coerceAtLeast(0.0), azDeg)
+    sunMark(at(altDeg.coerceAtLeast(0.0), azDeg), pal)
+}
+
+/** The sun's mark at [p]: a disc of the card's colour, ink-edged, with eight rays. T327: shared with the Panorama's lens. */
+internal fun DrawScope.sunMark(p: Offset, pal: GnssPalette) {
     val r = 6.dp.toPx()
     drawCircle(pal.card, r, p)
     drawCircle(pal.ink, r, p, style = Stroke(1.5.dp.toPx()))

@@ -117,7 +117,11 @@ object GnssUi {
  * GNSS and the check are plain fields, not Compose state: the parts that read them take [tick] (T307's verifier).
  */
 @Composable
-fun SatellitesSection(sats: List<io.github.jasondorjeshort.dystopo.gnss.Satellite>, plotted: List<PlotSat>, summary: GnssHealth.Summary, fn: ((Double) -> Double)?, pal: GnssPalette, units: io.github.jasondorjeshort.dystopo.render.ContourUnits, tick: Int, bump: () -> Unit) {
+fun SatellitesSection(sats: List<io.github.jasondorjeshort.dystopo.gnss.Satellite>, plotted: List<PlotSat>, summary: GnssHealth.Summary, fn: ((Double) -> Double)?, pal: GnssPalette, units: io.github.jasondorjeshort.dystopo.render.ContourUnits, tick: Int,
+    /** T327: a row's tap (the Panorama turns to that satellite; rows 48 dp tall), and the row [chosen] by its id; null: rows do nothing. */
+    onRow: ((io.github.jasondorjeshort.dystopo.gnss.Satellite) -> Unit)? = null, chosen: String? = null,
+    bump: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
@@ -145,7 +149,7 @@ fun SatellitesSection(sats: List<io.github.jasondorjeshort.dystopo.gnss.Satellit
         Summary(summary, pal, units, tick)
         CheckSection(pal, tick, bump)
         Legend(plotted.map { it.sat.constellation }.distinct(), pal)
-        SatelliteList(sats, fn, pal)
+        SatelliteList(sats, fn, pal, onRow, chosen)
     }
 }
 
@@ -292,7 +296,7 @@ private fun RampBar(pal: GnssPalette) {
 }
 
 @Composable
-private fun SatelliteList(sats: List<io.github.jasondorjeshort.dystopo.gnss.Satellite>, horizon: ((Double) -> Double)?, pal: GnssPalette) {
+private fun SatelliteList(sats: List<io.github.jasondorjeshort.dystopo.gnss.Satellite>, horizon: ((Double) -> Double)?, pal: GnssPalette, onRow: ((io.github.jasondorjeshort.dystopo.gnss.Satellite) -> Unit)? = null, chosen: String? = null) {
     val rows = GnssHealth.listOrder(sats.filter { it.tracked })
     if (rows.isEmpty()) return
     // At large text the five columns do not fit: each satellite takes two lines, its place and band under its name.
@@ -309,7 +313,8 @@ private fun SatelliteList(sats: List<io.github.jasondorjeshort.dystopo.gnss.Sate
         }
         for (s in rows) {
             val behind = GnssHealth.behind(s.elevationDeg, s.azimuthDeg, horizon)
-            Row(Modifier.fillMaxWidth().heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+            val tap = onRow?.let { f -> Modifier.heightIn(min = 48.dp).semantics { this.selected = s.id == chosen }.clickable(role = Role.Button) { f(s) } } ?: Modifier // T327
+            Row(Modifier.fillMaxWidth().heightIn(min = 28.dp).then(tap), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.width(if (wide) 104.dp else 150.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     MarkIcon(markOf(s.constellation), Cn0Ramp.of(s.cn0), pal.ink, thick = s.used, size = 20.dp)
                     BasicText("${s.constellation.label} ${s.svid}", style = TextStyle(color = pal.ink, fontSize = 13.sp, fontWeight = if (s.used) FontWeight.Bold else FontWeight.Normal))

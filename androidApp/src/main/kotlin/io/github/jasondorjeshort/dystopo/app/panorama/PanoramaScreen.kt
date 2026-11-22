@@ -26,6 +26,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import io.github.jasondorjeshort.dystopo.app.gnss.SatellitesSection
+import io.github.jasondorjeshort.dystopo.app.gnss.plotSats
+import io.github.jasondorjeshort.dystopo.app.horizon.FlightCardHost
+import io.github.jasondorjeshort.dystopo.app.horizon.FlightsSection
+import io.github.jasondorjeshort.dystopo.app.horizon.HorizonData
+import io.github.jasondorjeshort.dystopo.app.horizon.SunSection
+import io.github.jasondorjeshort.dystopo.app.horizon.pickedFlight
+import io.github.jasondorjeshort.dystopo.gnss.GnssHealth
+import io.github.jasondorjeshort.dystopo.horizon.HorizonLayers
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -71,7 +83,6 @@ object PanoramaStrings {
     const val LOOK_DOWN = "Look down"
     const val PLOT_LABEL = "Panorama"
     const val PLACE_LABEL = "Panorama from"
-    const val NO_PEAKS = "Peaks are off: the view shows the land's skyline only."
 
     /** The plot's spoken label after the place line: "Facing NNW 347°, 60° across". */
     fun facing(bearingDeg: Double, fovDeg: Double): String =
@@ -106,9 +117,15 @@ fun PanoramaScreen() {
     val pal = remember(night) { GnssPalette(night) }
     val units = AppSettings.units
     val fix = Gnss.position()
-    // The compass for the opening's bearing (choice c); no GNSS hold and no flights' poll: those layers are T327's.
-    val clock = SkyViewEffects(SkyViewHolds(compass = true, satellites = false, flightsAt = null, skyRange = AppSettings.skyRange), night)
-    @Suppress("UNUSED_VARIABLE") val tick = clock.tick
+    val skyRange = AppSettings.skyRange
+    // The compass for the opening's bearing (choice c); T327: the GNSS held while Satellites draws and the flights' poller
+    // asked (owner `horizon`) while Flights draws, as the Horizon view holds them (the one open state, choice i); both off
+    // at a chosen point (HorizonPlace.layers). Back lets go of the target first (PanoramaTargets.Back).
+    val clock = SkyViewEffects(
+        SkyViewHolds(compass = true, satellites = layers.satellites, flightsAt = fix?.takeIf { layers.flights }?.let { it.latitude to it.longitude }, skyRange = skyRange), night,
+        back = { PanoramaUi.apply(PanoramaTargets.Back) },
+    )
+    val tick = clock.tick
     val pos = HorizonPlace.source(point, fix?.latitude, fix?.longitude)
     val place = HorizonPlace.line(point, fix?.latitude, fix?.longitude, units)
     val rangeM = AppSettings.viewRangeKm * 1000.0
@@ -144,11 +161,41 @@ fun PanoramaScreen() {
             val selected = HorizonUi.selected
             val picked = peaks?.candidates?.firstOrNull { HorizonUi.keyOf(it) == selected }
             val pickedLabel = picked?.let { p -> peaks.scoreOf(p)?.label }
+            // T327: the Sun, Satellites and Flights, as the Horizon view reads them, over the Panorama's own skyline (the view range).
+            val nowMs = PanoramaUi.sunAtMs ?: System.currentTimeMillis()
+            val fn = h?.profile?.let { pr -> { az: Double -> pr.angleAt(az) } }
+            val sunNow = if (layers.sun && pos != null) io.github.jasondorjeshort.dystopo.nav.Sun.position(pos.first, pos.second, nowMs) else null
+            val sunDay = if (layers.sun && pos != null) HorizonData.sunFor(h?.takeIf { it.profile != null }, pos.first, pos.second, HorizonUi.date, nowMs) else null
+            val sats = if (layers.satellites) Gnss.satellites else emptyList()
+            val plotted = plotSats(sats)
+            val summary = GnssHealth.summarize(sats)
+            val flights = if (layers.flights) HorizonData.flightsFor(h, fix, skyRange, System.currentTimeMillis()) else null
+            val flight = pickedFlight()
+            val lens = LensLayers(sunDay?.takeIf { pos != null }, sunNow, plotted, layers.satellites, flights, HorizonUi.selectedFlight, night)
+            // T327: the target follows the picks (a row, a name, the pick's ×, the card's Close, Back), and its direction now.
+            val target = PanoramaUi.targets.target
+            PanoramaUi.targetDir = when (target?.kind) {
+                TargetKind.PEAK -> work?.peaks?.candidates?.firstOrNull { HorizonUi.keyOf(it) == target.id }?.let { it.angleDeg to it.bearingDeg }
+                TargetKind.SUN -> (sunNow ?: pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.first, it.second, nowMs) })?.let { it.apparentAltitudeDeg to it.azimuthDeg }
+                TargetKind.FLIGHT -> flights?.list?.firstOrNull { it.hex == target.id }?.let { it.elevationDeg to it.bearingDeg }
+                TargetKind.SATELLITE -> Gnss.satellites.firstOrNull { it.id == target.id }?.let { it.elevationDeg to it.azimuthDeg }
+                null -> null
+            }
             val listRoom = with(density) { (paneH - placeH - headingH - (if (picked != null) pickedH else 0)).toDp() }
             val headingScrolls = paneH > 0 && listRoom < 96.dp
             PanoramaUi.headingScrolls = headingScrolls
             val plot: @Composable () -> Unit = {
-                PanoramaPlot(plotW, plotH, pal, night, work, peaks?.ranked.orEmpty(), pickedLabel, place.text, wanted = steps)
+                Box(Modifier.size(plotW, plotH)) {
+                    PanoramaPlot(plotW, plotH, pal, night, work, peaks?.ranked.orEmpty(), pickedLabel, place.text, wanted = steps, lensLayers = lens)
+                    // T327: the feed's credit while the Flights layer draws, in the plot's lower left (the zoom buttons are at its right).
+                    flights?.let { f ->
+                        BasicText(
+                            f.credit, Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 4.dp).fillMaxWidth(0.45f).testTag("panoramaFlightsCredit"),
+                            style = TextStyle(color = pal.muted, fontSize = with(density) { 10.dp.toSp() }, lineHeight = with(density) { 12.dp.toSp() }),
+                            maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
             val heading: @Composable () -> Unit = {
                 Box(Modifier.onGloballyPositioned { headingH = it.size.height }) { SkyViewHeading(PanoramaStrings.TITLE, help = "panorama.view", pal = pal) }
@@ -170,10 +217,23 @@ fun PanoramaScreen() {
                     ) {
                         if (headingScrolls) heading()
                         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            LayerToggles(layers, listOf(HorizonLayer.PEAKS), emptySet(), false, pal)
+                            // T327: the four toggles, the Horizon view's own synced settings; at a chosen point Satellites and Flights disabled.
+                            LayerToggles(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), moved, pal)
                             TerrainLine(h ?: work?.reason?.let { Gnss.HorizonState(pos!!.first, pos.second, null, it, null, null, 0) }, pos, units, pal)
+                            // The sections in the Horizon view's order; a row's tap makes its thing the target and turns the view to it.
+                            flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units, help = "panorama.flights") }
                             if (layers.peaks) PeaksSection(h, peaks, selected, pal, units, help = "panorama.peaks", rangeM = rangeM)
-                            else BasicText(PanoramaStrings.NO_PEAKS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
+                            if (layers.sun) SunSection(
+                                pos != null, sunDay, sunNow, fn, pal, night, tick, help = "panorama.sun",
+                                onNow = { PanoramaUi.apply(PanoramaTargets.SunTapped(sunNow?.let { HorizonText.sunUp(it.apparentAltitudeDeg) } == true)) },
+                                nowChosen = target?.kind == TargetKind.SUN,
+                            )
+                            if (layers.satellites) SatellitesSection(
+                                sats, plotted, summary, fn, pal, units, tick, bump = { clock.bump() },
+                                onRow = { s -> PanoramaUi.apply(PanoramaTargets.SatelliteTapped(s.id, HorizonText.satelliteName(s))) },
+                                chosen = target?.takeIf { it.kind == TargetKind.SATELLITE }?.id,
+                            )
+                            if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
                         }
                     }
                 }
@@ -185,17 +245,46 @@ fun PanoramaScreen() {
                 plot()
                 pane(Modifier.weight(1f).fillMaxWidth())
             }
+            // T327: T311's flight card, as the Horizon view hosts it: over the pane's lower part, beside or under the plot.
+            flight?.let { a ->
+                FlightCardHost(
+                    a,
+                    (if (landscape) Modifier.align(Alignment.BottomEnd).width(paneW) else Modifier.align(Alignment.BottomCenter).fillMaxWidth())
+                        .heightIn(max = (if (landscape) maxHeight else maxHeight - plotH) * 0.9f).padding(8.dp)
+                        .padding(bottom = if (landscape) 0.dp else switchRoom - 8.dp),
+                )
+            }
+            // T327: the target follows HorizonUi's picks, whatever changed them (a row, a name, the pick's ×, the card's Close, Back).
+            val sel = HorizonUi.selected
+            val selFlight = HorizonUi.selectedFlight
+            LaunchedEffect(sel) { if (sel != PanoramaUi.targets.peak) PanoramaUi.apply(PanoramaTargets.PeakPicked(sel)) }
+            LaunchedEffect(selFlight) {
+                if (selFlight != PanoramaUi.targets.flight) PanoramaUi.apply(PanoramaTargets.FlightPicked(selFlight, flights?.list?.firstOrNull { it.hex == selFlight }?.label))
+            }
             SideEffect {
                 PanoramaUi.drawn = linkedMapOf(
                     "landscape" to landscape, "windowDp" to listOf(Math.round(maxWidth.value), Math.round(maxHeight.value)), "fontScale" to density.fontScale,
                     "plotDp" to listOf(Math.round(plotW.value), Math.round(plotH.value)), "paneDp" to Math.round(paneW.value),
                     "paneOverSwitch" to paneOverSwitch, "headingScrolls" to headingScrolls, "listRoomDp" to Math.round(listRoom.value),
                     "night" to night, "layers" to layers.json(), "selected" to picked?.peak?.name,
+                    "buttons" to HorizonLayers.buttons(tracking).map { it.key }, "disabledButtons" to HorizonPlace.disabled(moved).map { it.key },
+                    "flightCard" to (flight != null), "selectedFlight" to flight?.hex, "creditShown" to flights?.credit,
                     "point" to point?.let { p -> linkedMapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name) }, "placeLine" to place.text,
                     "moved" to place.moved, "backShown" to moved, "rangeKm" to rangeM / 1000, "stepsWanted" to steps,
                     "scrollPx" to scroll.value, "scrollMaxPx" to scroll.maxValue,
                 )
             }
+        }
+        // T327: a turn to the target asked for (a row, a name, the arrow, an opening with a kept pick), animated over 300 ms
+        // or at once with the system's animations off; it waits (up to 10 s) for the target's direction and the aim.
+        val turns = PanoramaUi.turnRequests
+        val context = androidx.compose.ui.platform.LocalContext.current
+        LaunchedEffect(turns) {
+            if (turns == 0) return@LaunchedEffect
+            val until = android.os.SystemClock.elapsedRealtime() + 10_000
+            while ((PanoramaUi.targetDir == null || PanoramaUi.aim == null || PanoramaUi.plotSize == null) && android.os.SystemClock.elapsedRealtime() < until) kotlinx.coroutines.delay(100)
+            val animate = android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
+            PanoramaUi.runTurn(animate)
         }
         // The switch at its anchor, Panorama selected, over the content (T315's one placement).
         AnchoredViewSwitch(SkyView.PANORAMA, ViewSwitchColours(pal.card, pal.ink, pal.line), Modifier.testTag(ViewSwitch.TAG_ON_VIEW)) { r, _ ->
@@ -212,12 +301,22 @@ internal val PANORAMA_HELP: List<HelpText> = run {
         HelpText("panorama.view", PanoramaStrings.TITLE, placed, show = show) { units ->
             "The land's skyline one way, as through a lens: the ridges to ${UnitFormat.distance(AppSettings.viewRangeKm * 1000.0, units)} " +
                 "(your view range) drawn far to near, the level line dashed and the bearings along the top. Drag sideways to turn, " +
-                "up and down to tilt; pinch or the buttons zoom."
+                "up and down to tilt; pinch or the buttons zoom. Tap a row or a name to turn to it; an arrow at the edge points to it while it is out of view." // T327
         },
         HelpText("panorama.peaks", HorizonText.PEAKS, "$placed, its ${HorizonText.PEAKS} list", show = show) { units ->
             "Named peaks within your view range of ${UnitFormat.distance(AppSettings.viewRangeKm * 1000.0, units)} in view or just out of " +
                 "sight. The view names the highest on the skyline, then the closest; zoom in to name more. Tap a name or a row for its line; " +
                 "${HorizonText.VIEW_FROM_HERE} stands the view on its top."
         },
+        // T327
+        HelpText("panorama.sun", HorizonText.SUN, "$placed, its ${HorizonText.SUN} section", show = show) { _ ->
+            "Today's path of the sun through the lens, with the hours, dashed where the terrain hides it, and the sun where it is now. " +
+                "Tap the line saying where it is now to turn the view to it while it is up."
+        },
+        HelpText("panorama.flights", HorizonText.FLIGHTS, "$placed, its ${HorizonText.FLIGHTS} list", show = show) { _ ->
+            "Each flight in the air is a dot where it is in the sky, with a tail of its last 90 s; hollow when hidden by the terrain " +
+                "or not heard lately, a ring for an emergency code. Tap a dot or a row for its card; the view turns to it."
+        },
+        // end T327
     )
 }

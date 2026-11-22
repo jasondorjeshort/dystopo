@@ -160,7 +160,13 @@ fun FlightsSection(f: HorizonData.Flights, havePosition: Boolean, selected: Stri
  * [fn] the horizon's angle at a bearing (null: no terrain), [tick] the view's clock (read so the section is read again).
  */
 @Composable
-fun SunSection(havePosition: Boolean, day: HorizonData.SunDay?, now: io.github.jasondorjeshort.dystopo.nav.Sun.Position?, fn: ((Double) -> Double)?, pal: GnssPalette, night: Boolean, tick: Int, help: String) {
+fun SunSection(
+    havePosition: Boolean, day: HorizonData.SunDay?, now: io.github.jasondorjeshort.dystopo.nav.Sun.Position?, fn: ((Double) -> Double)?, pal: GnssPalette, night: Boolean, tick: Int, help: String,
+    /** T327: the sun now's line as a row (48 dp) whose tap calls this while the sun is up (the Panorama's target); null: a plain line. */
+    onNow: (() -> Unit)? = null,
+    /** T327: the sun is the host's target (the row reads selected, in the link colour). */
+    nowChosen: Boolean = false,
+) {
     @Suppress("UNUSED_VARIABLE") val t = tick
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val dateText = day?.let { d ->
@@ -174,7 +180,17 @@ fun SunSection(havePosition: Boolean, day: HorizonData.SunDay?, now: io.github.j
         }
         val style = TextStyle(color = pal.ink, fontSize = 14.sp)
         val c = { ms: Long -> ClockFormat.text(ms) }
-        if (HorizonUi.date == null && now != null) BasicText(HorizonText.sunNow(now.apparentAltitudeDeg, now.azimuthDeg, fn?.let { it(now.azimuthDeg) > now.apparentAltitudeDeg } ?: false), style = style)
+        if (HorizonUi.date == null && now != null) {
+            val line = HorizonText.sunNow(now.apparentAltitudeDeg, now.azimuthDeg, fn?.let { it(now.azimuthDeg) > now.apparentAltitudeDeg } ?: false)
+            if (onNow != null && HorizonText.sunUp(now.apparentAltitudeDeg)) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { this.selected = nowChosen }.clickable(role = Role.Button) { onNow() }.padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BasicText(line, Modifier.weight(1f), style = style.copy(color = if (nowChosen) pal.link else pal.ink, fontWeight = if (nowChosen) FontWeight.Bold else FontWeight.Normal))
+                }
+            } else BasicText(line, style = style)
+        }
         val td = day.sun.terrain
         if (day.sun.onTerrain) {
             when {

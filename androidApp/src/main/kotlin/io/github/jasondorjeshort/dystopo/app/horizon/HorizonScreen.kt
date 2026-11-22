@@ -470,7 +470,7 @@ private fun DrawScope.drawNames(
         rim, peaks?.ranked.orEmpty(), flightRanked, { text.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble(), blocked, lines, first, firstFlight,
         aircraftBlocked = compass,
     )
-    drawFlights(g, flightList, layers.aircraft, pickedFlight, text, pal)
+    HorizonUi.flightMarks = drawFlightLayer(flightList, layers.aircraft, pickedFlight, text, pal) { el, az -> g.at(el, az) }
     val placed = layers.peaks
     val names = placed.map { n ->
         PlacedName(
@@ -571,7 +571,10 @@ internal fun altitudeColour(m: Double?): Color {
  * ring, when hidden by the terrain or stale), a red ring around an emergency's dot, a link-coloured ring around the picked
  * one, then the names [named] placed (on a plate, muted when hollow). Writes [HorizonUi.flightMarks].
  */
-private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondorjeshort.dystopo.horizon.SkyFlight>, named: List<HorizonLabels.Placed>, picked: String?, text: android.graphics.Paint, pal: GnssPalette) {
+internal fun DrawScope.drawFlightLayer(
+    list: List<io.github.jasondorjeshort.dystopo.horizon.SkyFlight>, named: List<HorizonLabels.Placed>, picked: String?, text: android.graphics.Paint, pal: GnssPalette,
+    at: (Double, Double) -> Offset?,
+): List<FlightMark> {
     val r = 4.5.dp.toPx()
     val boxes = named.associate { n -> (n.label.ref as io.github.jasondorjeshort.dystopo.horizon.SkyFlight).hex to n }
     val marks = ArrayList<FlightMark>()
@@ -579,9 +582,12 @@ private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondor
         if (f.tail.size < 2) continue
         val colour = altitudeColour(f.aircraft.altitudeM)
         val path = Path()
-        for ((i, p) in f.tail.withIndex()) {
-            val at = g.at(p.elevationDeg, p.bearingDeg)
-            if (i == 0) path.moveTo(at.x, at.y) else path.lineTo(at.x, at.y)
+        var open = false
+        for (p in f.tail) {
+            val q = at(p.elevationDeg, p.bearingDeg)
+            if (q == null) { open = false; continue }
+            if (!open) path.moveTo(q.x, q.y) else path.lineTo(q.x, q.y)
+            open = true
         }
         drawPath(
             path, colour.copy(alpha = 0.7f),
@@ -589,21 +595,21 @@ private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondor
         )
     }
     for (f in list) {
-        val at = g.at(f.elevationDeg, f.bearingDeg)
+        val dot = at(f.elevationDeg, f.bearingDeg) ?: continue
         val colour = altitudeColour(f.aircraft.altitudeM)
         val emergency = f.aircraft.report.emergency != null
         if (f.hollow) {
-            drawCircle(pal.sky, r, at)
-            drawCircle(colour, r - 1.dp.toPx(), at, style = Stroke(2.dp.toPx()))
+            drawCircle(pal.sky, r, dot)
+            drawCircle(colour, r - 1.dp.toPx(), dot, style = Stroke(2.dp.toPx()))
         } else {
-            drawCircle(colour, r, at)
-            drawCircle(pal.ink, r, at, style = Stroke(1.dp.toPx()))
+            drawCircle(colour, r, dot)
+            drawCircle(pal.ink, r, dot, style = Stroke(1.dp.toPx()))
         }
-        if (emergency) drawCircle(EMERGENCY, r + 4.dp.toPx(), at, style = Stroke(2.dp.toPx()))
-        if (f.hex == picked) drawCircle(pal.link, r + 7.5.dp.toPx(), at, style = Stroke(2.dp.toPx()))
+        if (emergency) drawCircle(EMERGENCY, r + 4.dp.toPx(), dot, style = Stroke(2.dp.toPx()))
+        if (f.hex == picked) drawCircle(pal.link, r + 7.5.dp.toPx(), dot, style = Stroke(2.dp.toPx()))
         val n = boxes[f.hex]
         marks += FlightMark(
-            f.hex, f.label, at, n?.let { androidx.compose.ui.geometry.Rect(it.box.left.toFloat(), it.box.top.toFloat(), it.box.right.toFloat(), it.box.bottom.toFloat()) },
+            f.hex, f.label, dot, n?.let { androidx.compose.ui.geometry.Rect(it.box.left.toFloat(), it.box.top.toFloat(), it.box.right.toFloat(), it.box.bottom.toFloat()) },
             f.hollow, emergency, f.tail.size,
         )
     }
@@ -617,7 +623,7 @@ private fun DrawScope.drawFlights(g: PlotGeometry, list: List<io.github.jasondor
     }
     text.isFakeBoldText = false
     text.color = pal.ink.toArgb()
-    HorizonUi.flightMarks = marks
+    return marks
 }
 
 

@@ -52,7 +52,11 @@ class SkyViewClock internal constructor(private val state: MutableState<Int>, va
  * body, so the whole view is read again each second.
  */
 @Composable
-fun SkyViewEffects(holds: SkyViewHolds, night: Boolean): SkyViewClock {
+fun SkyViewEffects(
+    holds: SkyViewHolds, night: Boolean,
+    /** T327: the host's own Back step after the satellites' menu and before the picks (the Panorama's target); true when used. */
+    back: (() -> Boolean)? = null,
+): SkyViewClock {
     val owner = LocalLifecycleOwner.current
     var started by remember { mutableStateOf(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     DisposableEffect(owner) {
@@ -76,6 +80,7 @@ fun SkyViewEffects(holds: SkyViewHolds, night: Boolean): SkyViewClock {
         when {
             GnssUi.confirmReset -> GnssUi.confirmReset = false
             GnssUi.menuOpen -> GnssUi.menuOpen = false
+            back?.invoke() == true -> {}
             HorizonUi.selectedFlight != null -> HorizonUi.selectedFlight = null
             HorizonUi.selected != null -> HorizonUi.selected = null
             HorizonUi.point != null -> HorizonUi.back() // T317: Back first returns to the fix, as "Back to here"
