@@ -58,6 +58,18 @@ Launched after T326 is merged.
 **Checks:** `{"checks": [{"name": "debug-tool-tests", "run": ["python", "-I", "tools/test_android_debug.py"], "exit": 0}]}`
 **Status: merged.** Verifier MERGE WITH NOTES on a95c2799 (merged as cce2267e), no fix round. Follow-ups: `tools/android-a11y.py`'s `bootstrap` passes no `since`, so a launch that fails for another reason after an earlier crash in the same logcat buffer can still be reported as that crash (a `since` from `device_now` closes it); every APK update brings a second pack open at launch through `BundledAssets.reloadWhenUp`, which costs launch time (a start-up measurement of its own); the verifier's first reboot died with a qemu "virtio: zero sized buffer" message and the retry booted; the ten rebooted launches were the implementer's run, not repeated.
 
+### T336. The sweep's Panorama step takes the target's bearing from the app's own row, not from a number
+
+Added at the close (2026-11-22; the numbers T329 to T335 are wave 46's draft). The closing sweep `out/sweep-20261122-w45` (main 11a94519) was red on `features` alone: `panorama_target_and_arrow` in `tools/android-ui.py` wants the view within 3 degrees of 347 after the tap on Mount Rainier's row and again after the arrow's tap, and the view stood at 343 both times, the arrow gone. The app agreed with itself: the row and the card read "NNW 343°" in the Horizon view's frame (`36-horizon-peak-picked`) and in the Panorama's (`41-panorama-target`), the target in the middle of the plot. The 347 is the step's own, from T327's runs at another fix.
+
+**Goal:** the step reads the bearing it wants from the row it taps (the row's second line, "14409 ft · 4.7 mi · NNW 343°") and compares the view with that after the row's tap and after the arrow's; a row with no bearing fails the step by name. The report says where the fix stood in the sweep's run and in T327's (why 343 and 347.7), from the part's own steps and the frames; if the cause turns out to be the app's and not the step's, the task stops there and reports it as a finding with nothing changed.
+
+**Owns:** `tools/android-ui.py` (the T327 block and `panorama_step`'s docstring), `tools/test_android_ui.py`, `docs/reference/release-realism.md` where it describes the step.
+
+**Done when:** the `features` part run on the branch against the swept commit's release build is green, its `panorama` step ok with the bearing wanted in its report (`target.bearingWanted`, read from the row) and the view within 3 degrees of it both times, the frames `panorama-target` and `panorama-arrow` written and viewed; `python -I tools/test_android_ui.py` passes with a case for the row's line and one for a line without a bearing; `./gradlew check` green. After the merge the coordinator's rerun `-Only features -RerunOf out\sweep-20261122-w45` on `main` is the wave's closing run.
+
+**Checks:** none.
+
 ## Owner actions pending (as of 2026-10-27)
 
 The owner's to-do list; the coordinator adds to it whenever a task leaves something only the owner can do, and strikes an item when it is done. `docs/HANDOFF.md` › Waiting on user points here.
