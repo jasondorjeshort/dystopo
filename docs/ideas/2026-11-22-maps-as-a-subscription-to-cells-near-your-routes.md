@@ -11,3 +11,5 @@ Status: **untriaged and not sanity-checked** (an idea of the coordinator's own, 
 Instead of "download this region", a standing rule: all map within a distance of the owner's routes and tracks, at a chosen detail, kept up to date when the phone is online and charging. A moonshot built on the cell store.
 
 **What exists already (to be checked):** **Exists in design:** ADR 0060 and the idea of 2026-11-07 (record the areas held, pull cells that are missing or stale); the subscription by route is the new rule.
+
+Waits: ADR 0060's cell downloads in a release (the owner, 2026-11-22, by multiple choice at triage).
