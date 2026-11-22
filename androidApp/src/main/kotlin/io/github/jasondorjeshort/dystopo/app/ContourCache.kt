@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import io.github.jasondorjeshort.dystopo.app.online.TileCache
+import io.github.jasondorjeshort.dystopo.app.storage.FileTrees
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
@@ -75,15 +76,23 @@ object ContourCache {
         for (d in root.listFiles()?.filter { it.isDirectory }.orEmpty()) {
             if (keeps(d.name, identities)) continue
             n += cache.clear("${d.name}/")
-            d.walkBottomUp().forEach { if (it.isFile && it.delete()) n++ else it.delete() } // a kill mid-write
+            n += FileTrees.deleteTree(d) // a kill mid-write; T328: another collection deleting the same directory is no error
         }
         return n
     }
 
-    /** [collectGarbage] for the app's cache on a background thread; [identities] are the DEM and vector files on the device. */
+    private val gcLock = Any()
+
+    /**
+     * [collectGarbage] for the app's cache on a background thread; [identities] are the DEM and vector files on the device.
+     * T328: one collection at a time. A launch after an install and a pack push ran two (the `packs` stage's and the
+     * reload the bundled assets' install asks for) over the same stale directories, and one's delete removed a directory
+     * the other's stdlib walk had just found: the launch crash of the sweeps' `a11y` part after the guard's reboot.
+     */
     fun collectGarbage(app: DystopoApp, identities: Set<String>) {
         Thread({
-            staleFilesDeleted.addAndGet(collectGarbage(root(app), get(app), identities).toLong())
+            val n = synchronized(gcLock) { collectGarbage(root(app), get(app), identities) }
+            staleFilesDeleted.addAndGet(n.toLong())
         }, "contour-cache-gc").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
     }
 

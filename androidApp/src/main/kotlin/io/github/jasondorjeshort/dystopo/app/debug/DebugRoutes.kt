@@ -220,7 +220,7 @@ object DebugRoutes {
             try {
                 if (clear) {
                     done = cache.clear("$FILL_SERVER/")
-                    File(cache.dir, FILL_SERVER).deleteRecursively() // what the index never saw
+                    io.github.jasondorjeshort.dystopo.app.storage.FileTrees.deleteTree(File(cache.dir, FILL_SERVER)) // what the index never saw (T328)
                 } else {
                     val body = ByteArray(bytes) { (it * 31).toByte() }
                     val now = System.currentTimeMillis()

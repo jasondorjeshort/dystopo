@@ -136,33 +136,92 @@ def device_now(exe, serial):
     return out if code == 0 and re.fullmatch(r"\d\d-\d\d \d\d:\d\d:\d\d\.000", out) else None
 
 
-def launch_crash(exe, serial, since=None, package=None):
-    """The app's uncaught exception since `since` (from `device_now`), as "Type: message (Process: ..., PID n)", or None.
+CRASH_DIR = os.path.join("out", "launch-crashes")  # T328: under the working directory (the repo root for every caller)
+CRASH_BLOCK_MAX = 400
+_BRIEF_PID = re.compile(r"^\w/[^(]*\(\s*(\d+)\):")
+
+
+def launch_crash(exe, serial, since=None, package=None, out_dir=None):
+    """The app's uncaught exception since `since` (from `device_now`), as "Type: message [Process: ..., PID n]
+    (stack: <file>)", or None.
 
     Reads logcat's crash buffer for a `FATAL EXCEPTION` of our package, so a launch that dies reports the
-    exception instead of "no loaded style" after a long wait.
+    exception instead of "no loaded style" after a long wait. T328: the whole crash block (the stack with its
+    "Caused by" chain, at most CRASH_BLOCK_MAX lines) is written to `out/launch-crashes/launch-crash-<serial>-<time>.txt`
+    under the working directory (or `out_dir`), and the string ends with that path; callers take the string as before.
     """
     args = ["logcat", "-d", "-b", "crash", "-v", "brief"]
     if since:
         args += ["-t", since]
     _, out = adb(exe, serial, *args, timeout=60)
-    return parse_crash(out, package)
+    block = crash_block(out, package)
+    if not block:
+        return None
+    summary = summarize_crash(block)
+    path = save_crash(block, serial, out_dir)
+    return f"{summary} (stack: {path})" if path else f"{summary} (stack not saved)"
 
 
-def parse_crash(text, package=None):
-    """The first `FATAL EXCEPTION` of our package in logcat `-v brief` text, as "Type: message [Process: ..., PID n]".
+def crash_block(text, package=None):
+    """T328: the lines of the last `FATAL EXCEPTION` block of our package in logcat `-v brief` text, from the FATAL line
+    through the last line that process logged before another FATAL line, CRASH_BLOCK_MAX lines at most; [] when none.
+    The last, not the first: with no `since` (android-a11y.py's bootstrap) the buffer can hold older crashes.
     T303: `package` (default the debug build's) must be the process name exactly: the release id is a prefix of the debug's."""
     lines = text.splitlines()
+    found = []
     for i, ln in enumerate(lines):
         if "FATAL EXCEPTION" not in ln:
             continue
-        block = [b.split("): ", 1)[-1].strip() for b in lines[i + 1:i + 40]]
-        proc = next((b for b in block if b.startswith("Process:")), "")
-        if not re.match(rf"Process: {re.escape(package or PACKAGE)}(,|$)", proc):
-            continue
-        exc = next((b for b in block if re.match(r"[A-Za-z0-9_.$]+(Exception|Error)(?::|$)", b)), "uncaught exception")
-        return f"{exc} [{proc}]"
-    return None
+        m = _BRIEF_PID.match(ln)
+        pid = m.group(1) if m else None
+        block = [ln]
+        for b in lines[i + 1:]:
+            if "FATAL EXCEPTION" in b or len(block) >= CRASH_BLOCK_MAX:
+                break
+            bm = _BRIEF_PID.match(b)
+            if pid is None or (bm and bm.group(1) == pid):
+                block.append(b)
+            elif bm is None and not b.startswith("---------"):
+                block.append(b)  # a continuation line without a header (another log format): keep it
+        body = [b.split("): ", 1)[-1].strip() for b in block[1:]]
+        proc = next((b for b in body if b.startswith("Process:")), "")
+        if re.match(rf"Process: {re.escape(package or PACKAGE)}(,|$)", proc):
+            found = block
+    return found
+
+
+def summarize_crash(block):
+    """"Type: message [Process: ..., PID n]" from a crash block (crash_block's lines)."""
+    body = [b.split("): ", 1)[-1].strip() for b in block[1:]]
+    proc = next((b for b in body if b.startswith("Process:")), "")
+    exc = next((b for b in body if re.match(r"[A-Za-z0-9_.$]+(Exception|Error)(?::|$)", b)), "uncaught exception")
+    return f"{exc} [{proc}]"
+
+
+def save_crash(block, serial, out_dir=None):
+    """Writes a crash block to <out_dir or out/launch-crashes>/launch-crash-<serial>-<host time>.txt; the path, or None
+    when it cannot be written (a crash report never fails for its file)."""
+    d = out_dir or CRASH_DIR
+    name = f"launch-crash-{re.sub(r'[^A-Za-z0-9_.-]', '_', serial or 'device')}-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, name + ".txt")
+        n = 1
+        while os.path.exists(path):
+            n += 1
+            path = os.path.join(d, f"{name}-{n}.txt")
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(block) + "\n")
+        return path.replace("\\", "/")
+    except OSError:
+        return None
+
+
+def parse_crash(text, package=None):
+    """The last `FATAL EXCEPTION` of our package in logcat `-v brief` text, as "Type: message [Process: ..., PID n]",
+    or None (crash_block's rule)."""
+    block = crash_block(text, package)
+    return summarize_crash(block) if block else None
 
 
 def raise_if_crashed(exe, serial, since=None, package=None):
@@ -260,19 +319,28 @@ def health_token(base, timeout=10.0):
 
 def main(argv=None):
     """T303: `python -I tools/android_debug.py get --serial S --port P --path /diagnostics [--launch]`: starts the debug
-    build when --launch (or when it is not running), forwards --port to its debug server and prints the route's JSON."""
+    build when --launch (or when it is not running), forwards --port to its debug server and prints the route's JSON.
+    T328: `python -I tools/android_debug.py crash --serial S [--package P]` prints {"crash": <launch_crash's line or
+    null>}, saving the crash buffer's last block of the package to out/launch-crashes/ (exit 1 when there is one)."""
     import argparse
-    ap = argparse.ArgumentParser(description="GET one debug route of the debug build through adb")
-    ap.add_argument("cmd", choices=["get"])
+    ap = argparse.ArgumentParser(description="GET one debug route of the debug build through adb, or read its last crash")
+    ap.add_argument("cmd", choices=["get", "crash"])
     ap.add_argument("--serial", required=True)
-    ap.add_argument("--port", type=int, required=True)
-    ap.add_argument("--path", required=True)
+    ap.add_argument("--port", type=int)
+    ap.add_argument("--path")
+    ap.add_argument("--package", default=PACKAGE, help="crash: the process name (default the debug build's)")
     ap.add_argument("--launch", action="store_true", help="start the app first (am start -W) even when it runs")
     a = ap.parse_args(argv)
     exe = adb_path()
     if not exe:
         print(json.dumps({"error": "adb not found (set ANDROID_HOME)"}))
         return 2
+    if a.cmd == "crash":
+        crash = launch_crash(exe, a.serial, None, a.package)
+        print(json.dumps({"serial": a.serial, "package": a.package, "crash": crash}))
+        return 1 if crash else 0
+    if a.port is None or not a.path:
+        ap.error("get needs --port and --path")
     try:
         if a.launch or not app_pid(exe, a.serial):
             adb(exe, a.serial, "shell", "am", "start", "-W", "-n", activity(PACKAGE), timeout=120)

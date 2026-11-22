@@ -88,12 +88,10 @@ object Storage {
         var n = 0L
         var bytes = 0L
         var disk = 0L
-        if (dir.isDirectory) dir.walkTopDown().forEach { f ->
-            if (f.isFile) {
-                n++
-                bytes += f.length()
-                disk += runCatching { android.system.Os.stat(f.path).st_blocks * 512 }.getOrDefault(f.length())
-            }
+        FileTrees.forEachFile(dir) { f -> // T328: a directory deleted meanwhile is skipped
+            n++
+            bytes += f.length()
+            disk += runCatching { android.system.Os.stat(f.path).st_blocks * 512 }.getOrDefault(f.length())
         }
         return Walk(n, bytes, disk)
     }
@@ -257,7 +255,7 @@ object Storage {
             SOURCES -> {
                 val dir = File(app.cacheDir, "sources")
                 val w = walk(dir)
-                dir.walkBottomUp().forEach { if (it != dir) it.delete() }
+                FileTrees.deleteTree(dir, keepRoot = true)
                 mapOf("store" to store, "files" to w.files, "bytes" to w.apparentBytes)
             }
             else -> throw IllegalArgumentException("store must be one of $CLEARABLE (got '$store'); packs are removed in the pack list")

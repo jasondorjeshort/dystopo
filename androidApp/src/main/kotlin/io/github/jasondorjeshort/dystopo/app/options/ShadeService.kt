@@ -14,6 +14,7 @@ import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
 import io.github.jasondorjeshort.dystopo.tiles.SunPointAnswer
 import io.github.jasondorjeshort.dystopo.tiles.SunShadeOptions
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.app.storage.FileTrees
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -96,7 +97,7 @@ class ShadeService(
         // T49: the pre-T49 shade directory (now in the contour LRU).
         if (legacyRoot.isDirectory) {
             Thread({
-                legacyRoot.walkBottomUp().forEach { val isFile = it.isFile; if (it.delete() && isFile) staleFilesDeleted.incrementAndGet() }
+                FileTrees.deleteTree(legacyRoot) { staleFilesDeleted.incrementAndGet() } // T328: tolerates an entry gone meanwhile
             }, "shade-cache-gc").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
         }
     }
