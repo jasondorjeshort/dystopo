@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-21
+
+- T324: The Panorama's scene in `shared`: what the lens draws, the aim and the arithmetic of its gestures
+
 ## v0.1.40-alpha (2026-11-21)
 
 ### 2026-11-21
