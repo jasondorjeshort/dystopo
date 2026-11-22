@@ -19,7 +19,7 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the open wave
 2. T327 (Opus-class) after T326's merge; its verifier checks the GNSS hold and the poller's owner (T326's Interacts with line); record ADR 0064's second prediction at its merge.
 3. T328 in the free slots; its verifier is Sonnet-class (an emulator and a stack to read).
 4. Close the wave: the README status, the sweep with `-First` on the Panorama frames (`sweep-diff.py --check-first` on the exact names first), v0.1.41-alpha by the `release` skill, costs by `tools/agent-cost.py`, the record `docs/tasks/wave-45.md` [no-check: written at the close].
-5. Then: Panorama pass three (Follow the phone, the steering setting, the named offset); triage of the ideas of 2026-11-21 still untriaged and the 20 answered Questions into Plans; the reroute's amendment to ADR 0040; the routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`.
+5. Then, without asking again (the owner, 2026-11-22: "After this release we can go ahead and build the next one."): plan wave 46 by the `wave` skill, its critic first, and run it. Panorama pass three (Follow the phone, the steering setting, the named offset); triage of the ideas of 2026-11-21 still untriaged and the 20 answered Questions into Plans; the reroute's amendment to ADR 0040; the routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`.
 
 ## Waiting on user
 
