@@ -428,7 +428,7 @@ object Gnss {
         val s = GnssHealth.summarize(sats)
         val f = fix()
         return linkedMapOf(
-            "open" to GnssUi.open, "holders" to holders(), "statusOnly" to statusOnlyHolders(), "listening" to (listener != null), "engine" to engine, // T333 "error" to error, "permission" to permitted(),
+            "open" to GnssUi.open, "holders" to holders(), "statusOnly" to statusOnlyHolders(), "listening" to (listener != null), "engine" to engine, "error" to error, "permission" to permitted(), // T333: statusOnly, listening
             "source" to source, "statusCallbacks" to statusCallbacks.get(), "fixes" to fixes.get(),
             "statusAgeMs" to if (realAt == 0L) null else SystemClock.elapsedRealtime() - realAt,
             "summary" to linkedMapOf(
