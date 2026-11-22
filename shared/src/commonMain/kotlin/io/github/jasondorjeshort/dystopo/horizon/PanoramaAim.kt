@@ -12,7 +12,7 @@ import kotlin.math.tan
 /**
  * T324: where the Panorama's lens looks (wave 45's choices (c) and (d), ADR 0064): [bearingDeg] true at the view's centre
  * (0 to 360, wrapping), [tiltDeg] from the level ([MIN_TILT_DEG] to [MAX_TILT_DEG]), [fovDeg] across the plot's width
- * ([MIN_FOV_DEG] to [MAX_FOV_DEG]); no roll (up on the screen is up; the roll is pass three's). Pure: each gesture is a
+ * ([MIN_FOV_DEG] to [MAX_FOV_DEG]); in Drag no roll (up on the screen is up; Follow's roll is below). Pure: each gesture is a
  * new aim, so the phone's plot steers by these numbers alone and draws [PanoramaScene] for the result.
  *
  * - [drag]: the direction at the view's centre goes where the finger takes it (exactly, not by a fixed degrees per px),
