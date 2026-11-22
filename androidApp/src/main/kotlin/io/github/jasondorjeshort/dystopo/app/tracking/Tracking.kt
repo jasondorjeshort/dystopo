@@ -574,6 +574,7 @@ class Tracking private constructor(private val app: DystopoApp) {
                 notification.cancel()
                 puck(null) // T251: the map's listener again
                 weak.reset() // T333
+                weakRim = "none"
             }
         }
         io.github.jasondorjeshort.dystopo.app.gnss.Gnss.hold(WEAK_HOLDER, false) // T333

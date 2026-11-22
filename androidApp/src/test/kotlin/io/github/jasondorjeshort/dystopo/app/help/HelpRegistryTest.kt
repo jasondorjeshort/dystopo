@@ -196,6 +196,9 @@ class HelpRegistryTest {
             // T327: the Panorama's Sun and Flights.
             "panorama.sun", "panorama.flights",
             // end T327
+            // T333: the recording panel's weak-signal line.
+            "tracks.weakSignal",
+            // end T333
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
