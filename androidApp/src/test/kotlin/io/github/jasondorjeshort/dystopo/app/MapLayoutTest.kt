@@ -527,10 +527,14 @@ class MapLayoutTest {
             val t = if (scale > 1f) 1.75f else 1f // the cards' and the strip's curve
             val (w, h) = if (landscape) 914.3f to 411.4f else 411.4f to 914.3f
             val ins = if (landscape) floatArrayOf(48f, 24f, 0f, 24f) else floatArrayOf(0f, 48.8f, 0f, 24f)
-            val sw = size(158f * k, 48f)
+            val sw = size(249f * k, 48f * k) // T326: three segments
             val anchor = ui.switchRect(w, h, ins[0], ins[3], sw)
             val creditH = if (landscape) 18f * t else 30f * t
-            val floor = minOf(h - ins[3] - 6f - creditH, anchor.top) // what the app's bottom cards stand on
+            // T326 (choice h): under 240 dp beside the switch (upright here) the credit stands above it across the window.
+            val creditAbove = ui.creditAbove(ui.creditRoomBeside(w, ins[0], ins[2], sw.width))
+            assertEquals(!landscape, creditAbove, "landscape=$landscape scale=$scale: above upright, beside on its side")
+            // What the app's bottom cards stand on (AttributionInsets.bottom: the higher of the credit line and the switch).
+            val floor = if (creditAbove) anchor.top - 6f - creditH else minOf(h - ins[3] - 6f - creditH, anchor.top)
             val cardW = if (landscape) 420f else w - 16f
             val routeH = if (landscape) 150f else 220f * t
             val route = if (routeCard) rect(8f + ins[0], floor - 6f - routeH, 8f + ins[0] + cardW, floor - 6f) else null
@@ -562,7 +566,9 @@ class MapLayoutTest {
             for (id in listOf(OverlayIds.SCALE_BAR, OverlayIds.STRIP, OverlayIds.POSITION, OverlayIds.ORIENTATION, OverlayIds.PLANNING_CARD, OverlayIds.UPDATE_CARD)) {
                 p[id]?.rect?.let { r -> assertTrue(r.bottom <= anchor.top, "$at: $id $r above the switch $anchor") }
             }
-            assertTrue(p[OverlayIds.CREDIT]!!.rect!!.left >= anchor.right, "$at: the credit line beside the switch")
+            val credit = p[OverlayIds.CREDIT]!!.rect!!
+            if (creditAbove) assertTrue(credit.bottom <= anchor.top, "$at: the credit line above the switch")
+            else assertTrue(credit.left >= anchor.right, "$at: the credit line beside the switch")
             if (firstRun) {
                 val card = p[OverlayIds.FIRST_RUN_CARD]
                 assertTrue(card != null && (card.rect != null || card.reason != null), "$at: the first-run card placed, or hidden with a reason: $card")
@@ -580,23 +586,29 @@ class MapLayoutTest {
     fun aRouteCardPlannedBeforeTheFontWasRaisedLeavesTheSwitchShown() {
         val ui = io.github.jasondorjeshort.dystopo.ui.OverlayLayout
         fun size(w: Float, h: Float) = io.github.jasondorjeshort.dystopo.ui.OverlaySize(w, h)
-        val sw = size(170.7f, 48f)
+        val sw = size(249f, 48f) // T326: three segments; at 411 dp the credit line stands above them (choice h)
         val anchor = ui.switchRect(411.4f, 914.3f, 0f, 24f, sw)
+        // The route card stands on the credit line's top (AttributionInsets.bottom), the credit 6 dp above the switch.
+        fun card(creditH: Float) = io.github.jasondorjeshort.dystopo.ui.OverlayCard(420f, 140f, 44f, 395.4f,
+            drawn = io.github.jasondorjeshort.dystopo.ui.OverlayRect(8f, anchor.top - 12f - creditH - 420f, 403.4f, anchor.top - 12f - creditH))
         val at1 = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
             windowWidth = 411.4f, windowHeight = 914.3f, insetTop = 48.8f, insetBottom = 24f, fontScale = 1f,
-            search = size(ui.SEARCH_WIDTH, 48f), topRow = size(190f, 40f), credit = size(220f, 30f),
+            search = size(ui.SEARCH_WIDTH, 48f), topRow = size(190f, 40f), credit = size(380f, 30f),
             online = size(160f, 32f), trackBar = size(106.7f, 40f), routes = size(70f, 36f), horizonSwitch = sw,
             scaleBar = size(79.6f, 28f), strip = List(3) { size(70f, 40f) }, stripCore = 2, buttons = 1,
-            planning = io.github.jasondorjeshort.dystopo.ui.OverlayCard(420f, 140f, 44f, 395.4f, drawn = io.github.jasondorjeshort.dystopo.ui.OverlayRect(8f, anchor.top - 6f - 420f, 403.4f, anchor.top - 6f)),
+            planning = card(30f),
             cardsDrawn = true,
         )
+        assertTrue(ui.creditAbove(at1))
         val first = ui.place(at1)
-        val raised = at1.copy(fontScale = 2f, search = size(ui.SEARCH_WIDTH, 63.2f), topRow = size(236.6f, 38.1f), credit = size(220f, 55.6f), trackBar = size(106.7f, 82.3f),
+        val raised = at1.copy(fontScale = 2f, search = size(ui.SEARCH_WIDTH, 63.2f), topRow = size(236.6f, 38.1f), credit = size(380f, 55.6f), trackBar = size(106.7f, 82.3f),
+            horizonSwitch = size(249f * 1.3f, 48f), planning = card(55.6f),
             scaleBar = size(79.6f, 41.9f), strip = List(3) { size(130f, 66.4f) })
         for (p in listOf(ui.place(raised, first.latch), ui.place(raised))) {
             assertTrue(p.overlaps().isEmpty(), "${p.overlaps()}")
             val e = p[OverlayIds.HORIZON_SWITCH]!!
-            assertEquals(anchor, e.rect, "shown at its anchor: $e")
+            assertEquals(ui.switchRect(raised), e.rect, "shown at its anchor: $e")
+            assertEquals(anchor.top, e.rect!!.top)
         }
     }
 
