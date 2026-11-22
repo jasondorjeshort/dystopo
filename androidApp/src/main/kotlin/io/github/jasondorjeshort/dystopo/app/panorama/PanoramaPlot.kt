@@ -183,11 +183,11 @@ fun PanoramaPlot(
     }
     val followBox = if (sensor && aim != null) followButtonBox(wPx, hPx, d, followW) else null
     val corner = followBox?.let { io.github.jasondorjeshort.dystopo.horizon.RimBox(minOf(zoomCorner.left, it.left - PanoramaScene.ZOOM_MARGIN_DP * d), it.top - PanoramaScene.ZOOM_MARGIN_DP * d, wPx, hPx) } ?: zoomCorner
-    // T331 (choice (f)): the correction's line with Reset, at the upper left under the tape while a correction stands; its
-    // box (sized for the widest line, so it does not move as the degrees change) is given to the scene and the arrow.
+    // T331 (choice (f)): the correction's line with Reset, at the lower left while a correction stands; its box (sized for
+    // the widest line, so it does not move as the degrees change) is given to the scene and the arrow.
     val correction = PanoramaFollow.correctionDeg?.takeIf { following && aim?.follow == true }
     val correctionSize = remember(density, measurer, wPx) { correctionPlateSize(measurer, density, wPx) }
-    val correctionBox = if (correction != null) correctionBoxAt(d, correctionSize) else null
+    val correctionBox = if (correction != null) correctionBoxAt(hPx, d, correctionSize, if (lensLayers?.flights != null) CREDIT_ROOM_DP else 0.0) else null
     val keepOff = listOfNotNull(zoomCorner, followBox, correctionBox)
     // T330 (choice (c)): while the followed attitude moves the names keep their offsets, as in a drag; placed when it rests.
     val holding = gesturing || (aim?.follow == true && PanoramaFollow.moving)
@@ -245,20 +245,24 @@ fun PanoramaPlot(
                             val z = event.calculateZoom()
                             val p = event.calculatePan()
                             if (event.changes.count { it.pressed } > 1) multi = true
+                            var first = false
                             if (!started) {
                                 pan += p
                                 zoom *= z
                                 if (pan.getDistance() > touchSlop || abs(zoom - 1f) > 0.04f) {
                                     started = true
+                                    first = true
                                     PanoramaUi.gesturing = true
                                 }
                             }
                             if (started) {
                                 val c = event.calculateCentroid(useCurrent = true)
                                 // T331 (choice (f)): in Follow a one-finger drag is the heading correction along the level
-                                // line; a pinch's drift corrects nothing (choice (e)).
+                                // line, the travel within the touch slop included so the drawing keeps up with the finger;
+                                // a pinch's drift corrects nothing (choice (e)).
                                 if (p != Offset.Zero) {
-                                    if (PanoramaUi.aim?.follow == true) { if (!multi) PanoramaFollow.dragBy(p.x.toDouble(), p.y.toDouble()) }
+                                    val move = if (first) pan else p
+                                    if (PanoramaUi.aim?.follow == true) { if (!multi) PanoramaFollow.dragBy(move.x.toDouble(), move.y.toDouble()) }
                                     else PanoramaUi.steer { a, (w, _, _) -> a.drag(p.x.toDouble(), p.y.toDouble(), w) }
                                 }
                                 if (z != 1f && c != Offset.Unspecified) PanoramaUi.steer { a, (w, h, _) -> a.pinch(z.toDouble(), c.x.toDouble(), c.y.toDouble(), w, h) }
@@ -510,7 +514,7 @@ private fun EdgeArrow(
     sign: Boolean = false,
     /** T331: the plate's top stays at or under this (px: under the tape; T330's note: it rose over the tape at an edge). */
     topPx: Double = 0.0,
-    /** T331: a box the plate keeps off (the correction's line): moved down under it. */
+    /** T331: a box the plate keeps off (the correction's line at the lower left): moved up above it. */
     avoid: io.github.jasondorjeshort.dystopo.horizon.RimBox? = null,
 ) {
     val side = a.side
@@ -535,11 +539,13 @@ private fun EdgeArrow(
                     io.github.jasondorjeshort.dystopo.horizon.OffSide.DOWN -> a.y - p.height
                     else -> a.y - p.height / 2.0
                 }.coerceIn(minOf(topPx, maxOf(0.0, hPx - p.height)), maxOf(0.0, hPx - p.height))
-                // T331: off the correction's line: down under it.
-                if (avoid != null && x < avoid.right && x + p.width > avoid.left && y < avoid.bottom && y + p.height > avoid.top) y = minOf(avoid.bottom + 4.0 * density, maxOf(0.0, hPx - p.height))
-                // Off the zoom buttons' corner: up above it at the right edge, else to its left.
+                // T331: off the correction's line: up above it.
+                if (avoid != null && x < avoid.right && x + p.width > avoid.left && y < avoid.bottom && y + p.height > avoid.top) y = maxOf(minOf(topPx, avoid.top), avoid.top - p.height - 4.0 * density)
+                // Off the zoom buttons' corner: up above it at the right edge, else to its left; T331: up above it too when
+                // the plate is wider than the room to its left (a two-line plate at font 2.0 lay under "Follow phone").
                 if (x + p.width > zoom.left && y + p.height > zoom.top) {
-                    if (side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT) y = maxOf(topPx, zoom.top - p.height) else x = maxOf(0.0, zoom.left - p.width)
+                    if (side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT || zoom.left - p.width < 0) y = maxOf(topPx, zoom.top - p.height)
+                    else x = zoom.left - p.width
                 }
                 layout(constraints.maxWidth, constraints.maxHeight) { p.place(x.roundToInt(), y.roundToInt()) }
             }
@@ -549,7 +555,7 @@ private fun EdgeArrow(
             }
             .testTag("panoramaArrow")
             .heightIn(min = 48.dp)
-            .background(pal.card.copy(alpha = if (sign) 0.85f else 0.94f), RoundedCornerShape(12.dp))
+            .background(pal.card.copy(alpha = 0.94f), RoundedCornerShape(12.dp))
             .then(if (sign) Modifier else Modifier.border(1.5.dp, pal.link, RoundedCornerShape(12.dp)))
             .semantics(mergeDescendants = true) { contentDescription = a.text }
             .then(if (sign) Modifier else Modifier.clickable(role = Role.Button) { PanoramaUi.turnToTarget() })
@@ -632,7 +638,9 @@ internal data class PlateSize(val width: Double, val height: Double, val textWid
 private fun correctionPlateSize(measurer: androidx.compose.ui.text.TextMeasurer, density: androidx.compose.ui.unit.Density, wPx: Double): PlateSize {
     val d = density.density.toDouble()
     val resetW = measurer.measure(PanoramaStrings.RESET, TextStyle(fontSize = RESET_TEXT_SP.sp, fontWeight = FontWeight.Medium)).size.width + 2 * RESET_PAD_DP * d
-    val maxText = (wPx * 0.75 - resetW - (2 * LINE_PAD_DP + LINE_GAP_DP) * d).coerceAtLeast(40 * d)
+    // At most 3/4 of the plot's width, and clear of the zoom buttons' column at the right.
+    val maxPlate = minOf(wPx * 0.75, wPx - (2 * EDGE_MARGIN_DP + PanoramaScene.ZOOM_MARGIN_DP + PanoramaScene.ZOOM_BUTTON_DP) * d)
+    val maxText = (maxPlate - resetW - (2 * LINE_PAD_DP + LINE_GAP_DP) * d).coerceAtLeast(40 * d)
     val t = measurer.measure(
         WIDEST_LINE, TextStyle(fontSize = LINE_TEXT_SP.sp), maxLines = 2,
         constraints = androidx.compose.ui.unit.Constraints(maxWidth = maxText.roundToInt()),
@@ -642,16 +650,23 @@ private fun correctionPlateSize(measurer: androidx.compose.ui.text.TextMeasurer,
     return PlateSize(LINE_PAD_DP * d + textW + LINE_GAP_DP * d + resetW + 2 * d, h, textW, resetW)
 }
 
-/** The plate's box (plot px): at the upper left, under the tape, [EDGE_MARGIN_DP] in from the edges. */
-private fun correctionBoxAt(d: Double, s: PlateSize): io.github.jasondorjeshort.dystopo.horizon.RimBox {
+/**
+ * The plate's box (plot px): at the lower left, [EDGE_MARGIN_DP] in from the edges, over the near ground where no name
+ * stands while the phone points at the land (at the upper left a dominant name forced to its place could fall under it);
+ * above the flights' credit ([creditDp] of room) while that shows.
+ */
+internal fun correctionBoxAt(hPx: Double, d: Double, s: PlateSize, creditDp: Double): io.github.jasondorjeshort.dystopo.horizon.RimBox {
     val left = EDGE_MARGIN_DP * d
-    val top = PanoramaScene.TAPE_DP * d + EDGE_MARGIN_DP * d
-    return io.github.jasondorjeshort.dystopo.horizon.RimBox(left, top, left + s.width, top + s.height)
+    val bottom = hPx - (EDGE_MARGIN_DP + creditDp) * d
+    return io.github.jasondorjeshort.dystopo.horizon.RimBox(left, bottom - s.height, left + s.width, bottom)
 }
+
+/** The room the flights' credit takes at the plot's lower left (two 12 dp lines on a plate, 6 dp in), dp. */
+internal const val CREDIT_ROOM_DP = 34.0
 
 /**
  * T331: the heading correction's line (wave 46's choice (f): "Compass adjusted 4° east", [HeadingCorrection.line]) with
- * "Reset" (a 48 dp button that drops the correction), on a plate at the upper left of the plot, upright at any roll.
+ * "Reset" (a 48 dp button that drops the correction), on a plate at the lower left of the plot, upright at any roll.
  */
 @Composable
 private fun CorrectionPlate(b: io.github.jasondorjeshort.dystopo.horizon.RimBox, deg: Double, pal: GnssPalette) {

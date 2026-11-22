@@ -1078,6 +1078,43 @@ def end_recording_weak(c):
 # end T333
 
 
+# T331
+# The Panorama following the phone with everything Follow adds on screen: a simulated attitude (true bearing 60, 20
+# degrees down, rolled 25) so nothing depends on the emulator's sensor; Mount Rainier the target, off the view to the
+# left (the arrow a sign, no edge and no tap); a heading correction of 4 degrees (its line and Reset at the lower left);
+# a simulated accuracy status of 1 (low), so the weak-compass line stands under the plot after its 2 s. Flight tracking
+# is left as it is. Each pin is put back by end_panorama_attitude, also after a failed setup (the steering setting as
+# found, the simulated attitude and status cleared, the target and the correction let go).
+PANORAMA_ATTITUDE = "60,-20,25"
+
+
+def scr_panorama_attitude(c):
+    c.attitude_steering_found = (c.srv.ok("GET", "/settings") or {}).get("panoramaSteering")
+    c.srv.ok("POST", "/settings?panoramaSteering=follow")
+    c.srv.ok("POST", "/horizon/switch?to=panorama", timeout=30.0)
+    c.srv.ok("GET", "/panorama?wait=60000", timeout=120.0)
+    c.srv.ok("POST", f"/panorama?attitude={PANORAMA_ATTITUDE}&attitudeNoise=0")
+    c.srv.ok("POST", "/panorama?target=" + urllib.parse.quote("peak:Mount Rainier"))
+    c.srv.ok("POST", "/panorama?correction=4&compassStatus=1")
+    deadline = time.time() + 10
+    while True:
+        j = c.srv.ok("GET", "/panorama") or {}
+        if (j.get("hint") or {}).get("shown") and j.get("arrow") and j.get("correctionDeg") is not None:
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"Follow's screen did not stand: hint {json.dumps(j.get('hint'))}, arrow {json.dumps(j.get('arrow'))}, correction {j.get('correctionDeg')}")
+        time.sleep(0.5)
+    time.sleep(1.0)
+
+
+def end_panorama_attitude(c):
+    c.srv.call("POST", "/panorama?compassStatus=none&correction=none&target=none&attitude=none")
+    c.srv.call("POST", "/horizon/switch?to=map")
+    found = getattr(c, "attitude_steering_found", None)
+    c.srv.call("POST", f"/settings?panoramaSteering={found or 'drag'}")
+# end T331
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1115,6 +1152,9 @@ SCREENS = [
     # T333
     ("recording-weak", scr_recording_weak, end_recording_weak, "map"),
     # end T333
+    # T331
+    ("panorama-attitude", scr_panorama_attitude, end_panorama_attitude, "screen"),
+    # end T331
 ]
 
 

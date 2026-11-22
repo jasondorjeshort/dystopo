@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -306,7 +308,7 @@ fun PanoramaScreen() {
                 pane(Modifier.weight(1f).fillMaxWidth())
             }
             // T331 (T326's note): the strip under the status bar over the plot carries the plot's sky on upward (it was paper).
-            val topInset = androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(density)
+            val topInset = androidx.compose.foundation.layout.WindowInsets.statusBars.union(androidx.compose.foundation.layout.WindowInsets.displayCutout).getTop(density) // the padding the content stands under
             if (topInset > 0) {
                 val tints = remember(night) { PanoramaTints(night) }
                 androidx.compose.foundation.Canvas(
