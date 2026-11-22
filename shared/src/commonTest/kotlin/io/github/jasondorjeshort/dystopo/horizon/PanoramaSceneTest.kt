@@ -190,6 +190,108 @@ class PanoramaSceneTest {
     }
 
     @Test
+    fun t329TheOutlinesHoldRolledAndLookingFarDown() {
+        val cases = listOf(
+            "roll 30" to PanoramaAim.follow(10.0, 3.0, 30.0, 60.0),
+            "roll 30, east, wide" to PanoramaAim.follow(85.0, 8.0, 30.0, 100.0),
+            "roll -90" to PanoramaAim.follow(0.0, 2.0, -90.0, 60.0),
+            "roll -90, narrow on the far cone" to PanoramaAim.follow(42.0, 1.0, -90.0, 30.0),
+            "tilt -75" to PanoramaAim.follow(20.0, -75.0, 0.0, 100.0),
+            "tilt -75, roll 40" to PanoramaAim.follow(200.0, -75.0, 40.0, 100.0),
+        )
+        val all = HashSet<Int>()
+        for ((name, aim) in cases) {
+            val (share, seen) = differing(aim)
+            assertTrue(share < 0.01, "$name: ${share * 100}% of pixels differ")
+            all += seen
+            println("T329 outlines against rays, $name: ${share * 100}% differ, layers $seen")
+        }
+        assertTrue(all.containsAll(listOf(-1, 0, 1)), "the sky and the near layers are tested rolled: $all")
+        // Through the crater's zenith rolled: the hole of the skyline's loop.
+        val (share, _) = differing(PanoramaAim.follow(0.0, 80.0, 65.0, 100.0), crater)
+        assertTrue(share < 0.01, "near straight up, rolled: ${share * 100}%")
+    }
+
+    @Test
+    fun t329StraightDownIsAllGroundAndStraightUpAllSky() {
+        for (roll in listOf(0.0, 35.0, -120.0)) {
+            val down = PanoramaScene.build(PanoramaAim.follow(30.0, -90.0, roll, 60.0), w, h, dp, skyline, emptyList(), text, text)
+            for (layer in down.layers) {
+                assertEquals(1, layer.rings.size, "roll $roll: straight down every layer's ground covers the view")
+                assertEquals(8, layer.rings[0].size)
+            }
+            assertNull(down.level)
+            val up = PanoramaScene.build(PanoramaAim.follow(30.0, 90.0, roll, 60.0), w, h, dp, skyline, emptyList(), text, text)
+            assertTrue(up.layers.all { it.rings.isEmpty() && it.ridges.isEmpty() }, "roll $roll: straight up all sky")
+            assertNull(up.level)
+        }
+    }
+
+    @Test
+    fun t329TheLevelLineAtARollLiesOnTheLevel() {
+        for ((tilt, roll) in listOf(0.0 to 20.0, 10.0 to -35.0, -20.0 to 70.0, 0.0 to 90.0)) {
+            val aim = PanoramaAim.follow(100.0, tilt, roll, 60.0)
+            val lens = aim.lens(w, h, dp)
+            val l = assertNotNull(PanoramaScene.level(lens), "tilt $tilt roll $roll")
+            for (s in listOf(0.0, 0.25, 0.5, 0.75, 1.0)) {
+                val (el, _) = lens.ray(l[0] + s * (l[2] - l[0]), l[1] + s * (l[3] - l[1]))
+                assertTrue(kotlin.math.abs(el) < 1e-6, "tilt $tilt roll $roll at $s: elevation $el")
+            }
+            assertTrue(kotlin.math.hypot(l[2] - l[0], l[3] - l[1]) > 100, "it crosses the view")
+            // Its slope is the roll's: a clockwise phone sees the level rise to the right.
+            if (roll != 90.0) assertEquals(-kotlin.math.tan(roll * kotlin.math.PI / 180), (l[3] - l[1]) / (l[2] - l[0]), 1e-6)
+        }
+        // At no roll the Follow aim's line is the Drag aim's.
+        val drag = assertNotNull(PanoramaScene.level(PanoramaAim(40.0, 7.0, 60.0).lens(w, h, dp)))
+        val follow = assertNotNull(PanoramaScene.level(PanoramaAim.follow(40.0, 7.0, 0.0, 60.0).lens(w, h, dp)))
+        for (i in 0 until 4) assertEquals(drag[i], follow[i], 1e-9)
+    }
+
+    @Test
+    fun t329TheTapeRolledAndItsOneFacingMark() {
+        val wide = 1080.0
+        val dpPhone = 2.625
+        val t = PanoramaText({ s -> 5.6 * dpPhone * s.length }, -9.3 * dpPhone, 2.4 * dpPhone)
+        // Rolled 20 degrees: the ticks still cross the top edge, the labels upright boxes that never touch.
+        val rolled = PanoramaScene.tape(PanoramaAim.follow(0.0, 0.0, 20.0, 60.0).lens(wide, wide * 0.75, dpPhone), t)
+        assertNull(rolled.facing)
+        assertTrue(rolled.ticks.size >= PanoramaScene.TAPE_MIN_TICKS && rolled.labels.size >= 2, "${rolled.labels.map { it.text }}")
+        for ((a, c) in rolled.labels.zipWithNext()) assertTrue(c.box.left - a.box.right >= PanoramaScene.TAPE_GAP_DP * dpPhone - 1e-9)
+        // On its side unturned (roll 90) the top edge runs up and down one bearing: no tick crosses it, the one mark stands.
+        val side = PanoramaAim.follow(347.0, 0.0, 90.0, 60.0).lens(wide, wide * 0.75, dpPhone)
+        val tape = PanoramaScene.tape(side, t)
+        assertTrue(tape.ticks.size < PanoramaScene.TAPE_MIN_TICKS)
+        assertTrue(tape.ticks.isEmpty() && tape.labels.isEmpty())
+        val mark = assertNotNull(tape.facing)
+        assertEquals("Facing 347°", mark.text)
+        assertEquals(wide / 2, mark.x, 1e-9)
+        assertTrue(mark.box.left >= 0 && mark.box.right <= wide && mark.box.bottom <= tape.box.bottom)
+        assertEquals("Facing N", PanoramaScene.facingText(0.4))
+        // Today's aims never give the mark.
+        assertNull(PanoramaScene.tape(PanoramaAim(0.0, 90.0, 10.0).lens(wide, wide * 0.75, dpPhone), t).facing)
+    }
+
+    @Test
+    fun t329NamesKeepOffEveryBoxTheCallerGives() {
+        val aim = PanoramaAim(90.0, 0.0, 60.0)
+        val lens = aim.lens(w, h, dp)
+        val peaks = (0 until 12).map { i ->
+            val (el, az) = lens.ray(40.0 + i * 40.0, h / 2 + (i % 3) * 20)
+            HorizonLabel("Peak $i", LabelKind.PEAK, az, el, 5000.0 + i * 100, 1.0, 2000.0 + i)
+        }
+        val ranked = HorizonLabels.rank(peaks)
+        val boxes = listOf(RimBox(0.0, h / 2 - 120, w / 2, h / 2), RimBox(w - 80, h - 80, w, h))
+        val s = PanoramaScene.build(aim, w, h, dp, skyline, ranked, text, text, boxes)
+        assertTrue(s.names.isNotEmpty())
+        // A forced name (the dominant, the closest) may be moved into the view over a box when it has no free place; the rest never are.
+        val closest = peaks.minBy { it.distanceM }
+        val free = s.names.filter { !it.label.dominant && it.label != closest }
+        assertTrue(free.isNotEmpty())
+        for (n in free) for (b in boxes) assertTrue(!n.placed.box.overlaps(b), "${n.label.name} over $b")
+        assertTrue(boxes.all { it in s.blocked })
+    }
+
+    @Test
     fun theSweepsStepsCoarseToFine() {
         assertEquals(listOf(1.0, 0.1), PanoramaSweep.steps(10.0, 1080.0))
         assertEquals(listOf(1.0, 0.5), PanoramaSweep.steps(60.0, 1080.0))

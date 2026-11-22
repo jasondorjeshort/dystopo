@@ -17,7 +17,10 @@ import io.github.jasondorjeshort.dystopo.dem.PeakView
 import io.github.jasondorjeshort.dystopo.dem.Terrain
 import io.github.jasondorjeshort.dystopo.dem.Viewshed
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
+import io.github.jasondorjeshort.dystopo.horizon.Enu
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLabels
+import io.github.jasondorjeshort.dystopo.horizon.PhoneAttitude
+import io.github.jasondorjeshort.dystopo.horizon.Quat
 import io.github.jasondorjeshort.dystopo.horizon.LayeredSkyline
 import io.github.jasondorjeshort.dystopo.horizon.OffView
 import io.github.jasondorjeshort.dystopo.horizon.OffViewArrow
@@ -57,18 +60,22 @@ import kotlin.math.tan
  * opening unless `--tilt` or `--fov` is given) drawn as the phone draws it: the layers' outlines far to near, the level
  * line, the bearing tape, the pack's peaks named, the zoom buttons' corner, and with `--target` the edge arrow and its
  * line ([OffView]). A JSON report of the aim, the sweeps, the names placed and left out with their reasons, the target and
- * the scene's build time.
+ * the scene's build time. T329: `--roll` and a tilt past Drag's -45 draw a Follow aim ([PanoramaAim.follow]); `--attitude`
+ * with `--rotation` draws the aim [PhoneAttitude] derives from a rotation vector and prints it with its axes.
  */
 class PanoramaCommand : CliktCommand(name = "panorama") {
     override fun help(context: Context) =
-        "The Panorama view from a point: the skyline at several ranges drawn far to near through a lens (bearing, tilt, " +
-            "field of view; the aim at opening by default), the bearing tape, the level line, the peak names and an optional " +
+        "The Panorama view from a point: the skyline at several ranges drawn far to near through a lens (bearing, tilt, roll, " +
+            "field of view, or a phone's rotation vector; the aim at opening by default), the bearing tape, the level line, the peak names and an optional " +
             "target's edge arrow (PNG), with the names placed, the labels left out, the sweeps' timings and the scene's build time (JSON)."
 
     private val area by option("--area", help = "Named area: its centre is the default point and out/<area>-outdoors.pmtiles the default pack")
     private val from by option("--from", help = "lat,lon of the observer (default: the area's centre)")
     private val bearing by option("--bearing", help = "Bearing at the view's centre, degrees true (default: toward the highest skyline peak, else the highest skyline)").double()
-    private val tilt by option("--tilt", help = "Tilt from the level, degrees (-45 to 90; default: the level line two thirds down)").double()
+    private val tilt by option("--tilt", help = "Tilt from the level, degrees (-90 to 90; past -45, Drag's limit, the aim follows the phone; default: the level line two thirds down)").double()
+    private val roll by option("--roll", help = "Roll, degrees (positive: the phone turned clockwise); the aim follows the phone").double()
+    private val attitude by option("--attitude", help = "The phone's rotation vector x,y,z,w (as the sensor gives it); the aim follows it, the vector's north taken as true")
+    private val rotation by option("--rotation", help = "The display's rotation with --attitude, degrees").choice("0", "90", "180", "270").default("0")
     private val fov by option("--fov", help = "Field of view across the width, degrees (10 to 100; default 60)").double()
     private val width by option("--width", help = "Plot width, px").int().default(1080)
     private val height by option("--height", help = "Plot height, px (default three quarters of the width: the phone's plot upright)").int()
@@ -93,7 +100,10 @@ class PanoramaCommand : CliktCommand(name = "panorama") {
         val h = (height ?: (width * 3 / 4)).toDouble()
         if (rangeM <= 0 || rangeM > Viewshed.MAX_RANGE_M) throw UsageError("--range-km must be in (0, ${Viewshed.MAX_RANGE_M / 1000}]")
         fov?.let { if (it < PanoramaAim.MIN_FOV_DEG || it > PanoramaAim.MAX_FOV_DEG) throw UsageError("--fov must be in [${PanoramaAim.MIN_FOV_DEG}, ${PanoramaAim.MAX_FOV_DEG}]") }
-        tilt?.let { if (it < PanoramaAim.MIN_TILT_DEG || it > PanoramaAim.MAX_TILT_DEG) throw UsageError("--tilt must be in [${PanoramaAim.MIN_TILT_DEG}, ${PanoramaAim.MAX_TILT_DEG}]") }
+        tilt?.let { if (it < PanoramaAim.FOLLOW_MIN_TILT_DEG || it > PanoramaAim.FOLLOW_MAX_TILT_DEG) throw UsageError("--tilt must be in [${PanoramaAim.FOLLOW_MIN_TILT_DEG}, ${PanoramaAim.FOLLOW_MAX_TILT_DEG}]") }
+        val q = attitude?.let(::parseQuat)
+        if (q != null && (bearing != null || tilt != null || roll != null)) throw UsageError("--attitude gives the bearing, the tilt and the roll; leave those out")
+        val rotationDeg = rotation.toInt()
         stepDeg?.let { if (it <= 0 || it > 5) throw UsageError("--step-deg must be in (0, 5]") }
         val targetDir = target?.let(::parseTarget)
         val fovDeg = fov ?: PanoramaAim.OPENING_FOV_DEG
@@ -135,12 +145,18 @@ class PanoramaCommand : CliktCommand(name = "panorama") {
         val ranked = HorizonLabels.rank(PeakRim.labels(views))
         val centre = bearing ?: PanoramaRender.defaultBearing(skyline, ranked)
         val opening = PanoramaAim.opening(w, h, centre, fovDeg)
-        val aim = PanoramaAim(opening.bearingDeg, tilt ?: opening.tiltDeg, fovDeg)
+        val t = tilt ?: opening.tiltDeg
+        val aim = when {
+            q != null -> PanoramaAim.follow(PhoneAttitude.axes(q, rotationDeg), fovDeg)
+            roll != null || t < PanoramaAim.MIN_TILT_DEG -> PanoramaAim.follow(opening.bearingDeg, t, roll ?: 0.0, fovDeg)
+            else -> PanoramaAim(opening.bearingDeg, t, fovDeg)
+        }
         val drawn = timings.time("render") { PanoramaRender.draw(aim, w, h, dp, skyline, ranked, targetDir?.let { Triple(targetName, it.first, it.second) }) }
         val cost = PanoramaRender.sceneCost(drawn)
 
         val name = area ?: "point"
-        val outFile = out ?: File("out/$name-panorama-b${aim.bearingDeg.roundToInt()}-t${aim.tiltDeg.roundToInt()}-f${aim.fovDeg.roundToInt()}.png")
+        val rollPart = if (aim.follow) "-r${aim.rollDeg.roundToInt()}" else ""
+        val outFile = out ?: File("out/$name-panorama-b${aim.bearingDeg.roundToInt()}-t${aim.tiltDeg.roundToInt()}$rollPart-f${aim.fovDeg.roundToInt()}.png")
         timings.time("write") {
             outFile.absoluteFile.parentFile.mkdirs()
             ImageIO.write(drawn.image, "png", outFile)
@@ -151,9 +167,13 @@ class PanoramaCommand : CliktCommand(name = "panorama") {
             "command" to "panorama", "area" to area, "from" to listOf(lat, lon),
             "source" to if (demFile != null) "dem:${demFile.name}" else source,
             "aim" to linkedMapOf(
-                "bearingDeg" to r1(aim.bearingDeg), "tiltDeg" to r2(aim.tiltDeg), "fovDeg" to aim.fovDeg, "opening" to (tilt == null && fov == null),
+                "bearingDeg" to r1(aim.bearingDeg), "tiltDeg" to r2(aim.tiltDeg), "rollDeg" to r2(aim.rollDeg), "fovDeg" to aim.fovDeg,
+                "follow" to aim.follow, "opening" to (tilt == null && fov == null && roll == null && q == null),
                 "width" to w, "height" to h, "dp" to dp, "pxPerDegAtCentre" to r2(scene.lens.pxPerDegAtCentre), "levelY" to scene.level?.let { r1(it[1]) },
+                "level" to scene.level?.map { r1(it) },
+                "axes" to aim.axes?.let { a -> linkedMapOf("forward" to enu(a.forward), "right" to enu(a.right), "up" to enu(a.up)) },
             ),
+            "attitude" to q?.let { linkedMapOf("x" to it.x, "y" to it.y, "z" to it.z, "w" to it.w, "rotationDeg" to rotationDeg, "north" to "the vector's (magnetic on a phone), taken as true") },
             "steps" to steps,
             "sweeps" to sweeps.map { s ->
                 linkedMapOf("stepDeg" to s.stepDeg, "samples" to s.profiles.sumOf { it.samples }, "ms" to s.sweepMs.sum(), "perRangeMs" to s.sweepMs)
@@ -180,7 +200,10 @@ class PanoramaCommand : CliktCommand(name = "panorama") {
                 linkedMapOf("name" to l.label.name, "distanceKm" to r1(l.label.distanceM / 1000), "bearingDeg" to r1(l.label.bearingDeg),
                     "angleDeg" to r2(l.label.angleDeg), "reason" to l.reason)
             },
-            "tape" to linkedMapOf("tickStepDeg" to scene.tape.tickStepDeg, "labelStepDeg" to scene.tape.labelStepDeg, "labels" to scene.tape.labels.map { it.text }),
+            "tape" to linkedMapOf(
+                "tickStepDeg" to scene.tape.tickStepDeg, "labelStepDeg" to scene.tape.labelStepDeg, "ticks" to scene.tape.ticks.size,
+                "labels" to scene.tape.labels.map { it.text }, "facing" to scene.tape.facing?.text,
+            ),
             "target" to targetDir?.let { (el, az) ->
                 val a = drawn.arrow
                 linkedMapOf("name" to targetName, "elevationDeg" to el, "bearingDeg" to az, "onView" to (a == null),
@@ -202,6 +225,14 @@ class PanoramaCommand : CliktCommand(name = "panorama") {
         return p[0]!! to p[1]!!
     }
 
+    private fun parseQuat(s: String): Quat {
+        val p = s.split(",").map { it.trim().toDoubleOrNull() }
+        if (p.size !in 3..4 || p.any { it == null }) throw UsageError("--attitude must be x,y,z,w (or x,y,z) of the rotation vector (got $s)")
+        return PhoneAttitude.quat(p.map { it!! }.toDoubleArray())
+    }
+
+    private fun enu(v: Enu) = listOf(r4(v.e), r4(v.n), r4(v.u))
+
     private fun parseTarget(s: String): Pair<Double, Double> {
         val p = s.split(",").map { it.trim().toDoubleOrNull() }
         if (p.size != 2 || p.any { it == null } || p[0]!! !in -90.0..90.0) throw UsageError("--target must be elevation,bearing in degrees (got $s)")
@@ -211,6 +242,7 @@ class PanoramaCommand : CliktCommand(name = "panorama") {
 
 private fun r1(d: Double) = (d * 10).roundToLong() / 10.0
 private fun r2(d: Double) = (d * 100).roundToLong() / 100.0
+private fun r4(d: Double) = (d * 10_000).roundToLong() / 10_000.0
 
 /**
  * T322, T324: the Panorama drawn from a [PanoramaScene], as the phone's Canvas draws it: the sky shaded by elevation, each
@@ -281,18 +313,29 @@ object PanoramaRender {
         val nameText = text(g.getFontMetrics(nameFont))
         val tapeText = text(g.getFontMetrics(tapeFont))
         val zoomCorner = PanoramaScene.zoomCorner(width, height, dp)
-        val scene = PanoramaScene.build(aim, width, height, dp, skyline, ranked, nameText, tapeText, zoomCorner)
+        val scene = PanoramaScene.build(aim, width, height, dp, skyline, ranked, nameText, tapeText, listOf(zoomCorner))
         val rebuild = { held: Boolean ->
-            PanoramaScene.build(aim, width, height, dp, skyline, ranked, nameText, tapeText, zoomCorner, held = if (held) scene.names else null)
+            PanoramaScene.build(aim, width, height, dp, skyline, ranked, nameText, tapeText, listOf(zoomCorner), held = if (held) scene.names else null)
         }
         val lens = scene.lens
         val text = ArrayList<RimBox>()
 
-        // The sky: from the level's tint to the overhead's at 60 degrees, along the centre column.
-        fun rowOf(el: Double): Double? = (el - aim.tiltDeg).takeIf { abs(it) < 85 }?.let { lens.cy - lens.focalPx * tan(it * PI / 180) }
-        val y0 = rowOf(0.0)
-        val y60 = rowOf(60.0)
-        g.paint = if (y0 != null && y60 != null && abs(y0 - y60) > 1) GradientPaint(0f, y0.toFloat(), SKY_LOW, 0f, y60.toFloat(), SKY_HIGH) else if (aim.tiltDeg > 30) SKY_HIGH else SKY_LOW
+        // The sky: from the level's tint to the overhead's at 60 degrees, along the centre column. T329: at a roll, between
+        // where the level and 60 degrees up fall on the view's bearing (the same two points with no roll).
+        val sky0: Pair<Double, Double>?
+        val sky60: Pair<Double, Double>?
+        if (aim.rollDeg == 0.0 && aim.axes == null) {
+            fun rowOf(el: Double): Double? = (el - aim.tiltDeg).takeIf { abs(it) < 85 }?.let { lens.cy - lens.focalPx * tan(it * PI / 180) }
+            sky0 = rowOf(0.0)?.let { 0.0 to it }
+            sky60 = rowOf(60.0)?.let { 0.0 to it }
+        } else {
+            fun at(el: Double) = (el - aim.tiltDeg).takeIf { abs(it) < 85 }?.let { lens.project(el, aim.bearingDeg) }?.let { it.x to it.y }
+            sky0 = at(0.0)
+            sky60 = at(60.0)
+        }
+        g.paint = if (sky0 != null && sky60 != null && kotlin.math.hypot(sky0.first - sky60.first, sky0.second - sky60.second) > 1) {
+            GradientPaint(sky0.first.toFloat(), sky0.second.toFloat(), SKY_LOW, sky60.first.toFloat(), sky60.second.toFloat(), SKY_HIGH)
+        } else if (aim.tiltDeg > 30) SKY_HIGH else SKY_LOW
         g.fillRect(0, 0, w, h)
 
         // The layers, far to near.
@@ -332,7 +375,7 @@ object PanoramaRender {
         g.stroke = BasicStroke((1 * dp).toFloat())
         for (t in tape.ticks) g.draw(Line2D.Double(t.x, t.top, t.x, t.bottom))
         g.font = tapeFont
-        for (l in tape.labels) {
+        for (l in tape.labels + listOfNotNull(tape.facing)) {
             g.drawString(l.text, l.box.left.toFloat(), l.baseline.toFloat())
             text += l.box
         }
