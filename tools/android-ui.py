@@ -2215,7 +2215,7 @@ def panorama_step(dev):
         errors.append(f"the opening's field of view is {facing0[1]}, not 60")
     # A one-finger swipe across the middle of the plot, right to left: the view turns (to the right).
     b = plot["bounds"]
-    y = (b[1] + b[3]) // 2
+    y = swipe_row(b)  # T331: clear of "Follow phone" (T330), which stands across the plot's middle row at the right
     dev.shell("input", "swipe", str(b[0] + (b[2] - b[0]) * 3 // 4), str(y), str(b[0] + (b[2] - b[0]) // 4), str(y), "700")
     time.sleep(2)
     nodes = dev.nodes()
@@ -2349,7 +2349,7 @@ def panorama_target_and_arrow(dev, out, errors):
     if turned is None or bearing_apart(turned, wanted) > 3:
         errors.append(f"the row did not turn the view to {PANORAMA_TARGET_PEAK} (facing {turned}, wanted {wanted} within 3)")
     # Two swipes right to left across the plot: the view turns right, Mount Rainier leaves at the left.
-    y = (pb[1] + pb[3]) // 2
+    y = swipe_row(pb)  # T331
     arrow = None
     for _ in range(4):
         dev.shell("input", "swipe", str(pb[0] + (pb[2] - pb[0]) * 7 // 8), str(y), str(pb[0] + (pb[2] - pb[0]) // 8), str(y), "600")
@@ -2382,6 +2382,13 @@ FOLLOWING = "Following the phone"  # in the plot's spoken label while the view f
 CORRECTION_LINE = r"^Compass adjusted \d+°( east| west)?$"  # HeadingCorrection.line
 RESET = "^Reset$"
 COMPASS_HINT = "^Compass needs calibrating"  # the weak-compass line under the plot (CompassHint.LINE)
+
+
+def swipe_row(bounds):
+    """T331: the row a sideways swipe across the plot runs along: 30 percent down it, above "Follow phone" (T330), which
+    stands across the plot's middle row at the right (a swipe along the middle started on the button and turned nothing:
+    "the swipe did not turn the view (N 0° then N 0°)" in T331's runs), and under the tape."""
+    return bounds[1] + (bounds[3] - bounds[1]) * 3 // 10
 
 
 def panorama_following(nodes):
@@ -2447,7 +2454,7 @@ def panorama_follow(dev, out, errors):
         facing0 = panorama_bearing(f["label"])
         # A slow one-finger swipe right to left across the middle of the plot: the drawing follows the finger (east).
         pb = plot["bounds"]
-        y = (pb[1] + pb[3]) // 2
+        y = swipe_row(pb)
         dev.shell("input", "swipe", str(pb[0] + (pb[2] - pb[0]) * 2 // 3), str(y), str(pb[0] + (pb[2] - pb[0]) // 3), str(y), "1200")
         line, nodes = dev.wait_for(CORRECTION_LINE, 8)
         reset = dev.find(RESET, nodes)
