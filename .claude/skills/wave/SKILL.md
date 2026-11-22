@@ -178,3 +178,6 @@ and the caches are regenerable; the only files on the machine that are not are t
    `## Later`, one line per task naming it; read that list, strike what is done or taken, then
    commit the board, the record and the index together and push with `bash tools/push-verified.sh`.
    A failed check in the recipe stops the chore; relaunch it Sonnet-class.
+6. Brainstorm with the owner (owner, 2026-11-22; the same step the `triage` skill ends with): after
+   the release, and after a push of triaged ideas, offer new ideas the wave suggested, moonshots
+   included, and record as untriaged ideas only those the owner accepts.
