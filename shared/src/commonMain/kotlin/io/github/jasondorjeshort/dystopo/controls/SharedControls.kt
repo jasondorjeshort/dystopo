@@ -33,7 +33,7 @@ object SharedControls {
     )
     val TEXT_SCALE = ControlItem(
         "textScale", ControlKind.SETTING, syncKey = "app.textScale",
-        placements = mapOf(onAndroid("display", 2, "settings", row = "textSize"), onWeb("display", 2, "panel", "text")),
+        placements = mapOf(onAndroid("display", 3, "settings", row = "textSize"), onWeb("display", 2, "panel", "text")), // T337: the phone's 2 is Pressure units, under Units
     )
 
     /** The section the map options sit in: its row on the phone, its `<summary>` on the page; order 0, ahead of its options. */

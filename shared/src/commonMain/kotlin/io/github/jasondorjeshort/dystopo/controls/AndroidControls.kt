@@ -75,6 +75,9 @@ object AndroidControls {
         // T330
         row("panoramaSteering", "navigation", 42), // how the Panorama view turns: under Sky range
         // end T330
+        // T337
+        row("pressureUnit", "display", 2), // the pressure's own unit, under Units (Text size moved to 3)
+        // end T337
         row("syncStatus", "sync", 1, ControlKind.LINK),
         row("share", "sync", 2, ControlKind.LINK),
         row("updates", "about", 1),

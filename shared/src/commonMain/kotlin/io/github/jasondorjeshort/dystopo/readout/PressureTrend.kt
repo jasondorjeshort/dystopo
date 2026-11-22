@@ -1,6 +1,8 @@
 package io.github.jasondorjeshort.dystopo.readout
 
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
+import io.github.jasondorjeshort.dystopo.render.PressureUnit
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
@@ -690,7 +692,8 @@ class FallAlert {
 
 /**
  * The warning's words (T178; pure). The survey's direction: say what was measured, hedge the forecast, never "storm".
- * Pressures in hPa, or inHg with feet ([inHg]).
+ * T337: pressures in the user's [PressureUnit] (mbar by default; its own setting, apart from feet and metres), through
+ * [UnitFormat.pressureChange].
  */
 object PressureText {
     const val TITLE = "Air pressure falling fast"
@@ -698,29 +701,28 @@ object PressureText {
     const val SPOKEN = "Air pressure is falling fast. Weather may get worse."
     const val NOT_ENOUGH = "not enough data"
 
-    /** "4.6 hPa" or "0.14 inHg". */
-    fun amount(hPa: Double, inHg: Boolean): String =
-        if (inHg) "${fmt(abs(hPa) / Altimeter.HPA_PER_INHG, 2)} inHg" else "${fmt(abs(hPa), 1)} hPa"
+    /** "4.6 mbar", "4.6 hPa", "0.14 inHg" or "3.5 mmHg" (T337: [unit]). */
+    fun amount(hPa: Double, unit: PressureUnit): String = UnitFormat.pressureChange(hPa, unit)
 
     private fun span(spanMs: Long) = if (spanMs >= PressureTrend.THREE_H_MS) "3 hours" else "1 hour"
 
-    /** "Down 4.6 hPa in 3 hours (sea-level equivalent). Weather may turn worse; check your plans." */
-    fun body(t: Tendency, inHg: Boolean): String =
-        "${if (t.seaLevelChange < 0) "Down" else "Up"} ${amount(t.seaLevelChange, inHg)} in ${span(t.spanMs)} (sea-level equivalent). $ADVICE"
+    /** "Down 4.6 mbar in 3 hours (sea-level equivalent). Weather may turn worse; check your plans." */
+    fun body(t: Tendency, unit: PressureUnit): String =
+        "${if (t.seaLevelChange < 0) "Down" else "Up"} ${amount(t.seaLevelChange, unit)} in ${span(t.spanMs)} (sea-level equivalent). $ADVICE"
 
-    /** The station's own tendency beside the phone's: "Weather station nearby: down 3.1 hPa in 3 hours." */
-    fun station(changeHPa: Double, inHg: Boolean): String = when {
+    /** The station's own tendency beside the phone's: "Weather station nearby: down 3.1 mbar in 3 hours." */
+    fun station(changeHPa: Double, unit: PressureUnit): String = when {
         abs(changeHPa) < 0.1 -> "Weather station nearby: steady over 3 hours."
-        else -> "Weather station nearby: ${if (changeHPa < 0) "down" else "up"} ${amount(changeHPa, inHg)} in 3 hours."
+        else -> "Weather station nearby: ${if (changeHPa < 0) "down" else "up"} ${amount(changeHPa, unit)} in 3 hours."
     }
 
-    private fun fmt(v: Double, digits: Int): String {
-        var s = 1.0
-        repeat(digits) { s *= 10 }
-        val r = (v * s).roundToLong()
-        val whole = r / s.toLong()
-        val frac = (r % s.toLong()).toString().padStart(digits, '0')
-        return "$whole.$frac"
+    /**
+     * T337: the pressure-fall warning's thresholds in [unit], as the help says them: "3 mbar, Standard at 4, Fewer at 6",
+     * "0.09 inHg, Standard at 0.12, Fewer at 0.18", "2.3 mmHg, Standard at 3, Fewer at 4.5".
+     */
+    fun thresholds(unit: PressureUnit): String {
+        fun t(w: FallWarning) = UnitFormat.pressureThreshold(w.thresholdHPa!!, unit)
+        return "${t(FallWarning.MORE)} ${unit.symbol}, ${FallWarning.STANDARD.label} at ${t(FallWarning.STANDARD)}, ${FallWarning.FEWER.label} at ${t(FallWarning.FEWER)}"
     }
 }
 

@@ -106,6 +106,15 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             Option("Feet", units == ContourUnits.FEET) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.FEET, null)) }
             Option("Metres", units == ContourUnits.METERS) { change(SettingsRoutes.Parsed.Ok(null, true, ContourUnits.METERS, null)) }
         }
+        // T337: the unit air pressure reads in, its own choice under Units (mbar by default whatever Units says).
+        SettingsRow.PRESSURE_UNIT -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.pressureUnit
+            Setting(row.label, PRESSURE_UNIT_LINE, help = "settings.pressureUnit") {
+                for (p in io.github.jasondorjeshort.dystopo.render.PressureUnit.entries) Option(p.label, v == p) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.PRESSURE_UNIT, p)) }
+            }
+        }
+        // end T337
         SettingsRow.TEXT_SIZE -> {
             val scale = AppSettings.textScale
             Setting(row.label, null, help = "settings.textSize") {
@@ -377,7 +386,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 }
             }
         }
-        // T178: the pressure-fall warning, in words (ADR 0022: the numbers in hPa are in the help text).
+        // T178: the pressure-fall warning, in words (the numbers are in the help text, T337: in the pressure unit).
         SettingsRow.PRESSURE_FALL_WARNING -> {
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val w = AppSettings.pressureFallWarning
@@ -857,12 +866,12 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         // T257: the extended readout row.
         HelpText("settings.readoutExtended", "Extended readout", at(SettingsGroup.NAVIGATION, "Extended readout"), show = page(SettingsGroup.NAVIGATION)) { units ->
             "On adds the GPS accuracy, how far off the position may be, and the fix age, how long ago the GPS gave one. " +
-                "Pressure shows the barometer's air pressure in ${if (units == ContourUnits.FEET) "inHg" else "hPa"}, with the trend " +
+                "Pressure shows the barometer's air pressure in ${AppSettings.pressureUnit.symbol}, with the trend " + // T337: its own unit
                 "arrow while a track records, whether or not the elevation uses it. These go first when the bar is short of room."
         },
         // end T257
         HelpText("settings.readoutBarometer", "Barometer", at(SettingsGroup.NAVIGATION, "Readout: Barometer"), show = page(SettingsGroup.NAVIGATION)) { units ->
-            "Air pressure falls about 1 hPa every ${if (units == ContourUnits.FEET) "27 ft" else "8 m"} you climb. Automatic uses the " +
+            "Air pressure falls about ${pressurePerClimb(AppSettings.pressureUnit, units)} you climb. Automatic uses the " + // T337: in the pressure unit
                 "barometer on foot, by bike and by boat, not in a car, train or aircraft, and drops it at once while it disagrees " +
                 "with the GPS. Always uses it whatever you do: in a pressurised cabin it is wrong by design. Never uses the GPS " +
                 "and the elevation map."
@@ -900,11 +909,10 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "your offline maps is hatched: there is no elevation data there to look across."
         },
         // T178: the pressure-fall warning's row.
-        HelpText("settings.pressureFallWarning", "Pressure-fall warning", at(SettingsGroup.NAVIGATION, "Pressure-fall warning"), show = page(SettingsGroup.NAVIGATION)) { units ->
-            val inHg = units == ContourUnits.FEET
+        HelpText("settings.pressureFallWarning", "Pressure-fall warning", at(SettingsGroup.NAVIGATION, "Pressure-fall warning"), show = page(SettingsGroup.NAVIGATION)) {
             "A phone barometer gives a trend, not a forecast. While you record, a fast fall in air pressure over 3 hours " +
                 "(sea-level equivalent, your climbing allowed for) brings a card and a spoken line: More warnings at " +
-                (if (inHg) "0.09 inHg, Standard at 0.12, Fewer at 0.18." else "3 hPa, Standard at 4, Fewer at 6.") +
+                io.github.jasondorjeshort.dystopo.readout.PressureText.thresholds(AppSettings.pressureUnit) + "." + // T337: in the pressure unit
                 " It is a hint to check the weather, not a safety alarm."
         },
         // T187: water along the route and its spoken line.
@@ -982,8 +990,30 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             io.github.jasondorjeshort.dystopo.app.panorama.PanoramaStrings.STEERING_HELP
         },
         // end T330
+        // T337
+        HelpText("settings.pressureUnit", "Pressure units", at(SettingsGroup.DISPLAY, "Pressure units"), show = page(SettingsGroup.DISPLAY)) {
+            PRESSURE_UNIT_HELP
+        },
+        // end T337
     )
 }
+
+// T337: the Pressure units row's line and help (the help's first sentence is the Plan's).
+internal const val PRESSURE_UNIT_LINE = "air pressure on the readout bar and in the pressure-fall warning"
+internal const val PRESSURE_UNIT_HELP = "Pressure is separate from feet and metres: this sets the unit of the air pressure on the readout bar, " +
+    "the pressure-fall warning and its help. mbar and hPa are the same number; inHg is inches of mercury, mmHg millimetres of mercury."
+
+/**
+ * T337: how far a climb drops the pressure by a round step in [p], for the barometer's help: "1 mbar every 8 m" (or
+ * 27 ft), "0.1 inHg every 28 m" (92 ft), "1 mmHg every 11 m" (36 ft): about 8.3 m a hPa low down, in the user's [units].
+ */
+internal fun pressurePerClimb(p: io.github.jasondorjeshort.dystopo.render.PressureUnit, units: ContourUnits): String {
+    val step = if (p == io.github.jasondorjeshort.dystopo.render.PressureUnit.INHG) 0.1 else 1.0
+    val metres = step * p.hPaPer * 8.3
+    val amount = if (step < 1) "0.1" else "1"
+    return "$amount ${p.symbol} every ${io.github.jasondorjeshort.dystopo.render.UnitFormat.elevation(metres, units)}"
+}
+// end T337
 
 /** T57: the snap distances the sheet offers (any value in [AppSettings.ROUTE_SNAP_RANGE] through `/settings`). */
 private val SNAP_CHOICES = listOf(300, 500, 1000)

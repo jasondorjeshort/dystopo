@@ -175,4 +175,39 @@ class UnitFormatTest {
         assertEquals(chosen, chosen.seeded(46.85, -121.76, "pack:rainier"))
         assertEquals(unset, unset.seeded(Double.NaN, 0.0, "fix"))
     }
+
+    // T337
+    /** T337: hPa to inHg and mmHg, the reading, the change and the thresholds in each unit; mbar the default. */
+    @Test
+    fun pressureInEachUnit() {
+        assertEquals(PressureUnit.MBAR, PressureUnit.DEFAULT)
+        assertEquals(29.92, PressureUnit.INHG.of(1013.25), 0.005)
+        assertEquals(760.0, PressureUnit.MMHG.of(1013.25), 0.01)
+        assertEquals(1013.25, PressureUnit.MBAR.of(1013.25))
+        assertEquals(PressureUnit.MBAR.of(987.6), PressureUnit.HPA.of(987.6), "mbar and hPa are the same number")
+        assertEquals("1013 mbar", UnitFormat.pressure(1013.25, PressureUnit.MBAR))
+        assertEquals("1013 hPa", UnitFormat.pressure(1013.25, PressureUnit.HPA))
+        assertEquals("29.92 inHg", UnitFormat.pressure(1013.25, PressureUnit.INHG))
+        assertEquals("760 mmHg", UnitFormat.pressure(1013.25, PressureUnit.MMHG))
+        assertEquals("21.40", UnitFormat.pressureValue(724.7, PressureUnit.INHG))
+        assertEquals("836", UnitFormat.pressureValue(835.9, PressureUnit.MBAR))
+        assertEquals("4.6 mbar", UnitFormat.pressureChange(-4.6, PressureUnit.MBAR))
+        assertEquals("0.14 inHg", UnitFormat.pressureChange(4.6, PressureUnit.INHG))
+        assertEquals("3.5 mmHg", UnitFormat.pressureChange(4.6, PressureUnit.MMHG))
+        // The pressure-fall warning's 3, 4 and 6 hPa as round numbers in each unit.
+        val t = listOf(3.0, 4.0, 6.0)
+        assertEquals(listOf("3", "4", "6"), t.map { UnitFormat.pressureThreshold(it, PressureUnit.MBAR) })
+        assertEquals(listOf("3", "4", "6"), t.map { UnitFormat.pressureThreshold(it, PressureUnit.HPA) })
+        assertEquals(listOf("0.09", "0.12", "0.18"), t.map { UnitFormat.pressureThreshold(it, PressureUnit.INHG) })
+        assertEquals(listOf("2.3", "3", "4.5"), t.map { UnitFormat.pressureThreshold(it, PressureUnit.MMHG) })
+        // The stored and synced key, and the symbols posted in any case.
+        assertEquals(listOf("mbar", "hpa", "inhg", "mmhg"), PressureUnit.entries.map { it.key })
+        assertEquals(listOf("mbar", "hPa", "inHg", "mmHg"), PressureUnit.entries.map { it.label })
+        assertEquals(PressureUnit.HPA, PressureUnit.of("hPa"))
+        assertEquals(PressureUnit.INHG, PressureUnit.of(" INHG "))
+        assertEquals(null, PressureUnit.of("psi"))
+        assertEquals(PressureUnit.INHG, PressureUnit.MBAR.other)
+        assertEquals(PressureUnit.MBAR, PressureUnit.INHG.other)
+    }
+    // end T337
 }

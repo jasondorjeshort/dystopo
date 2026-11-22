@@ -72,11 +72,19 @@ class ReadoutCourseTest {
     @Test
     fun pressureAccuracyAndAgeInTheUsersUnits() {
         fun t(e: ReadoutEntry, v: Double, u: ContourUnits = ContourUnits.METERS) = ReadoutText.of(ReadoutValue(e, ValueState.SHOWN, v), foot, u)!!.full
-        assertEquals("1013 hPa", t(ReadoutEntry.PRESSURE, 1013.25))
-        assertEquals("29.92 inHg", t(ReadoutEntry.PRESSURE, 1013.25, ContourUnits.FEET))
-        assertEquals("21.40 inHg", t(ReadoutEntry.PRESSURE, 724.7, ContourUnits.FEET))
+        // T337: the pressure reads in its own unit, mbar by default on feet and metres alike.
+        val p = io.github.jasondorjeshort.dystopo.render.PressureUnit
+        fun pr(v: Double, unit: io.github.jasondorjeshort.dystopo.render.PressureUnit, u: ContourUnits = ContourUnits.METERS) =
+            ReadoutText.of(ReadoutValue(ReadoutEntry.PRESSURE, ValueState.SHOWN, v), foot, u, pressure = unit)!!.full
+        assertEquals("1013 mbar", t(ReadoutEntry.PRESSURE, 1013.25))
+        assertEquals("1013 mbar", t(ReadoutEntry.PRESSURE, 1013.25, ContourUnits.FEET))
+        assertEquals("1013 hPa", pr(1013.25, p.HPA))
+        assertEquals("29.92 inHg", pr(1013.25, p.INHG, ContourUnits.FEET))
+        assertEquals("21.40 inHg", pr(724.7, p.INHG))
+        assertEquals("760 mmHg", pr(1013.25, p.MMHG))
         assertEquals("29.92 inHg", ReadoutText.other(ReadoutValue(ReadoutEntry.PRESSURE, ValueState.SHOWN, 1013.25), foot, ContourUnits.METERS)!!.full)
-        assertEquals("– hPa", ReadoutText.of(ReadoutValue(ReadoutEntry.PRESSURE, ValueState.DASH), foot, ContourUnits.METERS)!!.full)
+        assertEquals("1013 mbar", ReadoutText.other(ReadoutValue(ReadoutEntry.PRESSURE, ValueState.SHOWN, 1013.25), foot, ContourUnits.METERS, p.INHG)!!.full)
+        assertEquals("– mbar", ReadoutText.of(ReadoutValue(ReadoutEntry.PRESSURE, ValueState.DASH), foot, ContourUnits.METERS)!!.full)
         assertEquals("5 m", t(ReadoutEntry.ACCURACY, 4.6))
         assertEquals("15 ft", t(ReadoutEntry.ACCURACY, 4.6, ContourUnits.FEET))
         assertEquals(listOf("0 s", "59 s", "1 min", "59 min", "1 h", "47 h", "2 d", "99 d"),

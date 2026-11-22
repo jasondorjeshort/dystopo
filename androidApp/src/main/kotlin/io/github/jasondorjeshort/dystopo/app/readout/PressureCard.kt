@@ -50,7 +50,6 @@ import io.github.jasondorjeshort.dystopo.readout.StationTemperature
 import io.github.jasondorjeshort.dystopo.readout.TrendBand
 import io.github.jasondorjeshort.dystopo.readout.TrendMinute
 import io.github.jasondorjeshort.dystopo.readout.TrendResult
-import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.render.UnitRegions
 import io.github.jasondorjeshort.dystopo.store.LocationFix
 import java.io.File
@@ -120,8 +119,15 @@ object PressureWatch {
     private val counts = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private fun bump(k: String) { counts.merge(k, 1L, Long::plus) }
 
-    /** What the card shows (Compose state), or null. */
-    class Card(val title: String, val body: String, val station: String?, val raisedAtMs: Long)
+    /**
+     * What the card shows (Compose state), or null. T337: it keeps the tendency and the station's change in hPa, and its
+     * [body] and [station] lines read them in the pressure unit set now ([AppSettings.pressureUnit]), so a change of the
+     * unit while the card shows takes effect at once.
+     */
+    class Card(val title: String, val tendency: io.github.jasondorjeshort.dystopo.readout.Tendency, val stationHPa: Double?, val raisedAtMs: Long) {
+        val body: String get() = PressureText.body(tendency, AppSettings.pressureUnit)
+        val station: String? get() = stationHPa?.let { PressureText.station(it, AppSettings.pressureUnit) }
+    }
 
     var card by mutableStateOf<Card?>(null)
         private set
@@ -227,9 +233,8 @@ object PressureWatch {
 
     private fun raise(r: TrendResult) {
         val t = r.quoted ?: return
-        val inHg = AppSettings.units == ContourUnits.FEET
         val st = if (synthetic != null) null else PressureSource.stationTendency()?.first
-        val c = Card(PressureText.TITLE, PressureText.body(t, inHg), st?.let { PressureText.station(it, inHg) }, System.currentTimeMillis())
+        val c = Card(PressureText.TITLE, t, st, System.currentTimeMillis())
         dismissedAtMs = null
         main.post { card = c }
         val line = runCatching { io.github.jasondorjeshort.dystopo.app.nav.NavSpeech.sayPressure(PressureText.SPOKEN) }.getOrNull()
@@ -367,6 +372,7 @@ object PressureWatch {
             "result" to result?.json(),
             "alert" to alert.json(),
             "card" to linkedMapOf("shown" to (c != null), "title" to c?.title, "body" to c?.body, "station" to c?.station, "raisedAtMs" to c?.raisedAtMs,
+                "pressureUnit" to AppSettings.pressureUnit.key, // T337: the unit the card's lines read in
                 "dismissedAtMs" to dismissedAtMs, "boundsPx" to cardBoundsPx?.takeIf { c != null }?.map { Math.round(it) }, // T192: none once the card is gone
                 "layout" to WarningCardLayout.json().takeIf { c != null }), // T212: its room, collapse and scroll
             "spoken" to spoken.toList(),
@@ -413,11 +419,15 @@ fun PressureCard() {
     // T192: the card's bounds leave with the card (the recovery fixture's clear, Dismiss), so `GET /readout`
     // `trend.card.boundsPx` never reports a card that is gone.
     val c = PressureWatch.card
+    @Suppress("UNUSED_VARIABLE") val rev = io.github.jasondorjeshort.dystopo.app.SettingsUi.revision // T337: a new pressure unit redraws the lines
     if (c == null) {
         androidx.compose.runtime.SideEffect { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null); WarningCardLayout.gone() }
         return
     }
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PressureWatch.cardBoundsPx = null; PressureWatch.setCardBottom(null); WarningCardLayout.gone() } }
+    // T337: the lines in the pressure unit set now (read here, under the revision, so a change redraws them).
+    val bodyLine = measuredLine(c.body)
+    val stationLine = c.station
     val density = androidx.compose.ui.platform.LocalDensity.current
     // Under everything that floats across the top (the search column, the online indicator, the chips at the right and
     // the navigation card; Compose state, so the card follows them).
@@ -499,8 +509,8 @@ fun PressureCard() {
                         Modifier.onSizeChanged { if (it.height != detailPx) detailPx = it.height },
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        BasicText(measuredLine(c.body), style = TextStyle(color = Ink, fontSize = 14.sp))
-                        c.station?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) }
+                        BasicText(bodyLine, style = TextStyle(color = Ink, fontSize = 14.sp))
+                        stationLine?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 13.sp)) }
                         WayDownLines() // T196: on a ridge, the walk to lower ground
                     }
                 } else androidx.compose.runtime.SideEffect { WayDownWatch.linesBoundsPx = null }

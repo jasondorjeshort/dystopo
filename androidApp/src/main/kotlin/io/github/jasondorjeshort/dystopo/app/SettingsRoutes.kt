@@ -92,6 +92,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   synced as `app.<key>`; turning it on polls at once, off forgets every aircraft. `GET /aircraft` shows the effect.
  *   T314: `aircraftRouteLines=selected|all` (default selected: "Flight tracking: Route lines"), synced as
  *   `app.aircraftRouteLines`; the map's faint lines follow at once (`GET /aircraft` › `routeLines`).
+ *   T337: `pressureUnit=mbar|hpa|inhg|mmhg` (default mbar whatever `units` says; the symbols `hPa`, `inHg`, `mmHg` read
+ *   too), synced as `app.pressureUnit`: the unit every shown pressure reads in (the readout bar, the warning card and the
+ *   help); the bar and the card follow at once. `GET /readout` reports it (`pressureUnit`, `bar.pressure.unit` and `text`).
  *   T248: the keys with one stored value each are the registry's ([AppSettings.PLAIN], one line per setting: parsed,
  *   refused, stored, reported and synced from that line); the others are [COMPOSITE_KEYS], each with its code here.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
@@ -209,6 +212,8 @@ class SettingsRoutes(private val app: DystopoApp) {
         if (given(AppSettings.WATER_ALONG_ROUTE, AppSettings.WATER_SPOKEN)) io.github.jasondorjeshort.dystopo.app.routing.RouteWater.onSettings()
         // T184: the route card's time; the card recomposes at once (also after POST /settings, which bumps no revision itself).
         if (given(AppSettings.TIME_ESTIMATE_FORM)) runCatching { app.map.onMain { SettingsUi.revision++ } }
+        // T337: the pressure unit; the readout bar and the warning card's lines follow at once.
+        if (given(AppSettings.PRESSURE_UNIT)) { io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.refresh(); runCatching { app.map.onMain { SettingsUi.revision++ } } }
         // T203: the terrain estimate's switch; the source starts or stops watching at once.
         if (given(AppSettings.ESTIMATE_POSITION)) io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.update()
         // T213: the trail disagreements' layer switch; the markers follow at once.

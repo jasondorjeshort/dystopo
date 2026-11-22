@@ -206,7 +206,7 @@ object AppSettings {
 
     const val KEY_PRESSURE_FALL_WARNING = "pressureFallWarning"
 
-    /** The fall in 3 hours that warns: Off, More warnings (3 hPa), Standard (4, default) or Fewer (6). */
+    /** The fall in 3 hours that warns: Off, More warnings (3 hPa), Standard (4, default) or Fewer (6); T337: shown in [pressureUnit]. */
     val pressureFallWarning: io.github.jasondorjeshort.dystopo.readout.FallWarning get() = PRESSURE_FALL_WARNING.value
 
     // ---- T176: the position button's layout, its close zoom and the orientation lock (controls/RecenterButton); synced ----
@@ -695,6 +695,18 @@ object AppSettings {
         { "$KEY_PANORAMA_STEERING must be drag or follow (got $it)" }))
     val panoramaSteering: io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering get() = PANORAMA_STEERING.value
     // end T330
+    // T337: the unit air pressure reads in (the owner, 2026-11-14 and 2026-11-22): `mbar` (the default for every install,
+    // on feet or metres, Units set or not), `hpa`, `inhg` or `mmhg`; its own setting, beside `units` and apart from it
+    // (ADR 0022's regional seeding does not reach it). Before T337 the pressure read inHg on feet and hPa on metres, so an
+    // install on feet reads mbar after the update (ADR 0033: one key added, synced). A stored value this build does not
+    // know reads as the default. Row: Settings › Units and display, under Units. Stored and exported numbers stay hPa.
+    const val KEY_PRESSURE_UNIT = "pressureUnit"
+    val PRESSURE_UNIT = add(Setting(KEY_PRESSURE_UNIT, io.github.jasondorjeshort.dystopo.render.PressureUnit.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.render.PressureUnit.of(it) }),
+        { io.github.jasondorjeshort.dystopo.render.PressureUnit.of(it.toString()) },
+        { "$KEY_PRESSURE_UNIT must be mbar, hpa, inhg or mmhg (got $it)" }))
+    val pressureUnit: io.github.jasondorjeshort.dystopo.render.PressureUnit get() = PRESSURE_UNIT.value
+    // end T337
 }
 
 /**
