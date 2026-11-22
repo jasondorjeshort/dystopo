@@ -20,3 +20,13 @@ The owner, 2026-11-21: "Sounds cool."
   positions; between polls interpolated, and said so).
 - Storage: a small table beside the track, or a summary only (the track database's migration rules, `.claude/rules/trackdb.md`).
 - Privacy: the list is derived from public broadcasts, but a share of the track must not add it unless asked.
+
+Question: the Flights data is polled only while the app is open and Flight tracking is on (`AircraftPoller`: "in the
+foreground"), so a recording carried in a pocket would list almost nothing. May a recording poll in the background at
+a slow rate to make this list (a request every few minutes, counted against the 500 a day, the phone's rounded
+position sent with the screen off), or is the list built from the open-app polls alone? Recommended: neither yet.
+Your answer of 2026-11-21 on the overhead alert kept polling out of the background, and without it the line would
+read "2 aircraft" on a day twenty passed, which is worse than no line. If you want it anyway, the slow background
+poll during a recording is the form that works, as a setting of its own, off by default.
+
+Answer:
