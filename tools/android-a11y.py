@@ -824,6 +824,7 @@ def scr_panorama(c):
     """T326: the Panorama view at the fix (Paradise), opened by the switch's route as a tap on its third segment does, its
     skyline swept to the view range and its peaks named: the plot (its spoken label and four actions), the zoom buttons, the
     pane's place line, heading, Peaks toggle and list."""
+    c.srv.ok("POST", "/settings?aircraft=1")  # T327: Flight tracking on, so "Show:" has its four toggles
     c.srv.ok("POST", "/horizon/switch?to=panorama", timeout=30.0)
     c.srv.ok("GET", "/panorama?wait=60000", timeout=120.0)
     time.sleep(1.0)
@@ -831,7 +832,36 @@ def scr_panorama(c):
 
 def end_panorama(c):
     c.srv.call("POST", "/horizon/switch?to=map")
+    c.srv.call("POST", "/settings?aircraft=0")  # T327
 # end T326
+
+
+# T327
+def scr_panorama_flights(c):
+    """T327: the Panorama view with the Flights layer on T311's replay fixture, turned to the closest flight low in the sky (dots, tails
+    and names through the lens, the credit in the plot's corner) and the pane scrolled to the Flights list (each row a
+    button)."""
+    with open(FLIGHTS_REPLAY, "rb") as f:
+        c.srv.ok("POST", "/aircraft/replay?name=a11y&undulationM=-18.4&wait=3500", body=f.read())
+    c.srv.ok("POST", "/horizon?flights=1&skyRange=all")
+    c.srv.ok("POST", "/horizon/switch?to=panorama", timeout=30.0)
+    c.srv.ok("GET", "/panorama?wait=60000", timeout=120.0)
+    time.sleep(4.0)  # a poll
+    j = c.srv.ok("GET", "/panorama") or {}
+    aircraft = (((j.get("layers") or {}).get("flights") or {}).get("aircraft")) or []
+    low = [a for a in aircraft if 2 <= a[3] <= 30] or aircraft  # the closest low in the sky: the skyline and several flights in view
+    if low:
+        c.srv.ok("POST", f"/panorama?bearing={low[0][2]}")
+    c.srv.ok("POST", "/horizon?scroll=450")
+    time.sleep(1.0)
+
+
+def end_panorama_flights(c):
+    c.srv.call("POST", "/horizon?flight=none")
+    c.srv.call("POST", "/horizon/switch?to=map")
+    c.srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
+    c.srv.call("POST", "/settings?aircraft=0")
+# end T327
 
 
 # T311
@@ -953,6 +983,7 @@ SCREENS = [
     # end T312
     ("horizon-elsewhere", scr_horizon_elsewhere, end_horizon, "screen"),  # T321
     ("panorama", scr_panorama, end_panorama, "screen"),  # T326
+    ("panorama-flights", scr_panorama_flights, end_panorama_flights, "screen"),  # T327
 ]
 
 

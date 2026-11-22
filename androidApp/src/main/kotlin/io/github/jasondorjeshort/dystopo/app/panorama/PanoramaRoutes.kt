@@ -29,12 +29,24 @@ import io.github.jasondorjeshort.dystopo.horizon.SkyView
  *   false: offline maps only), `ms`, `demPacks`; `sweeps` done with `stepDeg`, `samples`, `ms`, `atMs`; `pending`; `peaks`),
  *   `kept` (the places kept, at most two), `sceneMs` (`last`, `max`, `builds`, `offMain`), `firstSkylineMs` (from the
  *   opening to the first skyline drawn), `gnss` (`held`). `wait=<ms>` waits until the plot has drawn the step the zoom
- *   asks for and the peaks are tested, or that long.
+ *   asks for and the peaks are tested, or that long. T327: `layers` (what the Sun, Satellites and Flights drew through the
+ *   lens: `sun` (`pathSamples`, `pathOnView`, `hourMarks`, `hoursOnView`, `nowAltDeg`, `nowAzDeg`, `nowDrawn`, `nowPx`),
+ *   `satellites` (`listed`, `onView`, `ids`), `flights` (`listed`, `onView`, `names`, `hollow`, `emergency`, `tailPoints`,
+ *   `credit`, `picked`, `aircraft`: hex, label, bearing and elevation of each listed); a layer that is off is absent), `buttons` and `disabledButtons` in `drawn`, `target` (`kind`,
+ *   `id`, `name`, `elDeg`, `azDeg`, `onView`, `x`, `y` in the plot (px) while on the view, `third`: `left`, `middle` or
+ *   `right` third of the plot's width), `arrow` (`side`, `degrees`, `text`, `x`, `y` (the edge point, plot px), `rectPx`
+ *   in the Compose root), `turns` (`done`, `last`: the target, the turn's degrees and the aim it ended at), `sunAt` (the
+ *   debug instant the Sun layer is drawn for, or null for the clock), `aircraftOwners` (the flights' poller's owners).
  * - `POST /panorama`: `open=1` (the switch's "Panorama", as a tap: from the map at the map's selection) or `open=0` (its
  *   "Map"); `bearing=`, `tilt=`, `fov=` set the aim (wrapped and held to its limits); `drag=dx,dy` (px) a drag through the
  *   aim, in `steps=` frames (default 1, at most 200) held as one gesture (the names keep their offsets until it ends; the
  *   scene's cost is counted from its start); `pinch=<factor>` about the plot's centre; `zoom=in|out` a button's press;
  *   `select=<peak name>|none` picks a candidate as a tap on its name does; then answers `GET /panorama` (with `wait`).
+ *   T327: `target=<kind>:<name>` makes it the target as a tap on its row does and turns the view to it (`peak:<name>`,
+ *   `sun`, `flight:<hex or label>`, `satellite:<id or "GPS 12">`); `target=none` lets the target and its pick go;
+ *   `arrow=1` taps the edge arrow (409 when none stands); `back=1` presses Back once; `sunAt=<ISO instant, e.g.
+ *   2026-06-21T20:00:00Z>|none` sets the instant the Sun layer is drawn for (the clock otherwise; `POST /horizon`'s `date=`
+ *   sets only the day, and only the Horizon view's).
  */
 object PanoramaRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -97,6 +109,22 @@ object PanoramaRoutes {
             }
             app.map.onMain { PanoramaUi.gesturing = false }
         }
+        q["sunAt"]?.let { v ->
+            val ms = if (v == "none") null else runCatching { java.time.Instant.parse(v).toEpochMilli() }.getOrNull() ?: return bad("sunAt must be an ISO instant (2026-06-21T20:00:00Z) or none")
+            app.map.onMain { PanoramaUi.sunAtMs = ms }
+        }
+        q["target"]?.let { v ->
+            if (!waitAim(app)) return Response.json(mapOf("error" to "the Panorama is not open (or its plot has no size yet)"), 409)
+            val err = app.map.onMain { target(v) }
+            if (err != null) return bad(err)
+            Thread.sleep(PanoramaUi.TURN_MS + 300)
+        }
+        if (q["arrow"] == "1") {
+            if (!app.map.onMain { PanoramaUi.arrow != null }) return Response.json(mapOf("error" to "no edge arrow stands"), 409)
+            app.map.onMain { PanoramaUi.turnToTarget() }
+            Thread.sleep(PanoramaUi.TURN_MS + 300)
+        }
+        if (q["back"] == "1") app.map.onMain { (app.map.activity as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed() }
         q["select"]?.let { name ->
             app.map.onMain {
                 val cands = PanoramaData.kept.firstOrNull()?.peaks?.candidates.orEmpty()
@@ -105,6 +133,41 @@ object PanoramaRoutes {
         }
         Thread.sleep(400)
         return answer(app, r)
+    }
+
+    /** T327: `target=<kind>:<name>` on the main thread: null, or why not. */
+    private fun target(v: String): String? {
+        if (v == "none") {
+            PanoramaUi.apply(PanoramaTargets.LetGo)
+            return null
+        }
+        val kind = TargetKind.of(v.substringBefore(':')) ?: return "target must be peak:<name>, sun, flight:<hex or label>, satellite:<id or name>, or none"
+        val name = v.substringAfter(':', "").trim()
+        when (kind) {
+            TargetKind.PEAK -> {
+                val p = PanoramaData.kept.firstOrNull()?.peaks?.candidates.orEmpty().firstOrNull { it.peak.name.equals(name, ignoreCase = true) } ?: return "no candidate peak named $name"
+                // As a tap on its row: picked (the target follows the pick); a peak already picked is turned to again.
+                if (PanoramaUi.targets.target?.id == HorizonUi.keyOf(p)) PanoramaUi.turnToTarget()
+                else PanoramaUi.apply(PanoramaTargets.PeakPicked(HorizonUi.keyOf(p), p.peak.name))
+            }
+            TargetKind.SUN -> {
+                val pos = HorizonPlace.source(HorizonUi.point, Gnss.position()?.latitude, Gnss.position()?.longitude) ?: return "no position"
+                val s = io.github.jasondorjeshort.dystopo.nav.Sun.position(pos.first, pos.second, PanoramaUi.sunAtMs ?: System.currentTimeMillis())
+                if (PanoramaUi.targets.target?.kind == TargetKind.SUN) PanoramaUi.turnToTarget()
+                else PanoramaUi.apply(PanoramaTargets.SunTapped(io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.sunUp(s.apparentAltitudeDeg)))
+            }
+            TargetKind.FLIGHT -> {
+                val a = io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.view.value.aircraft.firstOrNull { it.hex.equals(name, ignoreCase = true) }
+                val hex = a?.hex ?: PanoramaUi.flightMarks.firstOrNull { it.label.equals(name, ignoreCase = true) }?.hex ?: return "no flight $name"
+                PanoramaUi.apply(PanoramaTargets.FlightPicked(hex, PanoramaUi.flightMarks.firstOrNull { it.hex == hex }?.label))
+            }
+            TargetKind.SATELLITE -> {
+                val s = Gnss.satellites.firstOrNull { it.id.equals(name, ignoreCase = true) || io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.satelliteName(it).equals(name, ignoreCase = true) } ?: return "no satellite $name"
+                if (PanoramaUi.targets.target?.id == s.id) PanoramaUi.turnToTarget()
+                else PanoramaUi.apply(PanoramaTargets.SatelliteTapped(s.id, io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.satelliteName(s)))
+            }
+        }
+        return null
     }
 
     /** Waits (up to 5 s) for the aim at opening; false when the Panorama is not open. */
@@ -196,6 +259,24 @@ object PanoramaRoutes {
             "sceneMs" to linkedMapOf("last" to r2(PanoramaUi.sceneMsLast), "max" to r2(PanoramaUi.sceneMsMax), "builds" to PanoramaUi.sceneBuilds, "offMain" to PanoramaUi.sceneOffMain),
             "firstSkylineMs" to PanoramaUi.firstSkylineMs,
             "gnss" to linkedMapOf("held" to Gnss.held),
+            // T327
+            "layers" to PanoramaUi.layersDrawn,
+            "target" to PanoramaUi.targets.target?.let { t ->
+                val dir = PanoramaUi.targetDir
+                val at = dir?.let { scene?.lens?.mark(it.first, it.second) }
+                linkedMapOf(
+                    "kind" to t.kind.key, "id" to t.id, "name" to t.name, "elDeg" to dir?.first?.let(::r2), "azDeg" to dir?.second?.let(::r1),
+                    "onView" to (at != null), "x" to at?.let { r1(it.x) }, "y" to at?.let { r1(it.y) },
+                    "third" to at?.let { p -> size?.let { (w, _, _) -> if (p.x < w / 3) "left" else if (p.x > 2 * w / 3) "right" else "middle" } },
+                )
+            },
+            "picks" to linkedMapOf("peak" to PanoramaUi.targets.peak, "flight" to PanoramaUi.targets.flight),
+            "arrow" to PanoramaUi.arrow?.let { a ->
+                linkedMapOf("side" to a.side.word, "degrees" to r1(a.degrees), "text" to a.text, "x" to r1(a.x), "y" to r1(a.y), "rectPx" to PanoramaUi.arrowPx)
+            },
+            "turns" to linkedMapOf("done" to PanoramaUi.turnsDone, "last" to PanoramaUi.lastTurn),
+            "sunAt" to PanoramaUi.sunAtMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
+            "aircraftOwners" to io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.owners().sorted(),
         )
     }
 }

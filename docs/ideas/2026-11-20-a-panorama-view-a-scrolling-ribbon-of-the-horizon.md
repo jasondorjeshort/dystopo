@@ -96,3 +96,6 @@ Peaks layer, drag, tilt, the pinch and two zoom buttons, the terrain and sweeps 
 `POST /panorama`, the sweep step `panorama` and the a11y screen `panorama` (`docs/reference/android-panorama-view.md`).
 Left of pass two: the Sun, Satellites and Flights on the lens, a list row turning the view and the edge arrow (T327).
 Pass three remains.
+2026-11-22: pass two is built (T327): the Sun, Satellites and Flights through the lens with their toggles and sections,
+one target (a row or a name turns the view to it) and the edge arrow with its line (`docs/reference/android-panorama-view.md`).
+Pass three remains (Follow the phone, the roll, the steering setting, the named offset), so the file stays.

@@ -53,6 +53,12 @@ object HorizonText {
         else -> "Now ${Math.round(altDeg)}° up toward ${GnssText.compassPoint(azDeg)}."
     }
 
+    /** T327: the sun is up (above the flat horizon, as [sunNow] and the round plot's mark say): its row turns the Panorama. */
+    fun sunUp(altDeg: Double): Boolean = altDeg >= -0.5
+
+    /** T327: a satellite as its edge arrow and target name it ("GPS 12"). */
+    fun satelliteName(s: io.github.jasondorjeshort.dystopo.gnss.Satellite): String = "${s.constellation.label} ${s.svid}"
+
     /** "7 h 28 min of sun here." */
     fun sunMinutes(minutes: Double) = "${hoursMinutes(minutes)} of sun here."
     const val SUN_ALL_DAY = "The sun stays above the terrain all day."
