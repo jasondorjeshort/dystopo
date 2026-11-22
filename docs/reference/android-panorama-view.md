@@ -1,6 +1,6 @@
 ---
 verified: 2026-11-22
-source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327)
+source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327, T330)
 ---
 
 # The Panorama view
@@ -81,6 +81,39 @@ routes: `android-debug-routes.md` (Panorama view). The choices it is built by ar
 - **The edge arrow**: while the target is off the view, a plate at the edge `OffView` gives (6 dp inside, under the
   tape, off the zoom buttons' corner) with the arrow and its line ("Mount Rainier, 40° left"), at least 48 dp tall, its
   spoken label the line; a tap turns the view to the target. It goes when the target is in view or let go.
+
+## Follow phone (T330; wave 46's choices (a) to (e), (g), (i), (j))
+
+- **The setting** `panoramaSteering` (`drag`, the default, or `follow`; synced; ADR 0044: the apps split): the row
+  "Panorama steering" under Sky range in Settings › Navigation and tracking ("Drag" and "Follow phone"; help
+  `settings.panoramaSteering`), and the plot's third button "Follow phone" above the zoom buttons (48 dp, right-aligned
+  with them, a switch drawn filled in the link colour when on; names keep off its box, the edge arrow off the corner the
+  three stand in). On a phone with no attitude sensor the button is absent, the row's line says the view turns by
+  dragging, and a synced `follow` acts as Drag there (`PanoramaSteering.follows`) without changing the setting.
+- **The source** (`app/nav/NavDevice.kt` `AttitudeSensor`, held through `controls/Heading.setAttitudeWanted`): the
+  rotation vector at 20 ms, else the geomagnetic rotation vector; only while the view is open in Follow and the app is
+  in the foreground. In Follow the heading sensor's hold that Drag's opening takes is dropped (`SkyViewHolds.compass`).
+  Android hands over the values and the display's rotation; `PanoramaFollow` turns them through `PhoneAttitude.quat`,
+  `AttitudeFilter.step`, `PhoneAttitude.axes` and `turned` by the app's declination (`Compass`) into the aim
+  (`PanoramaAim.follow`, the bearing held near the poles by the aim before). A simulated attitude from the debug route
+  goes the same way. On the API 35 emulator the sensor is `rotationVector`, delivered at 50 Hz, status 3, with no
+  noise: held upright at Paradise it reads facing 14.6° true (magnetic north plus the declination).
+- **Resting** (choice c): while the filter rests the aim is not written, so the scene is not rebuilt and the names stay
+  placed; while it moves each name keeps its offset from its mark (as in a drag) and they are placed again when it
+  rests. The screen is kept on while following (the Compose view's `keepScreenOn`) and no longer.
+- **What changes in Follow**: the lens rolls and looks anywhere (T329); names, tape labels, hour labels and the three
+  buttons stay upright; the sky's gradient runs straight up the sky at a roll. The plot's spoken label reads "Panorama
+  from: <place line>; Following the phone; Facing <compass> <bearing>°, <tilt>, <field of view>° across" (tilt "12° up",
+  "5° down" or "level"), and the four turn and look actions are absent. A pinch and the zoom buttons change the field of
+  view only; a drag does nothing yet (the heading correction is T331's). A row's or a name's tap sets the target and turns
+  nothing; the edge arrow says which way to turn the phone, by the screen's axes (`OffView.of(..., follow = true)`).
+- **The opening in Follow** (choice (j)) is the phone's attitude at once (`aim.opening` `attitude`); Drag's opening stands
+  only when no sample came in 1.5 s, and the first sample replaces it. **Leaving Follow** (choice (e)): the roll goes to
+  zero and the tilt to Drag's limits at once (`PanoramaAim.toDrag`); the bearing and the field of view stay.
+- **Measured on the emulator** (wave 46, T330's report; first values for the real phone): a simulated quarter turn
+  reaches 90 percent in 173 to 197 ms; under a 0.2 degree jitter the drawn attitude's spread is 0.15 of the samples' and
+  the view rests; a steady 30 °/s turn draws about 43 frames a second, each scene build at most 8 ms and each draw pass at
+  most 6 ms with the four layers on.
 
 ## The terrain, the sweeps and what is kept (choice f)
 

@@ -27,7 +27,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   node's texts joined by a space; in the merged tree its descendants' too), `editableText`, `contentDescription`, `role`,
  *   `clickable` (an `OnClick` action) and `longClickable`, `enabled` (no `Disabled`), `hidden` (`HideFromAccessibility` or
  *   `InvisibleToUser`), `transparent` (drawn at alpha 0, which Compose leaves out of what TalkBack reads), `placed` (the node
- *   and every ancestor laid out), `mergesDescendants`, `testTag`, `stateDescription`, `toggle`, `selected`, `heading`, and for
+ *   and every ancestor laid out), `mergesDescendants`, `testTag`, `stateDescription`, `toggle`, `selected`, `heading`, `customActions` (their labels; T330), and for
  *   a text node of the unmerged tree `textStyle` (`fontSizeSp`, `fontScale`, `sizeDp`, the drawn size, and `bold`, from its
  *   text layout), which the WCAG contrast rule needs to tell large text. Top level: `density`, `fontScale` (the system's,
  *   `settings put system font_scale`), `screenPx` and `ms`, the walk's time.
@@ -130,6 +130,7 @@ object SemanticsRoutes {
         c.getOrNull(SemanticsProperties.TestTag)?.let { m["testTag"] = it }
         c.getOrNull(SemanticsProperties.StateDescription)?.let { m["stateDescription"] = it }
         c.getOrNull(SemanticsProperties.ToggleableState)?.let { m["toggle"] = it.toString() }
+        c.getOrNull(androidx.compose.ui.semantics.SemanticsActions.CustomActions)?.takeIf { it.isNotEmpty() }?.let { a -> m["customActions"] = a.map { it.label } } // T330
         c.getOrNull(SemanticsProperties.Selected)?.let { m["selected"] = it }
         if (c.contains(SemanticsProperties.Heading)) m["heading"] = true
         if (!merged && m["text"] != null) textStyle(n)?.let { m["textStyle"] = it }

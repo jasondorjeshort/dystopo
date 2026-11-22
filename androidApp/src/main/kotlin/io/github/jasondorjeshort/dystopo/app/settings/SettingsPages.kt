@@ -156,6 +156,18 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
             }
         }
         // end T312
+        // T330: how the Panorama view is steered (wave 46's choice (g); ADR 0044: the apps split). With no attitude sensor
+        // the line says why the view turns by drag (a synced Follow acts as Drag there; the setting is left as it is).
+        SettingsRow.PANORAMA_STEERING -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.panoramaSteering
+            val sensor = io.github.jasondorjeshort.dystopo.app.controls.Heading.attitudeAvailable
+            val line = if (sensor) io.github.jasondorjeshort.dystopo.app.panorama.PanoramaStrings.STEERING_LINE else io.github.jasondorjeshort.dystopo.app.panorama.PanoramaStrings.STEERING_NO_SENSOR
+            Setting(row.label, line, help = "settings.panoramaSteering") {
+                for (s in io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.entries) Option(s.label, v == s) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.PANORAMA_STEERING, s)) }
+            }
+        }
+        // end T330
         SettingsRow.NAV_SPEECH -> {
             // T126: spoken turn directions (nav/NavSpeech), off by default.
             val on = AppSettings.navSpeech
@@ -965,6 +977,11 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "phone from schedule data; nothing more is sent."
         },
         // end T314
+        // T330
+        HelpText("settings.panoramaSteering", io.github.jasondorjeshort.dystopo.app.panorama.PanoramaStrings.STEERING, at(SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.app.panorama.PanoramaStrings.STEERING), show = page(SettingsGroup.NAVIGATION)) {
+            io.github.jasondorjeshort.dystopo.app.panorama.PanoramaStrings.STEERING_HELP
+        },
+        // end T330
     )
 }
 

@@ -69,6 +69,7 @@ class SettingsRegistryTest {
         // end T311
         "horizonFlights" to false, "skyRange" to "overhead", // T312
         "aircraftRouteLines" to "all", // T314
+        "panoramaSteering" to "follow", // T330
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -111,6 +112,9 @@ class SettingsRegistryTest {
     // T314 (ADR 0033: one key added, synced): Flight tracking: Route lines.
     private val t314Keys = listOf("aircraftRouteLines")
     // end T314
+    // T330 (ADR 0033: one key added, synced): Panorama steering.
+    private val t330Keys = listOf("panoramaSteering")
+    // end T330
     private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot") +
         t308Keys + t308Keys.map { "app.$it" } +
         // T311 (ADR 0033: three keys added, synced): Flight tracking, its refresh and airport names.
@@ -120,8 +124,11 @@ class SettingsRegistryTest {
         t312Keys + t312Keys.map { "app.$it" } +
         // end T312
         // T314
-        t314Keys + t314Keys.map { "app.$it" }
+        t314Keys + t314Keys.map { "app.$it" } +
         // end T314
+        // T330
+        t330Keys + t330Keys.map { "app.$it" }
+        // end T330
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -132,10 +139,11 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one")
-        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1, t257Synced().size)
-        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one")
+        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1, t257Synced().size)
+        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
         assertEquals("all", SettingsSync.current()["app.aircraftRouteLines"], "T314: the seeded all syncs as all")
+        assertEquals("follow", SettingsSync.current()["app.panoramaSteering"], "T330: the seeded follow syncs as follow")
         assertEquals(listOf("on", "30", "codes"), t311Keys.map { SettingsSync.current()["app.$it"] }, "T311: the seeded Flights settings sync as stored")
         assertEquals(listOf("off", "overhead"), t312Keys.map { SettingsSync.current()["app.$it"] }, "T312: the seeded toggle and sky range sync as stored")
         assertEquals(listOf("off", "off", "off"), t308Keys.map { SettingsSync.current()["app.$it"] }, "T308: the seeded toggles sync as off")
@@ -204,7 +212,7 @@ class SettingsRegistryTest {
         assertEquals(io.github.jasondorjeshort.dystopo.routing.DrivePreference.QUICK, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(plan.params))[AppSettings.DRIVE_PREFERENCE])
         assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("drivePreference" to "shortest")))
         val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
-        assertEquals(rows[rows.size - 4], io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE, "the page's last row before T307's two (and T312's Sky range)")
+        assertEquals(rows[rows.size - 5], io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE, "the page's last row before T307's two (and T312's Sky range, T330's Panorama steering)")
         assertEquals("Plan drives for", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.DRIVE_PREFERENCE.label)
         assertEquals(listOf("Least time", "Least fuel", "Quicker planning"), io.github.jasondorjeshort.dystopo.app.settings.DRIVE_PREFERENCE_CHOICES.map { it.second })
     }
@@ -231,7 +239,7 @@ class SettingsRegistryTest {
         val synced = SettingsSync.plan(mapOf("app.skyPlot" to "north"), emptyMap(), SettingsRoutes.KEYS)
         assertEquals(io.github.jasondorjeshort.dystopo.gnss.SkyPlotOrientation.NORTH, assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))[AppSettings.SKY_PLOT])
         val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
-        assertEquals(listOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS, io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.SKY_PLOT), rows.takeLast(3).take(2), "T312: Sky range follows them")
+        assertEquals(listOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS, io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.SKY_PLOT), rows.takeLast(4).take(2), "T312: Sky range follows them, T330's Panorama steering it")
         assertEquals("Horizon view", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.GNSS_STATUS.label)
         assertEquals(listOf("Follow the phone", "North up"), io.github.jasondorjeshort.dystopo.app.gnss.SKY_PLOT_CHOICES.map { it.second })
     }
@@ -438,4 +446,41 @@ class SettingsRegistryTest {
         assertEquals("Flight tracking: Route lines", rows.last().label)
     }
     // end T311
+
+    // T330
+    /**
+     * T330: Panorama steering is `drag` by default, synced, posted and read back; a value other than drag or follow is
+     * refused with the key named, and one stored that this build does not know reads as drag; its row stands right under
+     * Sky range, the page's last.
+     */
+    @Test
+    fun panoramaSteeringIsDragByDefaultAndSynced() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.DRAG, AppSettings.panoramaSteering)
+        assertEquals("drag", SettingsSync.current()["app.panoramaSteering"])
+        assertTrue(AppSettings.PANORAMA_STEERING.synced)
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("panoramaSteering" to "follow")))
+        for ((s, v) in posted.plain) @Suppress("UNCHECKED_CAST") AppSettings.set(s as Setting<Any>, v)
+        assertEquals(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.FOLLOW, AppSettings.panoramaSteering)
+        assertEquals("follow", AppSettings.json()["panoramaSteering"])
+        val refused = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("panoramaSteering" to "tilt")))
+        assertTrue("panoramaSteering" in refused.message, refused.message)
+        AppSettings.load(FakePrefs(mapOf("server" to "", "panoramaSteering" to "camera")))
+        assertEquals(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.DRAG, AppSettings.panoramaSteering)
+        val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(SettingsSync.plan(mapOf("app.panoramaSteering" to "follow"), emptyMap(), SettingsRoutes.KEYS).params))
+        assertEquals(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.FOLLOW, back[AppSettings.PANORAMA_STEERING])
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.NAVIGATION)
+        assertEquals(listOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.SKY_RANGE, io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.PANORAMA_STEERING), rows.takeLast(2))
+        assertEquals(listOf("Drag", "Follow phone"), io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.entries.map { it.label })
+    }
+
+    /** T330 (choice (a)): Follow only with a sensor; a synced follow on a phone with none acts as Drag. */
+    @Test
+    fun followNeedsAnAttitudeSensor() {
+        val s = io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering
+        assertTrue(s.follows(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.FOLLOW, sensor = true))
+        assertTrue(!s.follows(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.FOLLOW, sensor = false))
+        assertTrue(!s.follows(io.github.jasondorjeshort.dystopo.app.panorama.PanoramaSteering.DRAG, sensor = true))
+    }
+    // end T330
 }

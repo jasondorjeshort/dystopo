@@ -792,7 +792,36 @@ def scr_packs(c):
 def settings_page(group):
     def fn(c):
         c.srv.ok("POST", f"/settings/open?group={group}")
+        if group == "navigation":
+            scroll_to_whole(c, STEERING_ROW_TEXTS)  # T330: the page's last row, Panorama steering, with its help and choices
     return fn
+
+
+# T330
+STEERING_ROW_TEXTS = ("Panorama steering", "Follow phone")
+
+
+def scroll_to_whole(c, texts, swipes=14):
+    """T330: swipes the open settings page up (adb input swipe on its lower half) until every text of [texts] is drawn
+    whole on the screen (its node's bounds as tall as its size), at most [swipes] times; the page is a plain scrolling
+    column, so the rows below the fold are in the tree but clipped to nothing."""
+    for _ in range(swipes + 1):
+        sem = c.srv.ok("GET", "/semantics") or {}
+        screen_h = (sem.get("screenPx") or [0, 2400])[1]
+        whole = set()
+        for w in sem.get("windows") or []:
+            for n in w.get("merged") or []:
+                t = (n.get("text") or "").replace("✓ ", "")
+                b, s = n.get("boundsPx") or [0, 0, 0, 0], n.get("sizePx") or [0, 0]
+                if t in texts and s[1] > 0 and b[3] - b[1] >= s[1] - 1:
+                    whole.add(t)
+        if whole >= set(texts):
+            time.sleep(0.5)
+            return True
+        c.dev.shell("input", "swipe", "540", str(int(screen_h * 0.85)), "540", str(int(screen_h * 0.45)), "300")
+        time.sleep(0.8)
+    return False
+# end T330
 
 
 def scr_help_drive(c):
@@ -835,6 +864,9 @@ def scr_panorama(c):
     skyline swept to the view range and its peaks named: the plot (its spoken label and four actions), the zoom buttons, the
     pane's place line, heading, Peaks toggle and list."""
     c.srv.ok("POST", "/settings?aircraft=1")  # T327: Flight tracking on, so "Show:" has its four toggles
+    # T330: the view in Drag (its four actions, "Follow phone" off) whatever an earlier run left; put back at the end.
+    c.steering_found = (c.srv.ok("GET", "/settings") or {}).get("panoramaSteering")
+    c.srv.ok("POST", "/settings?panoramaSteering=drag")
     c.srv.ok("POST", "/horizon/switch?to=panorama", timeout=30.0)
     c.srv.ok("GET", "/panorama?wait=60000", timeout=120.0)
     time.sleep(1.0)
@@ -843,6 +875,9 @@ def scr_panorama(c):
 def end_panorama(c):
     c.srv.call("POST", "/horizon/switch?to=map")
     c.srv.call("POST", "/settings?aircraft=0")  # T327
+    found = getattr(c, "steering_found", None)  # T330: the steering setting as it was found
+    if found:
+        c.srv.call("POST", f"/settings?panoramaSteering={found}")
 # end T326
 
 

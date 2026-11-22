@@ -99,6 +99,7 @@ object PanoramaUi {
     /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
     fun prepare() {
         aim; openings; gesturing; targets; turnRequests; sunAtMs
+        PanoramaFollow.following; PanoramaFollow.moving // T330
     }
 
     /**
@@ -149,7 +150,36 @@ object PanoramaUi {
         sceneMsLast = 0.0
         sceneMsMax = 0.0
         sceneBuilds = 0
+        drawMsLast = 0.0 // T330
+        drawMsMax = 0.0
+        draws = 0
+        drawTimes.clear()
     }
+
+    // T330: what a frame costs (choice (c)'s measurements, task (5)): the plot's draw pass (ms, last and most since the
+    // cost was reset), the passes counted, and their times over the last second or so for the frames per second.
+    @Volatile var drawMsLast = 0.0
+    @Volatile var drawMsMax = 0.0
+    @Volatile var draws = 0
+    private val drawTimes = ArrayDeque<Long>()
+
+    /** A draw pass of [ms] at [atNanos] (the plot's Canvas). */
+    fun drawn(ms: Double, atNanos: Long) {
+        drawMsLast = ms
+        if (ms > drawMsMax) drawMsMax = ms
+        draws++
+        synchronized(drawTimes) {
+            drawTimes.addLast(atNanos)
+            while (drawTimes.size > 240 || (drawTimes.size > 1 && atNanos - drawTimes.first() > 2_000_000_000L)) drawTimes.removeFirst()
+        }
+    }
+
+    /** The draw passes in the second before [nowNanos]. */
+    fun drawsPerSecond(nowNanos: Long): Int = synchronized(drawTimes) { drawTimes.count { nowNanos - it <= 1_000_000_000L } }
+    /** T330: "Follow phone" as last laid out (in the Compose root, px; null: not shown) and the view's keep-screen-on flag. */
+    @Volatile var followPx: List<Int>? = null
+    @Volatile var keepScreenOn = false
+    // end T330
 
     /** A scene built in [ms] (the plot's draw path; `GET /panorama` `sceneMs`). */
     fun sceneBuilt(s: PanoramaScene, ms: Double) {
@@ -186,7 +216,7 @@ object PanoramaUi {
     /** The compass's first reading came within the opening's wait and nobody steered: the view turns to it once. */
     internal fun lateHeading(deg: Double) {
         val a = aim ?: return
-        if (steered) return
+        if (steered || a.follow) return // T330: in Follow the phone aims
         aim = a.copy(bearingDeg = PanoramaAim.wrapDeg(deg))
         openingSource = "heading-late"
     }
@@ -214,6 +244,11 @@ object PanoramaUi {
         val (w, h, dp) = plotSize ?: return
         val t = a0.turnTo(el, az, w, h, PanoramaScene.TAPE_DP * dp)
         val cancel = turnCancelled
+        // T330 (choice (i)): in Follow nothing turns the view; the target is set and the arrow says which way to turn the phone.
+        if (a0.follow) {
+            lastTurn = linkedMapOf("target" to targets.target?.name, "fromBearingDeg" to Math.round(a0.bearingDeg * 10) / 10.0, "turnDeg" to Math.round(t.turnDeg * 10) / 10.0, "follow" to true)
+            return
+        }
         lastTurn = linkedMapOf(
             "target" to targets.target?.name, "fromBearingDeg" to Math.round(a0.bearingDeg * 10) / 10.0, "turnDeg" to Math.round(t.turnDeg * 10) / 10.0,
             "toBearingDeg" to Math.round(t.aim.bearingDeg * 10) / 10.0, "toTiltDeg" to Math.round(t.aim.tiltDeg * 100) / 100.0, "animated" to animate,
@@ -224,7 +259,7 @@ object PanoramaUi {
                 val start = SystemClock.uptimeMillis()
                 while (true) {
                     androidx.compose.runtime.withFrameNanos { }
-                    if (turnCancelled != cancel || aim == null) return
+                    if (turnCancelled != cancel || aim == null || aim?.follow == true) return // T330: Follow took over
                     val f = ((SystemClock.uptimeMillis() - start).toDouble() / TURN_MS).coerceIn(0.0, 1.0)
                     if (f >= 1.0) break
                     val e = f * f * (3 - 2 * f) // smoothstep

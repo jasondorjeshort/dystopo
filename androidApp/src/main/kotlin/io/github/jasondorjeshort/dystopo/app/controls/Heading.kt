@@ -145,8 +145,37 @@ object Heading {
         apply()
     }
 
+    // T330
+    /**
+     * T330: the phone's attitude for the Panorama's Follow ([io.github.jasondorjeshort.dystopo.app.nav.AttitudeSensor]):
+     * held only while the Panorama is open in Follow ([setAttitudeWanted]) and the app is in the foreground; its samples go
+     * to [attitudeSink] on the main thread.
+     */
+    private val attitudeSensor by lazy {
+        io.github.jasondorjeshort.dystopo.app.nav.AttitudeSensor(DystopoApp.instance) { v, rot, t -> attitudeSink?.invoke(v, rot, t) }
+    }
+    @Volatile var attitudeSink: ((DoubleArray, Int, Long) -> Unit)? = null
+    @Volatile private var attitudeWanted = false
+
+    /** Whether the phone has an attitude sensor (the rotation vector or the geomagnetic one): Follow is offered only then. */
+    val attitudeAvailable: Boolean get() = runCatching { attitudeSensor.available }.getOrDefault(false)
+
+    fun setAttitudeWanted(on: Boolean) {
+        attitudeWanted = on
+        apply()
+    }
+
+    fun attitudeJson(): Map<String, Any?> = runCatching { attitudeSensor.json() }.getOrElse { mapOf("error" to it.message) } +
+        mapOf("wanted" to attitudeWanted)
+
+    /** The attitude sensor's status (0 to 3) and its delivered rate, Hz (`GET /panorama`). */
+    val attitudeStatus: Int? get() = runCatching { attitudeSensor.status }.getOrNull()
+    val attitudeRunning: Boolean get() = runCatching { attitudeSensor.running }.getOrDefault(false)
+    // end T330
+
     private fun apply() {
         runCatching { if ((wanted && foreground) || terrainWanted || gnssWanted) sensor.start() else sensor.stop() }
+        runCatching { if (attitudeWanted && foreground) attitudeSensor.start() else attitudeSensor.stop() } // T330
     }
 
     fun compassJson(): Map<String, Any?> = runCatching { sensor.json() }.getOrElse { mapOf("error" to it.message) } +
