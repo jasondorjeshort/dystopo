@@ -98,6 +98,7 @@ Added on 2026-11-22 from wave 46's closing sweep (`out/sweep-20261122-w46`, on 0
 **Interacts with:** none (no other task is open).
 **Done when:** the Checks pass; `python -I tools/android-startup.py`'s budget check, run on `out/sweep-20261122-w46/startup.json` against the new file, reports no red (no device needed if the tool can check a saved report; otherwise say so).
 **Checks:** `{"checks": [{"name": "startup-tests", "run": ["python", "-I", "tools/test_android_startup.py"], "exit": 0}]}`
+**Status: merged.** Verifier MERGE by the Checks on c6d0306b (merged as 139557f4). The bisection found no merge to blame; the ceiling was raised by the budget's own rule. Follow-ups: the `map.attach` drift is the idea of 2026-11-22. A host check would show whether 80 comes back: `startup` alone on the tag at a quiet moment. The counted rerun of `startup` on `main` decides the release.
 
 ## Owner actions pending (as of 2026-10-27)
 
