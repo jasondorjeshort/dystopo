@@ -11,3 +11,5 @@ Status: **untriaged and not sanity-checked** (an idea of the coordinator's own, 
 Match the camera's skyline to the terrain model to correct the heading (and, further, the position), with the full-screen Panorama as the screen that delivers it: the owner marks the skyline against the drawn one and the app offsets the heading, which is the Panorama's heading correction made automatic.
 
 **What exists already (to be checked):** **Exists:** `2026-11-02-horizon-match-fix-from-the-camera.md`, and ADR 0064's camera-behind-the-drawing option; T331 (wave 46) adds the manual heading correction.
+
+Waits: T331 (the manual heading correction) merged and the full-screen Panorama question answered; then a proposal folding in `2026-11-02-horizon-match-fix-from-the-camera.md` (the owner, 2026-11-22, by multiple choice at triage).
