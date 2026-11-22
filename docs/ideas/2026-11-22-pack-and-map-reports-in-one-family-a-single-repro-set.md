@@ -19,3 +19,12 @@ routes, so every report of the family is a row in one table, and a fix is checke
 
 **What exists already (to be checked):** `tools/android-a11y.py` screens (`map-outside`, T332) and the sweep's parts; no
 shared fixture of overlapping packs. Public areas only (`areas.json`), per the privacy rule.
+
+Plan: a script under `tools/` that builds two small packs over a public area (Rainier from `areas.json`): a wide coarse
+one (Less detail, elevation to a low zoom) and a fine one inside it (full detail), installs both on a given emulator serial
+the way the app takes a pack, and switches the emulator's network on and off by its console. A sweep part beside it reads
+`GET /firstrun`, `/startup`, `/areas/rows`, `/horizon` and the panorama route at four places (inside both, inside the coarse
+one only, outside both, near the fine one's edge), network on and off, and writes one JSON table (eight rows) to `out/`.
+`docs/reference/` gains the script's command line where the sweep parts are listed. Verify: the part runs on one AVD and the
+table is complete; paste it in the report. Out of scope: fixing any row (the rows are the family's reports' evidence);
+personal areas. Lands before the Sky-from-here, empty-map and Download-this-area passes, which then reproduce on it.
