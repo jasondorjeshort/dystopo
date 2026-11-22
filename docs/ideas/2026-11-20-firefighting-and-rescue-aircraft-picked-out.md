@@ -25,10 +25,20 @@ public-safety aircraft turn transponders off or are filtered from public feeds, 
 
 Source: The owner asked for these to be written up on 2026-11-20 from the coordinator's review of the flights plan.
 
-Question: mark firefighting, rescue and medical aircraft by type code, knowing many public-safety aircraft are filtered
-from public feeds, so an absent mark can be read as an absent aircraft? Recommended: yes, a small first version: a
-card line from a short type-code list (air tankers and scoopers, unambiguous by type), no "show only" filter, and
-help text saying the list is partial; helicopters and medical flights stay unmarked until an operator source (the
-FAA registry) is weighed. The wording around absence is a safety rule, so it is yours to confirm.
+2026-11-21, the owner, by multiple choice, asked whether to mark firefighting, rescue and medical aircraft by type
+code, knowing many public-safety aircraft are filtered from public feeds, so an absent mark can be read as an absent
+aircraft (the wording around absence being a safety rule, the owner's to confirm): the small first version
+(recommended): a card line for air tankers and scoopers from a short type list, no show-only filter, help saying the
+list is partial. Helicopters and medical flights stay unmarked until an operator source (the FAA registry) is weighed.
 
-Answer: the owner, 2026-11-21, by multiple choice: the small first version (recommended): a card line for air tankers and scoopers from a short type list, no show-only filter, help saying the list is partial.
+Plan: one small pass, `shared` and the card. A short list of ICAO type designators that are firefighting aircraft by
+design (the scoopers and the purpose-built tankers; a converted airliner or a crop duster shares its designator with
+ordinary flights and stays out), each checked against the published designator list and named in the report with
+where it was checked (ADR 0044; the project's own list, nothing copied), in `shared/.../aircraft/` beside
+`AircraftKind`. `AircraftText.card` gains one line under the type line ("Firefighting aircraft, by its type") for a
+report whose `type` is listed; the Flights help gains a sentence that the mark comes from the type alone, that the
+list is partial and that many public-safety aircraft never appear in the feed. `GET /aircraft` reports
+`firefighting` per aircraft. Verify: `AircraftTest` with a fixture of each listed type and of a look-alike that must
+not match; a replay (`POST /aircraft/replay`) carrying one, its card viewed on the emulator. The line and the help
+sentence in the report for the owner to confirm (ADR 0031; the wording about absence is the owner's). Out of scope:
+a symbol of its own on the map, a filter, helicopters and medical flights, any operator or registry source.
