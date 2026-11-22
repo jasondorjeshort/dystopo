@@ -135,3 +135,15 @@ maps does not match what it holds) and should be read with T332's report before 
 
 Possible plan (the coordinator's suggestion, not triaged): reproduce as above, then one task: the horizon's terrain read at a chosen point goes through the whole elevation
 chain (regions, areas, online source) and says "loading" rather than a white view while it waits.
+
+Plan: after T331 merges (it edits `app/panorama/`), reproduce first on the two-pack fixture (or one public pack with the
+location mocked far away): long-press inside the pack, Sky from here, read `/horizon` and the panorama route at once and after
+5 s; record the result. Read at triage: `PanoramaData.readTerrain` (`androidApp/.../panorama/PanoramaData.kt`, about line 153)
+reads `app.tiles.packs.demPacks` only, with no online elevation, while the Horizon view falls through to "the online"; on no
+data it shows `ViewshedText.NO_DEM`, the viewshed's string. Fix: one terrain read for a chosen point, shared by the Horizon
+view and the Panorama: packs per cell in `PackPrecedence` order (finest first, stepping down where the finer one ends), then
+the online elevation source under the same Mobile-data and limit rules; the Panorama shows a loading state instead of an
+empty lens and a no-data line in the Horizon view's own wording; Peaks finishes or says none. Check the Horizon view's online
+"highest -1°" at a public peak (it should rise well above 0) and fix the tile read if it is wrong. Verify: a unit test of the
+merged read (a cell missing in the pack filled online); emulator screenshots inside a pack, outside every pack online, and
+outside offline. Out of scope: the map's, shade's and search's lookups (the one-function idea).
