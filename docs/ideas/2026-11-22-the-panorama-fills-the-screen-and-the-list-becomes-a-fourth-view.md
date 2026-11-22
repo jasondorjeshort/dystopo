@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: feature
-related: [2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-19-the-horizon-view-beside-the-map-view.md, 2026-11-21-the-horizon-view-moves-with-you.md]
+related: [2026-11-19-the-horizon-view-beside-the-map-view.md, 2026-11-21-the-horizon-view-moves-with-you.md]
 ---
 
 # The Panorama fills the screen; the list under it becomes a fourth view

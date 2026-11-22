@@ -1,7 +1,7 @@
 ---
 date: 2026-11-20
 kind: feature
-related: [2026-11-20-aircraft-paths-on-the-map-and-dots-in-the-sky.md, ../findings/2026-11-20-aircraft-layer-sources-and-display.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-10-window-seat-mode-with-the-fix-moved-up-to-now.md]
+related: [2026-11-20-aircraft-paths-on-the-map-and-dots-in-the-sky.md, ../findings/2026-11-20-aircraft-layer-sources-and-display.md, 2026-11-10-window-seat-mode-with-the-fix-moved-up-to-now.md]
 ---
 
 # The view from that plane: tap a flight and open the Panorama view from it

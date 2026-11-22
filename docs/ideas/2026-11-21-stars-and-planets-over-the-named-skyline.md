@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-20-the-moon-on-the-horizon-view.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-21-one-clock-for-the-whole-app-past-and-future.md]
+related: [2026-11-20-the-moon-on-the-horizon-view.md, 2026-11-21-one-clock-for-the-whole-app-past-and-future.md]
 ---
 
 # Stars and planets over the named skyline

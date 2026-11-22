@@ -105,5 +105,6 @@ strip as the view's main form.
   plot's call and its pin test unchanged, and the flights' names on the lens are `placeLayers`' second pass.
   The release `horizon` step passed on T326's and T327's branches; its only edits were the wave's own (the
   switch's spoken label with a third segment, and no Close button, T325).
+- 2026-11-22, pass three merged (T329, T330 and T331, wave 46), so item 7's three passes are built. Two things narrowed in the building, both from the wave's research and critic: the "offset" of item 2 is a **heading correction** only, a drag along the level line that turns the drawing about the vertical (tilt and roll come from gravity and are never corrected), shown as "Compass adjusted N° east" or "west" with Reset, dropped on leaving Follow and on closing the view and **not kept between sessions** (compass error changes with the place and the phone's surroundings); and in Follow nothing turns the view but the phone: a row's or a name's tap sets the target and the edge arrow is a sign that says which way to turn. The steering is the synced setting `panoramaSteering`, Drag by default, flipped by the plot's Follow phone button. Item 3 (the camera) is untouched.
 - Prediction, check when the camera option is proposed: it adds a backdrop and a field-of-view match to
   the Panorama screen and no new view.

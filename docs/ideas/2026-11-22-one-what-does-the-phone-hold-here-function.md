@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: feature
-related: [2026-11-22-a-downloaded-map-must-never-make-the-view-worse-than-online.md, 2026-11-22-sky-from-here-in-colorado-says-no-elevation-data-with-a-pack-and-the-internet.md, 2026-11-20-no-map-message-shown-with-a-bulk-downloaded-region.md]
+related: [2026-11-22-a-downloaded-map-must-never-make-the-view-worse-than-online.md, 2026-11-22-sky-from-here-in-colorado-says-no-elevation-data-with-a-pack-and-the-internet.md]
 ---
 
 # One "what does the phone hold here?" function for every reader

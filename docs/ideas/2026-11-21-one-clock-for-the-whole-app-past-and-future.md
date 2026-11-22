@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-21-when-the-sun-or-moon-stands-on-a-named-peak.md]
+related: [2026-11-16-the-clock-time-at-each-point-of-a-route-and-the-sun-there.md, 2026-11-21-when-the-sun-or-moon-stands-on-a-named-peak.md]
 ---
 
 # One clock for the whole app: set a time, and the map, the Horizon view and the Panorama show then

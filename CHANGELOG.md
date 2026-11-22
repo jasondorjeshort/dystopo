@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-22
 
+- T331: The Panorama's heading correction, the weak-compass line, the arrow as a sign, and the sweep's steps
 - T337: A pressure unit setting, millibar by default, apart from feet and metres
 - T334: "Can I see it from here?": one line on the long-press card
 - T333: A note while recording when the GPS signal stays unusually weak

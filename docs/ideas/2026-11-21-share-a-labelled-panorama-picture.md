@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-14-a-shared-map-picture-carries-its-place.md]
+related: [2026-11-14-a-shared-map-picture-carries-its-place.md]
 ---
 
 # Share the Panorama as a picture, with its names, its place and its bearing

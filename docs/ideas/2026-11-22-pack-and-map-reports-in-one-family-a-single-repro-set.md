@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: chore
-related: [2026-11-20-no-map-message-shown-with-a-bulk-downloaded-region.md, 2026-11-15-a-first-launch-with-no-map-ignores-a-fix-after-four-seconds.md, 2026-11-07-search-and-routes-find-nothing-outside-a-pack.md, 2026-11-22-sky-from-here-in-colorado-says-no-elevation-data-with-a-pack-and-the-internet.md, 2026-11-22-the-map-is-nearly-empty-at-the-zooms-between-the-world-overview-and-the-packs.md]
+related: [2026-11-15-a-first-launch-with-no-map-ignores-a-fix-after-four-seconds.md, 2026-11-07-search-and-routes-find-nothing-outside-a-pack.md, 2026-11-22-sky-from-here-in-colorado-says-no-elevation-data-with-a-pack-and-the-internet.md, 2026-11-22-the-map-is-nearly-empty-at-the-zooms-between-the-world-overview-and-the-packs.md]
 ---
 
 # One emulator fixture for the pack-and-map reports: two overlapping maps, the network on and off

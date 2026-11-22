@@ -1,7 +1,7 @@
 ---
 date: 2026-11-20
 kind: feature
-related: [2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md, 2026-11-19-the-horizon-view-beside-the-map-view.md]
+related: [2026-11-19-the-horizon-view-beside-the-map-view.md]
 ---
 
 # The Horizon view from another place: what is left

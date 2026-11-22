@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: feature
-related: [2026-11-02-horizon-match-fix-from-the-camera.md, 2026-11-22-the-panorama-fills-the-screen-and-the-list-becomes-a-fourth-view.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md]
+related: [2026-11-02-horizon-match-fix-from-the-camera.md, 2026-11-22-the-panorama-fills-the-screen-and-the-list-becomes-a-fourth-view.md]
 ---
 
 # Fix the compass and position from the camera, on the full-screen Panorama

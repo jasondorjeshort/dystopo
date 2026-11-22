@@ -1,7 +1,7 @@
 ---
 date: 2026-11-21
 kind: feature
-related: [2026-11-21-the-horizon-view-moves-with-you.md, 2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md]
+related: [2026-11-21-the-horizon-view-moves-with-you.md]
 ---
 
 # The view from a route's high point, and where a peak first comes into view

@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: bug
-related: [2026-11-20-no-map-message-shown-with-a-bulk-downloaded-region.md, 2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md]
+related: [2026-11-20-horizon-view-from-another-place-and-saying-where-it-is.md]
 ---
 
 # "Sky from here" at a far-away place: a white view, then "no elevation data", with the pack present and the internet on
