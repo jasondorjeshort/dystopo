@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -112,6 +116,13 @@ object PanoramaStrings {
     fun following(bearingDeg: Double, tiltDeg: Double, fovDeg: Double): String =
         "$FOLLOWING; Facing ${GnssText.compassPoint(bearingDeg)} ${Math.round(bearingDeg) % 360}°, ${tilt(tiltDeg)}, ${Math.round(fovDeg)}° across"
     // end T330
+
+    // T331: the heading correction's actions and button (wave 46's choice (f)); its line is HeadingCorrection.line, the
+    // weak-compass line CompassHint.LINE (choice (h)).
+    const val ADJUST_LEFT = "Adjust compass left"
+    const val ADJUST_RIGHT = "Adjust compass right"
+    const val RESET = "Reset"
+    // end T331
 }
 
 /**
@@ -171,6 +182,9 @@ fun PanoramaScreen() {
     var placeH by remember { mutableStateOf(0) }
     var headingH by remember { mutableStateOf(0) }
     var pickedH by remember { mutableStateOf(0) }
+    // T331 (choice (h)): the weak-compass line under the plot, and its height (px) the plot gives up on its side.
+    val hint = PanoramaFollow.hintShown && follow
+    var hintH by remember { mutableStateOf(0) }
     Box(Modifier.fillMaxSize().background(pal.paper).pointerInput(Unit) { detectTapGestures { } }.testTag("panoramaView")) {
         BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding()) {
             val landscape = maxWidth > maxHeight
@@ -178,7 +192,8 @@ fun PanoramaScreen() {
             val switchRoom = ViewSwitch.reserveDp.dp + 8.dp
             val paneW = if (landscape) maxOf(320.dp, maxWidth * 0.4f).coerceAtMost(maxWidth * 0.6f) else maxWidth
             val plotW = if (landscape) maxWidth - paneW else maxWidth
-            val plotH = if (landscape) maxHeight - switchRoom else minOf(maxWidth * 0.75f, maxHeight * 0.45f)
+            val hintRoom = if (hint) with(density) { hintH.toDp() } else 0.dp
+            val plotH = if (landscape) maxHeight - switchRoom - hintRoom else minOf(maxWidth * 0.75f, maxHeight * 0.45f)
             val paneOverSwitch = !landscape || plotW < switchW + ViewSwitch.EDGE_DP.dp + 8.dp
             // The place the view stands on, swept to the view range at the steps the zoom asks for (choice f).
             val aim = PanoramaUi.aim
@@ -271,12 +286,38 @@ fun PanoramaScreen() {
                     }
                 }
             }
+            // T331 (choice (h)): one quiet line under the plot while the compass reads weak in Follow.
+            val hintLine: @Composable () -> Unit = {
+                if (hint) BasicText(
+                    CompassHint.LINE,
+                    Modifier.width(plotW).padding(horizontal = 12.dp, vertical = 4.dp).testTag("panoramaCompassHint")
+                        .onGloballyPositioned { c ->
+                            hintH = c.size.height + with(density) { 8.dp.roundToPx() }
+                            val at = c.positionInRoot()
+                            PanoramaUi.hintPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
+                        },
+                    style = TextStyle(color = pal.muted, fontSize = 13.sp),
+                ) else PanoramaUi.hintPx = null
+            }
             if (landscape) Row(Modifier.fillMaxSize()) {
-                Column(Modifier.width(plotW).fillMaxHeight()) { plot() }
+                Column(Modifier.width(plotW).fillMaxHeight()) { plot(); hintLine() }
                 pane(Modifier.width(paneW).fillMaxHeight().padding(top = 8.dp))
             } else Column(Modifier.fillMaxSize()) {
                 plot()
+                hintLine()
                 pane(Modifier.weight(1f).fillMaxWidth())
+            }
+            // T331 (T326's note): the strip under the status bar over the plot carries the plot's sky on upward (it was paper).
+            val topInset = androidx.compose.foundation.layout.WindowInsets.statusBars.union(androidx.compose.foundation.layout.WindowInsets.displayCutout).getTop(density) // the padding the content stands under
+            if (topInset > 0) {
+                val tints = remember(night) { PanoramaTints(night) }
+                androidx.compose.foundation.Canvas(
+                    Modifier.offset { androidx.compose.ui.unit.IntOffset(0, -topInset) }.size(plotW, with(density) { topInset.toDp() }).testTag("panoramaSkyStrip"),
+                ) {
+                    val a = PanoramaUi.aim
+                    val (w, h, dp) = PanoramaUi.plotSize ?: Triple(size.width.toDouble(), 0.0, this.density.toDouble())
+                    drawRect(skyBrush(a, tints, a?.lens(w, h, dp), w, h, dy = size.height))
+                }
             }
             // T327: T311's flight card, as the Horizon view hosts it: over the pane's lower part, beside or under the plot.
             flight?.let { a ->
@@ -337,7 +378,13 @@ private fun FollowEffects(follow: Boolean, started: Boolean) {
     androidx.compose.runtime.DisposableEffect(follow) {
         PanoramaFollow.following = follow
         if (!follow) PanoramaUi.aim?.takeIf { it.follow }?.let { PanoramaUi.aim = it.toDrag() }
-        onDispose { PanoramaFollow.following = false }
+        if (!follow) PanoramaFollow.correct(PanoramaCorrection.LeftFollow) // T331: choice (f)
+        PanoramaFollow.evaluateHint()
+        onDispose {
+            PanoramaFollow.following = false
+            PanoramaFollow.correct(PanoramaCorrection.Closed) // T331: the view closed (or left Follow)
+            PanoramaFollow.evaluateHint()
+        }
     }
     androidx.compose.runtime.DisposableEffect(follow, started) {
         if (follow && started) PanoramaFollow.start() else PanoramaFollow.stop()
@@ -360,9 +407,11 @@ internal val PANORAMA_HELP: List<HelpText> = run {
     val show: () -> Unit = { ViewSwitch.select(SkyView.PANORAMA) }
     listOf(
         HelpText("panorama.view", PanoramaStrings.TITLE, placed, show = show) { units ->
-            "The land's skyline one way, as through a lens: the ridges to ${UnitFormat.distance(AppSettings.viewRangeKm * 1000.0, units)} " +
-                "(your view range) drawn far to near, the level line dashed and the bearings along the top. Drag sideways to turn, " +
-                "up and down to tilt; pinch or the buttons zoom. Tap a row or a name to turn to it; an arrow at the edge points to it while it is out of view." // T327
+            // T331: shortened to make room for Follow phone's sentence (the help's 330-character cap).
+            "The skyline one way, as through a lens, ridges to ${UnitFormat.distance(AppSettings.viewRangeKm * 1000.0, units)} " +
+                "(your view range) far to near. Drag to turn and tilt; pinch or the buttons zoom. Tap a row or a name to turn to it; " +
+                "an edge arrow points to it while out of view. With Follow phone on, point the phone; drag sideways to adjust the " +
+                "compass, and Reset undoes it."
         },
         HelpText("panorama.peaks", HorizonText.PEAKS, "$placed, its ${HorizonText.PEAKS} list", show = show) { units ->
             "Named peaks within your view range of ${UnitFormat.distance(AppSettings.viewRangeKm * 1000.0, units)} in view or just out of " +

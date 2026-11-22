@@ -2198,6 +2198,7 @@ def panorama_step(dev):
     if not title:
         return {"ok": False, "error": f"no 'Panorama view' heading after the segment (texts: {dev.texts(nodes)[:25]})"}
     nodes = wait_panorama_ready(dev, nodes)
+    nodes = panorama_follow_off(dev, nodes, out, errors, "followAtStart")  # T331: the setting outlives a failed run
     texts = dev.texts(nodes)
     out["frames"]["panorama"] = dev.screencap("panorama")[0]
     plot = panorama_plot(nodes)
@@ -2214,7 +2215,7 @@ def panorama_step(dev):
         errors.append(f"the opening's field of view is {facing0[1]}, not 60")
     # A one-finger swipe across the middle of the plot, right to left: the view turns (to the right).
     b = plot["bounds"]
-    y = (b[1] + b[3]) // 2
+    y = swipe_row(b)  # T331: clear of "Follow phone" (T330), which stands across the plot's middle row at the right
     dev.shell("input", "swipe", str(b[0] + (b[2] - b[0]) * 3 // 4), str(y), str(b[0] + (b[2] - b[0]) // 4), str(y), "700")
     time.sleep(2)
     nodes = dev.nodes()
@@ -2270,6 +2271,7 @@ def panorama_step(dev):
             if not place or not place.startswith("At "):
                 errors.append(f"the place line at the summit is {place!r}, not a named feature's ('At ..., ... of you')")
         back_to_fix_and_map(dev, out, errors)
+    panorama_follow(dev, out, errors)  # T331
     frames = out.pop("frames")
     return {"ok": not errors, "png": frames.get("panorama"), "frames": frames, "openedBy": "switch", "backs": backs, **out,
             "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
@@ -2347,7 +2349,7 @@ def panorama_target_and_arrow(dev, out, errors):
     if turned is None or bearing_apart(turned, wanted) > 3:
         errors.append(f"the row did not turn the view to {PANORAMA_TARGET_PEAK} (facing {turned}, wanted {wanted} within 3)")
     # Two swipes right to left across the plot: the view turns right, Mount Rainier leaves at the left.
-    y = (pb[1] + pb[3]) // 2
+    y = swipe_row(pb)  # T331
     arrow = None
     for _ in range(4):
         dev.shell("input", "swipe", str(pb[0] + (pb[2] - pb[0]) * 7 // 8), str(y), str(pb[0] + (pb[2] - pb[0]) // 8), str(y), "600")
@@ -2372,6 +2374,117 @@ def panorama_target_and_arrow(dev, out, errors):
         errors.append(f"the arrow's tap did not turn the view back to {PANORAMA_TARGET_PEAK} (facing {back}, wanted {wanted} within 3, arrow gone {out['arrowTapped']['arrowGone']})")
     return nodes
 # end T327
+
+
+# T331
+FOLLOW_PHONE = "^Follow phone$"  # the plot's third button (T330), a switch flipping the synced setting panoramaSteering
+FOLLOWING = "Following the phone"  # in the plot's spoken label while the view follows the phone
+CORRECTION_LINE = r"^Compass adjusted \d+°( east| west)?$"  # HeadingCorrection.line
+RESET = "^Reset$"
+COMPASS_HINT = "^Compass needs calibrating"  # the weak-compass line under the plot (CompassHint.LINE)
+
+
+def swipe_row(bounds):
+    """T331: the row a sideways swipe across the plot runs along: 30 percent down it, above "Follow phone" (T330), which
+    stands across the plot's middle row at the right (a swipe along the middle started on the button and turned nothing:
+    "the swipe did not turn the view (N 0° then N 0°)" in T331's runs), and under the tape."""
+    return bounds[1] + (bounds[3] - bounds[1]) * 3 // 10
+
+
+def panorama_following(nodes):
+    """T331: whether the plot's spoken label says the view follows the phone (None: no plot)."""
+    plot = panorama_plot(nodes)
+    return None if not plot else FOLLOWING in (plot["desc"] or "")
+
+
+def panorama_follow_off(dev, nodes, out, errors, key):
+    """T331: "Follow phone" tapped off when the view follows the phone (an earlier run may have stopped in Follow: the
+    setting is synced and kept); what was found goes in out[key]. Compares with what the screen says, never a stored value."""
+    was = panorama_following(nodes)
+    out[key] = was
+    if not was:
+        return nodes
+    b = dev.find(FOLLOW_PHONE, nodes)
+    if not b:
+        errors.append("the view follows the phone and no 'Follow phone' button stands to turn it off")
+        return nodes
+    dev.tap(b)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        time.sleep(1)
+        nodes = dev.nodes()
+        if panorama_following(nodes) is False:
+            return nodes
+    errors.append(f"'Follow phone' did not turn off (label {(panorama_plot(nodes) or {}).get('desc')!r})")
+    return nodes
+
+
+def panorama_follow(dev, out, errors):
+    """T331: the Panorama opened again from the map; "Follow phone" tapped on (frame `panorama-follow`: the emulator's own
+    sensor aims the view, the plot's label says "Following the phone"); a sideways one-finger swipe across the plot is the
+    heading correction (frame `panorama-offset`: "Compass adjusted N° east|west" with Reset, the facing moved); Reset
+    (the line gone, the facing back within 2 degrees); "Follow phone" tapped off (the label without "Following the
+    phone"); "Map" closes the view. Whatever fails, the button is left off. The facings compared are read from the
+    screen, never written into the script (the emulator's sensor decides where the view faces)."""
+    f = out.setdefault("follow", {})
+    n, nodes, _ = back_until(dev, PANORAMA_SEGMENT)
+    if not n:
+        errors.append("no Panorama segment on the map for Follow phone")
+        return
+    dev.tap(n)
+    title, nodes = dev.wait_for(PANORAMA_TITLE, 15)
+    nodes = wait_panorama_ready(dev, nodes, 60)
+    try:
+        b = dev.find(FOLLOW_PHONE, nodes)
+        if not b:
+            errors.append(f"no 'Follow phone' button on the plot (texts: {dev.texts(nodes)[:25]})")
+            return
+        f["buttonHeightPx"] = b["bounds"][3] - b["bounds"][1]
+        dev.tap(b)
+        time.sleep(2.5)  # the sensor's first samples and the filter's settling
+        nodes = dev.nodes()
+        plot = panorama_plot(nodes)
+        f["label"] = (plot or {}).get("desc")
+        f["following"] = panorama_following(nodes)
+        f["compassHint"] = next((t for t in dev.texts(nodes) if re.match(COMPASS_HINT, t)), None)
+        out["frames"]["follow"] = dev.screencap("panorama-follow")[0]
+        if not f["following"]:
+            errors.append(f"'Follow phone' did not make the view follow the phone (label {f['label']!r})")
+            return
+        facing0 = panorama_bearing(f["label"])
+        # A slow one-finger swipe right to left across the middle of the plot: the drawing follows the finger (east).
+        pb = plot["bounds"]
+        y = swipe_row(pb)
+        dev.shell("input", "swipe", str(pb[0] + (pb[2] - pb[0]) * 2 // 3), str(y), str(pb[0] + (pb[2] - pb[0]) // 3), str(y), "1200")
+        line, nodes = dev.wait_for(CORRECTION_LINE, 8)
+        reset = dev.find(RESET, nodes)
+        f["line"] = line and line["text"]
+        f["resetHeightPx"] = reset and reset["bounds"][3] - reset["bounds"][1]
+        facing1 = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
+        f["facing"] = {"before": facing0, "afterSwipe": facing1}
+        out["frames"]["offset"] = dev.screencap("panorama-offset")[0]
+        if not line or not reset:
+            errors.append(f"no correction line with Reset after the swipe in Follow (texts: {dev.texts(nodes)[:25]})")
+            return
+        m = re.search(r"(\d+)° (east|west)", line["text"])
+        if not m or m.group(2) != "east" or facing0 is None or facing1 is None or bearing_apart(facing1, facing0) < 3:
+            errors.append(f"the swipe right to left did not turn the view east ({line['text']!r}, facing {facing0} then {facing1})")
+        dev.tap(reset)
+        time.sleep(1.5)
+        nodes = dev.nodes()
+        f["lineAfterReset"] = next((t for t in dev.texts(nodes) if re.match(CORRECTION_LINE, t)), None)
+        facing2 = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
+        f["facing"]["afterReset"] = facing2
+        if f["lineAfterReset"] or facing2 is None or bearing_apart(facing2, facing0) > 2:
+            errors.append(f"Reset did not take the correction away (line {f['lineAfterReset']!r}, facing {facing0} then {facing2})")
+    finally:
+        nodes = panorama_follow_off(dev, dev.nodes(), f, errors, "followingBeforeOff")
+        f["followingAtEnd"] = panorama_following(nodes)
+        m = dev.find(MAP_SEGMENT, nodes)
+        if m:
+            dev.tap(m)
+            time.sleep(1)
+# end T331
 
 
 # --- features: Flight tracking (T311) ----------------------------------------------------------------------------

@@ -1,17 +1,18 @@
 ---
 verified: 2026-11-22
-source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327, T330)
+source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327, T330, T331)
 ---
 
 # The Panorama view
 
-The third view of the switch ("Map | Horizon | Panorama"; ADR 0064, pass two of
-`docs/ideas/2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md`): the land's skyline one way, as through a
-lens, beside the Horizon view's round plot of the whole sky. Code: `app/panorama/` (the screen, the plot, the terrain
-and sweeps, the routes), the scene and the aim in `shared/.../horizon/` (`PanoramaScene`, `PanoramaAim`,
-`PanoramaSweep`, `LayeredSkyline`, `LensView`; devtool `panorama` draws the same scene, `devtool-commands.md`). Debug
-routes: `android-debug-routes.md` (Panorama view). The choices it is built by are wave 45's (a) to (j) in
-`docs/tasks/` (the wave's record) and `docs/TASKS.md` while the wave is open.
+The third view of the switch ("Map | Horizon | Panorama"; ADR 0064, its Plan built in three passes, waves 44 to 46,
+the idea file deleted with the third): the land's skyline one way, as through a lens, beside the Horizon view's round
+plot of the whole sky, steered by a drag or by the phone itself (Follow phone, below). Code: `app/panorama/` (the
+screen, the plot, the terrain and sweeps, Follow, the routes), the scene, the aim and the phone's attitude in
+`shared/.../horizon/` (`PanoramaScene`, `PanoramaAim`, `PanoramaSweep`, `LayeredSkyline`, `LensView`, `PhoneAttitude`,
+`AttitudeFilter`, `OffView`'s `HeadingCorrection`; devtool `panorama` draws the same scene, `devtool-commands.md`).
+Debug routes: `android-debug-routes.md` (Panorama view). The choices it is built by are wave 45's (a) to (j) and wave
+46's (a) to (j) in `docs/tasks/` (the waves' records) and `docs/TASKS.md` while a wave is open.
 
 ## Opening, the place and the switch
 
@@ -82,7 +83,7 @@ routes: `android-debug-routes.md` (Panorama view). The choices it is built by ar
   tape, off the zoom buttons' corner) with the arrow and its line ("Mount Rainier, 40° left"), at least 48 dp tall, its
   spoken label the line; a tap turns the view to the target. It goes when the target is in view or let go.
 
-## Follow phone (T330; wave 46's choices (a) to (e), (g), (i), (j))
+## Follow phone (T330, T331; wave 46's choices (a) to (j))
 
 - **The setting** `panoramaSteering` (`drag`, the default, or `follow`; synced; ADR 0044: the apps split): the row
   "Panorama steering" under Sky range in Settings › Navigation and tracking ("Drag" and "Follow phone"; help
@@ -105,15 +106,40 @@ routes: `android-debug-routes.md` (Panorama view). The choices it is built by ar
   buttons stay upright; the sky's gradient runs straight up the sky at a roll. The plot's spoken label reads "Panorama
   from: <place line>; Following the phone; Facing <compass> <bearing>°, <tilt>, <field of view>° across" (tilt "12° up",
   "5° down" or "level"), and the four turn and look actions are absent. A pinch and the zoom buttons change the field of
-  view only; a drag does nothing yet (the heading correction is T331's). A row's or a name's tap sets the target and turns
-  nothing; the edge arrow says which way to turn the phone, by the screen's axes (`OffView.of(..., follow = true)`).
+  view only (a pinch's drift corrects nothing). A row's or a name's tap sets the target and turns nothing; the edge arrow
+  says which way to turn the phone, by the screen's axes (`OffView.of(..., follow = true)`: "Mount Rainier, 40° left",
+  also "up" and "down"), and is a sign there: no edge and no tap, its line still its spoken label (`arrow.clickable`
+  false). Back's ladder is Drag's.
+- **The heading correction** (T331, choice (f); `PanoramaCorrection` is its pure rule): a one-finger drag in Follow
+  turns the drawing about the vertical by the finger's travel along the drawn level line (`HeadingCorrection.dragDeg`,
+  the travel within the touch slop included), so a name follows the finger; the travel across the line does nothing.
+  The names are held during the drag and placed after it. The correction is degrees added to the phone's true bearing
+  (positive east) with the declination (`PanoramaFollow.axesOf`), and a change turns the drawn aim at once, resting or
+  not. While one stands, a plate at the plot's lower left (6 dp in, above the flights' credit while that shows; sized
+  for the widest line, two lines at most in three quarters of the width, clear of the buttons' column; its box given to
+  the scene's names and to the arrow, which keeps above it) reads `HeadingCorrection.line` ("Compass adjusted 4° east",
+  "Compass adjusted 0°" when it comes back to none) with "Reset" (48 dp). The plot's node carries "Adjust compass left"
+  and "Adjust compass right" (a degree each, left the view's bearing less) in place of Drag's four actions. A zoom, a
+  pinch and a target keep it; Reset, leaving Follow and closing the view drop it; it is never kept between sessions.
+- **The weak-compass line** (T331, choice (h); `CompassHint`): while following, the attitude sensor's own accuracy
+  status at 1 (low) or 0 (unreliable) for over 2 s shows "Compass needs calibrating: move the phone in a figure 8" under
+  the plot (on its side the plot gives up the line's height); a better status or leaving Follow takes it away at once,
+  and the view never refuses to draw. The API 35 emulator's sensor reports 3 (high), so the line never shows there
+  without `POST /panorama?compassStatus=`.
 - **The opening in Follow** (choice (j)) is the phone's attitude at once (`aim.opening` `attitude`); Drag's opening stands
   only when no sample came in 1.5 s, and the first sample replaces it. **Leaving Follow** (choice (e)): the roll goes to
   zero and the tilt to Drag's limits at once (`PanoramaAim.toDrag`); the bearing and the field of view stay.
-- **Measured on the emulator** (wave 46, T330's report; first values for the real phone): a simulated quarter turn
-  reaches 90 percent in 173 to 197 ms; under a 0.2 degree jitter the drawn attitude's spread is 0.15 of the samples' and
-  the view rests; a steady 30 °/s turn draws about 43 frames a second, each scene build at most 8 ms and each draw pass at
-  most 6 ms with the four layers on.
+- **The strip under the status bar** (T331, T326's note) carries the plot's sky on upward (`skyBrush` moved down by
+  the strip's height) instead of blank paper.
+- **Measured on the emulator** (wave 46, T330's and T331's reports; software rendering, first values for the real
+  phone): a simulated quarter turn reaches 90 percent in 173 to 197 ms; under a 0.2 degree jitter the drawn attitude's
+  spread is 0.15 of the samples' and the view rests; a steady 30 °/s turn with the Sun, Satellites, Flights and Peaks
+  on draws 40 to 70 frames a second, each scene build at most 6 to 8 ms and each draw pass at most 11 ms (the opening's
+  first frames included), inside a 16.7 ms frame. The layers' text paints and the hours' calendar are made once per
+  plot (`LensPaints`), not per frame.
+- **A drag measured** (T331): at Paradise, facing 20 degrees off Mount Rainier, a 300 px swipe right to left moved its
+  mark 301 px with the finger and set 18.4 degrees east (the angle at the centre 17.95); at roll 30 the same swipe set
+  16.05 (its travel along the slanted line 15.7) and the mark moved along the line; Reset put every name back to the px.
 
 ## The terrain, the sweeps and what is kept (choice f)
 

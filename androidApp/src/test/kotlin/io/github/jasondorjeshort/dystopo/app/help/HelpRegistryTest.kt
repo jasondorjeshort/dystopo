@@ -352,4 +352,14 @@ class HelpRegistryTest {
         assertEquals("GPS signal unusually weak", io.github.jasondorjeshort.dystopo.app.tracking.WEAK_SIGNAL_LINE)
     }
     // end T333
+
+    // T331: the Panorama's help says how Follow phone steers and that a drag there adjusts the compass, with Reset.
+    @Test
+    fun thePanoramaHelpNamesTheCompassAdjustment() {
+        for (u in ContourUnits.entries) {
+            val view = HelpRegistry.byKey("panorama.view")!!.text(u)
+            assertTrue("Follow phone" in view && "adjust the compass" in view && "Reset" in view, view)
+        }
+    }
+    // end T331
 }

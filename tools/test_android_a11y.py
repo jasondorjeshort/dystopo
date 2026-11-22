@@ -264,11 +264,19 @@ _sleep = a11y.time.sleep
 a11y.time.sleep = lambda s: None
 try:
     ps = PanoSrv()
-    pano[0][1](type("C", (), {"srv": ps})())
-    assert ps.calls == [("POST", "/settings?aircraft=1"), ("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000")], ps.calls  # T327: the four toggles
+    ctx = type("C", (), {"srv": ps})()
+    pano[0][1](ctx)
+    # T327: the four toggles; T330: the steering setting read, then the view pinned in Drag (fixed by T331: T330 changed
+    # the screen and not this assertion).
+    assert ps.calls == [("POST", "/settings?aircraft=1"), ("GET", "/settings"), ("POST", "/settings?panoramaSteering=drag"),
+                        ("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000")], ps.calls
     ps.calls.clear()
-    pano[0][2](type("C", (), {"srv": ps})())
-    assert ps.calls == [("POST", "/horizon/switch?to=map"), ("POST", "/settings?aircraft=0")], ps.calls
+    pano[0][2](ctx)
+    assert ps.calls == [("POST", "/horizon/switch?to=map"), ("POST", "/settings?aircraft=0")], ps.calls  # PanoSrv's {} found no setting to put back
+    ctx.steering_found = "follow"
+    ps.calls.clear()
+    pano[0][2](ctx)
+    assert ps.calls[-1] == ("POST", "/settings?panoramaSteering=follow"), ps.calls
 finally:
     a11y.time.sleep = _sleep
 # end T326
@@ -554,5 +562,47 @@ try:
 finally:
     a11y.time.sleep = _sleep
 # end T333
+
+# T331: the Panorama following the phone with a simulated attitude, a target off the view, a correction and the
+# weak-compass line; its end puts each pin back (the steering as found, drag when nothing was read).
+pa = [s for s in a11y.SCREENS if s[0] == "panorama-attitude"]
+assert len(pa) == 1 and pa[0][3] == "screen" and pa[0][2] is a11y.end_panorama_attitude, pa
+
+
+class AttitudeSrv:
+    def __init__(self, steering):
+        self.calls, self.steering = [], steering
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/settings":
+            return {"panoramaSteering": self.steering} if self.steering else {}
+        if path == "/panorama":
+            return {"hint": {"shown": True}, "arrow": {"side": "left"}, "correctionDeg": 4}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    for found, back in (("drag", "drag"), ("follow", "follow"), (None, "drag")):
+        asrv = AttitudeSrv(found)
+        ctx = type("C", (), {"srv": asrv})()
+        pa[0][1](ctx)
+        paths = [p for _m, p in asrv.calls]
+        assert paths[:4] == ["/settings", "/settings?panoramaSteering=follow", "/horizon/switch?to=panorama", "/panorama?wait=60000"], paths
+        assert paths[4] == "/panorama?attitude=60,-20,25&attitudeNoise=0" and paths[5] == "/panorama?target=peak%3AMount%20Rainier", paths
+        assert paths[6] == "/panorama?correction=4&compassStatus=1" and paths[-1] == "/panorama", paths
+        asrv.calls.clear()
+        pa[0][2](ctx)
+        assert [p for _m, p in asrv.calls] == ["/panorama?compassStatus=none&correction=none&target=none&attitude=none", "/horizon/switch?to=map",
+                                               f"/settings?panoramaSteering={back}"], asrv.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T331
 
 print("test_android_a11y: ok")
