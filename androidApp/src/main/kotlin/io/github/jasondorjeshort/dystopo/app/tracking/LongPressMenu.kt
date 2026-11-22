@@ -472,9 +472,7 @@ internal val LONG_PRESS_HELP: List<HelpText> = listOf(
         "A long-press on the map opens this card. Route to here plans a route from where you are to the point. " +
             "Waypoint here marks it with a waypoint you can name. Route " +
             "from here starts a route there: long-press again where it ends. What can I see from here " +
-            "shows the ground and peaks in view; Sky from here, the sky there. " + // T317
-            "With a GPS fix, the line under the coordinates says whether the point is in view from where you are, " +
-            "or how far off the ridge that hides it is." // T334
+            "shows the ground and peaks in view; Sky from here, the sky there." // T317
     },
     // T188: the sun line.
     HelpText("longPress.sun", "Sun at this point", "The map: long-press anywhere, the sun line", show = { LongPressMenu.showAtCentre() }) {
