@@ -9,10 +9,10 @@ import java.io.File
  * then asserts it again when it enters it (`FileTreeWalk.DirectoryState`: "rootDir must be verified to be directory
  * beforehand"). A directory deleted between the two checks throws an `AssertionError` where assertions are on (a debuggable
  * build: D8 forces them on, so `kotlin._Assertions.ENABLED` is true; R8 removes the assertion from a release build), and on
- * a plain thread that kills the app: the launch crash of three closing sweeps after the emulator guard's reboot, whose
- * stack was not kept (`docs/ideas/2026-11-19-launch-crash-rootdir-after-the-guards-reboot.md`). Every walk and recursive
- * delete of the app goes through here. A directory is listed with `listFiles`, and one that has gone (null) is skipped; a
- * file that has gone is skipped too.
+ * a plain thread that kills the app: the launch crash of three closing sweeps after the emulator guard's reboot, two
+ * contour collections deleting one stale directory at once ([io.github.jasondorjeshort.dystopo.app.ContourCache.collectGarbage]).
+ * Every walk and recursive delete of the app goes through here. A directory is listed with `listFiles`, and one that has
+ * gone (null) is skipped; a file that has gone is skipped too.
  */
 object FileTrees {
     /** Calls [visit] with every regular file under [root] (none when [root] is not a directory), depth-first, parents first. */
