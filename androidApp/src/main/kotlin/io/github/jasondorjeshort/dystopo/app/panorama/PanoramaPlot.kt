@@ -164,7 +164,7 @@ fun PanoramaPlot(
         if (aim == null || sky == null || wPx <= 0 || hPx <= 0) null else {
             val t0 = System.nanoTime()
             val held = if (gesturing) PanoramaUi.scene?.takeIf { it.lens.width == wPx && it.lens.height == hPx }?.names else null
-            val s = PanoramaScene.build(aim, wPx, hPx, d, sky, ranked, nameText, tapeText, zoomCorner, picked = picked, held = held)
+            val s = PanoramaScene.build(aim, wPx, hPx, d, sky, ranked, nameText, tapeText, listOf(zoomCorner), picked = picked, held = held)
             PanoramaUi.sceneBuilt(s, (System.nanoTime() - t0) / 1e6)
             s
         }

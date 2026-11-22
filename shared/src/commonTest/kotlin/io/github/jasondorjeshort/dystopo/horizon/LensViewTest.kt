@@ -107,6 +107,26 @@ class LensViewTest {
     }
 
     @Test
+    fun t329ALensFromAxesIsTheLensOfItsAngles() {
+        for ((b, t, r) in listOf(Triple(90.0, 0.0, 0.0), Triple(10.0, 35.0, -20.0), Triple(250.0, -70.0, 120.0))) {
+            val axes = LensAxes.of(b, t, r)
+            val a = LensView.of(w, h, dp, axes, 60.0)
+            near(a.bearingDeg, b, 1e-9); near(a.tiltDeg, t, 1e-9); near(a.rollDeg, r, 1e-9)
+            val c = lens(b, t, r)
+            for ((el, az) in listOf(0.0 to b, 10.0 to b + 12, -5.0 to b - 20)) {
+                val p = assertNotNull(a.project(el, az))
+                val q = assertNotNull(c.project(el, az))
+                near(p.x, q.x, 1e-6); near(p.y, q.y, 1e-6)
+            }
+            assertTrue(abs(((axes.right cross axes.up) dot axes.forward) + 1) < 1e-12, "right x up = -forward")
+        }
+        // Within two degrees of the poles the bearing written is the one held.
+        val held = LensView.of(w, h, dp, LensAxes.of(10.0, 89.0, 0.0), 60.0, heldBearingDeg = 200.0)
+        assertEquals(200.0, held.bearingDeg)
+        assertEquals(10.0, LensView.of(w, h, dp, LensAxes.of(10.0, 87.0, 0.0), 60.0, heldBearingDeg = 200.0).bearingDeg, 1e-9)
+    }
+
+    @Test
     fun theSkylinesAnglesNeverFallAsTheRangeGrows() {
         // Cones at 2, 8, 20 and 45 km in different directions, on gently rolling ground, near Paradise (a public place).
         fun cone(e: Double, n: Double, ce: Double, cn: Double, hM: Double, rad: Double) = max(0.0, hM * (1 - sqrt((e - ce) * (e - ce) + (n - cn) * (n - cn)) / rad))

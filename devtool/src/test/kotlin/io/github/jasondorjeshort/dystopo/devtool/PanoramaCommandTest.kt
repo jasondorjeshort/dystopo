@@ -10,6 +10,7 @@ import io.github.jasondorjeshort.dystopo.horizon.HorizonLabels
 import io.github.jasondorjeshort.dystopo.horizon.LayeredSkyline
 import io.github.jasondorjeshort.dystopo.horizon.PanoramaAim
 import io.github.jasondorjeshort.dystopo.horizon.PeakRim
+import io.github.jasondorjeshort.dystopo.horizon.PhoneAttitude
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -60,11 +61,16 @@ object PanoramaGolden {
         })
     }
 
-    fun render(fov: Double = 60.0): PanoramaRender.Drawn {
+    /** T329: the same view rolled 20 degrees (a Follow aim): the level line, the tape and the names upright on a rolled lens. */
+    const val ROLLED_FILE = "panorama/synthetic-ridges-b0-t4-r20-f60.png"
+    const val ROLLED_DEG = 20.0
+
+    fun render(fov: Double = 60.0, rollDeg: Double? = null): PanoramaRender.Drawn {
         val terrain = terrain()
         val skyline = LayeredSkyline.sweep(terrain, LAT, LON, LayeredSkyline.ranges(RANGE_M), 0.5, 1.7)
         val ranked = HorizonLabels.rank(PeakRim.labels(PanoramaRender.peakViews(terrain, skyline, peaks)))
-        return PanoramaRender.draw(PanoramaAim(0.0, 4.0, fov), 540.0, 540.0, 1.5, skyline, ranked)
+        val aim = if (rollDeg == null) PanoramaAim(0.0, 4.0, fov) else PanoramaAim.follow(0.0, 4.0, rollDeg, fov)
+        return PanoramaRender.draw(aim, 540.0, 540.0, 1.5, skyline, ranked)
     }
 
     /** The text's boxes, 2 px wider each side: where the comparison is loose (fonts differ a little by machine). */
@@ -127,8 +133,39 @@ class PanoramaCommandTest {
         assertTrue(cost.placedMs < 200 && cost.heldMs < 200, "scene ${cost.placedMs} ms")
     }
 
-    private fun write(image: BufferedImage, kind: String): String {
-        val f = File(Goldens.diffDir.absoluteFile, PanoramaGolden.FILE.replace('/', '-').removeSuffix(".png") + "-$kind.png")
+    @Test
+    fun theRolledPanoramaMatchesItsGolden() {
+        val d = PanoramaGolden.render(rollDeg = PanoramaGolden.ROLLED_DEG)
+        val file = PanoramaGolden.ROLLED_FILE
+        val actual = d.image
+        val expected = javaClass.getResourceAsStream("/goldens/$file")?.use { ImageIO.read(it) }
+            ?: fail("no golden goldens/$file; actual at ${write(actual, "actual", file)}. Run ./gradlew updateGoldens and view it.")
+        if (expected.width != actual.width || expected.height != actual.height) fail("size ${actual.width}x${actual.height}, golden ${expected.width}x${expected.height}")
+        val diff = ImageDiff(expected, actual, PanoramaGolden.mask(d), 12)
+        if (!diff.outside.within(strict) || !diff.inside.within(labels)) {
+            write(actual, "actual", file)
+            fail(
+                "rolled panorama differs from goldens/$file:\n  outside text: ${diff.outside.describe(strict)}\n  text: ${diff.inside.describe(labels)}\n" +
+                    "  ${write(diff.diffImage(), "diff", file)}\nIf the change is intended, run ./gradlew updateGoldens, view the new image, and commit it.",
+            )
+        }
+        // The level line is rolled: it rises to the right by tan 20.
+        val l = d.scene.level ?: fail("no level line")
+        val slope = (l[3] - l[1]) / (l[2] - l[0])
+        assertTrue(kotlin.math.abs(slope + kotlin.math.tan(PanoramaGolden.ROLLED_DEG * kotlin.math.PI / 180)) < 1e-6, "slope $slope")
+        assertTrue(d.placed.isNotEmpty(), "names placed on the rolled lens")
+    }
+
+    @Test
+    fun anAttitudeOnItsSideGivesTheUprightAim() {
+        // A phone on its side (turned anticlockwise) with the display turned 90: the aim is level, roll 0.
+        val q = PhoneAttitude.quatOf(0.0, 4.0, 0.0, 90)
+        val aim = PanoramaAim.follow(PhoneAttitude.axes(q, 90), 60.0)
+        assertTrue(kotlin.math.abs(aim.rollDeg) < 1e-9 && kotlin.math.abs(aim.tiltDeg - 4.0) < 1e-9 && kotlin.math.abs(PanoramaAim.signedDeg(aim.bearingDeg)) < 1e-9, "$aim")
+    }
+
+    private fun write(image: BufferedImage, kind: String, file: String = PanoramaGolden.FILE): String {
+        val f = File(Goldens.diffDir.absoluteFile, file.replace('/', '-').removeSuffix(".png") + "-$kind.png")
         f.parentFile.mkdirs()
         ImageIO.write(image, "png", f)
         return f.path

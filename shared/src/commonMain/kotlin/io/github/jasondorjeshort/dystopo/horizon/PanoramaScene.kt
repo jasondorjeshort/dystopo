@@ -26,7 +26,7 @@ class PanoramaText(val width: (String) -> Double, val ascent: Double, val descen
  * - [tape]: the bearing tape along the top, its ticks and labels (the eight compass points and the degrees between, the
  *   step chosen so no two labels touch).
  * - [names] placed by [HorizonLabels.place] through the lens, kept off [blocked] (the tape, past the view's edges, the
- *   zoom buttons' corner) with the forced names (the dominant, the closest, a pick) kept inside [keepIn]; [marks] every
+ *   caller's boxes: the zoom buttons' corner and what else stands on the plot) with the forced names (the dominant, the closest, a pick) kept inside [keepIn]; [marks] every
  *   candidate on the view; [leftOut] every candidate not named, with its reason.
  *
  * Built on every frame of a drag: the skylines' directions are computed once ([LayeredSkyline.directions]), the outlines
@@ -57,8 +57,15 @@ class PanoramaScene(
     /** A label of the tape: [text] centred on [x], its baseline at [baseline], its [box]. */
     class TapeLabel(val text: String, val bearingDeg: Double, val x: Double, val baseline: Double, val box: RimBox)
 
-    /** The tape: its [box] (a plate along the top), the steps chosen, the [ticks] and the [labels]. */
-    class Tape(val box: RimBox, val tickStepDeg: Double, val labelStepDeg: Double, val ticks: List<Tick>, val labels: List<TapeLabel>)
+    /**
+     * The tape: its [box] (a plate along the top), the steps chosen, the [ticks] and the [labels]; T329: [facing], when
+     * fewer than [TAPE_MIN_TICKS] ticks cross the top edge (rolled far, or looking near straight up or down), the one mark
+     * that stands instead of them, centred on the plate ("Facing 347°"), with no ticks and no labels.
+     */
+    class Tape(
+        val box: RimBox, val tickStepDeg: Double, val labelStepDeg: Double, val ticks: List<Tick>, val labels: List<TapeLabel>,
+        val facing: TapeLabel? = null,
+    )
 
     /** A name placed: [placed] (its baseline centre, box and leader) and its mark ([markX], [markY]) where the triangle stands. */
     class Name(val placed: HorizonLabels.Placed, val markX: Double, val markY: Double) {
@@ -83,6 +90,12 @@ class PanoramaScene(
 
         /** Two labels of the tape keep at least this gap, dp. */
         const val TAPE_GAP_DP = 6.0
+
+        /** T329 (choice (e)): the tape runs along the top edge while at least this many of its ticks cross it; else the one "Facing" mark. */
+        const val TAPE_MIN_TICKS = 2
+
+        /** T329: the one mark's text for a bearing (the lens's, true): "Facing N", "Facing 347°". */
+        fun facingText(bearingDeg: Double): String = "Facing ${tapeText(bearingDeg)}"
 
         /** The tape's steps, degrees: each divides the next and 45 or 90, so the eight compass points fall on the labels. */
         val TAPE_STEPS = listOf(1.0, 5.0, 15.0, 45.0, 90.0)
@@ -114,13 +127,14 @@ class PanoramaScene(
 
         /**
          * The scene for [aim] on a plot [width] by [height] px at [dp] over [skyline], naming [ranked] ([HorizonLabels.rank])
-         * in [nameText], the tape's labels in [tapeText]; [zoomBox] the zoom buttons' corner (names keep off it); [picked]
-         * placed first; [held] the names of the previous scene, kept at their offsets from their marks instead of placed
-         * again (a gesture in progress; a name whose mark left the view goes).
+         * in [nameText], the tape's labels in [tapeText]; [keepOff] the caller's boxes names keep off (T329: the zoom
+         * buttons' corner, the steering button, the correction's line); [picked] placed first; [held] the names of the
+         * previous scene, kept at their offsets from their marks instead of placed again (a gesture in progress, or the
+         * phone moving in Follow; a name whose mark left the view goes). Right at any roll and tilt (T329).
          */
         fun build(
             aim: PanoramaAim, width: Double, height: Double, dp: Double, skyline: LayeredSkyline, ranked: List<HorizonLabels.Scored>,
-            nameText: PanoramaText, tapeText: PanoramaText, zoomBox: RimBox? = null, picked: HorizonLabel? = null, held: List<Name>? = null,
+            nameText: PanoramaText, tapeText: PanoramaText, keepOff: List<RimBox> = emptyList(), picked: HorizonLabel? = null, held: List<Name>? = null,
         ): PanoramaScene {
             val lens = aim.lens(width, height, dp)
             val dirs = skyline.directions
@@ -131,7 +145,7 @@ class PanoramaScene(
             val tape = tape(lens, tapeText)
             val big = 1e6
             val edges = listOf(RimBox(-big, -big, 0.0, big), RimBox(width, -big, big, big), RimBox(-big, -big, big, 0.0), RimBox(-big, height, big, big))
-            val blocked = edges + tape.box + listOfNotNull(zoomBox)
+            val blocked = edges + tape.box + keepOff
             val keepIn = RimBox(0.0, tape.box.bottom, width, height)
             val names = if (held != null) {
                 held.mapNotNull { n ->
@@ -157,11 +171,40 @@ class PanoramaScene(
             return PanoramaScene(aim, lens, layers, level(lens), tape, blocked, keepIn, names, marks, leftOut)
         }
 
-        /** The level line on [lens] (no roll: a row, f tan(tilt) below the centre), or null off the view. */
+        /**
+         * The level line on [lens] (x0, y0, x1, y1, x0 <= x1), or null off the view or looking straight up or down. With no
+         * roll it is a row f tan(tilt) below the centre; T329: at any roll and tilt it is where the rays have no height,
+         * fwd.u + right.u sx + up.u sy = 0 on the screen's plane (sx, sy over the focal length, y up), cut to the view.
+         */
         fun level(lens: LensView): DoubleArray? {
             if (abs(lens.tiltDeg) >= 89.999) return null
-            val y = lens.cy + lens.focalPx * tan(lens.tiltDeg * PI / 180)
-            return if (y in 0.0..lens.height) doubleArrayOf(0.0, y, lens.width, y) else null
+            val a = lens.axes
+            val ru = a.right.u
+            val uu = a.up.u
+            if (ru == 0.0) {
+                val y = lens.cy + lens.focalPx * tan(lens.tiltDeg * PI / 180)
+                return if (y in 0.0..lens.height) doubleArrayOf(0.0, y, lens.width, y) else null
+            }
+            // In px: ru (x - cx) - uu (y - cy) + fu f = 0.
+            val c = a.forward.u * lens.focalPx
+            val pts = ArrayList<Pair<Double, Double>>(4)
+            fun add(x: Double, y: Double) {
+                if (x in -1e-9..lens.width + 1e-9 && y in -1e-9..lens.height + 1e-9) pts += x.coerceIn(0.0, lens.width) to y.coerceIn(0.0, lens.height)
+            }
+            if (abs(uu) > 1e-12) for (x in listOf(0.0, lens.width)) add(x, lens.cy + (ru * (x - lens.cx) + c) / uu)
+            for (y in listOf(0.0, lens.height)) add(lens.cx + (uu * (y - lens.cy) - c) / ru, y)
+            var best: DoubleArray? = null
+            var bestD = 0.5
+            for (i in pts.indices) for (j in i + 1 until pts.size) {
+                val (x0, y0) = pts[i]
+                val (x1, y1) = pts[j]
+                val d = hypot(x1 - x0, y1 - y0)
+                if (d > bestD) {
+                    bestD = d
+                    best = if (x0 < x1 || (x0 == x1 && y0 <= y1)) doubleArrayOf(x0, y0, x1, y1) else doubleArrayOf(x1, y1, x0, y0)
+                }
+            }
+            return best
         }
 
         /** The text of a tape label at [deg] (a whole number of degrees): a compass point at the multiples of 45, else the degrees. */
@@ -190,6 +233,13 @@ class PanoramaScene(
             }
             at.sortBy { it.second }
             val baseline = bottom - TAPE_BASELINE_DP * dp
+            if (at.size < TAPE_MIN_TICKS) {
+                val s = facingText(lens.bearingDeg)
+                val w = text.width(s)
+                val x = lens.width / 2
+                val mark = TapeLabel(s, PanoramaAim.wrapDeg(lens.bearingDeg.roundToInt().toDouble()), x, baseline, RimBox(x - w / 2, baseline + text.ascent, x + w / 2, baseline + text.descent))
+                return Tape(box, tick, tick, emptyList(), emptyList(), mark)
+            }
             val gap = TAPE_GAP_DP * dp
             fun labels(step: Double): List<TapeLabel> = at.filter { (deg, _) -> isMultiple(deg, step) }.mapNotNull { (deg, x) ->
                 val s = tapeText(deg)
@@ -229,8 +279,8 @@ class PanoramaScene(
 }
 
 /**
- * T324: the ground below one skyline ({el <= the profile's angle at az}) as seen through a lens with no roll, cut to the
- * view. The skyline is a closed loop of directions round the circle; only a part of it is in front of the lens. The loop
+ * T324: the ground below one skyline ({el <= the profile's angle at az}) as seen through a lens, cut to the view; written
+ * about the lens's axis, so it holds at any roll and tilt (T329 tests it rolled, looking down and through the zenith). The skyline is a closed loop of directions round the circle; only a part of it is in front of the lens. The loop
  * is cut where it crosses a cone round the view's axis whose image is a circle [DISK] times the view's half diagonal
  * (so the cut, and anything behind the lens, is far off the view), the pieces inside are projected, and they are joined
  * along that circle on the side the ground is on (each arc tested by the ray at its middle). The rings are then cut to

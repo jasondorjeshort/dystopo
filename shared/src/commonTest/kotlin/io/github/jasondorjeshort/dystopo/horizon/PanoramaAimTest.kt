@@ -102,6 +102,114 @@ class PanoramaAimTest {
     }
 
     @Test
+    fun t329FollowsLimitsTheFingersAndTheWayBackToDrag() {
+        val f = PanoramaAim.follow(120.0, -80.0, 30.0, 60.0)
+        assertTrue(f.follow)
+        near(f.tiltDeg, -80.0, 1e-12); near(f.rollDeg, 30.0, 1e-12)
+        PanoramaAim.follow(0.0, -90.0, 0.0, 60.0); PanoramaAim.follow(0.0, 90.0, 170.0, 60.0)
+        assertTrue(runCatching { PanoramaAim(0.0, -60.0, 60.0) }.isFailure, "Drag keeps its -45")
+        assertTrue(runCatching { PanoramaAim(0.0, 0.0, 60.0, rollDeg = 5.0) }.isFailure, "Drag has no roll")
+        // The fingers change the field of view alone; a drag and a turn-to turn nothing.
+        assertEquals(f, f.drag(100.0, -40.0, w))
+        val z = f.zoom(true, w, h)
+        assertEquals(f.axes, z.axes); near(z.focalPx(w), f.focalPx(w) * PanoramaAim.ZOOM_STEP, 1e-6)
+        val p = f.pinch(1.3, 100.0, 700.0, w, h)
+        assertEquals(f.copy(fovDeg = p.fovDeg), p)
+        val t = f.turnTo(0.0, 200.0, w, h)
+        assertEquals(f, t.aim); near(t.turnDeg, 80.0, 1e-9)
+        // Back in Drag: the roll goes to zero and the tilt to Drag's limits at once; the bearing and the field of view stay.
+        val d = f.toDrag()
+        assertTrue(!d.follow)
+        assertEquals(PanoramaAim(120.0, PanoramaAim.MIN_TILT_DEG, 60.0), d)
+        // The lens of a Follow aim made from angles is the Drag aim's at no roll.
+        val a = PanoramaAim.follow(33.0, 12.0, 0.0, 60.0).lens(w, h, dp)
+        val b = PanoramaAim(33.0, 12.0, 60.0).lens(w, h, dp)
+        val pa = a.project(20.0, 50.0)!!
+        val pb = b.project(20.0, 50.0)!!
+        near(pa.x, pb.x, 1e-9); near(pa.y, pb.y, 1e-9)
+    }
+
+    @Test
+    fun t329AimAtPutsADirectionAtAnOffsetOnARolledScreen() {
+        for (roll in listOf(30.0, -75.0, 140.0)) {
+            for ((sx, sy) in listOf(0.2 to 0.1, -0.3 to 0.25, 0.0 to -0.4)) {
+                val aim = PanoramaAim.aimAt(25.0, 70.0, sx, sy, 60.0, 0.0, roll)
+                assertTrue(aim.follow)
+                near(aim.rollDeg, roll, 1e-6, "roll")
+                val lens = aim.lens(w, h, dp)
+                val pt = lens.project(25.0, 70.0)!!
+                near(pt.x, w / 2 + sx * lens.focalPx, 1e-6, "x at roll $roll ($sx, $sy)")
+                near(pt.y, h / 2 - sy * lens.focalPx, 1e-6, "y at roll $roll ($sx, $sy)")
+            }
+        }
+    }
+
+    @Test
+    fun t329TheArrowReadsByTheScreensAxesAtARoll() {
+        val keep = RimBox(12.0, 70.0, w - 12, h - 12)
+        // On its side clockwise (roll 90): what stands 60 degrees right of the view is toward the screen's top.
+        val side = PanoramaAim.follow(90.0, 0.0, 90.0, 60.0).lens(w, h, dp)
+        val up = assertNotNull(OffView.of(side, 0.0, 150.0, "Mount Rainier", keep, follow = true))
+        assertEquals(OffSide.UP, up.side); assertEquals("Mount Rainier, 60° up", up.text); assertEquals(70.0, up.y); assertEquals(-1.0, up.dirY)
+        // And what stands above the view is toward the screen's left.
+        val left = assertNotNull(OffView.of(side, 60.0, 90.0, "Sun", keep, follow = true))
+        assertEquals(OffSide.LEFT, left.side); assertEquals("Sun, 60° left", left.text); assertEquals(12.0, left.x)
+        // Rolled 30: a peak 40 degrees right on the level is to the right and a little up the screen.
+        val rolled = PanoramaAim.follow(90.0, 0.0, 30.0, 60.0).lens(w, h, dp)
+        val r = assertNotNull(OffView.of(rolled, 0.0, 130.0, "Peak", keep, follow = true))
+        assertEquals(OffSide.RIGHT, r.side); assertEquals(w - 12, r.x); assertTrue(r.y < h / 2)
+        // Looking straight down: something ahead, on the level or a little below it, is up the screen.
+        val down = PanoramaAim.follow(0.0, -90.0, 0.0, 60.0).lens(w, h, dp)
+        val ahead = assertNotNull(OffView.of(down, -10.0, 0.0, "Ahead", keep, follow = true))
+        assertEquals(OffSide.UP, ahead.side); assertEquals("Ahead, 80° up", ahead.text)
+        val level = assertNotNull(OffView.of(down, 0.0, 0.0, "Level", keep, follow = true))
+        assertEquals(OffSide.UP, level.side); assertEquals("Level, 90° up", level.text)
+    }
+
+    @Test
+    fun t329InDragTheArrowCountsTheBearingDifferenceAtEveryTilt() {
+        val keep = RimBox(12.0, 70.0, w - 12, h - 12)
+        for (tilt in listOf(30.0, 60.0)) {
+            val lens = PanoramaAim(90.0, tilt, 60.0).lens(w, h, dp)
+            for (el in listOf(0.0, 20.0)) for (d in listOf(100.0, 120.0, 150.0, 179.0)) for (sign in listOf(1.0, -1.0)) {
+                val a = assertNotNull(OffView.of(lens, el, 90.0 + sign * d, "Peak", keep), "tilt $tilt el $el turn ${sign * d}")
+                assertEquals(if (sign > 0) OffSide.RIGHT else OffSide.LEFT, a.side)
+                near(a.degrees, d, 1e-9, "tilt $tilt el $el turn ${sign * d}")
+                assertEquals("Peak, ${d.toInt()}° ${a.side.word}", a.text)
+            }
+        }
+    }
+
+    @Test
+    fun t329TheCorrectionFollowsTheFingerAlongTheLevelLine() {
+        for ((tilt, roll) in listOf(0.0 to 0.0, 0.0 to 30.0, 30.0 to 0.0, 25.0 to -40.0)) {
+            val axes = LensAxes.of(200.0, tilt, roll)
+            val lens = PanoramaAim.follow(axes, 60.0).lens(w, h, dp)
+            val (el0, az0) = lens.ray(w / 2, h / 2)
+            // 40 px along the drawn level line's direction (its slope is the roll's).
+            val r = roll * kotlin.math.PI / 180
+            val (dx, dy) = 40.0 * kotlin.math.cos(r) to -40.0 * kotlin.math.sin(r)
+            val c = HeadingCorrection.dragDeg(lens, dx, dy)
+            assertTrue(c < 0, "a drag along the line to the right turns the view west: $c")
+            val after = PanoramaAim.follow(PhoneAttitude.turned(axes, c), 60.0).lens(w, h, dp)
+            val p = after.project(el0, az0)!!
+            val along = (p.x - w / 2) * kotlin.math.cos(r) - (p.y - h / 2) * kotlin.math.sin(r)
+            near(along, 40.0, 1.0, "tilt $tilt roll $roll: the centre's ground followed the finger")
+            // Across the line: nothing.
+            near(HeadingCorrection.dragDeg(lens, -dy, dx), 0.0, 1e-9, "across")
+            // The other way: east.
+            assertTrue(HeadingCorrection.dragDeg(lens, -dx, -dy) > 0)
+        }
+        // The wrap, the line, the action's step.
+        near(HeadingCorrection.add(179.0, 3.0), -178.0, 1e-9)
+        near(HeadingCorrection.add(-179.5, -1.0), 179.5, 1e-9)
+        assertEquals("Compass adjusted 4° east", HeadingCorrection.line(4.2))
+        assertEquals("Compass adjusted 12° west", HeadingCorrection.line(-11.6))
+        assertEquals("Compass adjusted 0°", HeadingCorrection.line(0.3))
+        assertEquals(1.0, HeadingCorrection.ACTION_STEP_DEG)
+    }
+
+    @Test
     fun offTheViewLeftRightUpDownAndBehind() {
         val lens = PanoramaAim(90.0, 0.0, 60.0).lens(w, h, dp)
         val keep = RimBox(12.0, 70.0, w - 12, h - 12)
