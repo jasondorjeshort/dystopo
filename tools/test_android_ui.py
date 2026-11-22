@@ -656,3 +656,11 @@ for _n in ast.parse(open(os.path.join(here, "android-ui.py"), encoding="utf-8").
         assert _n.name not in _seen, f"android-ui.py defines {_n.name} twice (lines {_seen[_n.name]} and {_n.lineno})"
         _seen[_n.name] = _n.lineno
 print("test_android_ui (T313): ok")
+
+# T336: the Panorama step reads the bearing wanted from the Peaks row's second line, not from a number.
+assert ui.row_bearing("14409 ft · 4.7 mi · NNW 343°") == 343 and ui.row_bearing("4.1 mi · N 349°") == 349
+assert ui.row_bearing("14409 ft · 4.7 mi") is None and ui.row_bearing(None) is None
+_row = {"text": "Mount Rainier", "bounds": [40, 1000, 400, 1060]}
+_line = {"text": "14409 ft · 4.7 mi · NNW 343°", "bounds": [40, 1062, 700, 1110]}
+assert ui.row_second_line([_row, _line, {"text": "Gibraltar Rock", "bounds": [40, 1140, 400, 1190]}], _row) == _line["text"]
+print("test_android_ui (T336): ok")
