@@ -21,3 +21,12 @@ The owner, 2026-11-21: "Definitely, eventually."
 - It is the Panorama view at a chosen point and a chosen time, so it waits for the Panorama view and the one-clock idea.
 - 2026-11-21: a photo with no place in it (stripped EXIF) is the horizon-match idea's search run on a still image;
   recorded there (`2026-11-02-horizon-match-fix-from-the-camera.md`).
+
+Question: "Definitely, eventually": does this wait for the one clock (the sun at the photo's moment), or is the first
+form wanted sooner without the sun? Recommended: wait for the clock; say so and it rests until then. The place half is
+ready (wave 45: the Panorama opens at any point, `HorizonUi.openAt`), so the pass would then be small: Android's photo
+picker (no storage permission), the place, time and heading read from the photo on the phone only, and the Panorama
+at that point facing that heading with the photo above it. Matching the two skylines for an overlay stays with
+`2026-11-02-horizon-match-fix-from-the-camera.md`.
+
+Answer:
