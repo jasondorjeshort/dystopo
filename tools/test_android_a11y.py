@@ -472,4 +472,44 @@ finally:
     a11y.debug.device_now, a11y.debug.bootstrap, a11y.urllib.request.urlopen, a11y.time.sleep = _saved
 # end T335
 
+# T332: the map outside every offline map is a map screen: the online sources off (the server and the public sources),
+# the camera at Mont Blanc, waited for until the outside line and its action show; its end puts both sources back as found.
+mo = [s for s in a11y.SCREENS if s[0] == "map-outside"]
+assert len(mo) == 1 and mo[0][3] == "map" and mo[0][2] is a11y.end_map_outside, mo
+
+
+class OutsideSrv:
+    def __init__(self):
+        self.calls = []
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/settings":
+            return {"server": "http://10.0.2.2:9050"}
+        if path == "/firstrun/direct":
+            return {"enabled": True}
+        if path == "/firstrun":
+            return {"mapMessage": "outside", "actionShown": "Go to my offline maps"}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    osrv = OutsideSrv()
+    ctx = type("C", (), {"srv": osrv})()
+    mo[0][1](ctx)
+    assert [p for _m, p in osrv.calls][:4] == ["/settings", "/firstrun/direct", "/settings?server=", "/firstrun/direct?on=0"], osrv.calls
+    assert osrv.calls[4][1].startswith("/camera?lat=45.8326&lon=6.8652") and osrv.calls[-1] == ("GET", "/firstrun"), osrv.calls
+    osrv.calls.clear()
+    mo[0][2](ctx)
+    assert [p for _m, p in osrv.calls][:2] == ["/settings?server=http%3A%2F%2F10.0.2.2%3A9050", "/firstrun/direct?on=1"], osrv.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T332
+
 print("test_android_a11y: ok")

@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -53,7 +55,7 @@ private val Line = Color(0xFFE2D8C6)
 private val Red = Color(0xFFB0302A)
 private val Link = Color(0xFF2C7BB6)
 
-private class CardUi(val noPack: Boolean, val server: String, val progress: String?, val importing: Boolean, val direct: Boolean, val notice: String? = null)
+private class CardUi(val server: String,val progress: String?, val importing: Boolean, val direct: Boolean, val notice: String? = null)
 
 /**
  * T79: the first-run card over the map while no pack is installed: what is missing and the ways to get a map, each
@@ -67,7 +69,7 @@ private class CardUi(val noPack: Boolean, val server: String, val progress: Stri
  * in the height the rule gives it, and what still does not fit is hidden by the rule's ladder with its reason.
  */
 @Composable
-fun FirstRunCard(fallback: String?) {
+fun FirstRunCard(message: MapMessage?) {
     ImportPickerHost()
     val app = DystopoApp.instance
     var tick by remember { mutableStateOf(0) }
@@ -90,7 +92,7 @@ fun FirstRunCard(fallback: String?) {
             manager.downloads.activeCount() > 0 -> "Downloading a map..."
             else -> null
         }
-        OnlineService.get(app).let { o -> CardUi(FirstRun.noPack(app), AppSettings.server, progress, manager.importRunning, o.isDirect, if (o.isDirect) o.direct.notice() else null) }
+        OnlineService.get(app).let { o -> CardUi(AppSettings.server, progress, manager.importRunning, o.isDirect, if (o.isDirect) o.direct.notice() else null) }
     }
     // T106 (a T95 follow-up): a trip, a planned route or navigation owns the bottom of the map; the card, drawn after
     // them, covered the trip card after a relaunch with no pack (online, or a trip synced in). It comes back when they close.
@@ -98,21 +100,46 @@ fun FirstRunCard(fallback: String?) {
         io.github.jasondorjeshort.dystopo.app.trips.Trips.editing != null || io.github.jasondorjeshort.dystopo.app.trips.Trips.listOpen,
         io.github.jasondorjeshort.dystopo.app.routing.RouteSession.phase, io.github.jasondorjeshort.dystopo.app.nav.NavSession.active,
     )
-    val show = ui.noPack && !FirstRun.dismissed && !PacksUi.visible && !SettingsUi.visible && !cardsBelow
+    // T332: the card is for a phone that holds no map (no region and no downloaded area), once both have been read.
+    val noPack = message?.firstRun == true
+    val show = noPack && !FirstRun.dismissed && !PacksUi.visible && !SettingsUi.visible && !cardsBelow
     FirstRunCardState.visible = show
     LaunchedEffect(tick, show) { if (show) FirstRun.refreshEstimate(app) } // T220: the size in the first choice's sentence
-    FirstRunCardState.yieldedTo = if (ui.noPack && !FirstRun.dismissed && cardsBelow) "bottomCards" else null
+    FirstRunCardState.yieldedTo = if (noPack && !FirstRun.dismissed && cardsBelow) "bottomCards" else null
     Box(Modifier.fillMaxSize()) {
         if (!show) {
-            if (ui.noPack && fallback != null && !PacksUi.visible && !SettingsUi.visible && !cardsBelow) {
-                BasicText(
-                    fallback,
-                    style = TextStyle(color = Ink, fontSize = 16.sp, textAlign = TextAlign.Center),
-                    modifier = Modifier.align(Alignment.Center).padding(24.dp).background(Color(0xEEFFFCF5), RoundedCornerShape(8.dp)).padding(16.dp),
-                )
+            // After "Not now" with nothing held and nothing online, the no-map text; T332: with maps held and the view
+            // outside every one (nothing online), the outside line and the way to Offline maps.
+            val clear = !PacksUi.visible && !SettingsUi.visible && !cardsBelow
+            val text = when {
+                !clear -> null
+                message == MapMessage.NOTHING_HELD -> io.github.jasondorjeshort.dystopo.app.MainActivity.NO_PACK
+                message == MapMessage.OUTSIDE -> OUTSIDE_TEXT
+                else -> null
+            }
+            val action = if (text == OUTSIDE_TEXT) OUTSIDE_ACTION else null
+            FirstRunCardState.text = text
+            FirstRunCardState.action = action
+            if (text != null) {
+                Column(
+                    Modifier.align(Alignment.Center).padding(24.dp).background(Color(0xEEFFFCF5), RoundedCornerShape(8.dp)).padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    BasicText(text, style = TextStyle(color = Ink, fontSize = 16.sp, textAlign = TextAlign.Center))
+                    if (action != null) {
+                        BasicText(
+                            action,
+                            Modifier.heightIn(min = 48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { PacksUi.visible = true }
+                                .wrapContentHeight().padding(horizontal = 12.dp),
+                            style = TextStyle(color = Link, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center),
+                        )
+                    }
+                }
             }
             return@Box
         }
+        FirstRunCardState.text = null
+        FirstRunCardState.action = null
         // T320: the layout rule places and sizes the card (`OverlayLayout`, a bottom card under the whole top block, the
         // lower controls standing on it) through its control node; the paddings here only hold it for the first frame,
         // before the rule has measured it: under the search box (T220), above the update offer (T106) and the switch (T315).

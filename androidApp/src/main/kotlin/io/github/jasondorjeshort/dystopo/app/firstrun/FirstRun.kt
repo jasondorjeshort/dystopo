@@ -105,8 +105,29 @@ object FirstRun {
         }, "dystopo-firstrun-size").apply { isDaemon = true }.start()
     }
 
-    /** True while no pack is open on the map (what the card is for). */
-    fun noPack(app: DystopoApp = DystopoApp.instance): Boolean = app.tiles.packs.regions.isEmpty()
+    /**
+     * True while the phone holds no map, once the packs and the areas have been read (what the card is for). T332: a
+     * downloaded area counts as a held map as a region does ([MapMessage]); before, only a region did.
+     */
+    fun noPack(app: DystopoApp = DystopoApp.instance): Boolean = mapMessage(app, null).firstRun
+
+    /** T332: the boxes of the open regions (their elevation and vector archives). */
+    private fun regionBoxes(app: DystopoApp): List<PackBounds> =
+        app.tiles.packs.regions.flatMap { listOfNotNull(it.demCoverage?.bounds, it.osmCoverage?.bounds) }
+
+    /** T332: the boxes of the downloaded areas that hold tiles ([MapMessage.heldArea]). */
+    private fun areaBoxes(): List<PackBounds> =
+        io.github.jasondorjeshort.dystopo.app.areas.Areas.list.filter { MapMessage.heldArea(it.state, it.pack != null) }.mapNotNull { runCatching { it.area.bounds }.getOrNull() }
+
+    /** T332: the map's message for the visible box [view] ([MapMessage.choose]); the boxes are in memory, so any thread. */
+    fun mapMessage(app: DystopoApp, view: PackBounds?): MapMessage = MapMessage.choose(
+        opened = io.github.jasondorjeshort.dystopo.app.areas.Areas.isRead,
+        regions = regionBoxes(app), areas = areaBoxes(), view = view, online = app.tiles.online != null,
+    )
+
+    /** T332: what the map last chose (`GET /firstrun` `mapMessage`), set by the map screen each half second. */
+    @Volatile var lastMessage: MapMessage? = null
+    @Volatile var lastView: PackBounds? = null
 
     /** Starts "Download the map around me" on a background thread ([lat]/[lon]: debug override of the fix). */
     fun downloadAroundMe(lat: Double? = null, lon: Double? = null): Map<String, Any?> {
@@ -218,6 +239,13 @@ object FirstRun {
         val choices = firstRunChoices(AppSettings.server, online.isDirect, estimateBytes, AppSettings.units)
         return linkedMapOf(
             "noPack" to noPack(app),
+            // T332: the rule's inputs and what the map chose last (`opening`, `nothingHeld`, `nothingHeldOnline`, `outside`, `none`).
+            "mapHolds" to linkedMapOf(
+                "opened" to io.github.jasondorjeshort.dystopo.app.areas.Areas.isRead, "regions" to app.tiles.packs.regions.size, "areas" to areaBoxes().size,
+                "online" to (app.tiles.online != null),
+            ),
+            "mapMessage" to lastMessage?.code, "textShown" to FirstRunCardState.text, "actionShown" to FirstRunCardState.action,
+            "viewInside" to lastView?.let { v -> MapMessage.covers(regionBoxes(app) + areaBoxes(), v) },
             "dismissed" to dismissed,
             "cardVisible" to FirstRunCardState.visible, "cardYieldedTo" to FirstRunCardState.yieldedTo, // T106
             // T320: how far the card's body scrolls in the room the layout rule gives it, and whether its links scroll with it.
@@ -286,6 +314,10 @@ internal object FirstRunCardState {
     @Volatile var visible = false
     /** T106: why the card is not shown although it would be (`bottomCards`: a trip, a route or navigation owns the bottom). */
     @Volatile var yieldedTo: String? = null
+
+    /** T332: the centred line drawn instead of the card (the no-map text or the outside line), and its action's label. */
+    @Volatile var text: String? = null
+    @Volatile var action: String? = null
 
     /**
      * T320: the card's scrolling body as last measured (its height on screen, px) and its scroll state, for the layout

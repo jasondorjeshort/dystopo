@@ -182,6 +182,8 @@ object Areas : VersionPins {
      * cache's lock must not wait on).
      */
     @Volatile private var ready = false
+    /** T332: the records have been read ([list] holds them); the map's message waits for it. */
+    val isRead: Boolean get() = ready
     private val readyLatch = java.util.concurrent.CountDownLatch(1)
     @Volatile private var loader: Thread? = null
 
