@@ -1,7 +1,7 @@
 # 0065. The coordinator's brainstorms and a readable ideas queue
 
 Date: 2026-11-22
-Status: under review
+Status: promoted to ADR 0065
 
 ## Question
 
