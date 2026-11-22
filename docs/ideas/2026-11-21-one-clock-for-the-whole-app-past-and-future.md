@@ -34,6 +34,8 @@ with "Back to now"; nothing persists across launches.
   as a row at a long-pressed point for the set date ("Direct sun 8:10 AM to 4:35 PM"), from `Sun.onTerrain` on that
   point's horizon, which the Horizon view's sun path already uses where the view stands.
 
+2026-11-22, folded in at triage (the owner, 2026-11-22, by multiple choice at triage): one time slider scrubbed across the map, the Horizon view and the Panorama (sun, moon, satellites and flights moving together, the map's shade following), for "when is the light on that ridge".
+
 Question: the one clock changes what every time-dependent layer reads and how a user knows a view is not now, and it
 is more than one pass; does it go through a proposal with the survey as its Prior art (ADR 0039: how planners and sky
 apps set and show a time that is not now) and an ADR, as the Panorama view did, or straight to a first pass?
