@@ -70,12 +70,29 @@ and drawn hollow; placement greedy by score with screen-space collisions against
 sun's arc, and a minimum gap between names of 4° x sqrt(candidates within ±15° / 5), at least 2°. A `kind` with a
 base weight lets huts, passes and waypoints join the same ranking later.
 
-Question: the view, its name, the switch and three of its layers are built (T308: satellites, peaks, the sun; T309:
-the Map | Horizon switch and the rim's ranking), the moon and the long-pressed point have ideas of their own, so
-which of the remaining layers do you want next, each as an idea of its own so this file can go: your own places in
-view (waypoints, the car, the route's next pass, the way back), a bearing to a chosen point with the declination,
-bright stars and planets, satellite passes, or the camera behind the plot? Recommended: your own places in view
-first; everything it needs is on the phone already (waypoints, routes, `Viewshed` for whether each is in sight) and
-it joins the rim's ranking through T309's `kind` weights. Stars and passes need new data sources and can wait.
+2026-11-21, the owner, by multiple choice. Asked: the view, its name, the switch and three of its layers are built
+(T308: satellites, peaks, the sun; T309: the Map | Horizon switch and the rim's ranking), the moon and the
+long-pressed point have ideas of their own, so which of the remaining layers comes next: your own places in view
+(waypoints, the car, the route's next pass, the way back), a bearing to a chosen point with the declination, bright
+stars and planets, satellite passes, or the camera behind the plot? The owner: your own places in view next (the
+recommendation: everything it needs is on the phone already and it joins the rim's ranking through T309's `kind`
+weights; stars and passes need new data sources and can wait). The others have files of their own now
+(`2026-11-21-which-way-is-it-the-panorama-facing-a-selected-place.md`,
+`2026-11-21-stars-and-planets-over-the-named-skyline.md`; the camera is ADR 0064's option; satellite passes wait for
+orbits, `2026-11-19-a-gps-coverage-forecast-along-a-route.md`), so this file goes when the Plan lands.
 
-Answer: the owner, 2026-11-21, by multiple choice: your own places in view next (recommended).
+Plan: one pass, a Places layer on both sky views. `HorizonLayer.PLACES` ("Places", synced `horizonPlaces`, on by
+default; `shared/.../horizon/HorizonLayers.kt`) and a `LabelKind.PLACE` with its weight (`HorizonLabels.kt`). A pure
+function in `shared/.../horizon/` turns the user's own places (the waypoints, the planned route's next stop and its
+end, a recording's start as the way back) into marks from the view's point: bearing, distance, the apparent angle of
+the ground there, and in sight or hidden by the clearance test the peaks use (`PeakRim.kt`), a hidden one drawn
+hollow. The app reads them from the track store and the route session (`app/horizon/HorizonData.kt`), draws them on
+the round plot and through the lens (`app/panorama/PanoramaLayers.kt`), names them in a placement pass after the
+peaks and the flights, and lists them in a "Your places" section (`app/horizon/SkyViewSections.kt`) whose rows pick
+and turn the view as a peak's do; `GET /horizon` and `GET /panorama` report `places`. At a chosen point the layer
+stays on (what of mine is seen from there). Verify: unit tests of the marks and the placement; on the emulator at
+Paradise with three waypoints (one behind a ridge) and a planned route, both views' frames at the default text and
+at font scale 2.0, the a11y baseline updated. Docs: `docs/reference/android-horizon-view.md`,
+`android-panorama-view.md`. Strings in the report (ADR 0031). Out of scope: a parked car (the app keeps none), huts
+and passes from the map's own data, the which-way action. It edits a file under `app/panorama/`, so not in a wave
+beside a task that owns that folder.
