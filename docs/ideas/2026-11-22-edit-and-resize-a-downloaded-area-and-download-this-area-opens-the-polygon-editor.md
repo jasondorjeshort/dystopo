@@ -46,6 +46,8 @@ row says it cannot be reshaped (or offers a new area drawn inside it).
 3. A pack row's "Show on map" frame (the owner's screenshot shows the polygons): the stored shape of each is what an
    edit would start from.
 
+2026-11-22, folded in at triage (the owner, 2026-11-22, by multiple choice at triage): a resize or an upgrade (Medium to Full) fetches only the difference (the tiles a new shape adds, the zooms a finer detail adds) and releases what falls outside, using ADR 0060's cell ledger; a resize that re-downloads everything is a defect of this work.
+
 Question: is "Download this area" the polygon editor, started on the visible rectangle, with the present card as its
 last step? Recommended: yes, since it is the same act as Draw an area; one editor, two ways in. Resizing a saved area
 follows (areas only), with the re-download caveat in words and the size shown before the owner confirms; resizing a
