@@ -67,6 +67,7 @@ Added at the close (2026-11-22; the numbers T329 to T335 are wave 46's draft). T
 **Owns:** `tools/android-ui.py` (the T327 block and `panorama_step`'s docstring), `tools/test_android_ui.py`, `docs/reference/release-realism.md` where it describes the step.
 
 **Done when:** the `features` part run on the branch against the swept commit's release build is green, its `panorama` step ok with the bearing wanted in its report (`target.bearingWanted`, read from the row) and the view within 3 degrees of it both times, the frames `panorama-target` and `panorama-arrow` written and viewed; `python -I tools/test_android_ui.py` passes with a case for the row's line and one for a line without a bearing; `./gradlew check` green. After the merge the coordinator's rerun `-Only features -RerunOf out\sweep-20261122-w45` on `main` is the wave's closing run.
+**Status: merged.** Verifier MERGE on f4e4a456 (merged as 1c326b99), no fix round, no emulator (the implementer's whole-part run read from its files; the device repeat is the rerun of `features` on `main`). Follow-ups: the `features` part's steps leave the fix where the last walk ended, so a step that wants Paradise sets it itself or reads what it compares from the screen; `verify-task.ps1` asks for `-Avd`, `-EmuPort` and `-Port` even with `-Skip boot,tour`, and `stop,guard` had to be skipped by name; two ports of a base range given in the brief (9012, 9013) are held by another program of this PC (`tools\ports.ps1` first).
 
 **Checks:** none.
 

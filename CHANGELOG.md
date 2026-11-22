@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-22
 
+- T336: The sweep's Panorama step takes the target's bearing from the app's own row, not from a number
 - T327: The Panorama's other layers, a list row that turns the view, and the edge arrow
 - T326: The Panorama view on the phone: the third segment, the lens plot, drag, tilt and zoom
 - T328: A launch crash keeps its stack, and the start-up walker that throws is found
