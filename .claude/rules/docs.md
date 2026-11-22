@@ -77,8 +77,9 @@ their one-line replacements. From the Hatchery base, with this project's exempti
   never ticked (ADR 0036). Git has the history; a directory holding only its README is the resting
   state. An idea ends in at most one block: `Plan:` (settled, pass-sized, ready to build),
   `Question:` with a blank `Answer:` (the owner's choice; they fill the answer in), or `Waits:` (the
-  owner's deferral to a named trigger). No block means untriaged. The `triage` skill writes blocks;
-  only the owner writes `Waits:` or deletes an idea for not being wanted.
+  owner's deferral to a named trigger, or at rest on the owner's quoted words). No block means
+  untriaged. The `triage` skill writes blocks; only the owner decides a `Waits:` (an agent writes
+  one only from the owner's quoted words) or deletes an idea for not being wanted.
 - An index is the one list a doc may carry. Prose never inventories files, fields, routes or counts
   ("the twelve commands", "a 400-line file"): every ordinary commit moves the figure, and a later
   session then "corrects" it. Write the rule that generates the list instead.
