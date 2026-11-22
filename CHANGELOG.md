@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.41-alpha (2026-11-22)
+
 ### 2026-11-22
 
 - T336: The sweep's Panorama step takes the target's bearing from the app's own row, not from a number
