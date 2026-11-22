@@ -90,3 +90,9 @@ separation the projection supplies, so the round plot's placements cannot move.
 is the screen distance over the rim's 3.17 dp per degree at a 411 dp plot), `LayeredSkyline` (one sweep per range, step
 0.1 degree), devtool `panorama`. Its report proposes 60 degrees as the default field of view and no vertical stretch;
 passes two and three remain, so the file stays.
+2026-11-22: pass two's first half is built (T324, the scene and the aim in `shared`; T325, the Horizon view's pane cut
+into parts; T326, the view on the phone): the switch's third segment, the lens plot over the Horizon view's pane with the
+Peaks layer, drag, tilt, the pinch and two zoom buttons, the terrain and sweeps to the view range, `GET` and
+`POST /panorama`, the sweep step `panorama` and the a11y screen `panorama` (`docs/reference/android-panorama-view.md`).
+Left of pass two: the Sun, Satellites and Flights on the lens, a list row turning the view and the edge arrow (T327).
+Pass three remains.

@@ -85,6 +85,7 @@ object HelpRegistry {
             // end T263
             io.github.jasondorjeshort.dystopo.app.gnss.GNSS_HELP + // T307: the satellites
             io.github.jasondorjeshort.dystopo.app.horizon.HORIZON_HELP + // T308: the Horizon view
+            io.github.jasondorjeshort.dystopo.app.panorama.PANORAMA_HELP + // T326: the Panorama view
             // T311: the Flights card
             io.github.jasondorjeshort.dystopo.app.aircraft.AIRCRAFT_HELP
             // end T311

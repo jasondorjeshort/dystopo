@@ -22,13 +22,14 @@ object HorizonText {
     const val PEAKS_NONE = "none in view"
 
     /** The plot's reach (`Horizon.DEFAULT_RANGE_M`, 30 km) in the user's units: "30 km" or "18.6 mi". */
-    fun range(units: ContourUnits): String = UnitFormat.distance(io.github.jasondorjeshort.dystopo.dem.Horizon.DEFAULT_RANGE_M, units)
+    fun range(units: ContourUnits, rangeM: Double = io.github.jasondorjeshort.dystopo.dem.Horizon.DEFAULT_RANGE_M): String = UnitFormat.distance(rangeM, units)
 
-    fun peaksNone(units: ContourUnits) = "No named peak in view or just out of sight within ${range(units)}."
+    /** T326: [rangeM] the host's reach (the Panorama's is the view range). */
+    fun peaksNone(units: ContourUnits, rangeM: Double = io.github.jasondorjeshort.dystopo.dem.Horizon.DEFAULT_RANGE_M) = "No named peak in view or just out of sight within ${range(units, rangeM)}."
 
     /** T309: "12 peaks in view or just out of sight within 30 km, closest first." */
-    fun peaksCount(n: Int, units: ContourUnits) =
-        "$n ${if (n == 1) "peak" else "peaks"} in view or just out of sight within ${range(units)}, closest first."
+    fun peaksCount(n: Int, units: ContourUnits, rangeM: Double = io.github.jasondorjeshort.dystopo.dem.Horizon.DEFAULT_RANGE_M) =
+        "$n ${if (n == 1) "peak" else "peaks"} in view or just out of sight within ${range(units, rangeM)}, closest first."
 
     /** T309: a peak hidden by less than [io.github.jasondorjeshort.dystopo.horizon.PeakRim.HIDDEN_M]: its row and its pick say so. */
     const val JUST_OUT_OF_SIGHT = "just out of sight"

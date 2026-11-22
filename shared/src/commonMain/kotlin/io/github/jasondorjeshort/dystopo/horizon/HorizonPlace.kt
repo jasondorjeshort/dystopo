@@ -17,6 +17,24 @@ data class HorizonPoint(val lat: Double, val lon: Double, val name: String? = nu
 enum class SwitchFrom(val key: String) { LONG_PRESS("longPress"), SEARCH("search"), FIX("fix") }
 
 /**
+ * T326: the views of the switch, left to right ("Map | Horizon | Panorama"): [key] as the debug routes name them,
+ * [label] the segment's text.
+ */
+enum class SkyView(val key: String, val label: String) {
+    MAP("map", "Map"), HORIZON("horizon", "Horizon"), PANORAMA("panorama", "Panorama");
+
+    companion object {
+        fun of(key: String?): SkyView? = entries.firstOrNull { it.key == key }
+    }
+}
+
+/** T326: what a tap on a segment does ([HorizonPlace.switchAction]). */
+enum class SwitchAction { NONE, CLOSE, OPEN_AT_SELECTION, KEEP_PLACE }
+
+/** T326: the sky views as the switch sees them: which [view] shows, the [point] it stands on (null: the fix) and the [picked] peak's key. */
+data class SkyState(val view: SkyView, val point: HorizonPoint?, val picked: String?)
+
+/**
  * T317: the place line under the horizon: [text] as shown, [moved] true when the view is not where the phone is (tinted
  * apart, with "Back to here"), [kind] `here`, `named`, `offset` or `unknown` (no fix to measure from), [distanceM] and
  * [bearingDeg] from the fix to the point (null at the fix or without one).
@@ -87,6 +105,48 @@ object HorizonPlace {
         searchMarker != null -> SwitchFrom.SEARCH
         else -> SwitchFrom.FIX
     }
+
+    // ---- T326: the switch for three views ----
+
+    /**
+     * T326: what a tap on the switch's segment [to] does with [from] showing (wave 45's choices (a) and (b)): nothing on
+     * the segment already shown; "Map" closes either sky view (the place and a pick let go); from the map a sky view opens
+     * at the map's selection ([switchFrom], `ViewSwitch.openAtSelection`); between the two sky views the view changes and
+     * keeps the place it stands on and a picked peak (the long-press card is not read again).
+     */
+    fun switchAction(from: SkyView, to: SkyView): SwitchAction = when {
+        from == to -> SwitchAction.NONE
+        to == SkyView.MAP -> SwitchAction.CLOSE
+        from == SkyView.MAP -> SwitchAction.OPEN_AT_SELECTION
+        else -> SwitchAction.KEEP_PLACE
+    }
+
+    /**
+     * T326: the sky views' state after a tap on [to], from [state]: [selection] is where the map's selection stands (the
+     * point [switchFrom] picks, null for the fix), read only when a sky view opens from the map. Pure, as the app applies it.
+     */
+    fun switched(state: SkyState, to: SkyView, selection: HorizonPoint?): SkyState = when (switchAction(state.view, to)) {
+        SwitchAction.NONE -> state
+        SwitchAction.CLOSE -> SkyState(SkyView.MAP, null, null)
+        SwitchAction.OPEN_AT_SELECTION -> SkyState(to, selection, null)
+        SwitchAction.KEEP_PLACE -> state.copy(view = to)
+    }
+
+    /**
+     * T326: the Panorama's bearing at an opening (wave 45's choice (c)): toward a picked peak when one is kept
+     * ([pickedBearingDeg]); else, when the view stands at the fix ([atFix]), the compass [headingDeg] (its first reading,
+     * taken once); else north.
+     */
+    fun openingBearing(pickedBearingDeg: Double?, atFix: Boolean, headingDeg: Double?): Double = when {
+        pickedBearingDeg != null -> wrap(pickedBearingDeg)
+        atFix && headingDeg != null -> wrap(headingDeg)
+        else -> 0.0
+    }
+
+    /** T326: the bearing a picked peak's key holds ("<name>@<bearing in tenths>", the sky views' key), or null. */
+    fun bearingOfKey(key: String?): Double? = key?.substringAfterLast('@', "")?.toLongOrNull()?.let { wrap(it / 10.0) }
+
+    private fun wrap(deg: Double): Double = ((deg % 360) + 360) % 360
 
     /** A coordinate to 4 decimals ("46.8530", "-121.7600"). */
     private fun coord(v: Double): String {

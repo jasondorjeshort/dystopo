@@ -48,6 +48,8 @@ import io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi
 import io.github.jasondorjeshort.dystopo.app.search.SearchMarker
 import io.github.jasondorjeshort.dystopo.app.tracking.LongPressMenu
 import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
+import io.github.jasondorjeshort.dystopo.horizon.SkyView
+import io.github.jasondorjeshort.dystopo.horizon.SwitchAction
 import io.github.jasondorjeshort.dystopo.horizon.SwitchFrom
 import io.github.jasondorjeshort.dystopo.ui.OverlayLayout
 
@@ -61,15 +63,21 @@ import io.github.jasondorjeshort.dystopo.ui.OverlayLayout
  * [HEIGHT_DP] tall, its text at map chrome's capped font scale, [MapChrome]), the segments in the order [SEGMENTS]. The
  * map's layout rule reserves the same rectangle (`ui/OverlayLayout.kt`, [OverlayLayout.switchRect]): the credit line
  * stands beside it and the rest of the map's lower controls above it ([floorDp]). The Horizon view draws it at the same
- * anchor and pads its scroll area and, in landscape, its plot clear of it ([reserveDp]). A third segment (a Panorama
- * view) goes at the end of [SEGMENTS]: the anchor grows to the right, and the credit line beside it narrows.
+ * anchor and pads its scroll area and, in landscape, its plot clear of it ([reserveDp]).
+ *
+ * T326: three segments, "Map | Horizon | Panorama" ([SEGMENTS], [SkyView]); the anchor grew to the right. What a tap does
+ * is [HorizonPlace.switchAction]'s rule: "Map" closes either sky view, the map to a sky view opens it at the map's selection
+ * ([openAtSelection]), and between the two sky views the place and a picked peak stay. The credit line stands beside the
+ * switch while its text fits whole there, else above it across the window (`about/AttributionLine.kt`, wave 45's (h)).
+ * Debug: `POST /horizon/switch?to=map|horizon|panorama`.
  */
 object ViewSwitch {
     const val MAP = "Map"
     const val HORIZON = "Horizon"
+    const val PANORAMA = "Panorama"
 
-    /** T315: the segments in order, left to right, and whether each is the Horizon view. */
-    val SEGMENTS: List<Pair<String, Boolean>> = listOf(MAP to false, HORIZON to true)
+    /** T315: the segments in order, left to right; T326: the three views. */
+    val SEGMENTS: List<SkyView> = listOf(SkyView.MAP, SkyView.HORIZON, SkyView.PANORAMA)
 
     /** Its height (dp): each segment's least, which its one line of text at map chrome's capped font scale stays under. */
     const val HEIGHT_DP = 48
@@ -77,12 +85,22 @@ object ViewSwitch {
     /** T315: the anchor's distance in from the left inset and up from the bottom inset (dp); the layout rule's [OverlayLayout.SWITCH_EDGE]. */
     const val EDGE_DP = OverlayLayout.SWITCH_EDGE
 
-    /** The group's spoken label. */
-    const val LABEL = "Map or horizon view"
+    /** The group's spoken label; T326: naming the three. */
+    const val LABEL = "Map, horizon or panorama view"
 
-    /** Test tags of the two segments (the device tour taps them by their nodes' bounds). */
+    /** Test tags of the segments (the device tour taps them by their nodes' bounds). */
     const val TAG_MAP = "horizonSwitch.map"
     const val TAG_HORIZON = "horizonSwitch.horizon"
+    const val TAG_PANORAMA = "horizonSwitch.panorama"
+
+    fun tagOf(v: SkyView): String = when (v) {
+        SkyView.MAP -> TAG_MAP
+        SkyView.HORIZON -> TAG_HORIZON
+        SkyView.PANORAMA -> TAG_PANORAMA
+    }
+
+    /** T326: the view showing now: the map while no sky view is open, else the one [HorizonUi.view] names. */
+    val showing: SkyView get() = if (HorizonUi.open) HorizonUi.view else SkyView.MAP
 
     /** The Horizon view's own copy of the switch (a plain tag: the map's layout does not place it). */
     const val TAG_ON_VIEW = "horizonViewSwitch"
@@ -121,9 +139,21 @@ object ViewSwitch {
      * selected place when there is one ([openAtSelection]); a selection made inside the view does not count (the view is
      * open already, so this returns first).
      */
-    fun select(horizon: Boolean) {
-        if (horizon == HorizonUi.open) return
-        if (horizon) openAtSelection() else HorizonUi.close()
+    fun select(to: SkyView) {
+        val action = HorizonPlace.switchAction(showing, to)
+        // T326: an opening of the Panorama (from the map or from the Horizon view): the aim at opening (choice c).
+        if (to == SkyView.PANORAMA && (action == SwitchAction.OPEN_AT_SELECTION || action == SwitchAction.KEEP_PLACE)) {
+            io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.opened()
+        }
+        when (action) {
+            SwitchAction.NONE -> {}
+            SwitchAction.CLOSE -> HorizonUi.close()
+            SwitchAction.OPEN_AT_SELECTION -> {
+                HorizonUi.show(to)
+                openAtSelection()
+            }
+            SwitchAction.KEEP_PLACE -> HorizonUi.show(to)
+        }
     }
 
     /** T321: what the last "Horizon" from the switch stood on (`POST /horizon/switch` answers it), or null before one. */
@@ -171,18 +201,19 @@ private val MapColours = ViewSwitchColours(Color(0xEEFFFCF5), Color(0xFF2B2420),
 
 /** The segments, the selected one filled (ink) with paper text, the others paper with ink text; each at least 48 dp tall. */
 @Composable
-fun ViewSwitchRow(horizon: Boolean, colours: ViewSwitchColours, modifier: Modifier = Modifier) {
+fun ViewSwitchRow(selected: SkyView, colours: ViewSwitchColours, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(20.dp)
     Row(
         modifier.semantics { contentDescription = ViewSwitch.LABEL }.selectableGroup()
             .clip(shape).background(colours.paper, shape).border(1.dp, colours.line, shape),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        for ((label, isHorizon) in ViewSwitch.SEGMENTS) {
-            val on = horizon == isHorizon
+        for (view in ViewSwitch.SEGMENTS) {
+            val label = view.label
+            val on = selected == view
             Box(
-                Modifier.testTag(if (isHorizon) ViewSwitch.TAG_HORIZON else ViewSwitch.TAG_MAP)
-                    .selectable(selected = on, role = Role.Tab) { ViewSwitch.select(isHorizon) }
+                Modifier.testTag(ViewSwitch.tagOf(view))
+                    .selectable(selected = on, role = Role.Tab) { ViewSwitch.select(view) }
                     .heightIn(min = ViewSwitch.HEIGHT_DP.dp).widthIn(min = 64.dp).background(if (on) colours.ink else Color.Transparent, shape)
                     .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.Center,
@@ -209,13 +240,13 @@ fun ViewSwitchRow(horizon: Boolean, colours: ViewSwitchColours, modifier: Modifi
  * [onPlaced] gets its rectangle in the Compose root (px: left, top, right, bottom) and the root's height (px).
  */
 @Composable
-fun AnchoredViewSwitch(horizon: Boolean, colours: ViewSwitchColours, tagged: Modifier, onPlaced: (FloatArray, Float) -> Unit = { _, _ -> }) {
+fun AnchoredViewSwitch(selected: SkyView, colours: ViewSwitchColours, tagged: Modifier, onPlaced: (FloatArray, Float) -> Unit = { _, _ -> }) {
     val insets = ViewSwitch.anchorInsets
     val density = LocalDensity.current.density
     MapChrome {
         Box(Modifier.fillMaxSize()) {
             ViewSwitchRow(
-                horizon, colours,
+                selected, colours,
                 viewSwitchAnchor(this, insets).then(tagged).onGloballyPositioned { c ->
                     val at = c.positionInRoot()
                     var root = c
@@ -233,7 +264,7 @@ fun AnchoredViewSwitch(horizon: Boolean, colours: ViewSwitchColours, tagged: Mod
 fun MapViewSwitch() {
     val density = LocalDensity.current.density
     DisposableEffect(Unit) { onDispose { ViewSwitch.mapAt(0f, 0f) } }
-    AnchoredViewSwitch(false, MapColours, Modifier.control("horizonSwitch")) { r, rootH -> // the node first (T243)
+    AnchoredViewSwitch(SkyView.MAP, MapColours, Modifier.control("horizonSwitch")) { r, rootH -> // the node first (T243)
         ViewSwitch.mapAt((rootH - r[1]) / density, ViewSwitch.EDGE_DP + (r[2] - r[0]) / density)
     }
 }

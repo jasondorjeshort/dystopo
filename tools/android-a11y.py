@@ -819,6 +819,21 @@ def scr_horizon_elsewhere(c):
 # end T321
 
 
+# T326
+def scr_panorama(c):
+    """T326: the Panorama view at the fix (Paradise), opened by the switch's route as a tap on its third segment does, its
+    skyline swept to the view range and its peaks named: the plot (its spoken label and four actions), the zoom buttons, the
+    pane's place line, heading, Peaks toggle and list."""
+    c.srv.ok("POST", "/horizon/switch?to=panorama", timeout=30.0)
+    c.srv.ok("GET", "/panorama?wait=60000", timeout=120.0)
+    time.sleep(1.0)
+
+
+def end_panorama(c):
+    c.srv.call("POST", "/horizon/switch?to=map")
+# end T326
+
+
 # T311
 FLIGHTS_REPLAY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "shared", "src", "commonTest", "resources", "aircraft", "rainier-replay.json")
 
@@ -937,6 +952,7 @@ SCREENS = [
     ("horizon-flights", scr_horizon_flights, end_horizon_flights, "screen"),
     # end T312
     ("horizon-elsewhere", scr_horizon_elsewhere, end_horizon, "screen"),  # T321
+    ("panorama", scr_panorama, end_panorama, "screen"),  # T326
 ]
 
 

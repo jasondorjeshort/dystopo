@@ -81,8 +81,26 @@ import kotlin.math.hypot
  * asked for, and what the view last drew ([drawn], `GET /horizon` `drawn`).
  */
 object HorizonUi {
+    /** Whether a sky view is open; T326 (wave 45's choice (i)): true for either, the Horizon view or the Panorama ([view]). */
     var open by mutableStateOf(false)
         private set
+
+    /**
+     * T326: which sky view shows while [open]: the Horizon view (the round plot) or the Panorama (`app/panorama/`). The
+     * switch sets it ([show]); [close] returns it to the Horizon view, so the settings row and "Sky from here" open that.
+     */
+    var view by mutableStateOf(io.github.jasondorjeshort.dystopo.horizon.SkyView.HORIZON)
+        private set
+
+    /** T326: shows sky view [v] (the switch, main thread): the place and a pick stay; opening is [open]'s or [openAt]'s. */
+    fun show(v: io.github.jasondorjeshort.dystopo.horizon.SkyView) {
+        if (v == io.github.jasondorjeshort.dystopo.horizon.SkyView.MAP || v == view) return
+        view = v
+        drawn = null
+        names = emptyList()
+        flightMarks = emptyList()
+        scrollTo = 0
+    }
 
     /** The peak a tap on its label or its row picked (its name and bearing), or null. */
     var selected by mutableStateOf<String?>(null)
@@ -124,7 +142,7 @@ object HorizonUi {
 
     /** Makes the Compose state on the main thread (`MainActivity.onCreate`), before a debug route's thread reads it (T226). */
     fun prepare() {
-        open; selected; date; scrollTo; namedKeys; selectedFlight; point
+        open; view; selected; date; scrollTo; namedKeys; selectedFlight; point
     }
 
     fun open() {
@@ -177,6 +195,7 @@ object HorizonUi {
 
     fun close() {
         open = false
+        view = io.github.jasondorjeshort.dystopo.horizon.SkyView.HORIZON // T326: the next opening by the settings row is the Horizon view's
         point = null // T317
         selected = null
         selectedFlight = null // T312
@@ -218,7 +237,7 @@ object HorizonUi {
  */
 @Composable
 fun HorizonScreen() {
-    if (!HorizonUi.open) return
+    if (!HorizonUi.open || HorizonUi.view != io.github.jasondorjeshort.dystopo.horizon.SkyView.HORIZON) return // T326: the Panorama hosts the same pane
     @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
     // T312: the Flights layer and its button only while Flight tracking (T311's setting) is on.
     val tracking = AppSettings.AIRCRAFT.value
@@ -396,7 +415,7 @@ fun HorizonScreen() {
         }
         // T315: the "Map | Horizon" switch at its anchor (the map's own place for it), Horizon selected, over the content.
         io.github.jasondorjeshort.dystopo.app.controls.AnchoredViewSwitch(
-            true, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchColours(pal.card, pal.ink, pal.line),
+            io.github.jasondorjeshort.dystopo.horizon.SkyView.HORIZON, io.github.jasondorjeshort.dystopo.app.controls.ViewSwitchColours(pal.card, pal.ink, pal.line),
             Modifier.testTag(io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.TAG_ON_VIEW),
         ) { r, _ -> HorizonUi.switchPx = r.map { Math.round(it) } }
     }
