@@ -21,3 +21,13 @@ scrub is cheap. The battery doctrine (`2026-10-13-battery-efficiency.md`) bounds
 - The move threshold and its cost on a real phone (the sweep's time per point, measured).
 - Whether the route scrub belongs with the one-clock idea (`2026-11-21-one-clock-for-the-whole-app-past-and-future.md`):
   a point along the route and the time you reach it are one control.
+
+Question: the view already follows the fix: while it is open, `Gnss.horizonAt` sweeps again once the phone is 100 m
+from every kept horizon (`Gnss.HORIZON_MOVE_M`, T307), so "stays put" above is not what the code does. What is left is
+(a) smoothing: the last skyline and its names stay up while the next is swept (today they drop out meanwhile), the
+step grows with the nearest ridge's distance, and the sweeps are counted in the battery scenario; and (b) the scrub
+along a planned route from skylines worked out ahead. Is (a) wanted as a small pass now, and (b) with the one clock?
+Recommended: yes to both; (a) wants the sweep's time on your own phone first, and (b) is one control with the route's
+clock (`2026-11-21-one-clock-for-the-whole-app-past-and-future.md`).
+
+Answer:
