@@ -100,6 +100,7 @@ object PanoramaUi {
     fun prepare() {
         aim; openings; gesturing; targets; turnRequests; sunAtMs
         PanoramaFollow.following; PanoramaFollow.moving // T330
+        PanoramaFollow.correctionDeg; PanoramaFollow.hintShown // T331
     }
 
     /**
@@ -144,6 +145,8 @@ object PanoramaUi {
         arrowPx = null
         layersDrawn = emptyMap()
         lastTurn = null
+        PanoramaFollow.correct(PanoramaCorrection.Closed) // T331: a correction is never kept from one opening to the next
+        correctionPx = null
     }
 
     fun resetSceneCost() {
@@ -180,6 +183,14 @@ object PanoramaUi {
     @Volatile var followPx: List<Int>? = null
     @Volatile var keepScreenOn = false
     // end T330
+
+    // T331: the correction's line with Reset and the weak-compass line as last laid out (in the Compose root, px; null:
+    // not shown), and whether the edge arrow as last drawn takes a tap (Drag) or is a sign (Follow).
+    @Volatile var correctionPx: List<Int>? = null
+    @Volatile var resetPx: List<Int>? = null
+    @Volatile var hintPx: List<Int>? = null
+    @Volatile var arrowClickable = false
+    // end T331
 
     /** A scene built in [ms] (the plot's draw path; `GET /panorama` `sceneMs`). */
     fun sceneBuilt(s: PanoramaScene, ms: Double) {

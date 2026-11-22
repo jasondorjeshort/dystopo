@@ -63,7 +63,26 @@ private const val FAR = 20.0
  * round plot draws them), the hour dots and their labels; the sun now while it is up. Returns what it drew, for
  * `GET /panorama` `layers.sun`, and the sun's mark for the taps.
  */
-internal fun DrawScope.drawSunOnLens(lens: LensView, day: HorizonData.SunDay?, now: Sun.Position?, pal: GnssPalette, night: Boolean, marks: MutableList<LensMark>): Map<String, Any?> {
+/**
+ * T331: the layers' text paints and the hours' calendar, made once per density and palette (the plot remembers them)
+ * instead of on every frame; [hourOf] reads an hour mark's local hour.
+ */
+class LensPaints(density: Float, pal: GnssPalette) {
+    val hourLabel = android.graphics.Paint().apply { isAntiAlias = true; textSize = 10f * density; color = pal.muted.toArgb(); textAlign = android.graphics.Paint.Align.CENTER }
+    val svid = android.graphics.Paint().apply { isAntiAlias = true; textSize = 10.5f * density; color = pal.ink.toArgb() }
+    private val cal = java.util.Calendar.getInstance()
+
+    fun hourOf(timeMs: Long): String {
+        cal.timeInMillis = timeMs // the zone is the phone's when the plot made these (an opening, a density or palette change)
+        return HOURS[cal.get(java.util.Calendar.HOUR_OF_DAY)]
+    }
+
+    private companion object {
+        val HOURS = Array(24) { it.toString() }
+    }
+}
+
+internal fun DrawScope.drawSunOnLens(lens: LensView, day: HorizonData.SunDay?, now: Sun.Position?, pal: GnssPalette, night: Boolean, marks: MutableList<LensMark>, paints: LensPaints): Map<String, Any?> {
     var samplesOnView = 0
     var hoursOnView = 0
     // The sun now, where it falls while it is up (drawn over the path; an hour's label under it gives way).
@@ -92,15 +111,13 @@ internal fun DrawScope.drawSunOnLens(lens: LensView, day: HorizonData.SunDay?, n
             drawPath(line, if (clear) colour else pal.muted, style = if (clear) solid else dashed)
             i = j
         }
-        val label = android.graphics.Paint().apply { isAntiAlias = true; textSize = 10f * density; color = pal.muted.toArgb(); textAlign = android.graphics.Paint.Align.CENTER }
-        val cal = java.util.Calendar.getInstance()
+        val label = paints.hourLabel
         for (m in d.marks) {
             val p = lens.at(m.altitudeDeg, m.azimuthDeg) ?: continue
             if (lens.onView(RimPt(p.x.toDouble(), p.y.toDouble()))) hoursOnView++
             drawCircle(if (m.clear) colour else pal.muted, 3f * density, p)
-            cal.timeInMillis = m.timeMs
             if (nowAt != null && (nowAt - Offset(p.x, p.y - 10f * density)).getDistance() < 16f * density) continue
-            drawContext.canvas.nativeCanvas.drawText(cal.get(java.util.Calendar.HOUR_OF_DAY).toString(), p.x, p.y - 6f * density, label)
+            drawContext.canvas.nativeCanvas.drawText(paints.hourOf(m.timeMs), p.x, p.y - 6f * density, label)
         }
     }
     nowAt?.let { p ->
@@ -116,8 +133,8 @@ internal fun DrawScope.drawSunOnLens(lens: LensView, day: HorizonData.SunDay?, n
 }
 
 /** T327: the Satellites layer on the lens: each mark as the round plot draws it ([satelliteMark]), where it falls. */
-internal fun DrawScope.drawSatellitesOnLens(lens: LensView, sats: List<PlotSat>, pal: GnssPalette, marks: MutableList<LensMark>): Map<String, Any?> {
-    val svid = android.graphics.Paint().apply { isAntiAlias = true; textSize = 10.5f * density; color = pal.ink.toArgb() }
+internal fun DrawScope.drawSatellitesOnLens(lens: LensView, sats: List<PlotSat>, pal: GnssPalette, marks: MutableList<LensMark>, paints: LensPaints): Map<String, Any?> {
+    val svid = paints.svid
     val drawn = ArrayList<String>()
     val px = LinkedHashMap<String, List<Int>>() // T330: each mark on the view, plot px (Follow's pass through the zenith)
     for (ps in sats) {

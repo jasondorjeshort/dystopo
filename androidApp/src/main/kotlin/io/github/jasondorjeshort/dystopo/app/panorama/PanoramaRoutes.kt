@@ -48,6 +48,15 @@ import io.github.jasondorjeshort.dystopo.horizon.SkyView
  *   `arrow=1` taps the edge arrow (409 when none stands); `back=1` presses Back once; `sunAt=<ISO instant, e.g.
  *   2026-06-21T20:00:00Z>|none` sets the instant the Sun layer is drawn for (the clock otherwise; `POST /horizon`'s `date=`
  *   sets only the day, and only the Horizon view's).
+ * - T330 (Follow): `GET` adds `steering`, `following`, `attitude`, `resting`, `aimFollow`, `followButton`, `keepScreenOn`,
+ *   `compass`, `frames`; `POST` adds `steering=drag|follow`, `attitude=`, `attitudeQ=`, `attitudeNoise=`, `attitudeRate=`
+ *   ([attitude]).
+ * - T331: `GET` adds `correctionDeg` (the heading correction, degrees, positive east; null: none), `correction` (`line`,
+ *   `changes`, `rectPx` and `resetPx` of the line's plate and its Reset in the Compose root), `hint` (the weak-compass
+ *   line: `shown`, `text`, `status` read, `simulatedStatus`, `lowForMs`, `rectPx`) and `arrow.clickable` (false in Follow:
+ *   a sign). `POST` adds `correction=<deg>|none` (sets it while following, 409 in Drag; `none` is Reset),
+ *   `compassStatus=<0..3>|none` (a simulated accuracy status for the weak-compass rule; `none` reads the sensor's again);
+ *   in Follow `drag=` is the heading correction along the level line as a finger's, and `arrow=1` answers 409 (no tap).
  */
 object PanoramaRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -107,7 +116,11 @@ object PanoramaRoutes {
         drag?.let { (dx, dy) ->
             app.map.onMain { PanoramaUi.resetSceneCost(); PanoramaUi.gesturing = true }
             for (i in 0 until steps) {
-                app.map.onMain { PanoramaUi.steer { a, (w, _, _) -> a.drag(dx / steps, dy / steps, w) } }
+                app.map.onMain {
+                    // T331: in Follow a drag is the heading correction (choice (f)), as the finger's.
+                    if (PanoramaUi.aim?.follow == true) PanoramaFollow.dragBy(dx / steps, dy / steps)
+                    else PanoramaUi.steer { a, (w, _, _) -> a.drag(dx / steps, dy / steps, w) }
+                }
                 Thread.sleep(34) // about two frames: each step is drawn
             }
             app.map.onMain { PanoramaUi.gesturing = false }
@@ -124,6 +137,8 @@ object PanoramaRoutes {
         }
         if (q["arrow"] == "1") {
             if (!app.map.onMain { PanoramaUi.arrow != null }) return Response.json(mapOf("error" to "no edge arrow stands"), 409)
+            // T331 (choice (i)): in Follow the arrow is a sign, with no tap.
+            if (!app.map.onMain { PanoramaUi.arrowClickable }) return Response.json(mapOf("error" to "the edge arrow is a sign while following the phone (no tap)"), 409)
             app.map.onMain { PanoramaUi.turnToTarget() }
             Thread.sleep(PanoramaUi.TURN_MS + 300)
         }
@@ -136,6 +151,22 @@ object PanoramaRoutes {
         }
         attitude(app, q)?.let { return it }
         // end T330
+        // T331
+        q["compassStatus"]?.let { v ->
+            val s = if (v == "none") null else v.toIntOrNull()?.takeIf { it in 0..3 } ?: return bad("compassStatus must be 0 to 3 or none")
+            app.map.onMain { PanoramaFollow.simulatedStatus = s; PanoramaFollow.evaluateHint() }
+        }
+        q["correction"]?.let { v ->
+            val deg = if (v == "none") null else v.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return bad("correction must be degrees (positive east) or none")
+            if (!waitAim(app)) return Response.json(mapOf("error" to "the Panorama is not open (or its plot has no size yet)"), 409)
+            val ok = app.map.onMain {
+                if (deg == null) { PanoramaFollow.correct(PanoramaCorrection.Reset); true }
+                else if (!PanoramaFollow.following) false
+                else { PanoramaFollow.correct(PanoramaCorrection.Set(deg)); true }
+            }
+            if (!ok) return Response.json(mapOf("error" to "a correction stands only while the view follows the phone (steering=follow)"), 409)
+        }
+        // end T331
         if (q["back"] == "1") app.map.onMain { (app.map.activity as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed() }
         q["select"]?.let { name ->
             app.map.onMain {
@@ -322,7 +353,10 @@ object PanoramaRoutes {
             },
             "picks" to linkedMapOf("peak" to PanoramaUi.targets.peak, "flight" to PanoramaUi.targets.flight),
             "arrow" to PanoramaUi.arrow?.let { a ->
-                linkedMapOf("side" to a.side.word, "degrees" to r1(a.degrees), "text" to a.text, "x" to r1(a.x), "y" to r1(a.y), "rectPx" to PanoramaUi.arrowPx)
+                linkedMapOf(
+                    "side" to a.side.word, "degrees" to r1(a.degrees), "text" to a.text, "x" to r1(a.x), "y" to r1(a.y), "rectPx" to PanoramaUi.arrowPx,
+                    "clickable" to PanoramaUi.arrowClickable, // T331: false in Follow (a sign)
+                )
             },
             "turns" to linkedMapOf("done" to PanoramaUi.turnsDone, "last" to PanoramaUi.lastTurn),
             "sunAt" to PanoramaUi.sunAtMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
@@ -342,6 +376,18 @@ object PanoramaRoutes {
                 "drawsLastSecond" to PanoramaUi.drawsPerSecond(System.nanoTime()),
             ),
             // end T330
+            // T331
+            "correctionDeg" to PanoramaFollow.correctionDeg?.let(::r2),
+            "correction" to linkedMapOf(
+                "line" to PanoramaFollow.correctionDeg?.let { io.github.jasondorjeshort.dystopo.horizon.HeadingCorrection.line(it) },
+                "changes" to PanoramaFollow.correctionChanges, "rectPx" to PanoramaUi.correctionPx, "resetPx" to PanoramaUi.resetPx,
+            ),
+            "hint" to linkedMapOf(
+                "shown" to PanoramaFollow.hintShown, "text" to CompassHint.LINE.takeIf { PanoramaFollow.hintShown },
+                "status" to PanoramaFollow.statusNow, "simulatedStatus" to PanoramaFollow.simulatedStatus,
+                "lowForMs" to PanoramaFollow.hintState.lowSinceMs?.let { SystemClock.elapsedRealtime() - it }, "rectPx" to PanoramaUi.hintPx,
+            ),
+            // end T331
         )
     }
 }

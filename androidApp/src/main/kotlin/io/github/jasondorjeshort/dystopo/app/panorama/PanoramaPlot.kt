@@ -127,6 +127,7 @@ fun PanoramaPlot(
     val tints = remember(night) { PanoramaTints(night) }
     val namePaint = remember(d, night) { android.graphics.Paint().apply { isAntiAlias = true; textSize = (NAME_DP * d).toFloat(); color = pal.ink.toArgb() } }
     val tapePaint = remember(d, night) { android.graphics.Paint().apply { isAntiAlias = true; textSize = (TAPE_TEXT_DP * d).toFloat(); color = pal.ink.toArgb() } }
+    val lensPaints = remember(d, night) { LensPaints(d.toFloat(), pal) } // T331: made once, not each frame
     val nameText = remember(namePaint) { namePaint.fontMetrics.let { fm -> PanoramaText({ namePaint.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble()) } }
     val tapeText = remember(tapePaint) { tapePaint.fontMetrics.let { fm -> PanoramaText({ tapePaint.measureText(it).toDouble() }, fm.ascent.toDouble(), fm.descent.toDouble()) } }
 
@@ -182,7 +183,12 @@ fun PanoramaPlot(
     }
     val followBox = if (sensor && aim != null) followButtonBox(wPx, hPx, d, followW) else null
     val corner = followBox?.let { io.github.jasondorjeshort.dystopo.horizon.RimBox(minOf(zoomCorner.left, it.left - PanoramaScene.ZOOM_MARGIN_DP * d), it.top - PanoramaScene.ZOOM_MARGIN_DP * d, wPx, hPx) } ?: zoomCorner
-    val keepOff = listOfNotNull(zoomCorner, followBox)
+    // T331 (choice (f)): the correction's line with Reset, at the upper left under the tape while a correction stands; its
+    // box (sized for the widest line, so it does not move as the degrees change) is given to the scene and the arrow.
+    val correction = PanoramaFollow.correctionDeg?.takeIf { following && aim?.follow == true }
+    val correctionSize = remember(density, measurer, wPx) { correctionPlateSize(measurer, density, wPx) }
+    val correctionBox = if (correction != null) correctionBoxAt(d, correctionSize) else null
+    val keepOff = listOfNotNull(zoomCorner, followBox, correctionBox)
     // T330 (choice (c)): while the followed attitude moves the names keep their offsets, as in a drag; placed when it rests.
     val holding = gesturing || (aim?.follow == true && PanoramaFollow.moving)
     val scene = remember(aim, wPx, hPx, sky, ranked, picked, holding, keepOff) {
@@ -213,8 +219,13 @@ fun PanoramaPlot(
             Modifier.fillMaxSize()
                 .semantics {
                     contentDescription = description
-                    // T330: the four turn and look actions are Drag's; in Follow the phone turns the view.
-                    if (aim?.follow != true) customActions = listOf(
+                    // T330: the four turn and look actions are Drag's; in Follow the phone turns the view. T331 (choice (f)):
+                    // in Follow the two compass actions, a degree each, the drag's equal.
+                    if (aim?.follow == true) customActions = listOf(
+                        CustomAccessibilityAction(PanoramaStrings.ADJUST_LEFT) { PanoramaFollow.correct(PanoramaCorrection.Stepped(right = false)); true },
+                        CustomAccessibilityAction(PanoramaStrings.ADJUST_RIGHT) { PanoramaFollow.correct(PanoramaCorrection.Stepped(right = true)); true },
+                    )
+                    else customActions = listOf(
                         CustomAccessibilityAction(PanoramaStrings.TURN_LEFT) { PanoramaUi.steer { a, _ -> a.copy(bearingDeg = PanoramaAim.wrapDeg(a.bearingDeg - PanoramaUi.turnStepDeg(a))) }; true },
                         CustomAccessibilityAction(PanoramaStrings.TURN_RIGHT) { PanoramaUi.steer { a, _ -> a.copy(bearingDeg = PanoramaAim.wrapDeg(a.bearingDeg + PanoramaUi.turnStepDeg(a))) }; true },
                         CustomAccessibilityAction(PanoramaStrings.LOOK_UP) { PanoramaUi.steer { a, _ -> a.copy(tiltDeg = (a.tiltDeg + PanoramaUi.TILT_STEP_DEG).coerceIn(PanoramaAim.MIN_TILT_DEG, PanoramaAim.MAX_TILT_DEG)) }; true },
@@ -228,10 +239,12 @@ fun PanoramaPlot(
                         var started = false
                         var pan = Offset.Zero
                         var zoom = 1f
+                        var multi = false // T331: once a second finger came down, the gesture is a pinch to its end
                         do {
                             val event = awaitPointerEvent()
                             val z = event.calculateZoom()
                             val p = event.calculatePan()
+                            if (event.changes.count { it.pressed } > 1) multi = true
                             if (!started) {
                                 pan += p
                                 zoom *= z
@@ -242,7 +255,12 @@ fun PanoramaPlot(
                             }
                             if (started) {
                                 val c = event.calculateCentroid(useCurrent = true)
-                                if (p != Offset.Zero) PanoramaUi.steer { a, (w, _, _) -> a.drag(p.x.toDouble(), p.y.toDouble(), w) }
+                                // T331 (choice (f)): in Follow a one-finger drag is the heading correction along the level
+                                // line; a pinch's drift corrects nothing (choice (e)).
+                                if (p != Offset.Zero) {
+                                    if (PanoramaUi.aim?.follow == true) { if (!multi) PanoramaFollow.dragBy(p.x.toDouble(), p.y.toDouble()) }
+                                    else PanoramaUi.steer { a, (w, _, _) -> a.drag(p.x.toDouble(), p.y.toDouble(), w) }
+                                }
                                 if (z != 1f && c != Offset.Unspecified) PanoramaUi.steer { a, (w, h, _) -> a.pinch(z.toDouble(), c.x.toDouble(), c.y.toDouble(), w, h) }
                                 event.changes.forEach { if (it.positionChanged()) it.consume() }
                             }
@@ -283,10 +301,10 @@ fun PanoramaPlot(
                 },
         ) {
             val t0 = System.nanoTime() // T330: the draw pass's time (task (5))
-            drawSky(aim, tints, scene?.lens)
+            drawRect(skyBrush(aim, tints, scene?.lens, size.width.toDouble(), size.height.toDouble()))
             if (scene != null) {
                 drawGround(scene, tints, pal, sky!!.profiles.size)
-                drawLensLayers(scene, lensLayers, pal, namePaint, nameText)
+                drawLensLayers(scene, lensLayers, pal, namePaint, nameText, lensPaints)
                 drawNames(scene, pal, namePaint, selected)
                 drawTape(scene, pal, tapePaint)
             } else {
@@ -308,8 +326,13 @@ fun PanoramaPlot(
             )
         } else null
         PanoramaUi.arrow = arrow
+        val sign = aim?.follow == true // T331 (choice (i)): in Follow the arrow is a sign, no edge and no tap
+        PanoramaUi.arrowClickable = arrow != null && !sign
         if (arrow == null) PanoramaUi.arrowPx = null
-        else EdgeArrow(arrow, pal, wPx, hPx, corner)
+        else EdgeArrow(arrow, pal, wPx, hPx, corner, sign = sign, topPx = PanoramaScene.TAPE_DP * d + EDGE_MARGIN_DP * d, avoid = correctionBox)
+        // T331: the correction's line and Reset (choice (f)).
+        if (correctionBox == null || correction == null) { PanoramaUi.correctionPx = null; PanoramaUi.resetPx = null }
+        else CorrectionPlate(correctionBox, correction, pal)
         // T330: "Follow phone" (choice (g)): one label with an on and off state, 48 dp tall, above the zoom buttons; flips the setting.
         if (followBox == null) PanoramaUi.followPx = null else FollowButton(followBox, following, pal)
         // The zoom buttons (48 dp each, stacked at the lower right: PanoramaScene.zoomButtons), the pinch's one-finger equal.
@@ -350,26 +373,25 @@ fun PanoramaPlot(
 /**
  * The sky: the paper's light at the level line to a cool tone 60 degrees up, along the centre column. T330: a rolled
  * Follow aim runs the gradient between where the level and 60 degrees up fall on [lens] (straight up the sky, at any roll).
+ * T331: as a brush for a plot [width] by [height] px, its gradient moved down by [dy] px, so the strip under the status
+ * bar above the plot ([dy] its height) carries the plot's sky on upward.
  */
-private fun DrawScope.drawSky(aim: PanoramaAim?, tints: PanoramaTints, lens: io.github.jasondorjeshort.dystopo.horizon.LensView? = null) {
-    if (aim == null) {
-        drawRect(tints.skyLow)
-        return
-    }
+internal fun skyBrush(aim: PanoramaAim?, tints: PanoramaTints, lens: io.github.jasondorjeshort.dystopo.horizon.LensView?, width: Double, height: Double, dy: Float = 0f): Brush {
+    if (aim == null) return androidx.compose.ui.graphics.SolidColor(tints.skyLow)
+    val flat = androidx.compose.ui.graphics.SolidColor(if (aim.tiltDeg > 30) tints.skyHigh else tints.skyLow)
     if (aim.follow && lens != null && aim.rollDeg != 0.0) {
         val a = lens.project(0.0, aim.bearingDeg)
         val b = lens.project(60.0, aim.bearingDeg)
-        if (a != null && b != null && hypot(a.x - b.x, a.y - b.y) > 1) {
-            drawRect(Brush.linearGradient(listOf(tints.skyLow, tints.skyHigh), start = Offset(a.x.toFloat(), a.y.toFloat()), end = Offset(b.x.toFloat(), b.y.toFloat())))
-        } else drawRect(if (aim.tiltDeg > 30) tints.skyHigh else tints.skyLow)
-        return
+        return if (a != null && b != null && hypot(a.x - b.x, a.y - b.y) > 1) {
+            Brush.linearGradient(listOf(tints.skyLow, tints.skyHigh), start = Offset(a.x.toFloat(), a.y.toFloat() + dy), end = Offset(b.x.toFloat(), b.y.toFloat() + dy))
+        } else flat
     }
-    val f = PanoramaAim.focal(size.width.toDouble(), aim.fovDeg)
-    fun rowOf(el: Double): Float? = (el - aim.tiltDeg).takeIf { abs(it) < 85 }?.let { (size.height / 2 - f * kotlin.math.tan(it * Math.PI / 180)).toFloat() }
+    val f = PanoramaAim.focal(width, aim.fovDeg)
+    fun rowOf(el: Double): Float? = (el - aim.tiltDeg).takeIf { abs(it) < 85 }?.let { (height / 2 - f * kotlin.math.tan(it * Math.PI / 180)).toFloat() }
     val y0 = rowOf(0.0)
     val y60 = rowOf(60.0)
-    if (y0 != null && y60 != null && abs(y0 - y60) > 1) drawRect(Brush.verticalGradient(listOf(tints.skyHigh, tints.skyLow), startY = y60, endY = y0))
-    else drawRect(if (aim.tiltDeg > 30) tints.skyHigh else tints.skyLow)
+    return if (y0 != null && y60 != null && abs(y0 - y60) > 1) Brush.verticalGradient(listOf(tints.skyHigh, tints.skyLow), startY = y60 + dy, endY = y0 + dy)
+    else flat
 }
 
 /** The ground: the layers far to near, the ridges, the level line. */
@@ -455,13 +477,13 @@ private const val EDGE_MARGIN_DP = 6.0
  * T327: the Sun, Satellites and Flights through the scene's lens, under the peaks' names (the round plot's order: the
  * flights under the names), writing what they drew (`GET /panorama` `layers`) and their marks for the taps.
  */
-private fun DrawScope.drawLensLayers(scene: PanoramaScene, ll: LensLayers?, pal: GnssPalette, namePaint: android.graphics.Paint, nameText: PanoramaText) {
+private fun DrawScope.drawLensLayers(scene: PanoramaScene, ll: LensLayers?, pal: GnssPalette, namePaint: android.graphics.Paint, nameText: PanoramaText, paints: LensPaints) {
     val marks = ArrayList<LensMark>()
     val drawn = LinkedHashMap<String, Any?>()
     var flights: List<io.github.jasondorjeshort.dystopo.app.horizon.FlightMark> = emptyList()
     if (ll != null) {
-        if (ll.sunDay != null || ll.sunNow != null) drawn["sun"] = drawSunOnLens(scene.lens, ll.sunDay, ll.sunNow, pal, ll.night, marks)
-        if (ll.satellitesOn) drawn["satellites"] = drawSatellitesOnLens(scene.lens, ll.sats, pal, marks)
+        if (ll.sunDay != null || ll.sunNow != null) drawn["sun"] = drawSunOnLens(scene.lens, ll.sunDay, ll.sunNow, pal, ll.night, marks, paints)
+        if (ll.satellitesOn) drawn["satellites"] = drawSatellitesOnLens(scene.lens, ll.sats, pal, marks, paints)
         ll.flights?.let { f ->
             val names = placeFlightNames(scene, f.list, ll.pickedFlight, nameText, if (PanoramaUi.gesturing) PanoramaUi.flightNames else null)
             PanoramaUi.flightNames = names
@@ -482,7 +504,15 @@ private fun DrawScope.drawLensLayers(scene: PanoramaScene, ll: LensLayers?, pal:
  * edge the target is off by, at least 48 dp tall, kept off the zoom buttons' corner; a tap turns the view to the target.
  */
 @Composable
-private fun EdgeArrow(a: io.github.jasondorjeshort.dystopo.horizon.OffViewArrow, pal: GnssPalette, wPx: Double, hPx: Double, zoom: io.github.jasondorjeshort.dystopo.horizon.RimBox) {
+private fun EdgeArrow(
+    a: io.github.jasondorjeshort.dystopo.horizon.OffViewArrow, pal: GnssPalette, wPx: Double, hPx: Double, zoom: io.github.jasondorjeshort.dystopo.horizon.RimBox,
+    /** T331 (choice (i)): in Follow a sign: no edge, no click action, its line still spoken. */
+    sign: Boolean = false,
+    /** T331: the plate's top stays at or under this (px: under the tape; T330's note: it rose over the tape at an edge). */
+    topPx: Double = 0.0,
+    /** T331: a box the plate keeps off (the correction's line): moved down under it. */
+    avoid: io.github.jasondorjeshort.dystopo.horizon.RimBox? = null,
+) {
     val side = a.side
     val glyph = when (side) {
         io.github.jasondorjeshort.dystopo.horizon.OffSide.LEFT -> "◀"
@@ -504,10 +534,12 @@ private fun EdgeArrow(a: io.github.jasondorjeshort.dystopo.horizon.OffViewArrow,
                     io.github.jasondorjeshort.dystopo.horizon.OffSide.UP -> a.y
                     io.github.jasondorjeshort.dystopo.horizon.OffSide.DOWN -> a.y - p.height
                     else -> a.y - p.height / 2.0
-                }.coerceIn(0.0, maxOf(0.0, hPx - p.height))
+                }.coerceIn(minOf(topPx, maxOf(0.0, hPx - p.height)), maxOf(0.0, hPx - p.height))
+                // T331: off the correction's line: down under it.
+                if (avoid != null && x < avoid.right && x + p.width > avoid.left && y < avoid.bottom && y + p.height > avoid.top) y = minOf(avoid.bottom + 4.0 * density, maxOf(0.0, hPx - p.height))
                 // Off the zoom buttons' corner: up above it at the right edge, else to its left.
                 if (x + p.width > zoom.left && y + p.height > zoom.top) {
-                    if (side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT) y = maxOf(0.0, zoom.top - p.height) else x = maxOf(0.0, zoom.left - p.width)
+                    if (side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT) y = maxOf(topPx, zoom.top - p.height) else x = maxOf(0.0, zoom.left - p.width)
                 }
                 layout(constraints.maxWidth, constraints.maxHeight) { p.place(x.roundToInt(), y.roundToInt()) }
             }
@@ -517,10 +549,10 @@ private fun EdgeArrow(a: io.github.jasondorjeshort.dystopo.horizon.OffViewArrow,
             }
             .testTag("panoramaArrow")
             .heightIn(min = 48.dp)
-            .background(pal.card.copy(alpha = 0.94f), RoundedCornerShape(12.dp))
-            .border(1.5.dp, pal.link, RoundedCornerShape(12.dp))
+            .background(pal.card.copy(alpha = if (sign) 0.85f else 0.94f), RoundedCornerShape(12.dp))
+            .then(if (sign) Modifier else Modifier.border(1.5.dp, pal.link, RoundedCornerShape(12.dp)))
             .semantics(mergeDescendants = true) { contentDescription = a.text }
-            .clickable(role = Role.Button) { PanoramaUi.turnToTarget() }
+            .then(if (sign) Modifier else Modifier.clickable(role = Role.Button) { PanoramaUi.turnToTarget() })
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
@@ -582,3 +614,79 @@ internal fun setSteering(to: PanoramaSteering) {
     }, "dystopo-panorama-steering").start()
 }
 // end T330
+
+// T331
+/** The correction's line: its text size (sp), the plate's inner padding (dp), the gap before Reset (dp), Reset's padding (dp). */
+private const val LINE_TEXT_SP = 13
+private const val LINE_PAD_DP = 10.0
+private const val LINE_GAP_DP = 6.0
+private const val RESET_TEXT_SP = 14
+private const val RESET_PAD_DP = 12.0
+
+/** The widest line the plate is sized for, so its box stays put as the degrees change. */
+private val WIDEST_LINE = io.github.jasondorjeshort.dystopo.horizon.HeadingCorrection.line(-180.0)
+
+/** The plate's size (px): the widest line (wrapping to two lines in at most 3/4 of the plot's width less Reset) and Reset, 48 dp tall at least. */
+internal data class PlateSize(val width: Double, val height: Double, val textWidth: Double, val resetWidth: Double)
+
+private fun correctionPlateSize(measurer: androidx.compose.ui.text.TextMeasurer, density: androidx.compose.ui.unit.Density, wPx: Double): PlateSize {
+    val d = density.density.toDouble()
+    val resetW = measurer.measure(PanoramaStrings.RESET, TextStyle(fontSize = RESET_TEXT_SP.sp, fontWeight = FontWeight.Medium)).size.width + 2 * RESET_PAD_DP * d
+    val maxText = (wPx * 0.75 - resetW - (2 * LINE_PAD_DP + LINE_GAP_DP) * d).coerceAtLeast(40 * d)
+    val t = measurer.measure(
+        WIDEST_LINE, TextStyle(fontSize = LINE_TEXT_SP.sp), maxLines = 2,
+        constraints = androidx.compose.ui.unit.Constraints(maxWidth = maxText.roundToInt()),
+    )
+    val textW = t.size.width.toDouble()
+    val h = maxOf(PanoramaScene.ZOOM_BUTTON_DP * d, t.size.height + 8 * d)
+    return PlateSize(LINE_PAD_DP * d + textW + LINE_GAP_DP * d + resetW + 2 * d, h, textW, resetW)
+}
+
+/** The plate's box (plot px): at the upper left, under the tape, [EDGE_MARGIN_DP] in from the edges. */
+private fun correctionBoxAt(d: Double, s: PlateSize): io.github.jasondorjeshort.dystopo.horizon.RimBox {
+    val left = EDGE_MARGIN_DP * d
+    val top = PanoramaScene.TAPE_DP * d + EDGE_MARGIN_DP * d
+    return io.github.jasondorjeshort.dystopo.horizon.RimBox(left, top, left + s.width, top + s.height)
+}
+
+/**
+ * T331: the heading correction's line (wave 46's choice (f): "Compass adjusted 4° east", [HeadingCorrection.line]) with
+ * "Reset" (a 48 dp button that drops the correction), on a plate at the upper left of the plot, upright at any roll.
+ */
+@Composable
+private fun CorrectionPlate(b: io.github.jasondorjeshort.dystopo.horizon.RimBox, deg: Double, pal: GnssPalette) {
+    val density = LocalDensity.current
+    val shape = RoundedCornerShape(12.dp)
+    androidx.compose.foundation.layout.Row(
+        Modifier.offset { IntOffset(b.left.roundToInt(), b.top.roundToInt()) }
+            .size(with(density) { (b.right - b.left).toFloat().toDp() }, with(density) { (b.bottom - b.top).toFloat().toDp() })
+            .testTag("panoramaCorrection")
+            .onGloballyPositioned { c ->
+                val at = c.positionInRoot()
+                PanoramaUi.correctionPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
+            }
+            .background(pal.card.copy(alpha = 0.92f), shape).border(1.dp, pal.line, shape)
+            .padding(start = LINE_PAD_DP.dp, end = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+    ) {
+        BasicText(
+            io.github.jasondorjeshort.dystopo.horizon.HeadingCorrection.line(deg), Modifier.weight(1f, fill = false).padding(end = LINE_GAP_DP.dp),
+            style = TextStyle(color = pal.ink, fontSize = LINE_TEXT_SP.sp), maxLines = 2,
+        )
+        Box(
+            Modifier.heightIn(min = PanoramaScene.ZOOM_BUTTON_DP.dp)
+                .testTag("panoramaCorrectionReset")
+                .onGloballyPositioned { c ->
+                    val at = c.positionInRoot()
+                    PanoramaUi.resetPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
+                }
+                .clickable(role = Role.Button) { PanoramaFollow.correct(PanoramaCorrection.Reset) }
+                .padding(horizontal = RESET_PAD_DP.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicText(PanoramaStrings.RESET, style = TextStyle(color = pal.link, fontSize = RESET_TEXT_SP.sp, fontWeight = FontWeight.Medium), maxLines = 1)
+        }
+    }
+}
+// end T331

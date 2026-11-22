@@ -84,6 +84,7 @@ object PanoramaFollow {
         state = null
         step = null
         if (moving) moving = false
+        evaluateHint() // T331: no line while the source is stopped
     }
 
     /**
@@ -143,6 +144,7 @@ object PanoramaFollow {
         rotationDeg = rotation
         lastRaw = q
         samples++
+        evaluateHint() // T331: the weak-compass rule, by the clock now (a sensor's timestamps need not be elapsed realtime)
         val prev = state
         val next = AttitudeFilter.step(prev, q, timeNanos) ?: return
         state = next
@@ -163,8 +165,57 @@ object PanoramaFollow {
         aimWrites++
     }
 
-    /** The lens's axes, true north, for the attitude [q] at the display's rotation now. */
-    fun axesOf(q: Quat) = PhoneAttitude.turned(PhoneAttitude.axes(q, rotationDeg), Heading.compass.declinationDeg ?: 0.0)
+    /** The lens's axes, true north, for the attitude [q] at the display's rotation now, turned by the heading correction too (T331). */
+    fun axesOf(q: Quat) = PhoneAttitude.turned(PhoneAttitude.axes(q, rotationDeg), (Heading.compass.declinationDeg ?: 0.0) + (correctionDeg ?: 0.0))
+
+    // T331
+    /**
+     * T331: the heading correction now (wave 46's choice (f): degrees added to the phone's true bearing, positive east; null:
+     * none, no line), by [PanoramaCorrection]'s rule. Compose state: the plot's line and Reset read it.
+     */
+    var correctionDeg by mutableStateOf<Double?>(null)
+        private set
+
+    /** The corrections applied (drags' frames, actions, the route; `GET /panorama` `correction.changes`). */
+    @Volatile var correctionChanges = 0
+        private set
+
+    /** Applies [e] to the correction (main thread); a changed correction turns the drawn aim at once, resting or not. */
+    fun correct(e: PanoramaCorrection.Event) {
+        val next = PanoramaCorrection.next(correctionDeg, following, e)
+        if (next == correctionDeg) return
+        correctionDeg = next
+        correctionChanges++
+        val st = state
+        if (following && st != null) writeAim(st.drawn)
+    }
+
+    /** A finger's drag by ([dx], [dy]) px in Follow, through the lens as last drawn (main thread). */
+    fun dragBy(dx: Double, dy: Double) {
+        val lens = PanoramaUi.scene?.lens ?: return
+        if (PanoramaUi.aim?.follow != true) return
+        correct(PanoramaCorrection.Dragged(io.github.jasondorjeshort.dystopo.horizon.HeadingCorrection.dragDeg(lens, dx, dy)))
+    }
+
+    /** T331, debug (`POST /panorama?compassStatus=`): a simulated accuracy status (0 to 3), or null for the sensor's own. */
+    @Volatile var simulatedStatus: Int? = null
+
+    /** The accuracy status the weak-compass rule reads: the simulated one, else the attitude sensor's. */
+    val statusNow: Int? get() = simulatedStatus ?: Heading.attitudeStatus
+
+    @Volatile var hintState = CompassHint.State()
+        private set
+
+    /** Whether the weak-compass line shows (choice (h)). Compose state. */
+    var hintShown by mutableStateOf(false)
+        private set
+
+    /** The weak-compass rule at [nowMs] (main thread: each sample, and when Follow starts or ends). */
+    fun evaluateHint(nowMs: Long = SystemClock.elapsedRealtime()) {
+        hintState = CompassHint.next(hintState, following && active, statusNow, nowMs)
+        if (hintShown != hintState.shown) hintShown = hintState.shown
+    }
+    // end T331
 
     /** The aim of the drawn attitude now, or null (no sample yet). */
     fun aimNow(fovDeg: Double): PanoramaAim? = state?.let { PanoramaAim.follow(axesOf(it.drawn), fovDeg, PanoramaUi.aim?.bearingDeg) }
