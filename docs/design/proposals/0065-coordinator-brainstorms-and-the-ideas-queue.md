@@ -9,284 +9,291 @@ How and when does the AI coordinator generate new ideas (near-term, intermediate
 product, process and tooling, research questions), how do they enter `docs/ideas/`, and how does the
 queue stay readable as it grows? The practice already works: the owner reports that ideas offered at
 the end of a piece of work "have been very high quality", "nearly always interesting", with some
-discarded and many "postponed indefinitely", which is an accepted outcome, not a failure. What is
-open is the shape: the offer, the provenance, a quality bar that rises with the queue's size, the
-handling of half-baked ideas and moonshots, and what a recurring idea does. The triage skill is
-base-owned, so the answer reaches every project built on Hatchery. In ten years the queue should be
-a place where a returning idea gets stronger, a far idea rests visibly without crowding the ready
-ones, and the owner's reading per session stays a handful of lines whatever the file count.
+discarded and many "postponed indefinitely", an accepted outcome, not a failure. What is open is the
+shape: the offer, the provenance, a bar that rises with the queue, the handling of half-baked ideas
+and moonshots, and what a recurring idea does. The triage skill is base-owned, so the answer reaches
+every project built on Hatchery. In ten years a returning idea should grow stronger, a far idea rest
+visibly without crowding the ready ones, and the owner's reading per session stay a handful of lines.
 
 ## Constraints that matter here
 
-- Only the owner prunes for taste (`docs/ideas/README.md`, ADR 0036, Hatchery ADR 0007); no pass
-  deletes an idea as not worth building, and nothing lapses into deletion without the owner.
-- Idea frontmatter is `date`, `kind`, optional `related`, nothing else (`.claude/rules/docs.md`);
-  `queue-list.js` lists a file with another key as `?`. The kind set and the three blocks are the
-  grammar Hatchery ADR 0007 and ADR 0017 keep identical across projects; a grammar change is an
-  incompatible surface change with a migration (Hatchery ADR 0016).
-- The owner's answers of 2026-11-22, binding on every option: no hard cap, a bar that rises roughly
-  logarithmically with the queue ("log scaling"); offered after a triage, at a wave close or release,
-  and mid-session when something sparks; recorded only on the owner's acceptance; about 3 near-term,
-  3 intermediate, 3 moonshots per offer ("10-15 feels high"); the sanity check stays at triage;
-  provenance on every idea, the agent's model included, marked not sanity-checked; a moonshot is
-  welcome and marked; one primitive must not be presented as several features (corrected twice).
-- Duplicates are updates (owner, 2026-11-22): a recurring idea carries both the signal that it came
-  up again and any new modification it brings, recorded on the existing file; recurrent ideas are
-  "often the best ones".
+- Only the owner prunes for taste (`docs/ideas/README.md`, ADR 0036, Hatchery ADR 0007); nothing
+  lapses into deletion, or out of the record, without the owner.
+- Idea frontmatter is `date`, `kind`, optional `related` (`.claude/rules/docs.md`); the kinds and the
+  three blocks are a grammar shared across projects (Hatchery ADRs 0007, 0017); changing it is an
+  incompatible surface change with a migration (Hatchery ADR 0016). Only the owner decides a `Waits:`.
+- The owner's answers of 2026-11-22, binding: no hard cap, a bar rising roughly logarithmically with
+  the queue; offers after a triage, at a wave close or release, and when something sparks; recorded
+  only on the owner's acceptance; about 3 near-term, 3 intermediate, 3 moonshots ("10-15 feels
+  high"); the sanity check at triage; provenance with the agent's model, marked not sanity-checked;
+  moonshots welcome and marked; one primitive never presented as several features.
+- Duplicates are updates (owner, 2026-11-22): a recurrence records both that it came up again and
+  any new modification, on the existing file; recurrent ideas are "often the best ones".
 - A separate pile for moonshots and not-ready ideas is a direction the owner leans toward.
 - The triage skill's text is a carry-back; a rule, an ADR or a grammar change reaches Hatchery as an
-  idea filed there (`.claude/skills/carry-back/SKILL.md`). The held carry-back
-  `carry-back/triage-brainstorm-step` at 4d00b15 (ADR 0038, departure table) may be replaced.
-- No user settings in scope: ADR 0044's settings are the app's; this is the process (each option
-  says so).
+  idea filed there (`carry-back` skill). The held carry-back `carry-back/triage-brainstorm-step` at
+  4d00b15 (ADR 0038's departure table) may be replaced.
+- No user settings in scope: ADR 0044's settings are the app's; this is process.
 
 ## Prior art
 
-Published practice (fetched and checked 2026-11-22; unverified sources were dropped):
+Published practice (fetched and checked 2026-11-22; unverified sources dropped):
 
-- Shape Up, ch. 7 "Bets, Not Backlogs" (https://basecamp.com/shapeup/2.1-chapter-07): "Backlogs are
-  a big weight we don't need to carry"; "Really important ideas will come back to you." Ch. 8
-  (https://basecamp.com/shapeup/2.2-chapter-08): idea work in a cool-down after each cycle, "no
-  'grooming' or backlog to organize"; an old pitch is revived only when someone chooses to.
+- Shape Up ch. 7 (https://basecamp.com/shapeup/2.1-chapter-07): "Backlogs are a big weight we don't
+  need to carry"; "Really important ideas will come back to you." Ch. 8
+  (https://basecamp.com/shapeup/2.2-chapter-08): idea work in a cool-down after each cycle, no
+  grooming; an old pitch is revived only when someone chooses to.
 - PEP 1 (https://peps.python.org/pep-0001/): Deferred "when no progress is being made"; a sponsor
-  must be found; vetting an idea before writing it up saves the author's time. Rust RFC 1068
+  must be found. Rust RFC 1068
   (https://github.com/rust-lang/rfcs/blob/master/text/1068-rust-governance.md): "closed as
   postponed". KEP process
   (https://github.com/kubernetes/enhancements/tree/master/keps/sig-architecture/0000-kep-process):
-  "provisional" first; an owning group accepts the work. The common thread: who proposes is separate
-  from who decides, and an idea at rest has a named state rather than a deletion.
-- Brainstorming research: Diehl and Stroebe 1987 (JPSP 53:497-509) and the Mullen et al. 1991
-  meta-analysis, individuals out-produce groups on quantity and quality; Nemeth et al. 2004 (EJSP
-  34:365-374, https://escholarship.org/uc/item/4k70n7v8), debate instructions beat "no criticism"
-  instructions, so "defer judgement" is not evidence-backed.
+  "provisional" first, an owning group accepts. Common thread: proposer and decider are separate,
+  and an idea at rest has a named state rather than a deletion.
+- Diehl and Stroebe 1987 (JPSP 53:497-509) and Mullen et al. 1991: individuals out-produce groups;
+  Nemeth et al. 2004 (EJSP 34:365-374, https://escholarship.org/uc/item/4k70n7v8): debate beats
+  "no criticism", so "defer judgement" is not evidence-backed.
 - Sharma et al. 2023 (https://arxiv.org/abs/2310.13548): "sycophancy is a general behavior of
-  state-of-the-art AI assistants", the reason an agent's idea is marked as not checked and the
-  decision stays with the owner. Anthropic's "Building effective agents"
-  (https://www.anthropic.com/engineering/building-effective-agents): human feedback at checkpoints;
-  silent on agents proposing work.
-- No source gives a per-session cap or a moonshot practice; those are design choices.
+  state-of-the-art AI assistants", the reason an agent's idea is marked unchecked and the owner
+  decides. No source gives a per-session cap or a moonshot practice; those are design choices.
 
-This queue's measured history (git, 2026-10-13 to 2026-11-22; classifications marked (H) by regex
-over commit subjects): 288 idea files added, 116 removed, 172 present; added per ISO week 21, 9, 64,
-41, 53, 100. Origin (H): coordinator-side 155, owner 104, process 29. Removed (H): built 84 (median 0
-days, mostly recorded at wave planning), already in the code 6, folded 6, converted 13, scan
-outcomes 10, **not wanted 0**. Brainstorm batches: 12 of 57 built (21%); the moonshots of
-2026-10-29 all open. Blocks today: 78 answered-but-unbuilt (median 20 days; 34 "as recommended"),
-68 Plans (median 7 days), 15 Waits, 11 untriaged, 0 blank Questions. Triage median 0.44 days from
-add; the owner answers in sittings (37, 19, 24 at a time), median 3.8 days. The README's "the owner
-reads the whole of it in one sitting" has not happened over the whole queue. Only one file today
-carries a recurrence note; recurrence is not recorded anywhere systematically.
+This queue (git, 2026-10-13 to 2026-11-22; (H) = classified by regex over commit subjects): 288
+idea files added, 116 removed, 172 present; added per ISO week 21, 9, 64, 41, 53, 100. Origin (H):
+coordinator-side 155, owner 104, process 29. Removed (H): built 84, already in the code 6, folded 6,
+converted 13, scan outcomes 10, **not wanted 0** (the critic rechecked the totals and the zero).
+Brainstorm batches: 12 of 57 built; the moonshots of 2026-10-29 all open. Blocks today: 78 answered
+but unbuilt (median 20 days), 68 Plans, 15 Waits, 11 untriaged, 0 blank Questions. Of the 15 Waits,
+4 are rests with no trigger and 2 were written by the coordinator on a blanket leave. Triage median
+0.44 days; the owner answers in sittings of 11 to 37, median 3.8 days. The README's whole-listing
+sitting has never happened.
 
 ## The pieces every option shares
 
-These follow from the owner's answers and are the same in A to D; the options differ in where an
-accepted idea lands, how the bar is applied and what handles ideas that sit.
+**The offer.** At most nine lines, grouped near-term, intermediate, moonshot, about three each, one
+or two lines per idea naming its anchor. The header states the open count at the session's start,
+the bar's step, and how many ideas were held back below it ("held back: 4; ask to see them"). The
+owner answers by number: record, record at rest (where an option has rest), fold into a named file,
+or no. "Record" and "record at rest" are equal choices; neither is pre-selected.
 
-**The offer.** A numbered list of at most nine lines, grouped near-term, intermediate, moonshot,
-about three each, one or two lines per idea naming its anchor. A header line states the queue size
-and the bar (below). Empty slots are normal. The owner answers by number: record, record at rest
-(where an option has a rest state), fold into an existing file, or no.
-
-**The Source line**, within the frontmatter rule: the first line of the body under the title,
-
-```
-Source: coordinator (claude-opus-5-5), after the triage of 2026-11-22; offered and accepted by
-the owner; not sanity-checked. Moonshot.
-```
-
-with the trigger (a triage, a wave close, a release, a spark during named work), the word
-`Moonshot.` when it is one, and the owner's own ideas written `Source: the owner, <context>`. This
-replaces the free-form "Status: untriaged and not sanity-checked (...)" paragraph of the 2026-11-22
-batches, which already says most of this but not the model. A key `source:` in frontmatter would be
-a grammar change in base-owned files and every project's listing; the body line costs nothing and
-`grep -l "^Source: coordinator"` finds them. A `kind: moonshot` was considered and rejected: kind
-says what the work is (feature, chore), moonshot says how far it is, and a moonshot feature would
-lose its kind. The `(moonshot)` title suffix already used on four files stays allowed.
-
-**The cheap check before offering** (a grep, not a sanity check, which stays at triage): the anchor
-named exists in the tree; the idea is not already built; a matching idea is searched for (README,
-"Before adding"); and the list is read once for one primitive offered as several uses. A match is
-not suppressed: it becomes a recurrence entry, offered as "came up again" with what is new.
-
-**The recurrence entry.** When an idea comes up again, the existing file gains a dated entry above
-its block (or at the end when it has none) recording both the recurrence and any modification:
+**The Source line**, the first body line after the H1 (before it, the listing would read it as the
+title), within the frontmatter rule:
 
 ```
-Came up again: 2026-11-22, coordinator (claude-opus-5-5), at the close of wave 46, while reading
-T331's heading correction. New: the manual correction gives the match a seed bearing, so the
-search narrows to plus or minus 15 degrees; anchor `shared/.../HeadingCorrection.kt`.
+Source: coordinator, generated by claude-sonnet-5-5 and recorded by claude-opus-5-5, after the
+triage of 2026-11-22; offered and accepted by the owner; not sanity-checked. Moonshot.
 ```
 
-The `New:` part is optional (a bare recurrence is still recorded) and may add an angle, a scope, an
-anchor or a constraint. A primitive split into uses is recorded the same way: the uses become `Use:`
-lines on the primitive's file instead of their own files. Triage reads the entries: the count of
-`Came up again:` lines raises the idea's standing (it is listed first among its block at the owner's
-sittings and in wave planning, oldest first among equals); a `New:` that changes what was settled
-reopens the block (a Plan whose shape changed becomes a Question; a Question whose choice the
-modification removes may become a Plan; a `Waits:` is the owner's and is only flagged to them). A
-`queue-list.js` column or flag counting the entries (`--recurring`, an addition to a promised CLI,
-not a change) makes the standing visible; until it exists, `grep -c "^Came up again:"` does.
+It names the model that generated the idea (the agent's own model id, or the Co-Authored-By trailer
+of the commit that brought it) and, when the recorder differs, both; the trigger in public terms
+only; `Moonshot.` when it is one; the owner's own ideas read `Source: the owner, <context>`. A
+`source:` key would change the grammar in every project; a `kind: moonshot` would lose the kind
+(a moonshot is a feature or a chore that is far). The `(moonshot)` title suffix stays allowed.
 
-**The rising bar.** One step per doubling of the open queue, stated as guidance the offer's header
-shows, never a number that refuses an idea:
+**The cheap check before offering**: a grep, not the sanity check, which stays at triage. The anchor
+exists; it is not already built; a matching idea is searched for (README, "Before adding"); the list
+is read once for one primitive offered as several uses. A match is offered as "came up again".
+
+**The recurrence entry.** The existing file gains a dated entry above its block, recording the
+recurrence and any modification:
+
+```
+Came up again: 2026-12-03, coordinator (claude-opus-5-5), at the close of wave 47, while reading
+the merged heading correction. New: the manual correction seeds the camera match's bearing, so the
+search narrows to plus or minus 15 degrees.
+```
+
+`New:` is optional and may add an angle, scope, anchor or constraint. A primitive offered as
+several uses records them as `Use:` lines on the primitive's file. Recurrence counts by distinct
+source or session: a recurrence in the same session as the triage that read the file is recorded
+(for its `New:`) but does not count. The count is shown, as information, at the owner's sittings
+and in the coordinator's wave-planning read; the README's oldest-first build order is unchanged,
+and the owner may pick by recurrence. Triage reads the entries (below); a `New:` that changes what
+was settled may reopen a Plan or a Question; a Waits is only flagged.
+
+**Landing keeps what is unbuilt.** A pass that lands an idea removes from the file what it built
+and rewrites the block while any unbuilt `Use:` or `New:` remains; the file is deleted only when
+nothing unbuilt is left. No accepted use is lost with its primitive.
+
+**Triage's reader.** Triage step 4 also lists every file whose last dated entry (`Came up again:`,
+`Use:`) is newer than its block, for re-reading: a Plan or a Question may be reopened, a Waits is
+only flagged to the owner in the triage report. Every step works with grep alone
+(`grep -c "^Came up again:"`); a `--recurring` flag for `queue-list.js` is optional, filed in
+Hatchery as an idea, and no skill text depends on it (an older base would exit 2 on it).
+
+**The rising bar.** One step per doubling of the open count, read once at the session's start and
+shown in the header; a step is guidance and may lag a session when a wave lands ideas near a
+boundary. It never refuses; the held-back count makes it visible.
 
 | Open ideas | What an offered idea also shows |
 |---|---|
 | under 20 | an anchor in the tree |
 | 20 to 40 | no existing file says it (else it is a recurrence entry) |
-| 40 to 80 | it is not one use of a primitive another file or this list names |
-| 80 to 160 | its lever: what it unblocks, which report or correction it answers, or for a moonshot why it is worth carrying far |
-| 160 to 320 | which open idea of its kind it outranks, and why |
-| 320 and up | the owner asked for its topic, or it recurred |
+| 40 to 80 | it is not one use of a primitive another file or this list names (else a `Use:` line) |
+| 80 to 160 | its lever: what it unblocks, which report or correction it answers, or why a moonshot is worth carrying |
+| 160 to 320 | which open idea of its kind it outranks, judged on the shortlist only, one line of reason each |
+| 320 and up | the owner asked for its topic, or it recurred from a distinct source |
 
 The coordinator judges at the offer, the owner at acceptance, triage afterwards. Offering below the
-bar is allowed with a stated reason ("below the bar: no lever yet, but the owner asked about
-skylines"). The 3/3/3 shape is the ceiling; the bar rises inside it, so slots thin as the queue grows
-rather than the shape changing. Header example: `Queue 172 open, step 5: each shows its lever and
-the open idea it outranks. 2 near-term, 2 intermediate, 3 moonshots; 2 recurrences.`
+bar is allowed with a reason. The 3/3/3 shape is the ceiling; the bar rises inside it, so slots thin.
+Resting ideas count toward the open count by design (they are ideas the owner holds).
 
-**Measured on the 2026-11-22 batches.** Grep finds 22 files saying "coordinator's own" dated
-2026-11-22 (the brief said 25; see Claims). Classifying them by title and body against step 4 (the
-architect's reading, for the critic to recheck): 7 show a lever (the line-of-sight function, the
-"what does the phone hold here?" function, the emulator fixture for six reports, the sweep's phone
-timing four ideas wait on, the waking Waits, the "why is this blank?" route, the beta-defaults
-ledger); 5 are moonshots with a reason (skyline geolocation, skylines in packs, the photo retake,
-the split download, the shared sky reading); 4 are recurrences of older files (distance-aware detail
-and the subscription of 2026-11-04 and 2026-10-13, the camera heading fix of 2026-11-02, route
-skylines of 2026-11-21); 6 fail, of which 3 are uses of the "what does the phone hold?" or
-line-of-sight primitives (the coverage panel, the Download card's line, the "where to stand" tint)
-and 3 depend on an unbuilt feature with no lever of their own (the star cutoff's first value, the
-storage advisor, peaks seen today). Under 3/3/3 that is 8 files and 4 recurrence entries instead of
-22 files, with 3 uses as `Use:` lines. Step 5 (outranks an open neighbour) could not be measured
-mechanically. The cost is real: the owner answered the coverage panel "yes" and the Download card
-got a Plan; under the bar both would live as `Use:` lines on the primitive's file, which the owner
-can still promote.
+**Measured on the 2026-11-22 batches.** There were two offers: `be89dabd` (14 files, generated
+under a Sonnet trailer) and `73467e3c` (11, Opus); the owner folded 3 at triage, leaving the 22
+files that say "coordinator's own". At 172 open the bar is at step 5, which cannot be measured
+mechanically; step 4 is the last measurable one. At step 4, the architect's reading of the 22: 7
+lever, 5 moonshot with a reason, 4 recurrences, 6 fail; the critic's recheck: 7, 5, 3, 7 (the
+subscription a recurrence, distance-aware detail contestable, peaks seen today a `Use:` of line of
+sight). So about 12 pass at step 4, within the 18 slots two offers allow. Of the failures, the owner
+answered the coverage panel yes, gave the Download card line a Plan and the storage advisor a Waits:
+the bar would have cut three ideas the owner kept. Hence a failing idea is offered as a `Use:` line
+or a recurrence entry on its home file, never dropped, and the held-back count shows the rest.
 
 ## Options
 
 ### A. Offer, file on yes, one pile (the current practice, sharpened)
 
-Accepted ideas land in `docs/ideas/` like any other, untriaged, with the Source line; moonshots and
-half-baked ideas are triaged with the rest and usually end in a `Question:` or, on the owner's word,
-a `Waits:`. Handling of ideas that sit: none new; the README's whole-listing sitting stays.
-- Bar: the shared table, judged at the offer; shown in the header.
-- Moonshots: `Moonshot.` in the Source line; triaged like the rest, which costs a triage read and a
-  Question per moonshot the owner will answer "later".
-- Ideas that sit: the 78 answered-but-unbuilt and 68 Plans are build capacity, not reading load;
-  nothing changes them. Half-baked ideas get a Question each, adding to the owner's sittings.
-- Reading load: per session at most nine offer lines plus each recorded idea's Question at the next
-  sitting; for the whole queue, the unexercised whole-listing sitting.
-- Files: the triage skill's step 9 (the held carry-back, rewritten with the shared pieces), the
-  wave skill's Close step 6 (points at it; adds the spark case), the `CLAUDE.md` bullet (shortened
-  to a pointer), the ideas README ("Before adding" gains the recurrence entry and the Source line).
-- Hatchery: the triage text as a carry-back; the Source line and recurrence entry as README
-  practice (project-owned READMEs, so an idea in Hatchery asking the base README to show them).
-- Exit cost: delete a step and a paragraph. Moving parts: none new. Settings: none.
+Accepted ideas land untriaged with the Source line; moonshots and half-baked ideas are triaged like
+the rest and end in a `Question:`.
+- Bar, check, provenance, recurrence, landing: the shared pieces.
+- Moonshots: `Moonshot.` in the Source line; each costs a triage read and a Question answered "later".
+- Ideas that sit: no new mechanism; the README's whole-listing sitting stays, unexercised.
+- Reading load: nine offer lines per session plus a Question per recorded idea at the next sitting.
+- Files: triage steps 4 and 9 and the Bounds (the carry-back, replacing 4d00b15); the wave skill's
+  Close step 6 points at step 9 and adds the spark case; the `CLAUDE.md` bullet becomes a pointer;
+  the ideas README gains the Source line, the recurrence entry and landing-keeps-unbuilt.
+- Hatchery: the triage text as a carry-back; the README practice and the landing rule as an idea
+  (the queue READMEs are project-owned).
+- Exit cost: revert one skill step and two README paragraphs; the Source lines and recurrence
+  entries already written stay as plain text. Moving parts: the five shared conventions (Source
+  line, cheap check, recurrence entry, `Use:` line, bar table), the triage reader, the landing
+  rule. Settings: none (process).
 
-### B. Offer, file on yes, with a rest pile on the owner's word (recommended shape)
+### B. Offer, file on yes, with a rest pile on the owner's word (recommended)
 
-As A, plus a rest state the owner chooses at acceptance: "record at rest" for a moonshot or an idea
-not ready. Carrier B1, no grammar change: a `Waits:` written on the owner's word, whose trigger is
-the owner's pick or a recurrence (`Waits: the owner picks it, or it comes up again (moonshot, at rest
-on the owner's word, 2026-11-22).`). `Waits:` is already "the owner's own deferral to a trigger",
-and the 2026-11-22 triage already wrote Waits from the owner's multiple-choice answers. Carrier B2,
-if B1 crowds the Waits: a fourth block `Rests:` (grammar change, below).
-- Bar: the shared table. Resting ideas count toward the queue size for the bar (they are ideas the
-  owner holds) but are listed apart, so the ready queue stays short.
-- Moonshots: `Moonshot.` in the Source line and, by default, offered as "record at rest"; triage
-  skips a resting file (it has a block) and reads it again only when a recurrence entry lands or the
-  owner names it, then replaces the Waits with a Plan or Question.
-- Ideas that sit: a resting idea is at rest by the owner's choice, visibly (`queue-list.js` shows
-  `waits`); nothing lapses. A recurrence wakes it at the next triage (a dated entry on a Waits file
-  is flagged to the owner, never rewritten by triage, since Waits is theirs). The README's
-  whole-listing sitting is replaced by a short **rest review** at a wave close every few waves or
-  when the owner asks: the coordinator lists resting and answered-but-unbuilt ideas older than a
-  month, most-recurrent first, one line each; the owner says keep, wake or delete. PEP 1's Deferred
-  and the RFC's "postponed" are the model, with the owner as the one who moves the state.
-- Reading load: per session nine offer lines; per rest review one line per old idea, sorted so the
-  owner can stop early; triage reads fewer files (resting ones skipped).
-- Files: as A, plus the ideas README (the rest meaning of Waits; the rest review replacing the
-  whole-listing sentence), the wave skill's Close step 6 (the rest review's cadence), a
-  `queue-list.js` `--recurring` flag (base-owned code; a carry-back once built, the flag an addition
-  to ADR 0017's promised CLI, so an idea filed in Hatchery first).
-- Hatchery: the triage text as a carry-back; the rest meaning of Waits, the rest review and the
-  recurrence rule as an idea filed there with this proposal's ADR as its source. B2 alone needs a
-  Hatchery ADR (ADR 0007's own supersession trigger: "the grammar wants a fourth state").
-- Exit cost: B1, rewrite resting Waits into Questions or leave them (they read as Waits anyway);
-  B2, a migration of every `Rests:` file in every project. Moving parts: one flag; a periodic review
-  the coordinator runs. Settings: none (process, not the app).
+As A, plus a rest state the owner chooses at the offer. **B1**, no grammar change: a Waits with a
+fixed, greppable prefix, written only on the owner's quoted word:
+
+```
+Waits: at rest — "keep it, later" (the owner, 2026-11-22)
+```
+
+The quote is the owner's words or the text of the option they picked. "At rest" is never the
+coordinator's default. **B2**, if B1 proves insufficient: a fourth block `Rests:` (grammar change).
+- Bar: the shared table; resting ideas count toward it and list apart (`grep "^Waits: at rest"`).
+- Moonshots: `Moonshot.` in the Source line, offered with "record" and "record at rest" side by side.
+- Ideas that sit: triage never rewrites any Waits. A recurrence entry on a resting file is flagged
+  in the triage report; only the owner's answer turns it into a Plan or Question. Nothing lapses.
+- **The rest review**: an offered list, not a sitting an agent runs. Every third wave close
+  (recorded in the wave record) or when the owner asks, the coordinator lists the resting Waits
+  sorted by distinct recurrences, one line each, with the 4 trigger-less Waits and the 2
+  blanket-leave Waits of today for the owner to restate or convert (triage converts none). The
+  owner decides each line: keep, wake, or delete. The answered-but-unbuilt stay with wave planning,
+  which already drains them oldest first; listing them would re-ask answered questions. The
+  README's "no agent runs that sitting" becomes "the coordinator offers the rest review on its
+  cadence; the owner decides each line", the owner's explicit word quoted in the ADR.
+- Reading load: nine offer lines per session; one line per resting idea every third wave, sorted so
+  the owner can stop early; triage reads fewer files (resting ones only when flagged).
+- Files: as A, plus the ideas README (the rest prefix, the review), `.claude/rules/docs.md` aligned
+  with the README ("only the owner decides a Waits; an agent writes one only from the owner's quoted
+  words"), the wave skill's Close step 6 (the review every third close).
+- Hatchery: the triage text as a carry-back; the rest prefix, the review, the recurrence and landing
+  rules and the `docs.md` line as an idea filed there citing this ADR. B2 alone needs a Hatchery ADR:
+  ADR 0013's "a new block kind that older readers may ignore is free" does not apply, since an older
+  `queue-list.js` would list a file ending in `Rests:` as untriaged and triage it again; ADR 0007's
+  own trigger ("the grammar wants a fourth state") would govern.
+- Exit cost: B1, drop the review step and leave the prefixed Waits, which read as ordinary Waits;
+  B2, a migration of every `Rests:` file in every project. Moving parts: A's, plus the prefix, the
+  review and its cadence line in the wave record. Settings: none (process).
+
+**Considered: A plus the fixed rest prefix** (the critic's alternative, no review, no flag). B1
+keeps the review: the owner put readability in scope and it is the only reading mechanism with a
+cadence; the flag is already deferred.
 
 ### C. A separate lane with a lapse rule (PEP 1's Deferred, owner-approved)
 
-New coordinator ideas land in their own lane, a subdirectory `docs/ideas/lane/` [no-check: not
-created] or a lane file, with their own 3/3/3 cap; an idea not picked by the owner at two sittings is
-proposed for lapse in a batch the owner approves once ("lapse these six"), after which they are
-deleted (git keeps them) or moved to a `later` pile.
-- Bar: the lane's size, not the whole queue's, drives it; the lane is small, so the bar stays low
-  there and the main queue is untouched.
-- Moonshots: the lane holds them; triage never reads the lane; the owner promotes by name.
-- Ideas that sit: lapse after two sittings, approved by the owner, which squares with "only the
-  owner prunes" only if the approval is real reading, not a rubber stamp of a batch.
-- Reading load: a second listing to read; the lapse batches.
-- Files: `queue-list.js` reads only the top level of `docs/ideas/` (`readdirSync`), so a
-  subdirectory is invisible to it and the post-edit hook would want an index there; Hatchery ADR
-  0017 defers "a fourth queue directory ... until an ADR adds a name". So a lane is a Hatchery ADR
-  and code change before it is usable; a single lane file is the shared list ADR 0007 retired.
-- Exit cost: merge the lane back and drop the lapse rule. Moving parts: a lane, a listing mode, a
-  lapse count per idea. Settings: none.
-- Against it: the owner's notes value "postponed indefinitely but interesting"; a lapse clock turns
-  that into a deletion prompt. Recurrence across lanes needs a cross-search.
+Coordinator ideas land in their own capped lane, skipped by triage; one not picked at two sittings
+is proposed for lapse in a batch the owner approves. `queue-list.js` ignores subdirectories (line
+155; `0017-queue-list.md` section 1) and Hatchery ADR 0017 item 7 defers a fourth queue directory
+"until an ADR adds a name"; a lane file is the list ADR 0007 retired. Against it: "postponed but
+interesting" becomes a lapse prompt. Exit cost: merge the lane back. Moving parts: a lane, a listing
+mode, a lapse count, a Hatchery ADR. Settings: none.
 
 ### D. Only through triage
 
-A brainstorm writes no new files: every suggestion is a recurrence entry or a `Use:` line on an
-existing idea, or a new Question on one; a genuinely new idea is filed only when triage finds no home.
-- Bar: implicit; new files are rare. Moonshots: no home unless an existing idea fits.
-- Ideas that sit: unchanged. Reading load: the lowest. Files: the triage skill only.
-- Against it: the owner wants sparks "any time" and moonshots welcome; most of the 2026-11-22
-  moonshots had no file to hang on. Kept as the record of the narrowest shape.
-- Exit cost: none. Moving parts: none. Settings: none.
+No new files: each suggestion is a recurrence entry, a `Use:` line or a Question on an existing
+idea. Sparks and moonshots have no home. Exit cost: none. Moving parts: one paragraph. Settings: none.
 
 ## Recommendation
 
-**B with carrier B1.** It keeps what the owner says works (offer at the end of work, 3/3/3, file on
-yes), adds the pile the owner leans toward without a grammar change (a `Waits:` on the owner's word
-is already the grammar's owner-only deferral), makes duplicates accrete as dated recurrence entries
-with their modifications, and states the log-scaled bar as a per-doubling table the offer's header
-shows, so the bar rises without a number that refuses anything. The whole-listing sitting nobody ran
-becomes a short, sorted rest review. The 78 answered-but-unbuilt are a capacity question for wave
-planning, not a reading problem, and the recurrence count is the one new signal planning gains.
+**B with carrier B1.** It keeps what the owner says works (offers at the end of work, 3/3/3, file on
+yes), adds the pile the owner leans toward without a grammar change, using a prefixed Waits written
+only on quoted words, lets duplicates accrete as recurrence entries counted by distinct source, keeps
+accepted uses alive past a landing, and states the log-scaled bar as a per-doubling table with a
+held-back count. The whole-listing sitting nobody ran becomes a rest review offered every third wave.
 
-First step: rewrite the held carry-back's step 9 with the shared pieces (offer, Source line, cheap
-check, recurrence entry, bar table) as one triage step that the wave skill's Close step 6 and the
-spark case call; the ideas README's paragraphs; the `CLAUDE.md` bullet as a pointer; the Source line
-added to the 2026-11-22 files that lack the model only if the owner wants it (they say "not
-sanity-checked" already). Then an idea in Hatchery for the rule and the `--recurring` flag.
+First step: the held carry-back rewritten as triage steps 4 and 9 and the Bounds, with the wave
+skill, README, `docs.md` and `CLAUDE.md` lines; then the idea in Hatchery (the flag optional).
 
 ## What would change this recommendation
 
-- Resting Waits outnumber trigger Waits so that the waking-Waits idea cannot tell them apart: take
-  B2 (a `Rests:` block) through a Hatchery ADR.
-- The owner skips two rest reviews running: the review is the wrong cadence; fold it into triage.
-- Recurrence entries pile up on files nobody builds: the standing signal is not used; drop the flag.
-- The owner finds the bar's step text noise in the header: keep the table in the skill only.
-- Hatchery declines a project-owned README practice spreading through an idea: keep it here only.
+- Resting Waits crowd the trigger Waits so that the waking-Waits idea cannot use the prefix: B2.
+- The owner skips two rest reviews running: drop the review, which leaves the critic's alternative.
+- Recurrence entries pile up on files nobody builds: drop the count from the planning read.
+- Predictions, each with its check:
+  - Prediction, check 2027-01-31: the open queue's growth per week (`git log --diff-filter=A` on
+    `docs/ideas/` per ISO week, minus deletions) is below half of W47's 100 added.
+  - Prediction, check at the second rest review: at each of the first two the owner decides at least
+    half the lines in one sitting (the wave record's review line).
+  - Prediction, check 2027-02-22: at most a quarter of `Came up again:` entries name the same session
+    as a triage that read the file, and every rest Waits carries the prefix (grep).
 
 ## Claims to verify
 
-- The 2026-11-22 count: grep finds 22 files with "coordinator's own"; the brief's 25 may count
-  ideas worded differently (commit 73467e3c says eleven from the triage batch).
-- The step-4 classification of those 22 (7 lever, 5 moonshot, 4 recurrence, 6 fail) is one reader's;
-  recheck against the files.
-- `queue-list.js` lists only the top level of `docs/ideas/` (its `readdirSync`), so option C's
-  subdirectory is invisible to it.
-- Whether a new `block` value in `--json` (B2's `rests`) is a promised-surface change under
-  Hatchery ADR 0017 item 5 (field names are promised; values are unstated).
-- That writing a `Waits:` from the owner's chat acceptance fits "no agent writes one on its own
-  judgement" (README); the 2026-11-22 triage did so from multiple-choice answers.
-- The queue history figures come from `0065-research-queue.md` (scratchpad, not durable; the
-  example commits there: be89dabd, 6549db59, 904b484f, 4733f465, 5144f950).
+- The two offers and the folds: `be89dabd` (14, Sonnet trailer), `73467e3c` (11, Opus), folds
+  `5144f950`, `d268de91`, `2b5cb85c` (the critic's Claim 1).
+- The step-4 classification: the architect's 7/5/4/6 and the critic's 7/5/3/7.
+- `queue-list.js` lists only the top level (line 155, `0017-queue-list.md` section 1); Hatchery ADR
+  0017 item 7 defers a fourth directory.
+- Hatchery ADR 0013's sentence on new block kinds, and why it does not cover `Rests:` (option B).
+- The Waits counts: 4 trigger-less rests and 2 blanket-leave Waits among the 15 (grep `^Waits:`).
+- The weekly and origin figures were not rechecked by the critic (scratchpad research, not durable).
 
 ## Critic's objections and responses
 
-(none yet)
+1. Serious, who rewrites a resting Waits. Response: triage never rewrites any Waits; a recurrence
+   on one is flagged in the triage report and only the owner's answer turns it into a Plan or
+   Question. Resolution: accepted (option B, "Ideas that sit").
+2. Serious, rest and trigger Waits indistinguishable. Response: the fixed prefix
+   `Waits: at rest — "<quoted words>" (the owner, <date>)`, written only on quoted words; record and
+   record at rest equal in the offer; the 4 trigger-less and 2 blanket-leave Waits listed at the first
+   rest review for the owner; `docs.md` aligned. Resolution: accepted.
+3. Serious, recurrence reorders the drain and echoes. Response: counted by distinct source or
+   session, the same-session echo excluded; a visible count at sittings and planning only; oldest
+   first unchanged. Resolution: accepted with change (shown in planning, not only to the owner).
+4. Serious, `Use:` and `New:` lines die with their file. Response: the landing pass removes what it
+   built and keeps the file while anything unbuilt remains, instead of spawning new files.
+   Resolution: accepted with change (the file kept, not split).
+5. Serious, carry-back too narrow; the flag. Response: triage step 4 gains the reader for files with
+   an entry newer than their block; the carry-back names steps 4 and 9 and the Bounds; grep only,
+   the flag optional and filed as an idea. Resolution: accepted.
+6. Serious, "8 instead of 22" does not hold. Response: restated in place: two offers, 3 folds, 12
+   passing at step 4, step 5 unmeasured, the critic's recheck beside the architect's, three kept
+   ideas the bar would have cut, so failures become `Use:` lines. Resolution: accepted.
+7. Minor, the count flips as waves build. Response: read once at the session's start, shown in the
+   header; a step may lag a session; resting ideas count by design. Resolution: accepted with change
+   (a lag note instead of hysteresis).
+8. Minor, step 5's cost. Response: judged on the shortlist only, one line of reason each.
+   Resolution: accepted (one offer per session and the meter rule not taken: the owner's triggers
+   stand, and the usage gate governs launches, not the coordinator's own text).
+9. Minor, the silent bar. Response: "held back: N" in the header. Resolution: accepted.
+10. Minor, model provenance. Response: the Source line names the generating model, from the agent's
+    id or the commit trailer, and both when the recorder differs; after the H1; public context only.
+    Resolution: accepted.
+11. Minor, the rest review against the README; cadence. Response: an offered list the owner decides
+    line by line; every third wave close, recorded in the wave record, or on request; resting Waits
+    only, the answered-but-unbuilt left to wave planning; the README sentence changes, the owner's
+    word quoted in the ADR. Resolution: accepted with change.
+12. Minor, boilerplate exit and moving-parts lines, no prediction. Response: concrete lines per
+    option, the shared conventions listed, three dated predictions. Resolution: accepted.
+13. Minor, citations for C and B2. Response: ADR 0017 item 7 for C; ADR 0013's sentence and why it
+    does not apply for B2. Resolution: accepted.
