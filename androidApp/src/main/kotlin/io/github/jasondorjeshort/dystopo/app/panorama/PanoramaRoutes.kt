@@ -32,7 +32,7 @@ import io.github.jasondorjeshort.dystopo.horizon.SkyView
  *   asks for and the peaks are tested, or that long. T327: `layers` (what the Sun, Satellites and Flights drew through the
  *   lens: `sun` (`pathSamples`, `pathOnView`, `hourMarks`, `hoursOnView`, `nowAltDeg`, `nowAzDeg`, `nowDrawn`, `nowPx`),
  *   `satellites` (`listed`, `onView`, `ids`), `flights` (`listed`, `onView`, `names`, `hollow`, `emergency`, `tailPoints`,
- *   `credit`, `picked`); a layer that is off is absent), `buttons` and `disabledButtons` in `drawn`, `target` (`kind`,
+ *   `credit`, `picked`, `aircraft`: hex, label, bearing and elevation of each listed); a layer that is off is absent), `buttons` and `disabledButtons` in `drawn`, `target` (`kind`,
  *   `id`, `name`, `elDeg`, `azDeg`, `onView`, `x`, `y` in the plot (px) while on the view, `third`: `left`, `middle` or
  *   `right` third of the plot's width), `arrow` (`side`, `degrees`, `text`, `x`, `y` (the edge point, plot px), `rectPx`
  *   in the Compose root), `turns` (`done`, `last`: the target, the turn's degrees and the aim it ended at), `sunAt` (the
