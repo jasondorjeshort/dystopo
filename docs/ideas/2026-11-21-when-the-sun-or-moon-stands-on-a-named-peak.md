@@ -30,3 +30,17 @@ Recorded 2026-11-21 from the coordinator's list after wave 44, on the owner's "w
 - The moon half waits on the Moon layer's Plan (`nav/Moon.kt`), and the moon's dates do not repeat by the year.
 - Where it is asked: a row on a picked peak in the Horizon view ("When is the sun here?"), next to "View from here".
 - Weather is unknown offline: it says when the alignment happens, not that it will be seen.
+
+Plan: one pass, the sun half, as text. `shared/.../horizon/` gains a pure search beside `SunPath.kt`: for an observer
+and a target's bearing and apparent angle (a `PeakView` of `Viewshed.peaks`), the days of the coming year on which the
+sun's disc crosses that point, each with its minute: per day the instant the sun passes the bearing (`Sun.position`,
+`Sun.refractionDeg`), kept when its centre is within the disc's radius of the angle; runs of days joined ("3 to 6
+February, about 7:40 AM"). Unit tests: at each found instant the sun stands within a quarter degree of the target; a
+target north of the sun's whole range finds none. The picked peak's line in the shared pane
+(`app/horizon/SkyViewParts.kt`, so both sky views) gains "Sun here" beside "View from here", opening the dates under
+it, worked out off the main thread, "Never" when the sun does not pass there, and a help sentence that it says when
+the alignment happens, not whether the sky is clear. `GET /horizon` reports `sunOnPeak` for the pick. Verify: on the
+emulator at Paradise, a picked peak to the south (dates) and Mount Rainier to the north (it reads "Never": the
+example above cannot happen from there), viewed at the default text and at font scale 2.0, and one found date
+checked by the route's `date=` (the sun's path through the summit). Strings in the report (ADR 0031). Out of scope:
+the moon (after `nav/Moon.kt`), where to stand for a given date, a jump to the date (the one clock's).
