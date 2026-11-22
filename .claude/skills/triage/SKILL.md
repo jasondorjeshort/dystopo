@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Read every untriaged file in docs/ideas/ against the code it names and write one block into each — a Plan: where the work is settled and pass-sized, a Question: with a blank Answer: where a choice is the owner's. Also runs the ADR 0012 scan (fired triggers, due predictions, fitness lines). Writes no code, deletes only an idea the code already has, pushes nothing.
+description: Read every untriaged file in docs/ideas/ against the code it names and write one block into each — a Plan: where the work is settled and pass-sized, a Question: with a blank Answer: where a choice is the owner's. Also runs the ADR 0012 scan (fired triggers, due predictions, fitness lines). Ends with a brainstorm of new ideas, recorded only as the owner accepts them. Writes no code, deletes only an idea the code already has, pushes nothing.
 ---
 
 # Triage
@@ -77,13 +77,24 @@ no block. The format of a file and its three blocks is `docs/ideas/README.md`; r
 8. Commit each file alone, through whoever the policy lets commit (`.claude/hooks/policy.json`;
    in the base that is the `runner`, via the `commit` skill), with a one-line subject naming the
    idea and the block written; the body carries the reason a Question is the owner's. Do not push.
-9. Report: how many scan hits, step 2's lines and its pending count, step 3's line, how many files read, how many got a Plan, how many a Question, which were deleted as
-   already built, and anything you could not anchor.
+9. The brainstorm. Once the blocks are committed, offer the owner new ideas the session suggests,
+   moonshots included: from the anchors just read, the answers the owner gave, any research that came
+   back, and the gaps the blocks left (several ideas waiting on one missing measurement, one primitive
+   described as several features, a pattern the owner corrected). Each is one or two lines naming
+   its anchor, in a numbered list, grouped near-term, medium and moonshot. None is written down
+   unasked. The ones the owner accepts become idea files in the `docs/ideas/README.md` shape, each
+   saying it is the coordinator's own, untriaged and not sanity-checked, recorded on the owner's
+   word, all in one commit; the next triage reads them like any other. A project's wave skill may
+   call this step at a wave's close or a release as well.
+10. Report: how many scan hits, step 2's lines and its pending count, step 3's line, how many files read, how many got a Plan, how many a Question, which were deleted as
+   already built, anything you could not anchor, and how many ideas the brainstorm offered and
+   recorded.
 
 ## Bounds
 
 - Triage writes blocks and nothing else: no code, no doc edits outside the idea file (except the
-  scan's idea files and their rows where `docs/ideas/README.md` carries a table), no deletion for taste.
+  scan's idea files and their rows where `docs/ideas/README.md` carries a table, and the files the
+  owner accepted from the brainstorm), no deletion for taste.
 - A `Waits:` is the owner's to write. If a file already carries a `Waits:` or a `Question:` with
   an `Answer:`, it is not yours; leave it.
 - One block per file. A file that needs both a Plan and a Question gets the Question; once the
