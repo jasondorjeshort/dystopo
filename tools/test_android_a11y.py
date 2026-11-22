@@ -512,4 +512,47 @@ finally:
     a11y.time.sleep = _sleep
 # end T332
 
+# T333: the screen recording-weak sets the fault sky and the shortened run, records, and waits for the line; its end
+# stops and deletes the recording and puts the time and the sky back, in that order.
+rw = [s for s in a11y.SCREENS if s[0] == "recording-weak"]
+assert len(rw) == 1 and rw[0][3] == "map" and rw[0][2] is a11y.end_recording_weak, rw
+
+
+class WeakSrv:
+    def __init__(self):
+        self.calls = []
+        self.polls = 0
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path.startswith("/tracks/record"):
+            return {"started": {"id": "t-1"}}
+        if path == "/tracks/weak":
+            self.polls += 1
+            return {"shown": self.polls >= 2}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    wsrv = WeakSrv()
+    ctx = type("C", (), {"srv": wsrv, "recorded": None})()
+    rw[0][1](ctx)
+    paths = [p for _m, p in wsrv.calls]
+    assert paths[:4] == ["/gnss?case=fault", f"/tracks/weak?holdS={a11y.WEAK_HOLD_S}", "/tracks/record?source=injected&activity=foot", "/tracks/ui?bar=1"], paths
+    assert paths[-1] == "/tracks/weak" and wsrv.polls == 2 and ctx.recorded == "t-1", paths
+    assert sum(1 for p in paths if p.startswith("/location?")) == 2, paths
+    wsrv.calls.clear()
+    rw[0][2](ctx)
+    assert [p for _m, p in wsrv.calls] == ["/tracks/stop", "/tracks/t-1", "/tracks/weak?holdS=default", "/gnss?clear=1"], wsrv.calls
+    assert ctx.recorded is None
+finally:
+    a11y.time.sleep = _sleep
+# end T333
+
 print("test_android_a11y: ok")
