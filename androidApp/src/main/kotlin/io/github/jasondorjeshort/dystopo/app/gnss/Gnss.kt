@@ -30,7 +30,9 @@ import java.util.concurrent.atomic.AtomicLong
  * while it is open ([GnssUi]) and the check while it runs ([GnssCheck]). While held it registers a [GnssStatus.Callback]
  * (the satellites: system, number, C/N0, elevation, azimuth, used in the fix, ephemeris, almanac, carrier frequency) and
  * its own GPS `requestLocationUpdates` (the [GpsLocationSource] pattern, on its looper), so the status flows whatever the
- * map's own listener does (an injected fix stops that one); both are removed when the last holder lets go.
+ * map's own listener does (an injected fix stops that one); both are removed when the last holder lets go. T333: a
+ * recording holds it status-only (`recording`, [hold]'s `statusOnly`): the callback alone, the recorder's own listener
+ * being the one that fixes, and [position] unchanged by it.
  *
  * - **Time to first fix** ([ttffMs]) is the app's own: from the first time `MapController` started its device fixes in
  *   this process to the first GPS fix its listener heard ([onDeviceStart], [onDeviceFix]); null (a dash) before that.
@@ -90,15 +92,55 @@ object Gnss {
     val held: Boolean get() = synchronized(holders) { holders.isNotEmpty() }
     fun holders(): List<String> = synchronized(holders) { holders.toList() }
 
-    /** [who] wants the GNSS status (true) or no longer (false); the callback and the listener follow the set of holders. */
-    fun hold(who: String, on: Boolean) {
-        val change = synchronized(holders) {
-            val before = holders.isNotEmpty()
-            if (on) holders += who else holders -= who
-            before != holders.isNotEmpty()
+    /** T333: the holders that want the status only (a recording's weak-signal watch), not the view's own fixes. */
+    private val statusOnly = HashSet<String>()
+
+    /**
+     * T333: whether a holder wants the view's own fixes ([lastFix]): every holder but a status-only one. [position] reads the
+     * view's own fix only then, so a recording's hold changes no fix the sky views stand on.
+     */
+    val fixHeld: Boolean get() = synchronized(holders) { holders.any { it !in statusOnly } }
+
+    fun statusOnlyHolders(): List<String> = synchronized(holders) { holders.filter { it in statusOnly } }
+
+    /**
+     * [who] wants the GNSS status (true) or no longer (false); the callback and the listener follow the set of holders.
+     * T333: a [statusOnly] holder (the recording's watch, whose recorder has its own GPS listener) registers the status
+     * callback alone; the view's own GPS listener runs only while some other holder holds.
+     */
+    fun hold(who: String, on: Boolean, statusOnly: Boolean = false) {
+        val (before, after) = synchronized(holders) {
+            val b = holdLevel()
+            if (on) {
+                holders += who
+                if (statusOnly) this.statusOnly += who else this.statusOnly -= who
+            } else {
+                holders -= who
+                this.statusOnly -= who
+            }
+            b to holdLevel()
         }
-        if (change) {
-            if (on) start() else stop()
+        if (before != after) follow(after)
+    }
+
+    /** 0 nothing held, 1 the status only, 2 the status and the view's own fixes. Under the holders' lock. */
+    private fun holdLevel(): Int = when {
+        holders.isEmpty() -> 0
+        holders.all { it in statusOnly } -> 1
+        else -> 2
+    }
+
+    @Synchronized
+    private fun follow(level: Int) {
+        when (level) {
+            0 -> stop()
+            else -> {
+                start(fixes = level == 2)
+                if (level == 1) listener?.let { l ->
+                    runCatching { manager.removeUpdates(l) }
+                    listener = null
+                }
+            }
         }
     }
 
@@ -108,10 +150,13 @@ object Gnss {
 
     @SuppressLint("MissingPermission") // permitted() first
     @Synchronized
-    private fun start() {
-        if (callback != null) return
+    private fun start(fixes: Boolean) {
         if (!permitted()) {
             error = "no location permission"
+            return
+        }
+        if (callback != null) {
+            if (fixes && listener == null) startListener()
             return
         }
         val cb = object : GnssStatus.Callback() {
@@ -124,19 +169,35 @@ object Gnss {
                 realAt = SystemClock.elapsedRealtime()
             }
         }
+        try {
+            val m = manager
+            if (Build.VERSION.SDK_INT >= 30) m.registerGnssStatusCallback(executor, cb)
+            else @Suppress("DEPRECATION") m.registerGnssStatusCallback(cb, Handler(GpsLocationSource.looper))
+            callback = cb
+            engine = "registered"
+            error = null
+        } catch (e: SecurityException) {
+            error = "location: ${e.message}"
+            return
+        } catch (e: RuntimeException) {
+            error = "${e.javaClass.simpleName}: ${e.message}"
+            return
+        }
+        if (fixes) startListener()
+    }
+
+    /** The view's own GPS listener (T333: apart from the status callback, for the holders that want fixes). */
+    @SuppressLint("MissingPermission") // permitted() first
+    @Synchronized
+    private fun startListener() {
         val l = io.github.jasondorjeshort.dystopo.app.tracking.locationListener { loc ->
             fixes.incrementAndGet()
             lastFix = loc
         }
         try {
             val m = manager
-            if (Build.VERSION.SDK_INT >= 30) m.registerGnssStatusCallback(executor, cb)
-            else @Suppress("DEPRECATION") m.registerGnssStatusCallback(cb, Handler(GpsLocationSource.looper))
             if (m.allProviders.contains(LocationManager.GPS_PROVIDER)) m.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, l, GpsLocationSource.looper)
-            callback = cb
             listener = l
-            engine = "registered"
-            error = null
         } catch (e: SecurityException) {
             error = "location: ${e.message}"
         } catch (e: RuntimeException) {
@@ -213,9 +274,10 @@ object Gnss {
     /**
      * The position the view describes and the check holds still: while fixes are injected (debug) the injected one, else
      * the view's own GPS fix while the GNSS is held, else the map's (T308: the Horizon view with Satellites off follows
-     * the map's fix). Never the terrain estimate; never written to a report.
+     * the map's fix). Never the terrain estimate; never written to a report. T333: a status-only hold (a recording's)
+     * does not count, so recording changes no fix the sky views stand on.
      */
-    fun position(): Location? = if (app.map.injectedLocation || !held) mapFix() else lastFix ?: mapFix()
+    fun position(): Location? = if (app.map.injectedLocation || !fixHeld) mapFix() else lastFix ?: mapFix()
 
     /** The fix the summary describes (accuracy, age, height, speed, course): as [position]. */
     fun fix(): Location? = position()
@@ -366,7 +428,7 @@ object Gnss {
         val s = GnssHealth.summarize(sats)
         val f = fix()
         return linkedMapOf(
-            "open" to GnssUi.open, "holders" to holders(), "engine" to engine, "error" to error, "permission" to permitted(),
+            "open" to GnssUi.open, "holders" to holders(), "statusOnly" to statusOnlyHolders(), "listening" to (listener != null), "engine" to engine, // T333 "error" to error, "permission" to permitted(),
             "source" to source, "statusCallbacks" to statusCallbacks.get(), "fixes" to fixes.get(),
             "statusAgeMs" to if (realAt == 0L) null else SystemClock.elapsedRealtime() - realAt,
             "summary" to linkedMapOf(

@@ -87,8 +87,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.horizon.HORIZON_HELP + // T308: the Horizon view
             io.github.jasondorjeshort.dystopo.app.panorama.PANORAMA_HELP + // T326: the Panorama view
             // T311: the Flights card
-            io.github.jasondorjeshort.dystopo.app.aircraft.AIRCRAFT_HELP
+            io.github.jasondorjeshort.dystopo.app.aircraft.AIRCRAFT_HELP +
             // end T311
+            // T333: the recording panel's weak-signal line.
+            io.github.jasondorjeshort.dystopo.app.tracking.WEAK_SIGNAL_HELP
+            // end T333
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

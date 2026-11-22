@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -169,6 +170,7 @@ private fun BoxScope.Controls() {
                     // T260: the gaps bridged on the map, their count and time, after the live stats.
                     GapStatsLine(UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)), ui.gapText, 13)
                     RecordingStateLine(ui)
+                    if (ui.weakSignal) WeakSignalLine() // T333
                     if (ui.paused) DiscardLine() // T253: paused only, and it asks first
                     TurnBackChip() // T252: the card off by default, on with this chip
                     WayBackLine() // T180
@@ -391,6 +393,42 @@ private fun WayBackLine() {
         }.start()
     }
 }
+
+/**
+ * T333: the recording panel's weak-signal line ([WEAK_SIGNAL_LINE]), shown once the watch fired until the recording ends; a
+ * tap opens the Horizon view (the round plot, where the satellites and the terrain's rim show), with its help beside it.
+ */
+@Composable
+private fun WeakSignalLine() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        BasicText(
+            WEAK_SIGNAL_LINE,
+            style = TextStyle(color = RecordRed, fontSize = 12.sp, fontWeight = FontWeight.Bold),
+            modifier = Modifier.weight(1f, fill = false).clickable(onClickLabel = WEAK_SIGNAL_ACTION) { openHorizonForWeakSignal() }
+                .heightIn(min = 48.dp).wrapContentHeight(Alignment.CenterVertically),
+        )
+        io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.weakSignal")
+    }
+}
+
+/** T333: the line's tap: the Horizon view at the fix (not the Panorama, whichever was open last). Main thread. */
+internal fun openHorizonForWeakSignal() {
+    io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi.open()
+    io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi.show(io.github.jasondorjeshort.dystopo.horizon.SkyView.HORIZON)
+}
+
+/** T333: the line's spoken action (ADR 0031). */
+internal const val WEAK_SIGNAL_ACTION = "Open the Horizon view"
+
+/** T333: the line's help (ADR 0031: the owner's to adjust). */
+internal val WEAK_SIGNAL_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.weakSignal", "GPS signal unusually weak", "The map, top right: Tracks, then the recording panel", needs = "recording, with a weak GPS signal for five minutes", show = { TrackBar.open = true }) {
+        "Shown once a recording when many satellites stand above the hills around you but every one has been weak " +
+            "for five minutes, as a phone deep in a bag or a fault in its GPS can cause. The recording goes on; its " +
+            "positions may be poor. Tap it for the Horizon view, which can show the satellites against the hills."
+    },
+)
+// end T333
 
 /** T272: the toast after "Turn back to here" on a waypoint (ADR 0031). Pure. */
 internal fun wayBackToWaypoint(name: String): String = "The way back now goes to ${name.ifBlank { "the waypoint" }}"

@@ -13,7 +13,8 @@ package io.github.jasondorjeshort.dystopo.gnss
  * [GnssHealth.FAULT_T4], uncalibrated (to be checked against recorded tracks).
  */
 class WeakSignalWatch(
-    val holdMs: Long = HOLD_MS,
+    /** How long the weak run must last; a var so a debug route can shorten it for a test. */
+    var holdMs: Long = HOLD_MS,
     val minAbove: Int = MIN_ABOVE,
     val weakBelow: Double = GnssHealth.FAULT_T4,
 ) {

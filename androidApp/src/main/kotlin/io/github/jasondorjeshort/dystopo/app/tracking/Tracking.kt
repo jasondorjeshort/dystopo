@@ -90,6 +90,10 @@ import kotlinx.coroutines.launch
  * per-device flag, never synced); [refreshOverlay] draws them all, the recording on top. Before, one transient field held
  * the one shown track, and a new recording, an import, a profile or a relaunch replaced it: the earlier track left the
  * map without being hidden or deleted. [shownId] remains for a reader of one track (the print sheet).
+ *
+ * T333, **the weak-signal watch** ([weak], [weakTick]): while a track records, the GNSS status is held status-only
+ * ([WEAK_HOLDER]) and read at each tick; at least 8 satellites above the terrain rim, every one under 25 dB-Hz for five
+ * minutes, shows one line on the recording panel ([WEAK_SIGNAL_LINE]), once a recording; no sound, no notification.
  */
 class Tracking private constructor(private val app: DystopoApp) {
     enum class Mode(val gps: Boolean, val injected: Boolean) { ALL(true, true), GPS(true, false), INJECTED(false, true) }
@@ -123,6 +127,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         val activeActivity: Activity? = null,
         /** T260: the recording's gaps bridged on the map, for the panel's statistics line ("1 gap, 10 min"); null with none. */
         val gapText: String? = null,
+        /** T333: the weak-signal watch fired for this recording: the panel shows its one line until the recording ends. */
+        val weakSignal: Boolean = false,
     )
 
     private val worker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-tracks").apply { isDaemon = true } }
@@ -138,6 +144,16 @@ class Tracking private constructor(private val app: DystopoApp) {
         ?: GpsLocationSource(app, LocationManager.PASSIVE_PROVIDER, "passive")
     /** T159: the times and counters behind [state] (tracking thread). */
     val watch = RecordingWatch()
+    /** T333: the weak-signal watch ([weakTick]); declared before `init`, whose posts may read it. Tracking thread. */
+    val weak = io.github.jasondorjeshort.dystopo.gnss.WeakSignalWatch()
+    /** T333: the rim the watch read at the last tick: `none` (the flat horizon, the raw condition not holding), `pending`, `terrain` or why there is none. */
+    @Volatile var weakRim: String = "none"
+        private set
+    /** T333: rim sweeps asked for while the raw condition held (a kept rim within 100 m answers without one). */
+    @Volatile var weakRimAsks = 0L
+        private set
+    /** T333: a status older than this counts as none (the GPS engine off): the run starts again. */
+    private val weakStaleMs = 15_000L
     val notification = TrackNotification(app)
     val overlay = TrackOverlay()
     val replay = Replay(this)
@@ -219,6 +235,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         refreshOverlay(force = true)
         if (resumed != null) {
             post { watch.begin(SystemClock.elapsedRealtime()); startTicker(); puck(null) } // T251
+            io.github.jasondorjeshort.dystopo.app.gnss.Gnss.hold(WEAK_HOLDER, true, statusOnly = true) // T333: the resumed recording's watch
             // T180: the way back of the resumed recording, from what it holds (its override is per device, kept).
             post { runCatching { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.rebuild(resumed, recordedPoints()) } }
             // The system restarting the service goes on by itself from its onStartCommand. T229: this object is built on its own
@@ -434,6 +451,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         val wantFallback = active && p.networkFallback && watch.waiting(now) && mode.gps && serviceForeground
         if (wantFallback && !fallback.listening) startFallback()
         else if (!wantFallback && fallback.listening) stopFallback("not needed")
+        if (weakTick(now, active)) refreshUi() // T333
         val before = state
         val s = statusNow(now)
         notification.update(s, recorder.activeId, startedAtWall())
@@ -532,11 +550,13 @@ class Tracking private constructor(private val app: DystopoApp) {
             prefs.edit().putString(KEY_REC_MODE, mode.name).apply()
             stoppedBySystemAt = null
             watch.begin(SystemClock.elapsedRealtime())
+            weak.reset() // T333: once a recording
             recorder.start(n, profile).also { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStart(it.id) } // T180; T262: a new track is shown
                 .also { puck(null) } // T251
         }
         startService()
         TerrainSource.update() // T203: recording keeps it watching in the background
+        io.github.jasondorjeshort.dystopo.app.gnss.Gnss.hold(WEAK_HOLDER, true, statusOnly = true) // T333
         refreshUi()
         refreshOverlay(force = true)
         return s
@@ -553,8 +573,10 @@ class Tracking private constructor(private val app: DystopoApp) {
                 state = RecState.IDLE
                 notification.cancel()
                 puck(null) // T251: the map's listener again
+                weak.reset() // T333
             }
         }
+        io.github.jasondorjeshort.dystopo.app.gnss.Gnss.hold(WEAK_HOLDER, false) // T333
         io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStop() // T180
         TerrainSource.update() // T203
         stopService()
@@ -841,6 +863,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             activeId = recorder.activeId, // T172
             activeActivity = active?.activity,
             gapText = recorder.activeId?.let { trackFor(it) }?.let { io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gapText(io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gaps(it)) }, // T260
+            weakSignal = recorder.recording && weak.fired, // T333
         )
         val status = if (recorder.recording) statusNow() else null
         val withState = state.copy(state = status?.state ?: RecState.IDLE, stateLine = status?.controlsLine)
@@ -902,7 +925,67 @@ class Tracking private constructor(private val app: DystopoApp) {
         return out
     }
 
+    // ---- T333: the weak-signal watch ----
+
+    /**
+     * T333 (the idea of 2026-11-19, wave 46's choice (k)): the recording's weak-signal watch ([WeakSignalWatch]), fed the
+     * satellites ([io.github.jasondorjeshort.dystopo.app.gnss.Gnss.satellites], held status-only as [WEAK_HOLDER] while a
+     * track records) at each tick while not paused. The terrain rim is swept ([io.github.jasondorjeshort.dystopo.app.gnss.Gnss.horizonAt],
+     * at the recorder's last fix) only while the raw condition holds ([WeakSignalWatch.raw]); otherwise the flat horizon
+     * stands in, which cannot make the condition hold. Fired once a recording: the panel's line ([UiState.weakSignal]) until
+     * the recording ends. Tracking thread.
+     */
+    /** T333: one tick of the watch at [now]; true when it fired at this tick. Tracking thread. */
+    private fun weakTick(now: Long, active: Boolean): Boolean {
+        if (!active) {
+            weak.restartRun() // paused: the count starts again on resume
+            return false
+        }
+        val g = io.github.jasondorjeshort.dystopo.app.gnss.Gnss
+        val sats = if (g.injected != null || now - g.realAt < weakStaleMs) g.satellites else emptyList()
+        var rim: ((Double) -> Double)? = null
+        weakRim = "none"
+        if (io.github.jasondorjeshort.dystopo.gnss.WeakSignalWatch.raw(sats)) {
+            val at = recorder.lastFix
+            if (at == null) weakRim = "no position"
+            else {
+                weakRimAsks++
+                val h = g.horizonAt(at.lat, at.lon)
+                weakRim = when {
+                    h == null -> "pending"
+                    h.profile == null -> h.reason ?: "no terrain"
+                    else -> "terrain"
+                }
+                h?.profile?.let { p -> rim = { az: Double -> p.angleAt(az) } }
+            }
+        }
+        val fired = weak.feed(now, sats, rim)
+        if (fired) Log.i(TAG, "weak GPS signal: ${weak.last?.above} satellites above the rim ($weakRim), all under ${weak.weakBelow} dB-Hz for ${weak.holdMs / 1000} s")
+        return fired
+    }
+
+    /** T333: `GET /tracks` `weakSignal` (figures only, never a position). */
+    fun weakJson(): Map<String, Any?> = call {
+        val now = SystemClock.elapsedRealtime()
+        val r = weak.last
+        linkedMapOf(
+            "watching" to (recorder.recording && !recorder.paused),
+            "holder" to (WEAK_HOLDER in io.github.jasondorjeshort.dystopo.app.gnss.Gnss.holders()),
+            "above" to r?.above, "strongestDbHz" to r?.strongest?.let { Math.round(it * 10) / 10.0 }, "weak" to r?.weak,
+            "rim" to weakRim, "rimAsks" to weakRimAsks,
+            "seconds" to weak.runMs(now) / 1000.0, "holdS" to weak.holdMs / 1000.0, "minAbove" to weak.minAbove, "belowDbHz" to weak.weakBelow,
+            "fired" to weak.fired, "firedAgoS" to weak.firedAt?.let { (now - it) / 1000.0 }, "readings" to weak.readings,
+            "line" to if (recorder.recording && weak.fired) WEAK_SIGNAL_LINE else null, "shown" to ui.weakSignal, "tickMs" to TICK_MS,
+        )
+    }
+
+    /** T333 (debug, `POST /tracks/weak?holdS=`): the run the watch needs, seconds; null restores the five minutes. */
+    fun setWeakHold(seconds: Long?): Unit = call { weak.holdMs = seconds?.let { it * 1000 } ?: io.github.jasondorjeshort.dystopo.gnss.WeakSignalWatch.HOLD_MS }
+    // end T333
+
     companion object {
+        /** T333: the recording's hold on the GNSS status ([io.github.jasondorjeshort.dystopo.app.gnss.Gnss.hold], status only). */
+        const val WEAK_HOLDER = "recording"
         const val TAG = "DystopoTracks"
         const val DB_NAME = "tracks.db"
         const val INJECTED_PRECEDENCE_MS = 30_000L
