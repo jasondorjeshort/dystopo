@@ -53,6 +53,10 @@ and about 60 percent sideways; the owner's own frame of the pane under a nearly 
 4. Where the list view's entry is (a button on the Panorama, the fourth segment, or both), and whether it is one list
    (Peaks, Sun, Satellites, Flights in one scrolled page) or a list per layer.
 
+2026-11-22, the survey of other apps' layouts: `../findings/2026-11-22-research-for-the-clock-the-moving-horizon-and-the-full-screen-panorama.md`
+(the lens is the whole screen everywhere it could be confirmed; the list is a separate screen; one page with sections;
+a row tap returns to the lens turned to the item).
+
 Question: does the fourth view replace the pane under the Panorama (the lens always full screen, the list a segment of
 the switch), and does it carry the Horizon view's pane as well? Recommended: yes to both, in two steps: first the
 Panorama's lens full screen with its overlays and the pane's content as the list view (so nothing is lost), then the

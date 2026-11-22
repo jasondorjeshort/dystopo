@@ -22,6 +22,19 @@ scrub is cheap. The battery doctrine (`2026-10-13-battery-efficiency.md`) bounds
 - Whether the route scrub belongs with the one-clock idea (`2026-11-21-one-clock-for-the-whole-app-past-and-future.md`):
   a point along the route and the time you reach it are one control.
 
+2026-11-22, the read-only research the owner asked for (desk only; no sweep timing is recorded anywhere in `docs/`): no
+published algorithm updates a raster terrain horizon incrementally for a moving viewer. Synthetic-vision and game
+practice re-sweeps from a cached height field; GRASS `r.horizon` is GPL, so it is a source of ideas only. Geometry still
+allows an estimate: a ridge at range r shifts about d/r in bearing, so 100 m moves a ridge at 5 km about 1.1 degrees
+and one at 30 km about 0.2 degrees. The recommendation, in three tiers on `LayeredSkyline`:
+(1) never clear: keep the last skyline until the next is complete, then swap; this alone ends the blanking;
+(2) re-sweep the near layer at about 25 to 50 m and the far layer at 500 m or more, at least 1 s apart, one sweep running
+at a time with the latest position winning, the interval adapting to about 1.5 times the measured sweep time;
+(3) store range and height per azimuth so the far layer can be moved to the new position each frame (under 1 ms), and
+optionally sweep ahead at the position 2 to 3 s ahead from GNSS speed and bearing.
+Measure on a phone first: the near and far sweep times, cold and warm; the cost of reading the elevation for each new
+window (likely the real limit); the error of moving the far layer against a fresh sweep at 50 to 500 m.
+
 Question: the view already follows the fix: while it is open, `Gnss.horizonAt` sweeps again once the phone is 100 m
 from every kept horizon (`Gnss.HORIZON_MOVE_M`, T307), so "stays put" above is not what the code does. What is left is
 (a) smoothing: the last skyline and its names stay up while the next is swept (today they drop out meanwhile), the
