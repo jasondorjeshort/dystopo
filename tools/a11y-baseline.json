@@ -98,7 +98,7 @@
 {"screen": "settings-data:1.0", "kind": "contrast", "label": "‹ Settings", "boundsDp": [24, 442, 325, 472]},
 {"screen": "settings-data:1.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "settings-data:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
-{"screen": "settings-display:1.0", "kind": "contrast", "label": "‹ Settings", "boundsDp": [24, 595, 325, 626]},
+{"screen": "settings-display:1.0", "kind": "contrast", "label": "‹ Settings", "boundsDp": [24, 472, 325, 502]},
 {"screen": "settings-display:1.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "settings-display:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "settings-map:1.0", "kind": "contrast", "label": "‹ Settings", "boundsDp": [24, 256, 325, 286]},
