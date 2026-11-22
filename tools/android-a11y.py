@@ -538,15 +538,25 @@ class Srv:
 
     def __init__(self, exe, serial, port):
         self.exe, self.serial, self.port, self.token = exe, serial, port, None
+        # T335: the launch check reads only crashes since this launch: the device clock when the tool took over the app
+        # (the sweep launched it), and from restart_app the clock before its force-stop (a `since` of None reads the
+        # whole crash buffer, where an earlier launch's crash would be reported as this one's).
+        self.since = self.device_now()
 
-    def reset(self):
+    def device_now(self):
+        return debug.device_now(self.exe, self.serial)
+
+    def reset(self, since=None):
+        """The token read again at the next call; `since` (the clock before a launch) when the app was launched again."""
         self.token = None
+        if since is not None:
+            self.since = since
 
     def call(self, method, path, body=None, timeout=60.0, ctype="application/json"):
         """(status, JSON or None)."""
         for attempt in range(3):
             if self.token is None:
-                _, self.token = debug.bootstrap(self.exe, self.serial, self.port, timeout=60.0)
+                _, self.token = debug.bootstrap(self.exe, self.serial, self.port, timeout=60.0, since=self.since)
             req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=body, method=method,
                                          headers={"X-Dystopo-Token": self.token, "Content-Type": ctype})
             try:
@@ -913,10 +923,11 @@ def end_share(c):
 
 
 def restart_app(c):
+    since = c.srv.device_now()  # T335: before the launch, for its launch check
     c.dev.shell("am", "force-stop", PACKAGE)
     time.sleep(1.0)
     c.dev.shell("am", "start", "-W", "-n", ACTIVITY, timeout=180)
-    c.srv.reset()
+    c.srv.reset(since)
     deadline = time.time() + 90
     while True:
         try:

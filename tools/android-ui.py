@@ -502,7 +502,10 @@ class DebugServer:
         self.exe = debug.adb_path()
         self.serial = serial
         self.port = port
-        _, self.token = debug.bootstrap(self.exe, serial, port)
+        # T335: the launch check reads only crashes since the part took over the app (the clock before its bootstrap),
+        # never an earlier launch's crash left in the buffer.
+        self.since = debug.device_now(self.exe, serial)
+        _, self.token = debug.bootstrap(self.exe, serial, port, since=self.since)
 
     def call(self, method, path, timeout=180, body=None):
         for attempt in (0, 1):
@@ -523,7 +526,7 @@ class DebugServer:
                     raise
                 FORWARD_RESTORES.append(f"{time.strftime('%H:%M:%S')} {method} {path.split('?')[0]} on tcp:{self.port}")
                 print(f"[ui] {method} {path.split('?')[0]}: connection refused; forwarding tcp:{self.port} again", file=sys.stderr)
-                _, self.token = debug.bootstrap(self.exe, self.serial, self.port)
+                _, self.token = debug.bootstrap(self.exe, self.serial, self.port, since=self.since)
 
 
 def read_tour(path):
