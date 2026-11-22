@@ -11,3 +11,11 @@ Status: **untriaged and not sanity-checked** (an idea of the coordinator's own, 
 Tapping the status chip could show a small stack for the view's centre: for example "Colorado pack, full detail; US pack, medium; online, finer at z14 and up", so which source serves a view and why is never a guess.
 
 **What exists already (to be checked):** The chip's card exists (T236, `online/OnlineOverlay.kt`): a sentence on the connection, one on the source, the cache's figure and one link. This adds the stack of every source at the point, so it needs the function of the idea before it.
+
+2026-11-22, folded in at triage (the owner, 2026-11-22, by multiple choice at triage): the coarse-map hint (where the finest-first lookup steps down to a coarser pack or the overview, say so) is one line of this panel, not a separate mark on the map.
+
+Question: wanted, built as the first visible use of the "what does the phone hold here?" function once that exists?
+Recommended: yes; it is the cheapest way for the owner and testers to see which pack or source serves a view, and it needs
+the function rather than a third reader of pack state.
+
+Answer: yes, built as the first visible use of the "what does the phone hold here?" function once it exists (the owner, 2026-11-22, by multiple choice at triage).
