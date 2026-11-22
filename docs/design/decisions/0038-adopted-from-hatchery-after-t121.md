@@ -128,6 +128,7 @@ the base line passes it.
 | `.claude/project/one-review.md` | replaces `one-review`: the verifier per PR | none |
 | `.claude/project/git.md` | replaces `git`: implementers commit and push `task/*`, ADR 0036 integration | none |
 | `.claude/project/licensing.md` | replaces `licensing`: permissive dependencies only, no SPDX headers | none |
+| `.claude/skills/triage/SKILL.md` (sent only; this tree keeps the base's text until the landing comes back by update) | triage ends with a brainstorm of new ideas, moonshots included, recorded only as the owner accepts them (owner, 2026-11-22) | `carry-back/triage-brainstorm-step` at 4d00b15 (sent 2026-11-22; held: not to be landed before proposal 0065 and its ADR settle the practice, which may replace it) |
 
 ## Consequences
 
