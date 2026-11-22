@@ -51,3 +51,14 @@ the button: **the view is covered when the finest source asked for each tile of 
 least the detail the download would take**; then the button reads "Already saved" (disabled, with the covering map's
 name) or is hidden, and the picker, opened any other way, says "Already on this phone" under the size line. Test:
 `Areas` coverage with a pack, an area, both, and a coarser pack under a finer request; the chip and the button agree.
+
+Plan: reproduce on an emulator with a map-only Medium pack and a view inside it: tap Download this area, screenshot the card,
+download, then read the Offline maps list and `GET /areas/rows` (shape, size, tiles), which settles the owner's "records the
+area but not for polygons". Then one coverage function over the visible box at a chosen detail (packs and areas, finest
+first), used by the chip (`Areas.isRecorded`) and the button (`online/OnlineOverlay.kt`): the card (`areas/AreaPicker.kt`)
+opens with what the phone holds there ("On this phone at medium detail, map only", or partly); when every tile the download
+would take is held at that detail or finer, the button reads "Already on this phone" (disabled, naming the map) and an upgrade
+stays offered otherwise. If the repro shows a 0-tile or duplicate row, no row is made when nothing is new; the report says
+which reading held. Verify: unit tests of the function (pack, area, both, a coarser pack under a Full request);
+`OnlineOverlaySnapshotTest` updated; emulator screenshots of the three cases; new strings listed (ADR 0031). This pass also
+builds `2026-11-22-the-download-card-says-what-you-already-hold.md`: delete both files in the landing commit.
