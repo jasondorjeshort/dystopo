@@ -57,6 +57,8 @@ and about 60 percent sideways; the owner's own frame of the pane under a nearly 
 (the lens is the whole screen everywhere it could be confirmed; the list is a separate screen; one page with sections;
 a row tap returns to the lens turned to the item).
 
+Use: 2026-11-22, coordinator (claude-opus-5-5): the viewshed's list of places to go (the answered viewpoint-finder idea, `2026-11-21-a-viewpoint-finder-where-a-peak-can-be-seen-from.md`) belongs in the same fourth list view: what is in sight, and where to go to see it (accepted by the owner).
+
 Question: does the fourth view replace the pane under the Panorama (the lens always full screen, the list a segment of
 the switch), and does it carry the Horizon view's pane as well? Recommended: yes to both, in two steps: first the
 Panorama's lens full screen with its overlays and the pane's content as the list view (so nothing is lost), then the
