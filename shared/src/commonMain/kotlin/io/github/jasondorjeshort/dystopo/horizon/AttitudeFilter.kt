@@ -62,8 +62,13 @@ object AttitudeFilter {
         else -> TAU_STILL_MS + (TAU_MOVING_MS - TAU_STILL_MS) * (gapDeg - STILL_GAP_DEG) / (MOVING_GAP_DEG - STILL_GAP_DEG)
     }
 
-    /** The state after [sample] at [timeNanos] (a sensor event's clock, nanoseconds) given [prev] (null: the first sample). */
-    fun step(prev: State?, sample: Quat, timeNanos: Long): State {
+    /**
+     * The state after [sample] at [timeNanos] (a sensor event's clock, nanoseconds) given [prev] (null: the first sample).
+     * A sample that is no rotation ([Quat.isRotation] false: zero length, or a value not finite) is skipped: [prev] is
+     * returned as it was (null before the first good sample), so it never reaches the state.
+     */
+    fun step(prev: State?, sample: Quat, timeNanos: Long): State? {
+        if (!sample.isRotation) return prev
         val q = sample.normalized()
         val dtMs = prev?.let { (timeNanos - it.timeNanos) / 1e6 }
         if (prev == null || dtMs == null || dtMs > RESET_MS || dtMs < 0) return State(q, timeNanos, q, timeNanos, false, TAU_STILL_MS)

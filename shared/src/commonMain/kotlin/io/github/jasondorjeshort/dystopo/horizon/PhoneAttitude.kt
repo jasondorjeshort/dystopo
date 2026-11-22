@@ -15,6 +15,10 @@ import kotlin.math.sqrt
 data class Quat(val x: Double, val y: Double, val z: Double, val w: Double) {
     infix fun dot(o: Quat) = x * o.x + y * o.y + z * o.z + w * o.w
 
+    /** Whether this can be made a rotation: its length is finite and not zero (a raw sensor value may be neither). */
+    val isRotation: Boolean
+        get() = (x * x + y * y + z * z + w * w).let { it.isFinite() && it > 1e-18 }
+
     fun normalized(): Quat {
         val l = sqrt(x * x + y * y + z * z + w * w)
         return Quat(x / l, y / l, z / l, w / l)
@@ -54,12 +58,15 @@ object PhoneAttitude {
     /** The display's rotations, degrees (Android's `Surface.ROTATION_0` to `ROTATION_270` times 90). */
     val ROTATIONS = listOf(0, 90, 180, 270)
 
-    /** The rotation vector's values (x, y, z and, when given, w; w is computed from the others when absent), normalized. */
-    fun quat(values: DoubleArray): Quat {
-        require(values.size >= 3) { "a rotation vector has at least three values" }
+    /**
+     * The rotation vector's values (x, y, z and, when given, w; w is computed from the others when absent), normalized;
+     * null when they are fewer than three or make no rotation (zero length, or a value not finite: [Quat.isRotation]).
+     */
+    fun quat(values: DoubleArray): Quat? {
+        if (values.size < 3) return null
         val (x, y, z) = Triple(values[0], values[1], values[2])
         val w = if (values.size >= 4) values[3] else sqrt((1 - x * x - y * y - z * z).coerceAtLeast(0.0))
-        return Quat(x, y, z, w).normalized()
+        return Quat(x, y, z, w).takeIf { it.isRotation }?.normalized()
     }
 
     /**

@@ -33,9 +33,15 @@ object OffView {
      * the view); else left or right by the side of the screen it is on (exactly behind: right). Left and right count the
      * turn about the screen's up axis, up and down the turn about its right axis after it; at no roll and no tilt they
      * are the bearing's and the elevation's differences. The degrees are rounded in the text.
+     *
+     * That rule is Follow's ([follow] true). In Drag ([follow] false, the default) the arrow answers as before T329 at
+     * every tilt, since its tap turns the view by the bearing difference and the tape shows it: up or down when the
+     * bearing falls on the view at the centre row (by |elevation - tilt|), else left or right by the bearing difference
+     * the shorter way (exactly behind: right).
      */
-    fun of(lens: LensView, elDeg: Double, azDeg: Double, name: String, keepIn: RimBox): OffViewArrow? {
+    fun of(lens: LensView, elDeg: Double, azDeg: Double, name: String, keepIn: RimBox, follow: Boolean = false): OffViewArrow? {
         if (lens.mark(elDeg, azDeg) != null) return null
+        if (!follow) return dragArrow(lens, elDeg, azDeg, name, keepIn)
         val el = elDeg * DEG
         val az = azDeg * DEG
         val c = DoubleArray(3)
@@ -60,6 +66,30 @@ object OffView {
         val y = if (abs(pitch) < 89.0) lens.cy - f * kotlin.math.tan(pitch * DEG) else if (pitch > 0) keepIn.top else keepIn.bottom
         val side = if (right) OffSide.RIGHT else OffSide.LEFT
         val deg = abs(yaw)
+        return OffViewArrow(
+            side, deg, if (right) keepIn.right else keepIn.left, y.coerceIn(keepIn.top, keepIn.bottom),
+            if (right) 1.0 else -1.0, 0.0, line(name, deg, side),
+        )
+    }
+
+    /** Drag's arrow (T324's rule, unchanged): the bearing difference and the elevation less the tilt. */
+    private fun dragArrow(lens: LensView, elDeg: Double, azDeg: Double, name: String, keepIn: RimBox): OffViewArrow {
+        val turn = PanoramaAim.signedDeg(azDeg - lens.bearingDeg)
+        val column = if (abs(turn) < 90) lens.xOnRow(azDeg, lens.cy) else null
+        if (column != null && column in 0.0..lens.width) {
+            val up = elDeg > lens.tiltDeg
+            val deg = abs(elDeg - lens.tiltDeg)
+            val side = if (up) OffSide.UP else OffSide.DOWN
+            return OffViewArrow(
+                side, deg, column.coerceIn(keepIn.left, keepIn.right), if (up) keepIn.top else keepIn.bottom,
+                0.0, if (up) -1.0 else 1.0, line(name, deg, side),
+            )
+        }
+        val right = turn > 0 || turn == 180.0
+        val d = elDeg - lens.tiltDeg
+        val y = if (abs(d) < 89.0) lens.cy - lens.focalPx * kotlin.math.tan(d * DEG) else if (d > 0) keepIn.top else keepIn.bottom
+        val side = if (right) OffSide.RIGHT else OffSide.LEFT
+        val deg = abs(turn)
         return OffViewArrow(
             side, deg, if (right) keepIn.right else keepIn.left, y.coerceIn(keepIn.top, keepIn.bottom),
             if (right) 1.0 else -1.0, 0.0, line(name, deg, side),

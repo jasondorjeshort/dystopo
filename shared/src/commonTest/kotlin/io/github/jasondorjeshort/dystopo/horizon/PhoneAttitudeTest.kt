@@ -98,8 +98,20 @@ class PhoneAttitudeTest {
         }
         // The values as the sensor gives them, three or four.
         val q = PhoneAttitude.quatOf(30.0, 10.0, 5.0, 0)
-        val three = PhoneAttitude.quat(doubleArrayOf(q.x, q.y, q.z))
+        val three = PhoneAttitude.quat(doubleArrayOf(q.x, q.y, q.z))!!
         near(three.w, q.w, 1e-12, "w from the other three")
+    }
+
+    @Test
+    fun valuesThatMakeNoRotationGiveNone() {
+        kotlin.test.assertNull(PhoneAttitude.quat(doubleArrayOf(0.0, 0.0, 0.0, 0.0)))
+        kotlin.test.assertNull(PhoneAttitude.quat(doubleArrayOf(Double.NaN, 0.0, 0.0, 1.0)))
+        kotlin.test.assertNull(PhoneAttitude.quat(doubleArrayOf(0.0, Double.POSITIVE_INFINITY, 0.0)))
+        kotlin.test.assertNull(PhoneAttitude.quat(doubleArrayOf(0.1, 0.2)))
+        // Three values of length 1 or more leave w at 0: still a rotation (half a turn), made unit.
+        val half = PhoneAttitude.quat(doubleArrayOf(0.0, 0.0, 2.0))!!
+        assertEquals(Quat(0.0, 0.0, 1.0, 0.0), half)
+        assertTrue(!Quat(0.0, 0.0, 0.0, 0.0).isRotation && Quat(0.0, 0.0, 0.0, 1.0).isRotation)
     }
 
     @Test

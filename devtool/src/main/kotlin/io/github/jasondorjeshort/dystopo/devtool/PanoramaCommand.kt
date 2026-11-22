@@ -228,7 +228,7 @@ class PanoramaCommand : CliktCommand(name = "panorama") {
     private fun parseQuat(s: String): Quat {
         val p = s.split(",").map { it.trim().toDoubleOrNull() }
         if (p.size !in 3..4 || p.any { it == null }) throw UsageError("--attitude must be x,y,z,w (or x,y,z) of the rotation vector (got $s)")
-        return PhoneAttitude.quat(p.map { it!! }.toDoubleArray())
+        return PhoneAttitude.quat(p.map { it!! }.toDoubleArray()) ?: throw UsageError("--attitude must be a rotation (not of zero length; got $s)")
     }
 
     private fun enu(v: Enu) = listOf(r4(v.e), r4(v.n), r4(v.u))
@@ -424,7 +424,7 @@ object PanoramaRender {
         if (target != null) {
             val (tn, el, az) = target
             val keep = RimBox(14 * dp, tape.box.bottom + 14 * dp, width - 14 * dp, height - 14 * dp)
-            arrow = OffView.of(lens, el, az, tn, keep)
+            arrow = OffView.of(lens, el, az, tn, keep, follow = aim.follow)
             g.color = Color(0xB0, 0x30, 0x10)
             g.stroke = BasicStroke((2.5 * dp).toFloat())
             val a = arrow

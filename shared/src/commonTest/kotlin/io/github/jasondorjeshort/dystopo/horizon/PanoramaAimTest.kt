@@ -149,21 +149,35 @@ class PanoramaAimTest {
         val keep = RimBox(12.0, 70.0, w - 12, h - 12)
         // On its side clockwise (roll 90): what stands 60 degrees right of the view is toward the screen's top.
         val side = PanoramaAim.follow(90.0, 0.0, 90.0, 60.0).lens(w, h, dp)
-        val up = assertNotNull(OffView.of(side, 0.0, 150.0, "Mount Rainier", keep))
+        val up = assertNotNull(OffView.of(side, 0.0, 150.0, "Mount Rainier", keep, follow = true))
         assertEquals(OffSide.UP, up.side); assertEquals("Mount Rainier, 60° up", up.text); assertEquals(70.0, up.y); assertEquals(-1.0, up.dirY)
         // And what stands above the view is toward the screen's left.
-        val left = assertNotNull(OffView.of(side, 60.0, 90.0, "Sun", keep))
+        val left = assertNotNull(OffView.of(side, 60.0, 90.0, "Sun", keep, follow = true))
         assertEquals(OffSide.LEFT, left.side); assertEquals("Sun, 60° left", left.text); assertEquals(12.0, left.x)
         // Rolled 30: a peak 40 degrees right on the level is to the right and a little up the screen.
         val rolled = PanoramaAim.follow(90.0, 0.0, 30.0, 60.0).lens(w, h, dp)
-        val r = assertNotNull(OffView.of(rolled, 0.0, 130.0, "Peak", keep))
+        val r = assertNotNull(OffView.of(rolled, 0.0, 130.0, "Peak", keep, follow = true))
         assertEquals(OffSide.RIGHT, r.side); assertEquals(w - 12, r.x); assertTrue(r.y < h / 2)
         // Looking straight down: something ahead, on the level or a little below it, is up the screen.
         val down = PanoramaAim.follow(0.0, -90.0, 0.0, 60.0).lens(w, h, dp)
-        val ahead = assertNotNull(OffView.of(down, -10.0, 0.0, "Ahead", keep))
+        val ahead = assertNotNull(OffView.of(down, -10.0, 0.0, "Ahead", keep, follow = true))
         assertEquals(OffSide.UP, ahead.side); assertEquals("Ahead, 80° up", ahead.text)
-        val level = assertNotNull(OffView.of(down, 0.0, 0.0, "Level", keep))
+        val level = assertNotNull(OffView.of(down, 0.0, 0.0, "Level", keep, follow = true))
         assertEquals(OffSide.UP, level.side); assertEquals("Level, 90° up", level.text)
+    }
+
+    @Test
+    fun t329InDragTheArrowCountsTheBearingDifferenceAtEveryTilt() {
+        val keep = RimBox(12.0, 70.0, w - 12, h - 12)
+        for (tilt in listOf(30.0, 60.0)) {
+            val lens = PanoramaAim(90.0, tilt, 60.0).lens(w, h, dp)
+            for (el in listOf(0.0, 20.0)) for (d in listOf(100.0, 120.0, 150.0, 179.0)) for (sign in listOf(1.0, -1.0)) {
+                val a = assertNotNull(OffView.of(lens, el, 90.0 + sign * d, "Peak", keep), "tilt $tilt el $el turn ${sign * d}")
+                assertEquals(if (sign > 0) OffSide.RIGHT else OffSide.LEFT, a.side)
+                near(a.degrees, d, 1e-9, "tilt $tilt el $el turn ${sign * d}")
+                assertEquals("Peak, ${d.toInt()}° ${a.side.word}", a.text)
+            }
+        }
     }
 
     @Test
