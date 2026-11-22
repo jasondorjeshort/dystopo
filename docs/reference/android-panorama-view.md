@@ -1,6 +1,6 @@
 ---
 verified: 2026-11-22
-source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326)
+source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327)
 ---
 
 # The Panorama view
@@ -39,13 +39,17 @@ routes: `android-debug-routes.md` (Panorama view). The choices it is built by ar
   the heading and a picked peak's line scroll with the list (`headingScrolls`).
 - **The pane** hosts the Horizon view's parts (`app/horizon/SkyViewParts.kt`, `SkyViewSections.kt`): the place line with
   "Back to here", the heading "Panorama view" and its help, a picked peak's line with "View from here", "Show:" with the
-  Peaks toggle alone (the Sun, Satellites and Flights come with the lens drawing them), the terrain line, the Peaks list
-  (its count says the view range). No Close button.
+  Horizon view's toggles (Satellites, Peaks, Sun, and Flights while Flight tracking is on: the same synced settings; at a
+  chosen point Satellites and Flights disabled with the Horizon view's sentence), the terrain line, then the Flights,
+  Peaks (its count says the view range), Sun and Satellites sections in the Horizon view's order, and a flight's card
+  over the pane's lower part. No Close button.
 - **The plot** (`PanoramaPlot.kt`) draws T324's scene: the skylines at 3, 10 and 30 km and the view range far to near,
   each tinted from the style's tokens between the paper's line tone and the hillshade's shadow (night by the map's night
   colours), the sky from the paper's light at the level to a cool tone overhead, the level line dashed, the bearing tape
   on a plate along the top, the candidates' small triangles and the names placed by `HorizonLabels.place` through the
-  lens (the plot writes `HorizonUi.namedKeys`, so the list's rows bold the names drawn). A tap on a name picks its peak.
+  lens (the plot writes `HorizonUi.namedKeys`, so the list's rows bold the names drawn), each on a plate of the card's
+  colour with a thin edge (a pale plate with no edge read as a blob lying over a ridge), a hollow triangle an outline
+  only. A tap on a name picks its peak.
   While nothing is ready a line stands in the plot (the reason, or "Working out the skyline...").
 - **Steering** (choice d): a horizontal drag turns without end, a vertical drag tilts (45 degrees below the level to
   straight up), a pinch and the "Zoom in" and "Zoom out" buttons (48 dp, `PanoramaScene.zoomButtons`) zoom from 100 to 10
@@ -53,8 +57,30 @@ routes: `android-debug-routes.md` (Panorama view). The choices it is built by ar
   placed again when it ends (choice g). The plot's node says "Panorama from: <place line>; Facing <compass> <bearing>°,
   <field of view>° across; Peaks: ..." and carries four actions: Turn left and Turn right (half the field of view), Look
   up and Look down (10 degrees).
-- **Seams for the next pass**: `PanoramaPlot`'s `layers` (drawers over the scene, in order) and `PanoramaUi.turnTo`
-  (T324's turn-to, from a list row or an arrow).
+
+## The other layers, the target and the edge arrow (T327)
+
+- **The layers through the lens** (`PanoramaLayers.kt`), drawn as the round plot draws them but where they fall (nothing
+  sits on a rim; a mark below the level line stays where it is): the Sun's day path solid in view and dashed behind the
+  terrain, its hour dots and labels, the sun now while it is up (`SkyPlot.kt`'s `sunMark`); the satellites' marks and
+  numbers (`satelliteMark`); the flights' tails, dots, rings and names (`HorizonScreen.kt`'s `drawFlightLayer` through a
+  projection) and the feed's credit in the plot's lower left. The order, bottom up: the ground, the sun, the satellites,
+  the flights, the peaks' marks and names, the tape. The flights' names are the second pass of `placeLayers` against the
+  peaks' names as placed (kept off their boxes, marks and leaders; the closest not forced), so no peak name moves for a
+  flight's; during a drag, a pinch or a turn they keep their offsets as the peaks' do. The holds are the Horizon view's:
+  the GNSS while Satellites draws, the flights' poller (owner `horizon`) while Flights draws, neither at a chosen point,
+  both let go when the view closes (`SkyViewEffects`).
+- **One target** (`PanoramaTarget.kt`, the pure rule `PanoramaTargets.next`): a tap on a row (a peak, the sun's "Now ..."
+  line while the sun is up, a flight, a satellite) or on a name or mark on the plot makes it the target and turns the
+  view to it by `PanoramaAim.turnTo` (the shorter way round; the tilt only when it would be off the view), over 300 ms
+  with the names held, at once when the system's animations are off. A peak's pick and a flight's card are the target as
+  picked; a pick kept across the switch is the target at the opening; the newest choice wins. Back lets go of a sun or
+  satellite target first, then a flight, then a peak (then the chosen point, then the view closes); the pick's ×, the
+  card's Close, a second tap on the row or a tap on empty plot let it go. A target below the tilt's limit turns the view
+  to its bearing at -45 degrees and its arrow reads "down".
+- **The edge arrow**: while the target is off the view, a plate at the edge `OffView` gives (6 dp inside, under the
+  tape, off the zoom buttons' corner) with the arrow and its line ("Mount Rainier, 40° left"), at least 48 dp tall, its
+  spoken label the line; a tap turns the view to the target. It goes when the target is in view or let go.
 
 ## The terrain, the sweeps and what is kept (choice f)
 

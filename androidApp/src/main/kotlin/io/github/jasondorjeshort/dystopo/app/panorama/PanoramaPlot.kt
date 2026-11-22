@@ -25,6 +25,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -177,7 +178,8 @@ fun PanoramaPlot(
     ).joinToString("; ")
     val touchSlop = LocalViewConfiguration.current.touchSlop
     Box(
-        Modifier.size(plotW, plotH).testTag("panoramaPlot").onGloballyPositioned { c ->
+        // T327: clipped, so a layer that runs off the view (the sun's path, a mark past the edge) never draws over the pane.
+        Modifier.size(plotW, plotH).clipToBounds().testTag("panoramaPlot").onGloballyPositioned { c ->
             val at = c.positionInRoot()
             PanoramaUi.plotPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
         },
@@ -480,10 +482,10 @@ private fun EdgeArrow(a: io.github.jasondorjeshort.dystopo.horizon.OffViewArrow,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
     ) {
-        val text: @Composable () -> Unit = {
-            BasicText(a.text, Modifier.clearAndSetSemantics { }, style = style, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-        }
-        val mark: @Composable () -> Unit = { BasicText(glyph, Modifier.clearAndSetSemantics { }, style = style.copy(color = pal.link, fontSize = 16.sp)) }
-        if (side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT) { text(); mark() } else { mark(); text() }
+        // The line takes what the arrow leaves (at large text it wraps to two lines; the arrow is never pushed out).
+        val right = side == io.github.jasondorjeshort.dystopo.horizon.OffSide.RIGHT
+        if (!right) BasicText(glyph, Modifier.clearAndSetSemantics { }, style = style.copy(color = pal.link, fontSize = 16.sp))
+        BasicText(a.text, Modifier.weight(1f, fill = false).clearAndSetSemantics { }, style = style, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (right) BasicText(glyph, Modifier.clearAndSetSemantics { }, style = style.copy(color = pal.link, fontSize = 16.sp))
     }
 }

@@ -2179,7 +2179,10 @@ def panorama_step(dev):
     swipe across the plot turns the view (its spoken label's bearing changes; `panorama-turned`); "Zoom in" twice narrows
     the field of view (`panorama-zoomed`); the view's "Map" segment closes it. Then a long-press at Mount Rainier's summit
     and the segment: the Panorama opens there (the frame `panorama-point`: the amber place line "At Mount Rainier, ... of
-    you" with "Back to here"), "Back to here" returns to the fix, "Map" closes it."""
+    you" with "Back to here"), "Back to here" returns to the fix, "Map" closes it. T327: before "Map", a tap on Mount
+    Rainier's row in the Peaks list turns the view to it (`panorama-target`: facing about 347 degrees), swipes turn it off the
+    view and the edge arrow stands with its line ("Mount Rainier, 40° left"; `panorama-arrow`), and a tap on the arrow turns
+    the view back to it (the arrow gone)."""
     t0 = time.time()
     out = {"frames": {}}
     errors = []
@@ -2232,6 +2235,7 @@ def panorama_step(dev):
     out["zoomed"] = {"facing": facing2[0], "fovDeg": facing2[1]}
     if facing2[1] is None or facing1[1] is None or facing2[1] >= facing1[1]:
         errors.append(f"Zoom in did not narrow the view ({facing1[1]} then {facing2[1]})")
+    nodes = panorama_target_and_arrow(dev, out, errors)
     m = dev.find(MAP_SEGMENT, nodes)
     if m:
         dev.tap(m)
@@ -2266,6 +2270,85 @@ def panorama_step(dev):
     frames = out.pop("frames")
     return {"ok": not errors, "png": frames.get("panorama"), "frames": frames, "openedBy": "switch", "backs": backs, **out,
             "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
+
+
+# T327
+PANORAMA_TARGET_PEAK = "Mount Rainier"
+PANORAMA_ARROW = r"^Mount Rainier, \d+° (left|right|up|down)$"  # the edge arrow's spoken label: its line
+
+
+def panorama_bearing(desc):
+    """T327: the bearing (degrees) in the plot's spoken label, or None."""
+    m = re.search(r"Facing \S+ (\d+)°", desc or "")
+    return int(m.group(1)) if m else None
+
+
+def bearing_apart(a, b):
+    d = abs(a - b) % 360
+    return min(d, 360 - d)
+
+
+def panorama_target_and_arrow(dev, out, errors):
+    """T327: by taps and one-finger swipes on the Panorama view: Mount Rainier's row in the Peaks list (scrolled to) makes
+    it the target and turns the view to it (frame `panorama-target`); two swipes across the plot turn it off the view and
+    the edge arrow stands with its line (frame `panorama-arrow`); a tap on the arrow turns the view back (the arrow gone).
+    Answers the nodes."""
+    nodes = dev.nodes()
+    plot = panorama_plot(nodes)
+    if not plot:
+        errors.append("no Panorama plot for the target's row")
+        return nodes
+    pb = plot["bounds"]
+    w = max((x["bounds"][2] for x in nodes if x["bounds"]), default=1080)
+    h = max((x["bounds"][3] for x in nodes if x["bounds"]), default=2400)
+    row = None
+    for _ in range(25):
+        row = next((x for x in nodes if x["text"] == PANORAMA_TARGET_PEAK and x["bounds"] and x["bounds"][1] > pb[3] and x["bounds"][3] < h * 0.84), None)
+        if row:
+            break
+        # Slow swipes in the pane, below the plot and above the switch: no fling.
+        y0 = int(pb[3] + (h * 0.84 - pb[3]) * 0.85)
+        dev.shell("input", "swipe", str(w // 2), str(y0), str(w // 2), str(int(y0 - (h * 0.84 - pb[3]) * 0.5)), "900")
+        time.sleep(0.8)
+        nodes = dev.nodes()
+    if not row:
+        errors.append(f"no {PANORAMA_TARGET_PEAK!r} row in the Peaks list (texts: {dev.texts(nodes)[:30]})")
+        return nodes
+    before = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
+    dev.tap(row)
+    time.sleep(1.5)  # the turn's 300 ms and a frame
+    nodes = dev.nodes()
+    out["frames"]["target"] = dev.screencap("panorama-target")[0]
+    turned = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
+    out["target"] = {"bearingBefore": before, "bearingAfter": turned}
+    if turned is None or bearing_apart(turned, 347) > 3:
+        errors.append(f"the row did not turn the view to {PANORAMA_TARGET_PEAK} (facing {turned}, wanted about 347)")
+    # Two swipes right to left across the plot: the view turns right, Mount Rainier leaves at the left.
+    y = (pb[1] + pb[3]) // 2
+    arrow = None
+    for _ in range(4):
+        dev.shell("input", "swipe", str(pb[0] + (pb[2] - pb[0]) * 7 // 8), str(y), str(pb[0] + (pb[2] - pb[0]) // 8), str(y), "600")
+        time.sleep(1.5)
+        nodes = dev.nodes()
+        arrow = dev.find(PANORAMA_ARROW, nodes)
+        if arrow:
+            break
+    out["frames"]["arrow"] = dev.screencap("panorama-arrow")[0]
+    if not arrow:
+        errors.append(f"no edge arrow after the swipes (texts: {dev.texts(nodes)[:25]})")
+        return nodes
+    out["arrow"] = {"line": arrow["desc"] or arrow["text"], "bearing": panorama_bearing((panorama_plot(nodes) or {}).get("desc"))}
+    ab = arrow["bounds"]
+    out["arrow"]["heightPx"] = ab[3] - ab[1]
+    dev.tap(arrow)
+    time.sleep(1.5)
+    nodes = dev.nodes()
+    back = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
+    out["arrowTapped"] = {"bearing": back, "arrowGone": dev.find(PANORAMA_ARROW, nodes) is None}
+    if back is None or bearing_apart(back, 347) > 3 or not out["arrowTapped"]["arrowGone"]:
+        errors.append(f"the arrow's tap did not turn the view back to {PANORAMA_TARGET_PEAK} (facing {back}, arrow gone {out['arrowTapped']['arrowGone']})")
+    return nodes
+# end T327
 
 
 # --- features: Flight tracking (T311) ----------------------------------------------------------------------------
@@ -2771,7 +2854,8 @@ def part_horizonflights(args):
     """T312 (debug build): the Horizon view's Flights layer on T311's replay fixture, from the emulator's fix at
     Paradise: the plot with dots, tails and names (frame `horizon-flights-plot`), the Flights list (`horizon-flights-list`),
     the nearest flight picked as a tap does with its card in the view (`horizon-flights-card`), the list at font scale
-    2.0 (`horizon-flights-font2`) and in landscape (`horizon-flights-landscape`). Checks from GET /horizon: at least five
+    2.0 (`horizon-flights-font2`) and in landscape (`horizon-flights-landscape`); T327: the same flights in the Panorama view
+    turned to the closest by its target (`panorama-flights`). Checks from GET /horizon: at least five
     flights listed, one hollow or more, the credit shown, the card open. Every setting, the font scale and the rotation
     put back."""
     srv = DebugServer(args.port, args.serial)
@@ -2855,6 +2939,30 @@ def part_horizonflights(args):
         srv.call("POST", "/horizon?flight=none")
         return {"ok": ok, "png": png, "picked": a.get("label"), **({} if ok else {"error": f"card {d.get('flightCard')}"})}
 
+    def panorama():
+        # T327: the same flights in the Panorama view, turned to the closest one by its target (its card up): dots, tails
+        # and names through the lens, the credit in the plot's corner; then back to the Horizon view for the steps after.
+        srv.call("POST", "/horizon/switch?to=panorama")
+        srv.call("GET", "/panorama?wait=60000")
+        time.sleep(3)
+        p = srv.call("GET", "/panorama")[1] or {}
+        aircraft = (((p.get("layers") or {}).get("flights") or {}).get("aircraft")) or []
+        if aircraft:
+            srv.call("POST", f"/panorama?target=flight:{aircraft[0][0]}")
+        time.sleep(1.5)
+        p = srv.call("GET", "/panorama")[1] or {}
+        png = dev.screencap("panorama-flights")[0]
+        fl = (p.get("layers") or {}).get("flights") or {}
+        t = p.get("target") or {}
+        checks = {"listed": (fl.get("listed") or 0) >= 5, "onView": len(fl.get("onView") or []) >= 1, "named": len(fl.get("names") or []) >= 1,
+                  "credit": bool(fl.get("credit")), "target": t.get("kind") == "flight" and t.get("onView") is True,
+                  "card": ((p.get("drawn") or {}).get("flightCard")) is True, "poller": "horizon" in (p.get("aircraftOwners") or [])}
+        ok = all(checks.values())
+        srv.call("POST", "/panorama?target=none")
+        srv.call("POST", "/horizon/switch?to=horizon")
+        time.sleep(2)
+        return {"ok": ok, "png": png, "checks": checks, "names": fl.get("names"), "target": t, **({} if ok else {"error": f"checks {checks}"})}
+
     def font2():
         dev.shell("settings", "put", "system", "font_scale", "2.0")
         time.sleep(3)
@@ -2875,7 +2983,7 @@ def part_horizonflights(args):
         return r
 
     try:
-        for name, fn in (("setup", setup), ("plot", plot), ("list", listing()), ("card", card), ("font2", font2), ("landscape", landscape)):
+        for name, fn in (("setup", setup), ("plot", plot), ("list", listing()), ("card", card), ("panorama", panorama), ("font2", font2), ("landscape", landscape)):
             run.step(name, fn)
     finally:
         srv.call("POST", "/horizon?flight=none")

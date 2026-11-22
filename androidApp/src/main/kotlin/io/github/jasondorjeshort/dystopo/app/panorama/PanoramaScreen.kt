@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Alignment
 import io.github.jasondorjeshort.dystopo.app.gnss.SatellitesSection
@@ -190,7 +191,11 @@ fun PanoramaScreen() {
                     // T327: the feed's credit while the Flights layer draws, in the plot's lower left (the zoom buttons are at its right).
                     flights?.let { f ->
                         BasicText(
-                            f.credit, Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 4.dp).fillMaxWidth(0.45f).testTag("panoramaFlightsCredit"),
+                            f.credit,
+                            // On a plate: the plot's lower left is the near ground, where muted text alone did not read.
+                            Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 6.dp).widthIn(max = plotW * 0.45f)
+                                .background(pal.card.copy(alpha = 0.88f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 1.dp)
+                                .testTag("panoramaFlightsCredit"),
                             style = TextStyle(color = pal.muted, fontSize = with(density) { 10.dp.toSp() }, lineHeight = with(density) { 12.dp.toSp() }),
                             maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         )

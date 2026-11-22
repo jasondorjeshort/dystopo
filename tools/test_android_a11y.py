@@ -265,13 +265,38 @@ a11y.time.sleep = lambda s: None
 try:
     ps = PanoSrv()
     pano[0][1](type("C", (), {"srv": ps})())
-    assert ps.calls == [("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000")], ps.calls
+    assert ps.calls == [("POST", "/settings?aircraft=1"), ("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000")], ps.calls  # T327: the four toggles
     ps.calls.clear()
     pano[0][2](type("C", (), {"srv": ps})())
-    assert ps.calls == [("POST", "/horizon/switch?to=map")], ps.calls
+    assert ps.calls == [("POST", "/horizon/switch?to=map"), ("POST", "/settings?aircraft=0")], ps.calls
 finally:
     a11y.time.sleep = _sleep
 # end T326
+
+# T327: the Panorama with the Flights layer on the replay: opened by the switch, turned to the closest flight the view
+# lists, scrolled to the Flights list; closed by "Map", the replay stopped and Flight tracking off again.
+pf = [s for s in a11y.SCREENS if s[0] == "panorama-flights"]
+assert len(pf) == 1 and pf[0][3] == "screen" and pf[0][2] is a11y.end_panorama_flights, pf
+
+
+class PanoFlightsSrv(PanoSrv):
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path.split("&wait=")[0] if path.startswith("/aircraft/replay") else path))
+        return {"layers": {"flights": {"aircraft": [["a1b2c3", "N123AB", 123.4, 5.6]]}}} if path == "/panorama" else {}
+
+
+a11y.time.sleep = lambda s: None
+try:
+    ps = PanoFlightsSrv()
+    pf[0][1](type("C", (), {"srv": ps})())
+    assert ps.calls == [("POST", "/aircraft/replay?name=a11y&undulationM=-18.4"), ("POST", "/horizon?flights=1&skyRange=all"), ("POST", "/horizon/switch?to=panorama"),
+                        ("GET", "/panorama?wait=60000"), ("GET", "/panorama"), ("POST", "/panorama?bearing=123.4"), ("POST", "/horizon?scroll=450")], ps.calls
+    ps.calls.clear()
+    pf[0][2](type("C", (), {"srv": ps})())
+    assert ps.calls[1] == ("POST", "/horizon/switch?to=map") and ps.calls[-1] == ("POST", "/settings?aircraft=0"), ps.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T327
 
 tmp = tempfile.mkdtemp(prefix="t270-a11y-")
 try:

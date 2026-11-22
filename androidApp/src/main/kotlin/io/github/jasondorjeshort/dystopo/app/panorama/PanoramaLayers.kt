@@ -66,6 +66,8 @@ private const val FAR = 20.0
 internal fun DrawScope.drawSunOnLens(lens: LensView, day: HorizonData.SunDay?, now: Sun.Position?, pal: GnssPalette, night: Boolean, marks: MutableList<LensMark>): Map<String, Any?> {
     var samplesOnView = 0
     var hoursOnView = 0
+    // The sun now, where it falls while it is up (drawn over the path; an hour's label under it gives way).
+    val nowAt: Offset? = now?.takeIf { HorizonText.sunUp(it.apparentAltitudeDeg) }?.let { lens.at(it.apparentAltitudeDeg, it.azimuthDeg) }
     day?.let { d ->
         val path = d.sun.path
         val colour = sunColour(night)
@@ -97,16 +99,13 @@ internal fun DrawScope.drawSunOnLens(lens: LensView, day: HorizonData.SunDay?, n
             if (lens.onView(RimPt(p.x.toDouble(), p.y.toDouble()))) hoursOnView++
             drawCircle(if (m.clear) colour else pal.muted, 3f * density, p)
             cal.timeInMillis = m.timeMs
+            if (nowAt != null && (nowAt - Offset(p.x, p.y - 10f * density)).getDistance() < 16f * density) continue
             drawContext.canvas.nativeCanvas.drawText(cal.get(java.util.Calendar.HOUR_OF_DAY).toString(), p.x, p.y - 6f * density, label)
         }
     }
-    var nowAt: Offset? = null
-    if (now != null && HorizonText.sunUp(now.apparentAltitudeDeg)) {
-        lens.at(now.apparentAltitudeDeg, now.azimuthDeg)?.let { p ->
-            sunMark(p, pal)
-            nowAt = p
-            marks += LensMark(TargetKind.SUN, PanoramaTargets.SUN_ID, PanoramaTargets.SUN_NAME, p)
-        }
+    nowAt?.let { p ->
+        sunMark(p, pal)
+        marks += LensMark(TargetKind.SUN, PanoramaTargets.SUN_ID, PanoramaTargets.SUN_NAME, p)
     }
     val on = nowAt?.let { lens.onView(RimPt(it.x.toDouble(), it.y.toDouble())) } ?: false
     return linkedMapOf(
@@ -168,5 +167,6 @@ internal fun DrawScope.drawFlightsOnLens(lens: LensView, f: HorizonData.Flights,
         "listed" to f.list.size, "onView" to onView.map { it.hex }, "names" to named.map { it.placed.label.name },
         "hollow" to onView.filter { it.hollow }.map { it.hex }, "emergency" to onView.filter { it.emergency }.map { it.hex },
         "tailPoints" to onView.sumOf { it.tailPoints }, "credit" to f.credit, "picked" to picked,
+        "aircraft" to f.list.map { s -> listOf(s.hex, s.label, Math.round(s.bearingDeg * 10) / 10.0, Math.round(s.elevationDeg * 100) / 100.0) },
     )
 }
