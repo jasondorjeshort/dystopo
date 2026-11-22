@@ -429,4 +429,47 @@ hf[0][2](type("C", (), {"srv": bs})())
 assert ("POST", "/horizon/ui?open=0", False) in bs.calls and ("POST", "/settings?aircraft=0", False) in bs.calls, bs.calls
 # end T312
 
+# T335: the launch check's `since`: the clock when the tool took over the app, then the clock before restart_app's
+# force-stop; a reset after a failed call keeps the launch's.
+class _Resp:
+    status = 200
+
+    def read(self):
+        return b"{}"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+_saved = (a11y.debug.device_now, a11y.debug.bootstrap, a11y.urllib.request.urlopen, a11y.time.sleep)
+clock = iter(["11-22 09:00:00.000", "11-22 09:05:00.000"])
+boots, shells = [], []
+a11y.debug.device_now = lambda exe, serial: next(clock)
+a11y.debug.bootstrap = lambda exe, serial, port, timeout=30.0, since=None: (boots.append(since), (41000, "tok"))[1]
+a11y.time.sleep = lambda s: None
+try:
+    srv = a11y.Srv("adb", "emulator-5640", 8700)
+    assert srv.since == "11-22 09:00:00.000", srv.since
+    a11y.urllib.request.urlopen = lambda req, timeout=0: (_ for _ in ()).throw(OSError("refused"))
+    try:
+        srv.call("GET", "/health")
+        raise AssertionError("must raise")
+    except OSError:
+        pass
+    assert boots == ["11-22 09:00:00.000"] * 3, boots  # every bootstrap of the first launch
+    boots.clear()
+    a11y.urllib.request.urlopen = lambda req, timeout=0: _Resp()
+    dev = type("D", (), {"shell": lambda self, *a, **k: shells.append(a[:2])})()
+    a11y.restart_app(type("C", (), {"dev": dev, "srv": srv})())
+    assert shells == [("am", "force-stop"), ("am", "start")], shells
+    assert srv.since == "11-22 09:05:00.000" and boots == ["11-22 09:05:00.000"], (srv.since, boots)
+    srv.reset()  # a failed call: still this launch's clock
+    assert srv.since == "11-22 09:05:00.000"
+finally:
+    a11y.debug.device_now, a11y.debug.bootstrap, a11y.urllib.request.urlopen, a11y.time.sleep = _saved
+# end T335
+
 print("test_android_a11y: ok")

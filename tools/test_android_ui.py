@@ -664,3 +664,43 @@ _row = {"text": "Mount Rainier", "bounds": [40, 1000, 400, 1060]}
 _line = {"text": "14409 ft · 4.7 mi · NNW 343°", "bounds": [40, 1062, 700, 1110]}
 assert ui.row_second_line([_row, _line, {"text": "Gibraltar Rock", "bounds": [40, 1140, 400, 1190]}], _row) == _line["text"]
 print("test_android_ui (T336): ok")
+
+# T335: a launch check reads only crashes since the part took over the app: DebugServer takes the device clock before
+# its first bootstrap, and the forward set up again after a refused connection passes the same `since`.
+class _Resp:
+    status = 200
+
+    def read(self):
+        return b"{}"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+_saved = (ui.debug.device_now, ui.debug.bootstrap, ui.urllib.request.urlopen, ui.check.refused)
+_boots, _answers = [], [ConnectionRefusedError("refused"), _Resp()]
+ui.debug.device_now = lambda exe, serial: "11-22 09:00:00.000"
+ui.debug.bootstrap = lambda exe, serial, port, timeout=30.0, since=None: (_boots.append(since), (41000, "tok"))[1]
+ui.check.refused = lambda e: True
+
+
+def _open(req, timeout=0):
+    a = _answers.pop(0)
+    if isinstance(a, Exception):
+        raise a
+    return a
+
+
+ui.urllib.request.urlopen = _open
+try:
+    _srv = ui.DebugServer(8700, "emulator-5640")
+    assert _srv.since == "11-22 09:00:00.000" and _boots == ["11-22 09:00:00.000"], (_srv.since, _boots)
+    assert _srv.call("GET", "/health") == (200, {})
+    assert _boots == ["11-22 09:00:00.000"] * 2, _boots
+finally:
+    ui.debug.device_now, ui.debug.bootstrap, ui.urllib.request.urlopen, ui.check.refused = _saved
+    ui.FORWARD_RESTORES.clear()
+print("test_android_ui (T335): ok")

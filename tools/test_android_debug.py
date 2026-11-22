@@ -82,6 +82,51 @@ m.adb = saved_adb
 print("crash block ok")
 
 
+# T335: a launch check reads only crashes since its launch. The crash buffer holds an earlier launch's crash; the
+# launch that is checked fails without one (no debug-server line). With the `since` taken before the launch, logcat gets
+# `-t <since>` and the old crash is not reported as this launch's; without one it still is (the reason for the change).
+OLD_CRASH_AT = "11-22 08:00:00.000"
+
+
+def clock_adb(exe, serial, *args, timeout=120):
+    if args[:2] == ("shell", "pidof"):
+        return 1, ""  # the app is not running: no debug-server line comes
+    if args[:2] == ("shell", "date"):
+        return 0, "11-22 09:00:00.000\n"
+    if args[:4] == ("logcat", "-d", "-b", "crash"):
+        since = args[args.index("-t") + 1] if "-t" in args else None
+        seen.append(since)
+        return 0, ("" if since and since > OLD_CRASH_AT else DBG)  # the old crash is before any later clock
+    if args[0] == "forward":
+        return 0, ""
+    raise AssertionError(args)
+
+
+seen = []
+m.adb = clock_adb
+try:
+    since = m.device_now("adb", "emulator-5650")
+    assert since == "11-22 09:00:00.000", since
+    try:
+        m.bootstrap("adb", "emulator-5650", 8700, timeout=0, since=since)
+        raise AssertionError("no endpoint: must raise")
+    except m.LaunchCrash as e:
+        raise AssertionError(f"an earlier launch's crash reported as this one's: {e}")
+    except RuntimeError as e:
+        assert "no 'debug server on port' line" in str(e), e
+    assert seen == [since], seen
+    seen.clear()
+    try:
+        m.bootstrap("adb", "emulator-5650", 8700, timeout=0)
+        raise AssertionError("must raise")
+    except m.LaunchCrash as e:
+        assert "Reading a state" in str(e) and seen == [None], (e, seen)  # no since: the whole buffer
+        os.remove(str(e).rsplit("(stack: ", 1)[1].rstrip(")"))
+finally:
+    m.adb = saved_adb
+print("launch since ok")
+
+
 # T105: device_now() through a stand-in for `adb shell`, which joins its arguments with spaces and hands the line to
 # the device's shell, which splits it again: that split is what gave `date` the unquoted format as two arguments.
 def fake_adb(exe, serial, *args, timeout=120):

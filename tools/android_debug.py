@@ -165,7 +165,7 @@ def launch_crash(exe, serial, since=None, package=None, out_dir=None):
 def crash_block(text, package=None):
     """T328: the lines of the last `FATAL EXCEPTION` block of our package in logcat `-v brief` text, from the FATAL line
     through the last line that process logged before another FATAL line, CRASH_BLOCK_MAX lines at most; [] when none.
-    The last, not the first: with no `since` (android-a11y.py's bootstrap) the buffer can hold older crashes.
+    The last, not the first: with no `since` (a clock that could not be read) the buffer can hold older crashes.
     T303: `package` (default the debug build's) must be the process name exactly: the release id is a prefix of the debug's."""
     lines = text.splitlines()
     found = []
