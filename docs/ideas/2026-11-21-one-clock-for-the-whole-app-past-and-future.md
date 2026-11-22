@@ -33,3 +33,14 @@ with "Back to now"; nothing persists across launches.
   this clock adds is the date. One answer deserves a line of its own under it: "will this campsite get morning sun",
   as a row at a long-pressed point for the set date ("Direct sun 8:10 AM to 4:35 PM"), from `Sun.onTerrain` on that
   point's horizon, which the Horizon view's sun path already uses where the view stands.
+
+Question: the one clock changes what every time-dependent layer reads and how a user knows a view is not now, and it
+is more than one pass; does it go through a proposal with the survey as its Prior art (ADR 0039: how planners and sky
+apps set and show a time that is not now) and an ADR, as the Panorama view did, or straight to a first pass?
+Recommended: the proposal. Five other ideas hang on its shape (the shadow forecast, the sun on a peak, old photos, the
+stars, the route's clock), `SunClock` (`app/options/SunShade.kt`) and the sky views' date (`HorizonUi.date`) are two
+clocks to merge, and the rule that live layers hide or are marked when the clock is moved wants writing once. A
+likely cut: pass one, the clock in `shared`, the band with "Back to now" and the two sky views reading it; pass two,
+the map's shade and the "Direct sun" row at a long-pressed point.
+
+Answer:
