@@ -31,12 +31,16 @@ not sanity checked.
   ray back from each listed place settles it.
 - Whether the result is a list, a tint on the map like the visible-area overlay, or both.
 
-Question: is the viewpoint finder wanted, and if so which half first? Recommended: yes to the first half only, as one
-pass when you want it: on a peak (the long-press card on it, a picked peak in the sky views) "Where can I see it
-from?" runs `Viewshed.compute` from the summit and lists the map's viewpoints, trailheads and stretches of trail or
-road inside that area, nearest first, one ray back from each to confirm, each a place to route to. The second half
-("the best view", a skyline per candidate) waits until the sweep's time per point on a real phone is known. The
-elevation model knows no trees, so both would say "by the terrain", and mapped viewpoints are the only evidence of
-an open view the map holds.
+2026-11-22, the owner at triage: "What can I see from here, and where can I see this from, are the same question
+though. They're both just line of sight." The first half is therefore not a new search: it is the existing viewshed
+(`Viewshed.compute`, "What can I see from here") run at whichever end is convenient, here the summit, and what is new
+is only the result read as a list of places to go (mapped viewpoints, trailheads, trail and road stretches, nearest
+first). The same holds for "where to stand" in `2026-11-21-when-the-sun-or-moon-stands-on-a-named-peak.md` and
+`2026-11-21-a-mountains-shadow-forecast.md`: line of sight with a bearing and elevation filter from the sun or moon at a
+time. Only the second half (ranking many candidate viewpoints by their skylines) is a different cost.
 
-Answer:
+Question: with that correction, is the one new piece wanted: the viewshed's result (from your position, a long-pressed
+point or a picked peak) also listed as places to go, nearest first, each routable? Recommended: yes, as a small pass on
+the existing viewshed when you want it; the "best view" ranking waits for the sweep's time on a real phone.
+
+Answer: yes, on the wave planner's timeline (the owner, 2026-11-22, by multiple choice at triage).
