@@ -5,6 +5,7 @@ import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.Request
 import io.github.jasondorjeshort.dystopo.app.Response
+import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
 import io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch
 import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi
@@ -93,6 +94,8 @@ object PanoramaRoutes {
         }
         if (bearing != null || tilt != null || fov != null) app.map.onMain {
             PanoramaUi.steer { a, _ ->
+                // T330: in Follow the phone aims; only the field of view is set.
+                if (a.follow) return@steer a.copy(fovDeg = (fov ?: a.fovDeg).coerceIn(PanoramaAim.MIN_FOV_DEG, PanoramaAim.MAX_FOV_DEG))
                 PanoramaAim(
                     PanoramaAim.wrapDeg(bearing ?: a.bearingDeg), (tilt ?: a.tiltDeg).coerceIn(PanoramaAim.MIN_TILT_DEG, PanoramaAim.MAX_TILT_DEG),
                     (fov ?: a.fovDeg).coerceIn(PanoramaAim.MIN_FOV_DEG, PanoramaAim.MAX_FOV_DEG),
@@ -124,6 +127,15 @@ object PanoramaRoutes {
             app.map.onMain { PanoramaUi.turnToTarget() }
             Thread.sleep(PanoramaUi.TURN_MS + 300)
         }
+        // T330
+        q["steering"]?.let { v ->
+            val to = PanoramaSteering.of(v) ?: return bad("steering must be drag or follow")
+            SettingsRoutes(app).apply(SettingsRoutes.Parsed.Ok.of(AppSettings.PANORAMA_STEERING, to))
+            app.map.onMain { io.github.jasondorjeshort.dystopo.app.SettingsUi.revision++ }
+            Thread.sleep(300)
+        }
+        attitude(app, q)?.let { return it }
+        // end T330
         if (q["back"] == "1") app.map.onMain { (app.map.activity as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed() }
         q["select"]?.let { name ->
             app.map.onMain {
@@ -134,6 +146,44 @@ object PanoramaRoutes {
         Thread.sleep(400)
         return answer(app, r)
     }
+
+    // T330
+    /**
+     * T330: `attitude=<bearing>,<tilt>,<roll>|none` (a simulated attitude, true bearing), `attitudeQ=<x,y,z,w>` (a raw
+     * rotation vector, as the sensor gives it), `attitudeNoise=<deg>` (a jitter on each simulated sample; alone, it changes
+     * the attitude simulated now) and `attitudeRate=<deg/s>` (a steady turn about the vertical). Null, or the refusal.
+     */
+    private fun attitude(app: DystopoApp, q: Map<String, String>): Response? {
+        val noise = q["attitudeNoise"]?.let { it.toDoubleOrNull()?.takeIf { v -> v.isFinite() && v in 0.0..30.0 } ?: return bad("attitudeNoise must be 0 to 30 degrees") }
+        val rate = q["attitudeRate"]?.let { it.toDoubleOrNull()?.takeIf { v -> v.isFinite() && kotlin.math.abs(v) <= 720 } ?: return bad("attitudeRate must be -720 to 720 degrees a second") }
+        val now = PanoramaFollow.simulated
+        val sim: PanoramaFollow.Sim? = when {
+            q["attitude"] == "none" -> null
+            q["attitude"] != null -> {
+                val p = q["attitude"]!!.split(",").map { it.trim().toDoubleOrNull()?.takeIf { v -> v.isFinite() } }
+                if (p.size != 3 || p.any { it == null }) return bad("attitude must be bearing,tilt,roll in degrees, or none")
+                if (p[1]!! !in -90.0..90.0) return bad("attitude's tilt must be -90 to 90")
+                PanoramaFollow.Sim(null, p[0]!!, p[1]!!, p[2]!!, noise ?: now?.noiseDeg ?: 0.0, rate ?: 0.0)
+            }
+            q["attitudeQ"] != null -> {
+                val v = q["attitudeQ"]!!.split(",").map { it.trim().toDoubleOrNull() ?: Double.NaN }.toDoubleArray()
+                val quat = io.github.jasondorjeshort.dystopo.horizon.PhoneAttitude.quat(v) ?: return bad("attitudeQ must be x,y,z[,w] making a rotation")
+                PanoramaFollow.Sim(quat, 0.0, 0.0, 0.0, noise ?: now?.noiseDeg ?: 0.0, 0.0)
+            }
+            noise != null || rate != null -> now?.let {
+                if (rate != null && it.q == null) {
+                    // A steady turn starts from the bearing the simulation has reached.
+                    val t = (SystemClock.elapsedRealtime() - it.startMs) / 1000.0
+                    it.copy(bearingDeg = it.bearingDeg + it.rateDegS * t, rateDegS = rate, noiseDeg = noise ?: it.noiseDeg, startMs = SystemClock.elapsedRealtime())
+                } else it.copy(noiseDeg = noise ?: it.noiseDeg)
+            } ?: return bad("no simulated attitude to change: set attitude= or attitudeQ= first")
+            else -> return null
+        }
+        app.map.onMain { PanoramaFollow.simulate(sim) }
+        Thread.sleep(600) // the filter's settling (its still time constant is 300 ms)
+        return null
+    }
+    // end T330
 
     /** T327: `target=<kind>:<name>` on the main thread: null, or why not. */
     private fun target(v: String): String? {
@@ -277,6 +327,21 @@ object PanoramaRoutes {
             "turns" to linkedMapOf("done" to PanoramaUi.turnsDone, "last" to PanoramaUi.lastTurn),
             "sunAt" to PanoramaUi.sunAtMs?.let { java.time.Instant.ofEpochMilli(it).toString() },
             "aircraftOwners" to io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.owners().sorted(),
+            // T330
+            "steering" to AppSettings.panoramaSteering.key, "following" to PanoramaFollow.following,
+            "attitude" to PanoramaFollow.json(), "resting" to PanoramaFollow.state?.resting,
+            "aimFollow" to aim?.let { a -> linkedMapOf("follow" to a.follow, "rollDeg" to r2(a.rollDeg)) },
+            "followButton" to linkedMapOf(
+                "shown" to (io.github.jasondorjeshort.dystopo.app.controls.Heading.attitudeAvailable && aim != null),
+                "rectPx" to PanoramaUi.followPx,
+            ),
+            "keepScreenOn" to PanoramaUi.keepScreenOn,
+            "compass" to io.github.jasondorjeshort.dystopo.app.controls.Heading.compassJson().let { c -> linkedMapOf("running" to c["running"], "gnssWanted" to c["gnssWanted"]) },
+            "frames" to linkedMapOf(
+                "drawMsLast" to r2(PanoramaUi.drawMsLast), "drawMsMax" to r2(PanoramaUi.drawMsMax), "draws" to PanoramaUi.draws,
+                "drawsLastSecond" to PanoramaUi.drawsPerSecond(System.nanoTime()),
+            ),
+            // end T330
         )
     }
 }

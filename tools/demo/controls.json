@@ -1059,6 +1059,19 @@
       }
     },
     {
+      "id": "panoramaSteering",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "navigation",
+          "order": 42,
+          "zone": "settings",
+          "row": "panoramaSteering"
+        }
+      }
+    },
+    {
       "id": "syncStatus",
       "kind": "link",
       "platforms": ["android"],

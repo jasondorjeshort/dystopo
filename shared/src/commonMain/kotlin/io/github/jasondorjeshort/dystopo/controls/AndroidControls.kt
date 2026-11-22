@@ -72,6 +72,9 @@ object AndroidControls {
         // T312
         row("skyRange", "navigation", 41), // the Horizon view's flights: beside its other rows
         // end T312
+        // T330
+        row("panoramaSteering", "navigation", 42), // how the Panorama view turns: under Sky range
+        // end T330
         row("syncStatus", "sync", 1, ControlKind.LINK),
         row("share", "sync", 2, ControlKind.LINK),
         row("updates", "about", 1),

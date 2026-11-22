@@ -12,7 +12,7 @@ enum class SettingsGroup(val id: String, val title: String, val summary: String)
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage"), // T115: titles from Screens
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements, flight tracking"), // T223: names what the page holds; T311: flight tracking
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, text size"),
-    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning, Horizon view, sky range"), // T223: names what the page holds; T308: Horizon view; T312: sky range
+    NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning, Horizon view, sky range, Panorama steering"), // T223: names what the page holds; T308: Horizon view; T312: sky range; T330: Panorama steering
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
     ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, technical details, problem reports, contour warm-up, credits"),
     ;
@@ -108,6 +108,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T312: which flights the Horizon view draws, beside the view's other row (the controls manifest's next free order)
     SKY_RANGE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SKY_RANGE, SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.SKY_RANGE, "SettingsPages", "T312"),
     // end T312
+    // T330: how the Panorama view is steered, under Sky range (the controls manifest's next free order)
+    PANORAMA_STEERING(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_PANORAMA_STEERING, SettingsGroup.NAVIGATION, io.github.jasondorjeshort.dystopo.app.panorama.PanoramaStrings.STEERING, "SettingsPages", "T330"),
+    // end T330
     // T213: the trail disagreements' layer switch (the Map page, last)
     SHOW_DIVERGENCE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SHOW_DIVERGENCE, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.routing.DivergenceText.SETTING, "SettingsPages", "T213"),
     // end T213
