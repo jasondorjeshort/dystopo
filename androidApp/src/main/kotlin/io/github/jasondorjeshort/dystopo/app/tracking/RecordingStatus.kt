@@ -6,6 +6,12 @@ import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import io.github.jasondorjeshort.dystopo.store.RecorderCounts
 
 /**
+ * T333: the recording panel's line when the weak-signal watch fired (ADR 0031: the owner's to adjust); a tap opens the
+ * Horizon view. Beside the state line, never in the notification.
+ */
+internal const val WEAK_SIGNAL_LINE = "GPS signal unusually weak"
+
+/**
  * T159: the one explicit state of a recording, shown by the track controls and the recording's notification and
  * reported by `GET /tracks` (`state`). Worked out by [RecordingWatch.stateOf] from the recorder and the watch.
  */

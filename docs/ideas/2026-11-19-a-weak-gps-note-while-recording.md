@@ -23,17 +23,9 @@ since the verdict's 25 and 35 dB-Hz are uncalibrated and a line that fires under
 build it now with the cautious rule (not the recommended wait): many satellites in view, all below 25 dB-Hz for five
 minutes, the terrain rim not explaining it, at most once a recording.
 
-Plan: one pass. `shared/.../gnss/` gains a pure watch beside `GnssHealth`, fed the satellites and the terrain rim at
-each status: it fires once when at least a set count of satellites stand above the rim and every one of them reads
-below 25 dB-Hz for five minutes on end; a stronger signal starts the count again. Unit tests with `GnssCases`' weak
-case, a strong one, and a rim that hides the sky (few above it: no line). `Tracking` holds `Gnss` while a track
-records (the status callback; the recorder's own listener stays the one that fixes), sweeps the rim where the
-recording stands (`Gnss.horizonAt`) and feeds the watch; when it fires, one line "GPS signal unusually weak" beside
-the recording's state on the track controls (`app/tracking/RecordingStatus.kt`, `TrackControls.kt`), a tap opening
-the Horizon view; no sound, no notification, once a recording. `GET /tracks` reports the watch (`weakSignal`: the
-count, the seconds so far, fired) and a debug parameter shortens the five minutes. Verify: `check`; on the emulator
-a recording with the weak case of `POST /gnss?case=`, the line viewed at the default text and at font scale 2.0, and a
-strong case that never fires; the `tracking` battery scenario before and after in the report. The line and its help
-sentence in the report (ADR 0031). It shares the hold with `2026-11-19-gnss-signal-recorded-with-each-track-point.md`:
-whichever lands second reuses the first's. Out of scope: calibrating the 25 dB-Hz on recorded tracks, handing over
-to the terrain position estimate (`tracking/TerrainSource.kt`).
+Built 2026-11-22 (T333): the watch `WeakSignalWatch` in `shared/.../gnss/` with the cautious rule (at least 8
+satellites above the terrain rim, every one under 25 dB-Hz, five minutes on end, once a recording); the recording holds the
+GNSS status only, sweeps the rim only while that many weak satellites stand above the flat horizon, and shows the line on
+the recording panel, a tap opening the Horizon view (`docs/reference/android-app.md` › A weak GPS signal while recording).
+Left: checking the 25 dB-Hz and the count against recorded tracks once the related idea's per-point signal exists; the
+hand-over to the terrain position estimate (`tracking/TerrainSource.kt`).

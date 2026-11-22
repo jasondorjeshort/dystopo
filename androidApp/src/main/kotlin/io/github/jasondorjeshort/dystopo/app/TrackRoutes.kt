@@ -33,6 +33,7 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   and `list`: each gap's `from` and `to` as `[lat, lon]`, `startTime`, `endTime`, `durationS`, `straightM`); `overlay`
  *   gains `bridges` and `bridgedS` (what the map draws now); `GET /tracks/{id}` gains the same `bridged`; `ui.gapText` and
  *   `ui.profileGapText` are the two statistics lines' gap words.
+ *   T333: `weakSignal`, the weak-signal watch (its route, `POST /tracks/weak`, is documented at [weakSignalRoute]).
  * - `POST /tracks/record?name=&source=all|gps|injected[&activity=foot|bike|road|rail|boat|air]`: start recording (stops the
  *   current track); T172: with that activity's profile from the settings rows (default: the remembered activity, which
  *   this does not change). Tracks and the recording carry `activity`; the recording also `profile` (its four choices and the
@@ -149,6 +150,7 @@ object TrackRoutes {
         if (r.method == "GET" && r.path == "/tracks" && Tracking.readyOrNull == null) return Response.json(Tracking.readiness())
         val t = Tracking.of(app)
         val p = params(r)
+        weakSignalRoute(t, r, p)?.let { return it } // T333
         when (r.method to r.path) {
             "POST" to "/location" -> {
                 val lat = p.d("lat")
@@ -160,7 +162,7 @@ object TrackRoutes {
                 }
                 return null
             }
-            "GET" to "/tracks" -> return Response.json(Tracking.readiness() + overview(t)) // T229: ready first
+            "GET" to "/tracks" -> return Response.json(Tracking.readiness() + overview(t) + mapOf("weakSignal" to t.weakJson())) // T229: ready first; T333
             "GET" to "/tracks/ui" -> return Response.json(screenJson(t))
             "POST" to "/tracks/ui" -> return screenPost(app, t, p) // T262 (T219's sheet before)
             "POST" to "/waypoint" -> {
@@ -728,4 +730,31 @@ object TrackRoutes {
         if (body.startsWith("{")) runCatching { m.putAll(MiniJson.parseObject(body)) }
         return Params(m)
     }
+
+    // T333: the weak-signal watch's debug route.
+    /**
+     * `POST /tracks/weak?holdS=<1..3600>|default` sets how long the weak run must last before the line shows (default five
+     * minutes; kept for the process until set back, and for every recording); `tap=1` taps the panel's line (409 unless it
+     * shows). `GET /tracks/weak` is `GET /tracks`' `weakSignal`.
+     */
+    private fun weakSignalRoute(t: Tracking, r: Request, p: Params): Response? {
+        if (r.path != "/tracks/weak") return null
+        if (r.method == "POST") {
+            p.s("holdS")?.let { raw ->
+                val v = if (raw == "default") null else raw.toLongOrNull()?.takeIf { it in 1..3600 }
+                    ?: return Response.json(mapOf("error" to "holdS must be 1 to 3600 seconds, or default"), 400)
+                t.setWeakHold(v)
+            }
+            if (p.s("tap") == "1") {
+                val shown = DystopoApp.instance.map.onMain {
+                    val on = io.github.jasondorjeshort.dystopo.app.tracking.TrackingUiState.ui.weakSignal
+                    if (on) io.github.jasondorjeshort.dystopo.app.tracking.openHorizonForWeakSignal()
+                    on
+                }
+                if (!shown) return Response.json(mapOf("error" to "the weak-signal line is not shown"), 409)
+            }
+        }
+        return Response.json(t.weakJson())
+    }
+    // end T333
 }

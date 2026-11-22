@@ -199,6 +199,9 @@ class HelpRegistryTest {
             // T330: Panorama steering.
             "settings.panoramaSteering",
             // end T330
+            // T333: the recording panel's weak-signal line.
+            "tracks.weakSignal",
+            // end T333
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
@@ -335,4 +338,15 @@ class HelpRegistryTest {
         }
     }
     // end T321
+
+    // T333: the weak-signal line's help says when it shows and what a tap does.
+    @Test
+    fun theWeakSignalHelpSaysWhenAndWhere() {
+        for (u in ContourUnits.entries) {
+            val t = HelpRegistry.byKey("tracks.weakSignal")!!.text(u)
+            assertTrue("five minutes" in t && "Horizon view" in t && "once a recording" in t, t)
+        }
+        assertEquals("GPS signal unusually weak", io.github.jasondorjeshort.dystopo.app.tracking.WEAK_SIGNAL_LINE)
+    }
+    // end T333
 }

@@ -1032,6 +1032,46 @@ def end_map_outside(c):
 # end T332
 
 
+# T333
+WEAK_HOLD_S = 10  # the weak run the screen asks for in place of five minutes (POST /tracks/weak?holdS=)
+
+
+def scr_recording_weak(c):
+    """T333: a recording at Paradise under the simulated `fault` sky (every satellite weak, many above the rim) with the
+    watch's five minutes shortened to WEAK_HOLD_S: the recording panel unfolded with "GPS signal unusually weak", its tap
+    and its help icon. State it leaves, each put back by end_recording_weak (also after a failed step): the recording
+    (stopped and deleted), the injected sky (`POST /gnss?clear=1`) and the shortened time (`holdS=default`). Fixes are
+    injected while it waits, so the state line never reads "Waiting for GPS"."""
+    c.srv.ok("POST", "/gnss?case=fault")
+    c.srv.ok("POST", f"/tracks/weak?holdS={WEAK_HOLD_S}")
+    j = c.srv.ok("POST", "/tracks/record?source=injected&activity=foot")
+    c.recorded = ((j or {}).get("started") or {}).get("id")
+    c.srv.ok("POST", "/tracks/ui?bar=1")
+    deadline = time.time() + 60
+    k = 0
+    while True:
+        c.srv.ok("POST", f"/location?lat={PARADISE[0] + k * 0.00003:.6f}&lon={PARADISE[1]}&accuracy=5")
+        k += 1
+        w = c.srv.ok("GET", "/tracks/weak") or {}
+        if w.get("shown"):
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"the weak-signal line did not show: {json.dumps(w)[:300]}")
+        time.sleep(2.0)
+    time.sleep(1.0)
+
+
+def end_recording_weak(c):
+    code, j = c.srv.call("POST", "/tracks/stop")
+    tid = c.recorded or ((j or {}).get("track") or {}).get("id") or (j or {}).get("id")
+    if tid:
+        c.srv.call("DELETE", f"/tracks/{tid}")
+    c.recorded = None
+    c.srv.call("POST", "/tracks/weak?holdS=default")
+    c.srv.call("POST", "/gnss?clear=1")
+# end T333
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1066,6 +1106,9 @@ SCREENS = [
     # T332
     ("map-outside", scr_map_outside, end_map_outside, "map"),
     # end T332
+    # T333
+    ("recording-weak", scr_recording_weak, end_recording_weak, "map"),
+    # end T333
 ]
 
 
