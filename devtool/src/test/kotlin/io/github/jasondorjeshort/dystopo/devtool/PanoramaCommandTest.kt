@@ -8,7 +8,7 @@ import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLabels
 import io.github.jasondorjeshort.dystopo.horizon.LayeredSkyline
-import io.github.jasondorjeshort.dystopo.horizon.LensView
+import io.github.jasondorjeshort.dystopo.horizon.PanoramaAim
 import io.github.jasondorjeshort.dystopo.horizon.PeakRim
 import java.awt.image.BufferedImage
 import java.io.File
@@ -64,7 +64,7 @@ object PanoramaGolden {
         val terrain = terrain()
         val skyline = LayeredSkyline.sweep(terrain, LAT, LON, LayeredSkyline.ranges(RANGE_M), 0.5, 1.7)
         val ranked = HorizonLabels.rank(PeakRim.labels(PanoramaRender.peakViews(terrain, skyline, peaks)))
-        return PanoramaRender.draw(LensView(540.0, 540.0, 1.5, 0.0, 4.0, 0.0, fov), skyline, ranked)
+        return PanoramaRender.draw(PanoramaAim(0.0, 4.0, fov), 540.0, 540.0, 1.5, skyline, ranked)
     }
 
     /** The text's boxes, 2 px wider each side: where the comparison is loose (fonts differ a little by machine). */
@@ -112,6 +112,19 @@ class PanoramaCommandTest {
         fun spread(m: Map<String, HorizonLabels.Placed>) = both.maxOf { m[it]!!.x } - both.minOf { m[it]!!.x }
         assertTrue(spread(b) > spread(a))
         assertEquals(LayeredSkyline.ranges(40_000.0), listOf(3_000.0, 10_000.0, 30_000.0, 40_000.0))
+    }
+
+    @Test
+    fun aTargetBehindGetsItsEdgeArrowAndLineAndTheSceneIsCheap() {
+        val terrain = PanoramaGolden.terrain()
+        val skyline = LayeredSkyline.sweep(terrain, 45.0, 0.5, LayeredSkyline.ranges(40_000.0), 0.5, 1.7)
+        val d = PanoramaRender.draw(PanoramaAim(0.0, 4.0, 60.0), 540.0, 405.0, 1.5, skyline, emptyList(), Triple("Sun", 10.0, 200.0))
+        val a = d.arrow ?: fail("no arrow for a target behind")
+        assertEquals("Sun, 160° left", a.text)
+        assertTrue(a.x < 540.0 / 2)
+        assertEquals(null, PanoramaRender.draw(PanoramaAim(0.0, 4.0, 60.0), 540.0, 405.0, 1.5, skyline, emptyList(), Triple("Ahead", 2.0, 5.0)).arrow)
+        val cost = PanoramaRender.sceneCost(d, builds = 5)
+        assertTrue(cost.placedMs < 200 && cost.heldMs < 200, "scene ${cost.placedMs} ms")
     }
 
     private fun write(image: BufferedImage, kind: String): String {

@@ -90,6 +90,24 @@ class PanoramaScene(
         /** The eight compass points, from north clockwise. */
         val COMPASS8 = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
+        /** The zoom buttons (wave 45's choice d): [ZOOM_BUTTON_DP] square, one above the other, [ZOOM_MARGIN_DP] from the plot's lower right corner and apart. */
+        const val ZOOM_BUTTON_DP = 48.0
+        const val ZOOM_MARGIN_DP = 8.0
+
+        /** The boxes of "Zoom in" (the upper) and "Zoom out" on a plot [width] by [height] px at [dp]. */
+        fun zoomButtons(width: Double, height: Double, dp: Double): List<RimBox> {
+            val s = ZOOM_BUTTON_DP * dp
+            val m = ZOOM_MARGIN_DP * dp
+            val out = RimBox(width - m - s, height - m - s, width - m, height - m)
+            return listOf(RimBox(out.left, out.top - m - s, out.right, out.top - m), out)
+        }
+
+        /** The corner the zoom buttons stand in, margins included: the box names keep off. */
+        fun zoomCorner(width: Double, height: Double, dp: Double): RimBox {
+            val b = zoomButtons(width, height, dp)
+            return RimBox(b[0].left - ZOOM_MARGIN_DP * dp, b[0].top - ZOOM_MARGIN_DP * dp, width, height)
+        }
+
         const val REASON_BEHIND = "behind the viewer"
         const val REASON_OFF_VIEW = "off the view"
         const val REASON_NO_ROOM = "no room"
