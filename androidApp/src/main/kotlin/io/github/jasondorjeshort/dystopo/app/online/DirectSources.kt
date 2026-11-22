@@ -19,6 +19,7 @@ import io.github.jasondorjeshort.dystopo.sources.elevation.SourceIo
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTilePlan
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
+import io.github.jasondorjeshort.dystopo.app.storage.FileTrees
 import java.io.File
 import java.io.IOException
 import java.net.ConnectException
@@ -835,7 +836,7 @@ class DirectSources(private val context: android.content.Context, private val ca
     @Synchronized
     fun trimSourceCache(): Map<String, Any?> {
         val root = File(cacheRoot, "sources")
-        val files = root.walkTopDown().filter { it.isFile }.map { Triple(it, it.length(), it.lastModified()) }.toList()
+        val files = FileTrees.files(root).map { Triple(it, it.length(), it.lastModified()) } // T328: tolerates a directory gone meanwhile
         var total = files.sumOf { it.second }
         val before = total
         var deleted = 0

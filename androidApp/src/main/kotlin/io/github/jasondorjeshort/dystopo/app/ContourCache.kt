@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app
 
 import io.github.jasondorjeshort.dystopo.app.online.TileCache
+import io.github.jasondorjeshort.dystopo.app.storage.FileTrees
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
@@ -75,7 +76,7 @@ object ContourCache {
         for (d in root.listFiles()?.filter { it.isDirectory }.orEmpty()) {
             if (keeps(d.name, identities)) continue
             n += cache.clear("${d.name}/")
-            d.walkBottomUp().forEach { if (it.isFile && it.delete()) n++ else it.delete() } // a kill mid-write
+            n += FileTrees.deleteTree(d) // a kill mid-write; T328: another collection deleting the same directory is no error
         }
         return n
     }

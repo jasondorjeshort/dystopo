@@ -356,7 +356,7 @@ class TileCache(
         try {
             copyDir(m, old, "")
             synchronized(moveLock) { moveRoot = null }
-            old.deleteRecursively() // what is left: emptied directories, and stale files whose key [dir] holds newer
+            io.github.jasondorjeshort.dystopo.app.storage.FileTrees.deleteTree(old) // T328; what is left: emptied directories, and stale files whose key [dir] holds newer
             old.parentFile?.delete()
             m.copyMs = (System.nanoTime() - t0) / 1_000_000
             m.state = TileStoreMove.State.DONE

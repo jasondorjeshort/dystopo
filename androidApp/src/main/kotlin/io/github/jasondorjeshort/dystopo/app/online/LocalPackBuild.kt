@@ -11,6 +11,7 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesWriter
 import io.github.jasondorjeshort.dystopo.pmtiles.TileType
 import io.github.jasondorjeshort.dystopo.sources.SourceRegistry
+import io.github.jasondorjeshort.dystopo.app.storage.FileTrees
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -40,7 +41,7 @@ class LocalPackBuild(
     zooms: IntRange,
     private val cancelled: () -> Boolean,
 ) {
-    private val dir = File(cacheDir, "local-build/$name").apply { deleteRecursively(); mkdirs() }
+    private val dir = File(cacheDir, "local-build/$name").apply { FileTrees.deleteTree(this); mkdirs() } // T328: FileTrees
     private val demZooms = maxOf(zooms.first, DEM_MIN_ZOOM)..minOf(zooms.last, direct.maxZoom)
     private val osmZooms = zooms.first..minOf(zooms.last, OnlineTiles.OSM_MAX_ZOOM)
     private val demTiles = demZooms.flatMap { tiles(it) }
@@ -65,7 +66,7 @@ class LocalPackBuild(
     fun outputs(): List<File> = listOf(PackRole.DEM, PackRole.VECTOR).map { File(dir, PackNames.fileName(name, it)) }.filter { it.isFile }
 
     fun cleanUp() {
-        dir.deleteRecursively()
+        FileTrees.deleteTree(dir) // T328
     }
 
     /** Builds both archives; [progress] gets [json] as it goes. Throws when nothing could be fetched. */

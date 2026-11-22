@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.cachebudget
 
 import io.github.jasondorjeshort.dystopo.app.online.TileCache
+import io.github.jasondorjeshort.dystopo.app.storage.FileTrees
 import java.io.File
 
 /** T112: one store the cache budget measures and evicts from ([BudgetEngine]); it may hold several kinds. */
@@ -95,7 +96,7 @@ class DirStore(
         return walked
     }
 
-    private fun files(): List<File> = if (!dir.isDirectory) emptyList() else dir.walkTopDown().filter { it.isFile && it.name !in keepNames }.toList()
+    private fun files(): List<File> = FileTrees.files(dir).filter { it.name !in keepNames } // T328: tolerates a directory gone meanwhile
 
     override fun oldest(kind: CacheKind, spare: (String) -> Boolean): Long? =
         if (kind != this.kind) null else files().filter { !spare(it.relativeTo(dir).invariantSeparatorsPath) }.minOfOrNull { it.lastModified() }
