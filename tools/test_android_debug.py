@@ -27,6 +27,60 @@ assert m.parse_crash(REL, m.RELEASE_PACKAGE) is not None and m.parse_crash(DBG, 
 assert m.activity(m.DEBUG_PACKAGE) == "io.github.jasondorjeshort.dystopo.debug/io.github.jasondorjeshort.dystopo.app.MainActivity"
 assert m.parse_crash("") is None
 
+# T328: the whole block is kept (the FATAL line through that PID's last line, other processes' lines left out, the
+# "Caused by" chain in), the last crash of our package is the one reported, and launch_crash writes the block to a
+# file whose path ends the string it returns (so LaunchCrash's message names it).
+import tempfile as _tf
+
+FRAMES = "".join(f"E/AndroidRuntime( 3278): \tat kotlin.io.FileTreeWalk$Frame{k}.step(FileTreeWalk.kt:{k})\n" for k in range(60))
+CUT = FRAMES.index("\n", 200) + 1  # between two frame lines
+TWO = (SAMPLE
+       + "--------- beginning of crash\n"
+       + "E/AndroidRuntime( 3278): FATAL EXCEPTION: DefaultDispatcher-worker-2\n"
+       + f"E/AndroidRuntime( 3278): Process: {m.DEBUG_PACKAGE}, PID: 3278\n"
+       + "E/AndroidRuntime( 3278): java.lang.AssertionError: rootDir must be verified to be directory beforehand\n"
+       + FRAMES[:CUT]
+       + "E/libc    ( 1999): an unrelated line of another process\n"
+       + FRAMES[CUT:]
+       + "E/AndroidRuntime( 3278): Caused by: java.io.IOException: gone\n"
+       + "E/AndroidRuntime( 3278): \tat io.github.jasondorjeshort.dystopo.app.storage.Storage.walk(Storage.kt:12)\n")
+blk = m.crash_block(TWO)
+assert blk[0].endswith("FATAL EXCEPTION: DefaultDispatcher-worker-2") and len(blk) == 2 + 1 + 60 + 2, len(blk)
+assert not any("another process" in b for b in blk) and blk[-1].endswith("Storage.walk(Storage.kt:12)")
+assert m.parse_crash(TWO).startswith("java.lang.AssertionError: rootDir must be verified")
+assert m.parse_crash(TWO, m.RELEASE_PACKAGE).startswith("java.lang.IllegalStateException")  # each package its own block
+LONG = TWO.replace(FRAMES[CUT:], FRAMES[CUT:] * 10)
+assert len(m.crash_block(LONG)) == m.CRASH_BLOCK_MAX
+
+
+def crash_adb(exe, serial, *args, timeout=120):
+    assert args[:4] == ("logcat", "-d", "-b", "crash"), args
+    return 0, TWO
+
+
+saved_adb = m.adb
+m.adb = crash_adb
+tmp = _tf.mkdtemp(prefix="t328-")
+msg = m.launch_crash("adb", "emulator-5572", None, None, out_dir=tmp)
+assert msg.startswith("java.lang.AssertionError: rootDir must be verified") and "(stack: " in msg, msg
+path = msg.rsplit("(stack: ", 1)[1].rstrip(")")
+assert os.path.basename(path).startswith("launch-crash-emulator-5572-") and path.endswith(".txt"), path
+text = open(path, encoding="utf-8").read()
+assert "FATAL EXCEPTION" in text and "Storage.walk(Storage.kt:12)" in text and text.count("\n") == len(blk)
+msg2 = m.launch_crash("adb", "emulator-5572", None, None, out_dir=tmp)  # a second crash in the same second: its own file
+assert msg2.rsplit("(stack: ", 1)[1] != msg.rsplit("(stack: ", 1)[1]
+try:
+    m.raise_if_crashed("adb", "emulator-5572")  # the default directory: out/launch-crashes under the working directory
+    raise AssertionError("not raised")
+except m.LaunchCrash as e:
+    assert "rootDir must be verified" in str(e) and "launch-crashes/launch-crash-emulator-5572-" in str(e), e
+    p = str(e).rsplit("(stack: ", 1)[1].rstrip(")")
+    os.remove(p)
+m.adb = lambda *a, **k: (0, SAMPLE.replace("io.github.jasondorjeshort.dystopo,", "com.other,"))
+assert m.launch_crash("adb", "emulator-5572", out_dir=tmp) is None
+m.adb = saved_adb
+print("crash block ok")
+
 
 # T105: device_now() through a stand-in for `adb shell`, which joins its arguments with spaces and hands the line to
 # the device's shell, which splits it again: that split is what gave `date` the unquoted format as two arguments.
