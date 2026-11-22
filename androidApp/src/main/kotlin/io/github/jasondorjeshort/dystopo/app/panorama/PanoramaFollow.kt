@@ -86,12 +86,13 @@ object PanoramaFollow {
         if (moving) moving = false
     }
 
-    /** Sets or clears ([sim] null) the simulated attitude (main thread). */
+    /**
+     * Sets or clears ([sim] null) the simulated attitude (main thread). The filter goes on from where it is, so a new
+     * attitude is a step the filter follows (the quarter turn's figure), as a real phone's turn would be.
+     */
     fun simulate(sim: Sim?) {
         simulated = sim
         handler.removeCallbacks(tick)
-        state = null
-        step = null
         if (sim != null && active) feed()
     }
 
