@@ -30,3 +30,13 @@ not sanity checked.
 - The eye stands 2 m above the ground and the summit does not, so the area from the summit is a little generous; one
   ray back from each listed place settles it.
 - Whether the result is a list, a tint on the map like the visible-area overlay, or both.
+
+Question: is the viewpoint finder wanted, and if so which half first? Recommended: yes to the first half only, as one
+pass when you want it: on a peak (the long-press card on it, a picked peak in the sky views) "Where can I see it
+from?" runs `Viewshed.compute` from the summit and lists the map's viewpoints, trailheads and stretches of trail or
+road inside that area, nearest first, one ray back from each to confirm, each a place to route to. The second half
+("the best view", a skyline per candidate) waits until the sweep's time per point on a real phone is known. The
+elevation model knows no trees, so both would say "by the terrain", and mapped viewpoints are the only evidence of
+an open view the map holds.
+
+Answer:
