@@ -402,17 +402,52 @@ function Write-Summary {
         $diffArgs = @('-I', (Join-Path $repo 'tools\sweep-diff.py'), $Prev, $Out, '--channel', $Channel)
         if ($First.Count) { $diffArgs += @('--first', ($First -join ',')) }
         $diffArgs += $extraDiffArgs # T292: -DiffArgs, as given
-        $d0 = Get-Date
-        & python @diffArgs | Out-Host
-        $diffCode = $LASTEXITCODE
-        $diffNote = ''
-        if ($diffCode -ne 0) {
-            try { $diffNote = "$(((Get-Content -Raw -LiteralPath (Join-Path $Out 'summary.json') | ConvertFrom-Json).parts.diff).note)" } catch { }
-            if (-not $diffNote) { $diffNote = "sweep-diff.py exit $diffCode" }
-            Write-Host "[sweep] sweep-diff.py failed (exit $diffCode): $diffNote"
+        # T335: the step cannot be silent. Before the call a `stopped` line goes into steps.tsv and summary.json (a sweep
+        # stopped during the diff leaves it red, not quiet); the call's own result replaces it. After the call changes.json
+        # must exist and be newer than the call's start; when it is not, the call runs once more, and a second miss is
+        # `diff` failed with the reason in both files (exit 2 when sweep-diff.py itself said 0).
+        $diffPy = Join-Path $repo 'tools\sweep-diff.py'
+        $changesFile = Join-Path $Out 'changes.json'
+        function Set-DiffLine([string]$c, [double]$s, [string]$n) {
+            $kept = @([IO.File]::ReadAllLines($stepsFile) | Where-Object { ($_ -split "`t", 2)[0] -ne 'diff' })
+            $kept += "diff`t$c`t$([math]::Round($s, 1))`t$($n -replace '[\t\r\n]', ' ')"
+            [IO.File]::WriteAllText($stepsFile, (@($kept | ForEach-Object { "$_`r`n" }) -join ''), (New-Object Text.UTF8Encoding $false))
         }
-        $line = "diff`t$diffCode`t$([math]::Round(((Get-Date) - $d0).TotalSeconds, 1))`t$($diffNote -replace '[\t\r\n]', ' ')`r`n"
-        [IO.File]::AppendAllText($stepsFile, $line, (New-Object Text.UTF8Encoding $false))
+        function Record-DiffFailure([string]$c, [double]$s, [string]$n) {
+            & python -I $diffPy --record-failure $Out --code $c --seconds ([math]::Round($s, 1)) --note ($n -replace '"', "'") | Out-Null
+        }
+        $d0 = Get-Date
+        $stoppedNote = "sweep-diff.py started at $($d0.ToString('HH:mm:ss')) and did not finish"
+        Set-DiffLine 'stopped' 0 $stoppedNote
+        Record-DiffFailure 'stopped' 0 $stoppedNote
+        $misses = @()
+        foreach ($try in 1, 2) {
+            $t = Get-Date
+            & python @diffArgs | Out-Host
+            $diffCode = $LASTEXITCODE
+            $item = Get-Item -LiteralPath $changesFile -ErrorAction SilentlyContinue
+            $miss = if (-not $item) { "sweep-diff.py exit $diffCode and no changes.json" }
+                elseif ($item.LastWriteTime -lt $t.AddSeconds(-1)) { "sweep-diff.py exit $diffCode and changes.json not rewritten (still from $($item.LastWriteTime.ToString('HH:mm:ss')))" }
+                else { '' }
+            if (-not $miss) { break }
+            $misses += "try ${try}: $miss"
+            Write-Host "[sweep] the diff wrote no changes.json (try $try): $miss"
+        }
+        $diffNote = ''
+        if ($diffCode -ne 0 -or $miss) {
+            try { $diffNote = "$(((Get-Content -Raw -LiteralPath (Join-Path $Out 'summary.json') | ConvertFrom-Json).parts.diff).note)" } catch { }
+            if ($diffNote -eq $stoppedNote) { $diffNote = '' }
+            if (-not $diffNote) { $diffNote = "sweep-diff.py exit $diffCode" }
+        }
+        if ($miss) {
+            if ("$diffCode" -eq '0') { $diffCode = 2 }
+            $diffNote = "no changes.json written, retried once: $($misses -join '; ')$(if ($diffNote -notmatch '^sweep-diff.py exit') { " ($diffNote)" })"
+            Record-DiffFailure "$diffCode" ((Get-Date) - $d0).TotalSeconds $diffNote
+        } elseif ($misses.Count) {
+            $diffNote = "retried once: $($misses -join '; ')$(if ($diffNote) { "; $diffNote" })"
+        }
+        if ($diffCode -ne 0) { Write-Host "[sweep] sweep-diff.py failed (exit $diffCode): $diffNote" }
+        Set-DiffLine "$diffCode" ((Get-Date) - $d0).TotalSeconds $diffNote
         if ($diffCode -ne 0 -and "$code" -eq '0') { $code = $diffCode }
     }
     $code

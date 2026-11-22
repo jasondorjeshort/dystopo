@@ -23,6 +23,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zlib
 
@@ -367,6 +368,80 @@ class SweepDiff(unittest.TestCase):
                                  ["ui/x/01-same.png", "ui/x/02-moved.png", "ui/x/03-new.png"], changed, ["ui/x/03-new.png"])
         self.assertEqual(out, {"missing": ["none"], "unchanged": ["same"], "added": ["ui/x/03-new.png"]})
         self.assertEqual(diff.first_outcome([], [], [], [], []), {"missing": [], "unchanged": [], "added": []})
+
+    # T335: the diff step cannot be silent. A part that crashed leaves a whole folder of frames missing from this sweep
+    # (the 2026-11-19 case: 44 a11y frames); the run still writes changes.json, lists them removed, and exits 0.
+    def test_removed_frames_write_changes_json(self):
+        for k in range(5):
+            png(os.path.join(self.a, f"a11y/0{k}-screen-{k}.png"), W, H, [BUTTON])
+        r = run_diff(self.a, self.b, "routes")
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        rep = self.changes()
+        self.assertEqual(sorted(rep["removed"]), ["a11y/00-screen-0.png", "a11y/01-screen-1.png", "a11y/02-screen-2.png",
+                                                  "a11y/03-screen-3.png", "a11y/04-screen-4.png", "ui/upgrade/09-gone.png"])
+        self.assertTrue(self.summary()["parts"]["diff"]["ok"])
+        # Only removed frames (nothing paired in this sweep at all): still a changes.json, still 0.
+        empty = os.path.join(self.d, "sweep-empty")
+        os.makedirs(empty)
+        with open(os.path.join(empty, "steps.tsv"), "w", encoding="utf-8") as f:
+            f.write("a11y\t1\t61.1\t\n")
+        r = run_diff(self.a, empty)
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        rep = read(os.path.join(empty, "changes.json"))
+        self.assertEqual((rep["paired"], rep["count"]), (0, 0))
+        self.assertIn("a11y/00-screen-0.png", rep["removed"])
+
+    def test_a_run_that_writes_no_changes_json_exits_2_and_says_so(self):
+        # In-process, with the comparison stood in for and the write made to do nothing: the guard turns exit 0 into 2.
+        report = {"firstMissing": [], "leftOut": [], "unknown": [], "leaveOutMissing": [], "paired": 0, "count": 0,
+                  "added": [], "removed": [], "firstUnchanged": []}
+        saved = (diff.run, diff.write_changes, sys.argv)
+        diff.run = lambda *a, **k: report
+        diff.write_changes = lambda this, rep: None
+        sys.argv = ["sweep-diff.py", self.a, self.b]
+        try:
+            self.assertEqual(diff.main(), 2)
+        finally:
+            diff.run, diff.write_changes, sys.argv = saved
+        self.assertFalse(os.path.exists(os.path.join(self.b, "changes.json")))
+        s = self.summary()
+        self.assertFalse(s["ok"])
+        self.assertIn("diff", s["failed"])
+        self.assertEqual(s["parts"]["diff"]["note"], "sweep-diff.py wrote no changes.json")
+        # A changes.json left by an earlier run is not this run's.
+        with open(os.path.join(self.b, "changes.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+        old = time.time() - 600
+        os.utime(os.path.join(self.b, "changes.json"), (old, old))
+        self.assertFalse(diff.wrote_changes(self.b, time.time()))
+        self.assertTrue(diff.wrote_changes(self.b, old))
+
+    def test_previous_not_a_folder_is_named_in_the_summary(self):
+        r = run_diff(os.path.join(self.d, "missing"), self.b)
+        self.assertEqual(r.returncode, 2)
+        s = self.summary()
+        self.assertIn("diff", s["failed"])
+        self.assertIn("not a folder", s["parts"]["diff"]["note"])
+
+    def test_record_failure_for_sweep_ps1(self):
+        # sweep.ps1's own record when a call left no fresh changes.json: summary.json and the steps.tsv line, when there.
+        with open(os.path.join(self.b, "steps.tsv"), "a", encoding="utf-8") as f:
+            f.write("diff\tstopped\t0\tstarted and did not finish\n")
+        note = "no changes.json written, retried once: sweep-diff.py exit 0 and no changes.json"
+        r = subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-diff.py"), "--record-failure", self.b,
+                            "--code", "0", "--seconds", "4.2", "--note", note], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        s = self.summary()
+        self.assertFalse(s["ok"])
+        self.assertEqual(s["parts"]["diff"], {"ok": False, "seconds": 4.2, "exit": "2", "note": note})
+        with open(os.path.join(self.b, "steps.tsv"), encoding="utf-8") as f:
+            self.assertEqual([l for l in f.read().splitlines() if l.startswith("diff\t")], [f"diff\t2\t4.2\t{note}"])
+        # The summary written again from steps.tsv keeps the red; a passing run clears it.
+        subprocess.run([sys.executable, "-I", os.path.join(here, "sweep-summary.py"), self.b, "--no-sheet"], capture_output=True, text=True)
+        self.assertIn("diff", self.summary()["failed"])
+        r = run_diff(self.a, self.b)
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        self.assertTrue(self.summary()["ok"])
 
 
 # T319: --check-first, a screen name against the frames a sweep writes: a synthetic tree of the two tools (the static scan)

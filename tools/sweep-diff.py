@@ -75,6 +75,9 @@ to steps.tsv and takes its exit code into its own). A rerun with corrected names
 and the `diff` line of steps.tsv when there is one. The image work runs in Playwright's Chromium canvas (the machine
 has no Pillow; Playwright is already needed by the sheet). Prints changes.json's summary; exit 0 whatever changed,
 1 on a --first name that matched nothing, 2 on an error (also written into summary.json as a failed `diff`).
+T335: never 0 without a changes.json written by this run (a run that ends without one exits 2 and says so in
+summary.json); `--record-failure <this> --code <c> --seconds <s> --note <why>` writes a failed `diff` into summary.json
+(and its steps.tsv line, when there is one) for tools/sweep.ps1, which uses it when a call left no fresh changes.json.
 """
 import argparse
 import ast
@@ -763,9 +766,54 @@ def check_first(names, sweep=None, tools_dir=HERE, parts=None):
             "names": out}
 
 
+def write_changes(this, report):
+    with open(os.path.join(this, "changes.json"), "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+
+def wrote_changes(this, t0):
+    """T335: whether changes.json is in `this` and was written at or after `t0` (epoch seconds) by this run."""
+    try:
+        return os.path.getmtime(os.path.join(this, "changes.json")) >= t0 - 1.0  # 1 s for the clock's grain
+    except OSError:
+        return False
+
+
 def main():
     if "--check-first" in sys.argv[1:]:
         return main_check_first()
+    if "--record-failure" in sys.argv[1:]:
+        return main_record_failure()
+    code, this, t0 = main_diff()
+    # T335: the step cannot be silent: a run that would exit 0 with no changes.json of its own exits 2 and says why.
+    if code == 0 and this and not wrote_changes(this, t0):
+        note = "sweep-diff.py wrote no changes.json"
+        fold_into_summary(this, 2, time.time() - t0, note, changes=False)
+        print(f"[sweep-diff] {note}", file=sys.stderr)
+        return 2
+    return code
+
+
+def main_record_failure():
+    ap = argparse.ArgumentParser(description="T335: a failed `diff` written into summary.json for tools/sweep.ps1")
+    ap.add_argument("--record-failure", required=True, metavar="THIS", help="the sweep folder")
+    ap.add_argument("--code", default="2", help="the step's code (never 0: this records a failure)")
+    ap.add_argument("--seconds", type=float, default=0.0)
+    ap.add_argument("--note", default="", help="why the step failed")
+    a = ap.parse_args()
+    this = os.path.abspath(a.record_failure)
+    if not os.path.isdir(this):
+        print(json.dumps({"error": f"not a folder: {this}"}))
+        return 2
+    code = a.code if a.code not in ("", "0") else "2"
+    fold_into_summary(this, code, a.seconds, a.note or f"diff failed ({code})", changes=False)
+    print(json.dumps({"recorded": "diff", "code": code, "note": a.note}))
+    return 0
+
+
+def main_diff():
+    """(exit code, this folder or None, start time): the comparison itself."""
+    t0 = time.time()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("prev", help="the previous sweep folder")
     ap.add_argument("this", help="this sweep folder (changes.png and changes.json are written here)")
@@ -780,22 +828,23 @@ def main():
     ap.add_argument("--frac", type=float, default=DEFAULTS["frac"], help="the share of differing pixels that changes a pair")
     a = ap.parse_args()
     prev, this = os.path.abspath(a.prev), os.path.abspath(a.this)
-    for d in (prev, this):
-        if not os.path.isdir(d):
-            print(json.dumps({"error": f"not a folder: {d}"}))
-            return 2
+    if not os.path.isdir(this):
+        print(json.dumps({"error": f"not a folder: {this}"}))
+        return 2, None, t0
+    if not os.path.isdir(prev):  # T335: named in summary.json too, as any other failure of the step
+        fold_into_summary(this, 2, 0.0, f"error: the previous sweep is not a folder: {prev}", changes=False)
+        print(json.dumps({"error": f"not a folder: {prev}"}))
+        return 2, this, t0
     first = [n.strip() for n in a.first.split(",") if n.strip()]
     leave_out = [n.strip() for n in a.leave_out.split(",") if n.strip()]
-    t0 = time.time()
     try:
         report = run(prev, this, first, a.width, a.pixel, a.frac, a.channel, leave_out, a.leave_unknown)
     except Exception as e:
         note = f"error: {str(e)[:300]}"
         fold_into_summary(this, 2, time.time() - t0, note, changes=False)
         print(json.dumps({"error": str(e)[:500]}))
-        return 2
-    with open(os.path.join(this, "changes.json"), "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+        return 2, this, t0
+    write_changes(this, report)
     missing = report["firstMissing"]
     code = 1 if missing else 0
     # T295: what was left out, said without a place.
@@ -816,7 +865,7 @@ def main():
     entry = fold_into_summary(this, code, time.time() - t0, note)
     print(json.dumps(entry or {k: report[k] for k in ("paired", "count", "added", "removed", "firstMissing", "firstUnchanged",
                                                       "leftOut", "unknown")}, indent=2))
-    return code
+    return code, this, t0
 
 
 def main_check_first():
