@@ -838,7 +838,7 @@ def end_panorama(c):
 
 # T327
 def scr_panorama_flights(c):
-    """T327: the Panorama view with the Flights layer on T311's replay fixture, turned to the closest flight (dots, tails
+    """T327: the Panorama view with the Flights layer on T311's replay fixture, turned to the closest flight low in the sky (dots, tails
     and names through the lens, the credit in the plot's corner) and the pane scrolled to the Flights list (each row a
     button)."""
     with open(FLIGHTS_REPLAY, "rb") as f:
@@ -849,8 +849,9 @@ def scr_panorama_flights(c):
     time.sleep(4.0)  # a poll
     j = c.srv.ok("GET", "/panorama") or {}
     aircraft = (((j.get("layers") or {}).get("flights") or {}).get("aircraft")) or []
-    if aircraft:
-        c.srv.ok("POST", f"/panorama?bearing={aircraft[0][2]}")
+    low = [a for a in aircraft if 2 <= a[3] <= 30] or aircraft  # the closest low in the sky: the skyline and several flights in view
+    if low:
+        c.srv.ok("POST", f"/panorama?bearing={low[0][2]}")
     c.srv.ok("POST", "/horizon?scroll=450")
     time.sleep(1.0)
 

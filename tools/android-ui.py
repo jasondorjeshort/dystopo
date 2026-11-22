@@ -2855,7 +2855,7 @@ def part_horizonflights(args):
     Paradise: the plot with dots, tails and names (frame `horizon-flights-plot`), the Flights list (`horizon-flights-list`),
     the nearest flight picked as a tap does with its card in the view (`horizon-flights-card`), the list at font scale
     2.0 (`horizon-flights-font2`) and in landscape (`horizon-flights-landscape`); T327: the same flights in the Panorama view
-    turned to the closest by its target (`panorama-flights`). Checks from GET /horizon: at least five
+    turned to the closest low in the sky by its target (`panorama-flights`). Checks from GET /horizon: at least five
     flights listed, one hollow or more, the credit shown, the card open. Every setting, the font scale and the rotation
     put back."""
     srv = DebugServer(args.port, args.serial)
@@ -2947,8 +2947,10 @@ def part_horizonflights(args):
         time.sleep(3)
         p = srv.call("GET", "/panorama")[1] or {}
         aircraft = (((p.get("layers") or {}).get("flights") or {}).get("aircraft")) or []
-        if aircraft:
-            srv.call("POST", f"/panorama?target=flight:{aircraft[0][0]}")
+        # The closest flight low in the sky (2 to 30 degrees up), so the view holds the skyline and several flights.
+        low = [a for a in aircraft if 2 <= a[3] <= 30] or aircraft
+        if low:
+            srv.call("POST", f"/panorama?target=flight:{low[0][0]}")
         time.sleep(1.5)
         p = srv.call("GET", "/panorama")[1] or {}
         png = dev.screencap("panorama-flights")[0]
