@@ -20,11 +20,4 @@ The owner, 2026-11-21: "Interesting. Eventually."
   offline. A safety reading (flying) means the wording is the owner's.
 - With the one-clock idea, the layer follows the set time.
 
-Question: "Interesting. Eventually": leave it at rest, or name what it waits for? Recommended: it rests until the one
-clock lands (`2026-11-21-one-clock-for-the-whole-app-past-and-future.md`), since a warming layer is read for an hour
-you set, not for now; then one pass could add it as a second reading of the sun-and-shade layer (the sun's angle on
-each slope, from the slope and aspect the hillshade already works out, summed since sunrise). Its label and its help
-are yours before it ships: it would be read as flying advice, and wind, cloud and ground cover, which decide real
-thermals, are unknown offline.
-
-Answer:
+Waits: the one clock built; then one pass, low priority, its label and help the owner's before it ships (the owner, 2026-11-22, by multiple choice at triage).

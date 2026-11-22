@@ -70,4 +70,4 @@ Question: is the new level "Lowest" under the same three-level row (a fourth), o
 Medium? Recommended: replace Less's range with the new smaller one only if the measurement shows nobody gains from Less
 as it is; otherwise add a fourth, named for what it holds ("Overview"), after the size of the whole US at it is known.
 
-Answer:
+Answer: decide after measuring; the owner leans to three levels being right, with Less and Medium today far too close together, so the measurement should show a Less that is much smaller than Medium (the owner, 2026-11-22, by multiple choice at triage).

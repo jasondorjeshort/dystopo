@@ -25,12 +25,4 @@ ground.
 - Which peaks: the dominant summits by prominence within range (T309's ranking), not every bump.
 - With the one-clock idea, the forecast is "the next time this peak's shadow shows from here" and a jump to that time.
 
-Question: you have said yes; what is open is the order, since a forecast is a time found and a jump to it. Build it
-after the one clock (`2026-11-21-one-clock-for-the-whole-app-past-and-future.md`), as rows on a picked peak ("Its
-shadow shows about 7:12 AM tomorrow") and a wedge drawn in the two sky views at the set time, with "where to stand"
-on the map left to the viewpoint finder's search; or sooner, as a wedge that shows only while it is happening?
-Recommended: after the clock, in one pass, with a read-only research pass first (ADR 0044) on where a summit's shadow
-can be seen from at all: the well-known pictures are taken on or high on the peak itself, and a wedge drawn for
-someone in a valley could promise what the sky never shows. Without the clock the layer would show a few minutes a day.
-
-Answer:
+Waits: the one clock built; then one pass, low priority, with the read-only pass on where a summit's shadow can be seen from first (the owner, 2026-11-22, by multiple choice at triage).

@@ -61,4 +61,4 @@ automatically (counted in the budget), or only when the owner turns a setting on
 the network is on and Mobile data is allowed, with a setting to hold it to the pack, since the owner's wording says a
 download must never lower the view.
 
-Answer:
+Answer: a setting, defaulting ON: the finer online tiles are fetched where the network can give more than the pack; a user who wants to save network data turns it off and accepts the lower detail (the owner, 2026-11-22, by multiple choice at triage).

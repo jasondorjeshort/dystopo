@@ -45,4 +45,4 @@ clocks to merge, and the rule that live layers hide or are marked when the clock
 likely cut: pass one, the clock in `shared`, the band with "Back to now" and the two sky views reading it; pass two,
 the map's shade and the "Direct sun" row at a long-pressed point.
 
-Answer:
+Answer: the proposal first, with the survey as Prior art and an ADR; the likely cut above stands (the owner, 2026-11-22, by multiple choice at triage).

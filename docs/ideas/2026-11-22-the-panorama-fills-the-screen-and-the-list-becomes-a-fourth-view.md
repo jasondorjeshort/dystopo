@@ -58,4 +58,4 @@ the switch), and does it carry the Horizon view's pane as well? Recommended: yes
 Panorama's lens full screen with its overlays and the pane's content as the list view (so nothing is lost), then the
 Horizon view's pane moved to the same list when the owner has seen it.
 
-Answer:
+Answer: yes, in two steps: the Panorama's lens full screen with the pane's content as the list view first, then the Horizon view's pane moved to the same list once the owner has seen it (the owner, 2026-11-22, by multiple choice at triage).

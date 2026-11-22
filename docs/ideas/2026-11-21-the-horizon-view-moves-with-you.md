@@ -30,4 +30,4 @@ along a planned route from skylines worked out ahead. Is (a) wanted as a small p
 Recommended: yes to both; (a) wants the sweep's time on your own phone first, and (b) is one control with the route's
 clock (`2026-11-21-one-clock-for-the-whole-app-past-and-future.md`).
 
-Answer:
+Answer: both (the owner, 2026-11-22, by multiple choice at triage). Smoothing is the more important: while driving the view blanks out constantly, so the last skyline and names stay up until the next is ready, with a minimum interval between updates. The owner asks for a read-only research pass on whether an algorithm can update the horizon steadily while moving (an estimate carried forward between full sweeps, in the spirit of dead reckoning) before (a) is built. (b) comes with the one clock.

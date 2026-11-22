@@ -29,11 +29,4 @@ not sanity checked.
 - The layer means little by day: shown only when the sun is down, or with the one-clock idea set to tonight.
 - Which star table and its terms, checked before a proposal.
 
-Question: are stars and planets wanted on the two sky views, and how far: the bright stars and the planets only, or
-constellation lines and more? Recommended: yes, in the smallest form, and not yet. After the Moon layer (its Plan is
-queued, `2026-11-20-the-moon-on-the-horizon-view.md`) and Follow the phone (the Panorama's pass three), one pass for a
-few hundred bright stars and five planets as a Night layer whose names join the placement, no lines. Before it, a
-read-only pass (ADR 0044) picks the star table and its terms for `sources.json`. You chose your own places as the
-next layer on 2026-11-21, and this comes after that.
-
-Answer:
+Waits: the owner asks for it (a medium-term project, at least one full pass of its own; it need not wait for the one clock, working at now or at the clock's time). The owner's shape, 2026-11-22 at triage: on both sky views, with "more" and "less" buttons that move the apparent-brightness cutoff, so the user matches the number of stars to what their sky shows (light pollution) and can, potentially, see everything; a read-only pass picks a star catalogue deep enough for that and its terms for `sources.json`.

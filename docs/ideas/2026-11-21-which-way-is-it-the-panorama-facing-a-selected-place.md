@@ -22,4 +22,4 @@ segment will) or at your location facing it? Recommended: at the place, so both 
 way is it?" as its own action on the long-press card and on a place's card, opening the Panorama at your location
 turned to face it; built after the Panorama's pass two.
 
-Answer:
+Answer: confirmed both: the Panorama segment opens at the selected place, and "Which way is it?" is its own action on the long-press card and on a place's card, opening the Panorama at your location facing the place (the owner, 2026-11-22, by multiple choice at triage).

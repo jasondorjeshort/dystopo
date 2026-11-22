@@ -53,4 +53,4 @@ last step? Recommended: yes, since it is the same act as Draw an area; one edito
 follows (areas only), with the re-download caveat in words and the size shown before the owner confirms; resizing a
 pack is left aside.
 
-Answer:
+Answer: yes: "Download this area" opens the polygon editor on the visible rectangle, the present card its last step; resizing a saved area follows, areas only, the size shown before confirming (the owner, 2026-11-22, by multiple choice at triage).
