@@ -651,8 +651,14 @@ def scr_map(c):
     pass
 
 
-def scr_longpress(c):
-    c.srv.ok("POST", f"/map/longpress?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}")
+def scr_longpress(c, timeout=30.0):
+    # T334: the card's sight line stands on the fresh fix at Paradise that close_all injects; the press waits for it
+    # (`wait=`, the route's own bound), then the card is polled until the line is worked out, at most `timeout` s.
+    j = c.srv.ok("POST", f"/map/longpress?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&wait=20000") or {}
+    deadline = time.time() + timeout
+    while ((j.get("sight") or {}).get("state") == "working") and time.time() < deadline:
+        time.sleep(0.5)
+        j = c.srv.ok("GET", "/map/longpress") or {}
 
 
 def scr_online(c):
