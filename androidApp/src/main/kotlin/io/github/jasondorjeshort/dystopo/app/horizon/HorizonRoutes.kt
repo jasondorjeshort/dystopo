@@ -47,7 +47,7 @@ import java.time.LocalDate
  *   T317: `point` (`lat`, `lon`, `name`: the chosen point, null at the fix), `placeLine` (`text`, `moved`, `kind`
  *   `here|named|offset|unknown`, `distanceM`, `bearingDeg` from the fix); `horizon`, `peaks` and `sun` are the point's, and
  *   `drawn` adds `point`, `placeLine`, `placeKind`, `moved`, `backShown`, `disabledButtons`.
- * - `POST /horizon/ui?open=1|0`: opens or closes the Horizon view, as the settings row and Close do (open at the fix);
+ * - `POST /horizon/ui?open=1|0`: opens or closes the Horizon view, as the settings row and the switch's "Map" do (open at the fix);
  *   answers `GET /horizon`. T317: `lat=&lon=` opens it for that point as the long-press card's "Sky from here" does (on a
  *   named feature within `radius=` metres, default 100, at the feature and named); `back=1` returns to the fix as
  *   "Back to here" does. With `wait=<ms>` the answer waits for the point's horizon and peaks.

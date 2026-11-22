@@ -49,7 +49,6 @@ import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.SettingsRoutes
 import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
-import io.github.jasondorjeshort.dystopo.app.gnss.Button
 import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.app.gnss.GnssPalette
 import io.github.jasondorjeshort.dystopo.app.gnss.GnssText
@@ -117,7 +116,7 @@ object HorizonUi {
     /**
      * T317: the point the view is drawn for in place of the fix ("Sky from here" on the long-press card, `POST /horizon/ui?lat=&lon=`),
      * or null at the fix. In memory only (the app reopens at the fix), never snapped back on a timer; "Back to here" and
-     * Close let it go. T321: also a picked peak's "View from here" ([viewFrom]) and the switch's "Horizon" with a place
+     * the switch's "Map" let it go. T321: also a picked peak's "View from here" ([viewFrom]) and the switch's "Horizon" with a place
      * selected on the map (`ViewSwitch.openAtSelection`); with nothing selected the switch opens at the fix.
      */
     var point by mutableStateOf<io.github.jasondorjeshort.dystopo.horizon.HorizonPoint?>(null)
@@ -207,7 +206,7 @@ object HorizonUi {
  * T308: the Horizon view, the map view's counterpart (the owner, 2026-11-19): the sky around the point as a square plot
  * with its circle ([SkyPlot]: the land's skyline, rings, N E S W, turned by the "Sky plot" setting), fixed at the top in
  * portrait and at the left in landscape, its side `min(width, height)` of the window inside the system bars; the rest of
- * the screen a heading with Close that stays, over an area that scrolls: the layer toggles (Satellites, Peaks, Sun; each
+ * the screen a heading that stays (T325: no Close; the switch's "Map" and Back leave), over an area that scrolls: the layer toggles (Satellites, Peaks, Sun; each
  * a synced setting, all on by default), the plot's orientation and terrain line, then each layer's content: the peaks on
  * the skyline, the sun's day, and the satellites (T307's summary, "Check my GPS" and list, last because the list is long).
  * While open and started it holds the compass for "Follow the phone"; it holds the GNSS only while Satellites is on (off,
@@ -329,8 +328,9 @@ fun HorizonScreen() {
                     // T317: the place line, just below the horizon (the plot) in portrait and at the pane's top in landscape,
                     // always shown; at a chosen point tinted apart with "Back to here", so another place's sky is never read as yours.
                     PlaceRow(place, moved, pal, night)
-                    // The heading stays while the rest scrolls: the title, its help and Close.
-                    SkyViewHeading(HorizonText.TITLE, "horizon.view", pal) { Button(GnssText.CLOSE, pal) { HorizonUi.close() } }
+                    // The heading stays while the rest scrolls: the title and its help. T325: no Close (the owner, 2026-11-21): the
+                    // switch's "Map" and Back are the ways out.
+                    SkyViewHeading(HorizonText.TITLE, "horizon.view", pal)
                     picked?.let { p -> PickedPeak(p, pal, units) }
                     Column(
                         Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),

@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-21
+verified: 2026-11-22
 source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T308, T312 with T311's replay, T317 at the summit); moved from android-app.md in T308
 ---
 
@@ -34,7 +34,7 @@ Horizon view (Horizon selected), whatever cards are up, in both orientations and
   card in portrait stands above it. `GET /horizon` `drawn`: `switchPx` (in the Compose root, as `GET /layout`'s), and
   `paneOverSwitch`, `switchRoomDp`.
 
-"Horizon" opens the view, "Map" closes it as Close and Back do. T321 (the owner, 2026-11-21: "If we select a different
+"Horizon" opens the view, "Map" closes it, as Back does once it has let go of a pick and a chosen point (T325: the view has no Close button; the owner, 2026-11-21: "it should just go away"). T321 (the owner, 2026-11-21: "If we select a different
 location on the map and switch to horizon view we want the horizon from THAT location, not ours"): "Horizon" opens the view
 at the map's selected place when there is one (`ViewSwitch.openAtSelection`, by `HorizonPlace.switchFrom`, one rule a
 Panorama segment calls too): an open long-press card first (as its "Sky from here": on a named feature within a fingertip,
@@ -51,11 +51,13 @@ The switch or Settings › Navigation and tracking › "Horizon view ›" (the p
 the row's id is still `gnssStatus`, "GPS status" before T308) opens it over the map, day or night as the map style is (the style's
 paper, ink and terrain tokens, through `NightColors` at night; light status-bar icons at night). The plot is a square
 `min(width, height)` of the window inside the system bars, fixed at the top in portrait (411 dp on a Pixel 6 AVD) and
-at the left in landscape (363 dp); the rest is a heading that stays ("Horizon view", its help, Close; a picked peak's
+at the left in landscape (363 dp); the rest is a heading that stays ("Horizon view" and its help; T325: no Close; a picked peak's
 line under it) over an area that scrolls: "Show:" with the toggles (Satellites, Peaks, Sun, and T312's Flights while Flight tracking is on; a tick and a filled
 button when on), "Sky plot:" (Follow the phone, North up), the terrain line and the band's legend, then the Peaks, Sun
 and Satellites sections in that order (the satellites' list is the long one, so it comes last). Back lets go of the
-menu, the confirmation and a picked peak, then closes. The plot keeps T307's rim (the horizon), rings at 30 and 60
+menu, the confirmation, a picked flight, a picked peak and a chosen point, then closes. T325: the pane is built of parts a second
+sky view hosts around its own plot (`app/horizon/SkyViewParts.kt`, `SkyViewSections.kt`, and the effects in one call,
+`SkyViewEffects.kt`); `HorizonUi` stays the one open state. The plot keeps T307's rim (the horizon), rings at 30 and 60
 degrees, N E S W with north marked, and the land's skyline as a band; it turns with the compass in "Follow the phone"
 (`Heading.setGnssWanted`, held while the view is open and started).
 
@@ -126,7 +128,7 @@ them; their synced settings are not touched (`shared/.../horizon/HorizonPlace.kt
   starts "Horizon from: <the line>".
 - **"Back to here"** (a filled button at the band's right, tag `horizonBackToHere`) returns to the fix; Back does the
   same before it closes the view. A chosen point is held in memory only (`HorizonUi.point`): never snapped back on a
-  timer, let go by Close and by the switch's "Map", and gone when the app restarts.
+  timer, let go by Back and by the switch's "Map", and gone when the app restarts.
 - **"View from here"** (T321): the picked peak's line under the heading carries a button of its own (at least 48 dp tall,
   tag `horizonViewFromHere`; the rest of the line still lets the peak go; above font scale 1.3 it stands under the line): the view moves to stand on the peak, named
   (`HorizonPlace.pointOf`, "At Little Tahoma, 7.3 km NNE of you"), the pick let go and the list scrolled to its top. From

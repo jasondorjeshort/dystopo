@@ -53,7 +53,7 @@ import io.github.jasondorjeshort.dystopo.ui.OverlayLayout
 
 /**
  * T309 (the owner, 2026-11-20: "Yeah, I want this as a real button."): the switch between the map view and the Horizon
- * view. "Horizon" opens the view, "Map" closes it (as Close and Back do). Debug: `POST /horizon/switch?to=map|horizon`.
+ * view. "Horizon" opens the view, "Map" closes it (as Back does, after letting go of a pick and a chosen point). Debug: `POST /horizon/switch?to=map|horizon`.
  *
  * T315 (the owner: the toggle "in the same place in every view"): one placement for every view, defined here. The anchor
  * is the window's bottom-left corner: [EDGE_DP] in from the left inset and up from the bottom inset ([anchorInsets]: the

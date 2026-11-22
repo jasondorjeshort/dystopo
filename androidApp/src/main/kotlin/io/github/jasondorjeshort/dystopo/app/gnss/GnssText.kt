@@ -12,7 +12,6 @@ object GnssText {
     /** T308: the screen and its Settings row ("GPS status" until T308). */
     const val TITLE = io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.TITLE
     const val SATELLITES = "Satellites"
-    const val CLOSE = "Close"
     const val MORE = "More actions"
     const val CHECK = "Check my GPS"
     const val CHECK_HINT = "Stand still outdoors for 2 minutes, phone face up, to check the GPS."
