@@ -13,3 +13,12 @@ An in-app "suggest an idea" that files into the same queue as `Source: user`, un
 Why carry it: the queue's handling was built for volume, and this is where volume would come from.
 
 **What exists already (to be checked):** Send diagnostics exists in Settings; no idea path.
+
+Question: Keep an in-app "suggest an idea" path for after beta, a new data flow from users' phones into the repo's queue, and if so when should it be designed?
+Recommendation: A; there are no outside users before beta (`2026-11-08-two-channels-at-beta-alpha-untested-beta-swept.md`), and the flow needs a proposal on where suggestions land (an issue tracker, an email, a form), what a suggestion may carry (no location unless the user adds it) and who triages it, not a pass.
+Options:
+A. Record at rest until the beta's planning, then a proposal (privacy, channel, moderation, the `Source: user` line).
+B. A proposal now, so the beta ships with it.
+C. Not worth building: users report through the release page and Send diagnostics.
+
+Answer:
