@@ -37,7 +37,7 @@ first imports N synthetic GPX tracks over Rainier (areas.json's box; fixed ids i
 none) through `POST /tracks/import`, T280's `--clear-online-cache` empties the online tile cache (`POST /online/cache/clear`;
 the `cacheIndex` stage walks every cached file, reported per launch as `cacheWalk`), `--clear-divergences` deletes the kept
 trail divergences (`files/divergence.json`: a recording after the seed runs them over the 52 synthetic tracks, 56 records in
-80 KB, and `map.attach` parses that on the main thread, `mapview` 58 to about 200 ms), and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
+80 KB, which `map.attach` parsed on the main thread until T347 moved the read to a thread of its own, `mapview` 58 to about 200 ms), and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
 the phone's copy differs in size; then the device's load is waited out (`android_debug.wait_quiet`). `--budget` compares
 the medians with the file's ceilings (`budget`: one row per stage and frame, `red` and its `reasons`) and exits 1 when a
 median is over its ceiling or a stage shows an undeclared StrictMode kind; a stage missing from the run or from the file

@@ -91,7 +91,7 @@ object Launch {
     )
     val MAPVIEW = Stage(
         "mapview", listOf("MapView", "mapView.onCreate", "map.attach", "map.attach: *"), needs = listOf("maplibre", "camera"), work = setOf(NATIVE, DISK),
-        gate = FIRST_FRAME, allowed = "MapLibre's view reads its resources, and the map's attach the trail-disagreement store (StrictMode, T266)",
+        gate = FIRST_FRAME, allowed = "MapLibre's view reads its resources (StrictMode, T266; the trail-disagreement store's read left the attach in T347)",
     )
     val ACTIVITY = Stage(
         "activity", listOf("links and intents", "setContent", "permissions"), needs = listOf("mapview"), work = setOf(BINDER), gate = FIRST_FRAME,

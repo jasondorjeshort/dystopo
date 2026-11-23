@@ -47,9 +47,18 @@ object DivergenceLayer {
     @Volatile var updates = 0L
         private set
 
-    /** Draws on [mapView] from now on (main thread); loads the kept records the first time. */
+    private var loadStarted = false // main thread
+
+    /**
+     * Draws on [mapView] from now on (main thread); loads the kept records the first time. T347: the store's Compose state is
+     * made here on the main thread, its file read on a thread of its own (the load's publish redraws this layer).
+     */
     fun bind(mapView: MapView) {
-        DivergenceStore.init(DystopoApp.instance)
+        if (!loadStarted) {
+            loadStarted = true
+            DivergenceStore.revision // the store's Compose state, on the main thread (T226)
+            Thread({ DivergenceStore.init(DystopoApp.instance) }, "dystopo-divergence-load").apply { isDaemon = true }.start()
+        }
         if (view === mapView) return
         view?.removeOnDidFinishLoadingStyleListener(styleListener)
         view = mapView

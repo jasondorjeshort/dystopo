@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-22
+verified: 2026-11-23
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
@@ -234,6 +234,15 @@ stage's. Step 1 moves nothing: every stage runs where and in the order it ran be
   thread of its own (`fd-table`; 42 to 59 ms on the sweep's emulator, `GET /debug/startup` `head.fdTableMs`), and no
   launch thread waits in `expand_files` since. The APK's update time (`getPackageInfo`, read by both stages and the
   trace's header) takes 0.1 to 2 ms: the system caches it per process. <!-- end T280 -->
+- **The `mapview` stage's attach** (T347): `map.attach` is split into a mark per step (`map.attach: <step>`, one per
+  `prepare()` and one before `MapController.attach`), so `tools/android-startup.py`'s `markMedians` attribute its growth.
+  Only what the first composition reads is made there: `OrientationUi`, `HorizonUi` (whether a sky view is open),
+  `ViewSwitch` and `AircraftUiState`. The sky views' own Compose state (`GnssUi`, `PanoramaUi`, `PanoramaData`, in
+  `MainActivity.prepareAfterFirstFrame`, which `ComposeStatePrepareTest` counts as a prepared place while `onCreate` names
+  it) and the binds of the trail-disagreement and Flights layers run on the main thread after the first frame
+  (`afterFirstFrame` in `MapController.kt`: from the second frame callback, once the start trace has marked its first
+  frame); the trail-disagreement store reads its file on a thread of its own (`dystopo-divergence-load`). Nothing opens
+  a sky view before the first frame but a tap, Settings or a debug route.
 - **Debug routes** (`StartupRoutes.kt`, `android-debug-routes.md`): `GET /debug/launch` (every stage's thread, needs,
   gate, work, marks, times, lag, wait, delay, failure, StrictMode counts and the kinds its work does not allow; the gate;
   the slots), `POST /debug/launch/delay?stage=&ms=` (holds one stage at the next launch; `POST /debug/tracking/delay` is
