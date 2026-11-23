@@ -281,6 +281,9 @@ $allParts += 'startup'; $deviceParts += 'startup'
 # T270: the accessibility part, a debug-build device part
 $allParts += 'a11y'; $deviceParts += 'a11y'
 # end T270
+# T339: the two-maps table, a debug-build device part
+$allParts += 'two-maps'; $deviceParts += 'two-maps'
+# end T339
 # T303: the owner's phone, opt-in with -Phone; not device parts (the sweep's emulator is not theirs).
 $phoneParts = @('phone-attach', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics', 'phone-release')
 $allParts += $phoneParts
@@ -305,6 +308,10 @@ $releaseBuildS = 1800
 # card's two restarts about 25 s); 1200 s leaves room for a loaded emulator and the routing graph's first build (about 125 s).
 $ceilings['a11y'] = 1200
 # end T270
+# T339: two-maps took TIMING on the implementer's emulator with the fixture copied from -DataDir (a build of the four
+# archives adds about BUILDTIME); 1500 s leaves room for a first build in a fresh checkout and a loaded emulator.
+$ceilings['two-maps'] = 1500
+# end T339
 # T288: features took 322 to 421 s before its drive step; the step (Plan drives for, its help and three drives on the
 # montblanc pack, with the pack's push, a cold start and the phone's first routing graph) took 283 to 328 s alone on the
 # implementer's emulator, so about 750 s for the part: 1500 s, twice that, for a loaded emulator and a slow graph build.
@@ -325,9 +332,9 @@ $outsideTimeoutS = 1800
 
 # T292: the order the Part calls below run in (not $allParts: startup and a11y run after bothunits, apk-strings last);
 # tools/test_sweep_summary.py checks it against the calls. -ListParts prints it (the header gives the shape) and exits.
-$runOrder = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'release', 'first-run', 'features', 'recenter', 'permissions', 'diagnostics', 'upgrade', 'background', 'network', 'update', 'matrix', 'phone-attach', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics', 'phone-release', 'apk-strings')
+$runOrder = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'two-maps', 'release', 'first-run', 'features', 'recenter', 'permissions', 'diagnostics', 'upgrade', 'background', 'network', 'update', 'matrix', 'phone-attach', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics', 'phone-release', 'apk-strings')
 if ($ListParts) {
-    $debugBuild = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics')
+    $debugBuild = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'two-maps', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics')
     $i = 0
     $list = foreach ($p in $runOrder) {
         $i++
@@ -1101,6 +1108,7 @@ try {
     $debugDeviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits')
     $debugDeviceParts += 'startup' # T268 (end T268)
     $debugDeviceParts += 'a11y' # T270 (end T270)
+    $debugDeviceParts += 'two-maps' # T339 (end T339)
     $needDevtool = @('tour', 'demo-serve', 'live', 'sync-sim', 'route-sheet') + $(if ($DeviceServer -eq 'live' -and -not $NoDevice) { $debugDeviceParts } else { @() }) |
         Where-Object { Want $_ }
     if ($needDevtool) {
@@ -1298,6 +1306,15 @@ try {
                 '--baseline', 'tools/a11y-baseline.json', '--dem', $dem, '--osm', $osm, '--out', (Join-Path $Out 'a11y')) (Join-Path $Out 'a11y.json') (Join-Path $Out 'a11y.err.log')
         }
         # end T270
+        # T339: the two-maps table (tools/two-maps-part.py), the last debug part: it moves the phone's maps aside for the
+        # fixture's two (copied from -DataDir's two-maps\ when built there from the same recipe, else built into out\two-maps\
+        # once), empties the online cache, restarts the app at each network phase, and at the end puts the maps, the network
+        # and the app back, so the release parts after it find the phone as a11y left it.
+        $null = Part 'two-maps' {
+            Run $py @('-I', 'tools/two-maps-part.py', '--serial', $serial, '--port', "$Port", '--from', (Join-Path $DataDir 'two-maps'),
+                '--out', (Join-Path $Out 'two-maps\table.json')) (Join-Path $Out 'two-maps.json') (Join-Path $Out 'two-maps.err.log')
+        }
+        # end T339
         Stop-Server 'device-server' # T105: the debug parts are done; the release build has no server unless a part types one
         $script:emuPhase = 'release' # T233: a reboot from here boots only; every release part installs its own APK
         $null = Part 'release' {
