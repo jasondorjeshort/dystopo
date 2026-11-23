@@ -107,6 +107,16 @@ class RecordingAgeTest {
     }
 
     @Test
+    fun aTerrainEstimateIsNotALocationUpdate() {
+        val s = InMemoryTrackStore()
+        val rec = TrackRecorder(s, ActivityProfile.of(Activity.FOOT), clock = { now })
+        rec.start("t")
+        rec.onFix(LocationFix(46.78, -121.73, time = now + 1_000))
+        rec.onFix(LocationFix(46.7801, -121.73, time = now + 30 * h, accuracyM = 30.0, source = TrackRecorder.ESTIMATE_SOURCE))
+        assertEquals(now + 1_000, rec.lastFixAt)
+    }
+
+    @Test
     fun aFixSeenBeforeTheStartDoesNotAgeANewRecording() {
         val s = InMemoryTrackStore()
         var clock = now

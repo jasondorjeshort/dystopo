@@ -95,6 +95,11 @@ import kotlinx.coroutines.launch
  * T333, **the weak-signal watch** ([weak], [weakTick]): while a track records, the GNSS status is held status-only
  * ([WEAK_HOLDER]) and read at each tick; at least 8 satellites above the terrain rim, every one under 25 dB-Hz for five
  * minutes, shows one line on the recording panel ([WEAK_SIGNAL_LINE]), once a recording; no sound, no notification.
+ *
+ * T348, **a recording left for days** ([lastFixAt], [RecordingAge]): a recovered recording is still adopted at any age
+ * (T158), but past a day without a location update [UiState.staleQuestion] asks at the next open, "Finish it"
+ * ([answerStale]: [stop] at the last fix) or "Keep recording" (not asked again for that fix); the way-back clock reads the
+ * same [lastFixAt] for its two-hour cut-off.
  */
 class Tracking private constructor(private val app: DystopoApp) {
     enum class Mode(val gps: Boolean, val injected: Boolean) { ALL(true, true), GPS(true, false), INJECTED(false, true) }
@@ -1036,13 +1041,17 @@ class Tracking private constructor(private val app: DystopoApp) {
         return true
     }
 
-    /** T348 (debug, `POST /tracks/stale?lastFixAgeH=`): the recording's last fix reads [ageMs] old from now; null forgets it. False when nothing records. */
-    fun setDebugLastFixAge(ageMs: Long?): Boolean {
+    /**
+     * T348 (debug, `POST /tracks/stale?lastFixAgeH=`): the recording's last fix reads [ageMs] old from now, until a newer
+     * fix (or, with [hold], whatever fixes come: a screen that injects fixes for the readout); null forgets it. False when
+     * nothing records.
+     */
+    fun setDebugLastFixAge(ageMs: Long?, hold: Boolean = false): Boolean {
         val ok = call {
             val id = recorder.activeId ?: return@call false
             val now = System.currentTimeMillis()
             if (ageMs == null) prefs.edit().remove(KEY_DEBUG_LAST_FIX).apply()
-            else prefs.edit().putString(KEY_DEBUG_LAST_FIX, "$id@${now - ageMs}@$now").apply()
+            else prefs.edit().putString(KEY_DEBUG_LAST_FIX, "$id@${now - ageMs}@${if (hold) Long.MAX_VALUE else now}").apply()
             true
         }
         refreshUi()

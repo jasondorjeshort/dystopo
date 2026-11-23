@@ -160,16 +160,20 @@ class TrackRecorder(
     /** T348: when the active track started (its creation time; a recovered track's own), or null when not recording. */
     private var activeSince: Long? = null
 
+    /** T348: the time of the last fix seen that was not a terrain estimate ([ESTIMATE_SOURCE]), or null. */
+    private var lastLocatedAt: Long? = null
+
     /**
-     * T348: when the recording last heard of its position: the last fix seen (kept or not, so a pause does not age it),
-     * else, before any fix, the recording's start; never before the start (a fix seen before [start] is older than the
-     * recording). Null when not recording. What [RecordingAge]'s two rules read.
+     * T348: when the recording last heard of its position: the last fix seen (kept or not, so a pause does not age it;
+     * a terrain estimate does not count, it is worked out from the last one), else, before any fix, the recording's start;
+     * never before the start (a fix seen before [start] is older than the recording). Null when not recording. What
+     * [RecordingAge]'s two rules read.
      */
     val lastFixAt: Long?
         get() {
             if (activeId == null) return null
             val since = activeSince
-            val fix = lastFix?.time
+            val fix = lastLocatedAt
             return when {
                 fix == null -> since
                 since == null -> fix
@@ -217,6 +221,7 @@ class TrackRecorder(
     /** Feeds one fix; returns true when it was appended to the active track. */
     fun onFix(fix: LocationFix): Boolean {
         lastFix = fix
+        if (fix.source != ESTIMATE_SOURCE) lastLocatedAt = fix.time // T348: an estimate is not a location update
         val id = activeId ?: return false
         val seen = prevSeen
         if (seen == null || fix.time > seen.time) prevSeen = fix
@@ -426,6 +431,7 @@ class TrackRecorder(
         lastAccepted = last?.let { LocationFix(it.lat, it.lon, it.ele, lastTime, it.accuracyM) }
         lastKept = last // T251
         lastFix = lastAccepted
+        lastLocatedAt = t.points.lastOrNull { !it.estimated }?.time ?: lastLocatedAt // T348
         pending = Pending(GapReason.STOPPED_BY_SYSTEM, lastTime)
     }
 

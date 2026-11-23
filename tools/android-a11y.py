@@ -1160,6 +1160,43 @@ def end_offline_maps_off(c):
 # end T342
 
 
+# T348
+STALE_AGE_H = 72  # the age the screen gives the recording's last fix (POST /tracks/stale?lastFixAgeH=)
+
+
+def scr_recording_stale(c):
+    """T348: a recording at Paradise whose last fix reads three days old (the debug age, held against the fixes the part injects; no clock moved): the question
+    card at the bottom ("This recording stopped getting location updates 3 days ago. ...", Finish it, Keep recording) and
+    the recording panel unfolded with the turn-back chip on, whose card says "No turn-back time" and how old the last
+    location update is. State it leaves, put back by end_recording_stale (also after a failed step): the recording
+    (stopped and deleted; its end forgets the debug age)."""
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+    j = c.srv.ok("POST", "/tracks/record?source=injected&activity=foot")
+    c.recorded = ((j or {}).get("started") or {}).get("id")
+    c.srv.ok("POST", f"/location?lat={PARADISE[0] + 0.0002:.6f}&lon={PARADISE[1]}&accuracy=5")
+    c.srv.ok("POST", f"/tracks/stale?lastFixAgeH={STALE_AGE_H}&hold=1")
+    c.srv.ok("POST", "/tracks/wayback?on=1")
+    c.srv.ok("POST", "/tracks/ui?bar=1")
+    deadline = time.time() + 30
+    while True:
+        s = c.srv.ok("GET", "/tracks/stale") or {}
+        if s.get("shown"):
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"the stale recording's question did not show: {json.dumps(s)[:300]}")
+        time.sleep(1.0)
+    time.sleep(1.0)
+
+
+def end_recording_stale(c):
+    code, j = c.srv.call("POST", "/tracks/stop")
+    tid = c.recorded or ((j or {}).get("track") or {}).get("id") or (j or {}).get("id")
+    if tid:
+        c.srv.call("DELETE", f"/tracks/{tid}")
+    c.recorded = None
+# end T348
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1206,6 +1243,9 @@ SCREENS = [
     # T342
     ("offline-maps-off", scr_offline_maps_off, end_offline_maps_off, "screen"),
     # end T342
+    # T348
+    ("recording-stale", scr_recording_stale, end_recording_stale, "map"),
+    # end T348
 ]
 
 

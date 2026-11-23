@@ -777,7 +777,8 @@ object TrackRoutes {
      * (no way-back verdict: older than `wayBackMaxAgeS`, two hours), `asked` and `question` (older than `askAfterS`, a day,
      * and not answered "Keep recording" for this last fix, `keptFor`), `shown` (the card is up).
      * `POST /tracks/stale?lastFixAgeH=<0..2000>|clear` makes the recording's last fix read that many hours old (kept for the
-     * recording across a cold start, until a newer fix or its end; `clear` forgets it); `answer=finish|keep` taps the card's
+     * recording across a cold start, until a newer fix or its end; with `hold=1` newer fixes do not undo it, for a screen
+     * that injects fixes; `clear` forgets it); `answer=finish|keep` taps the card's
      * "Finish it" (the recording ends at its last fix) or "Keep recording" (409 unless the question is asked). 409 with
      * nothing recording.
      */
@@ -787,7 +788,7 @@ object TrackRoutes {
             p.s("lastFixAgeH")?.let { raw ->
                 val ms = if (raw == "clear") null else raw.toDoubleOrNull()?.takeIf { it in 0.0..2000.0 }?.let { (it * 3_600_000).toLong() }
                     ?: return Response.json(mapOf("error" to "lastFixAgeH must be 0 to 2000 hours, or clear"), 400)
-                if (!t.setDebugLastFixAge(ms)) return Response.json(mapOf("error" to "nothing is recording"), 409)
+                if (!t.setDebugLastFixAge(ms, hold = p.s("hold") == "1")) return Response.json(mapOf("error" to "nothing is recording"), 409)
             }
             when (p.s("answer")) {
                 null -> {}

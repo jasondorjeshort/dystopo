@@ -441,13 +441,17 @@ internal val WEAK_SIGNAL_HELP: List<io.github.jasondorjeshort.dystopo.app.help.H
 @Composable
 private fun StaleRecordingCard(question: String) {
     val age = io.github.jasondorjeshort.dystopo.store.RecordingAge
-    Column(
-        Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(8.dp)).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        BasicText(question, style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+    // The map chips' capped font scale (T91): at 2.0 the card took half the map and squeezed the panels above it.
+    io.github.jasondorjeshort.dystopo.app.MapChrome {
+        // One flowing row: on a wide screen (landscape) the answers follow the question on its line, so the card is one
+        // button high and the recording panel above it keeps its room; upright they wrap under it.
         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicText(question, Modifier.padding(vertical = 4.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
             StaleAction(age.FINISH) { Thread { tracker().answerStale(finish = true) }.start() }
             StaleAction(age.KEEP) { Thread { tracker().answerStale(finish = false) }.start() }
         }
@@ -459,9 +463,12 @@ private fun StaleAction(text: String, onClick: () -> Unit) {
     BasicText(
         text,
         Modifier.clickable(onClick = onClick).heightIn(min = 48.dp).wrapContentHeight(Alignment.CenterVertically),
-        style = TextStyle(color = Link, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+        style = TextStyle(color = StaleLink, fontSize = 14.sp, fontWeight = FontWeight.Bold),
     )
 }
+
+/** T348: the answers' blue, darker than [Link] (4.3:1 on the card), so the two buttons pass 4.5:1. */
+private val StaleLink = Color(0xFF1B5E91)
 // end T348
 
 /** T272: the toast after "Turn back to here" on a waypoint (ADR 0031). Pure. */
