@@ -17,3 +17,13 @@ It is the Panorama turned inside out: the Panorama names what is in the directio
 - Tilt matters: with the phone level the ray meets the horizon's ground; pointed down a valley it meets the valley floor. Whether to use the tilt or always take the skyline's ground on that bearing.
 - The ray's range and cost per update (a kept horizon answers in a few milliseconds; a fresh ray took 256 to 765 ms on the emulator in T334).
 - Where the toggle lives; whether the heading sensor's hold for the map's compass is enough or the attitude source is needed (it runs only for the Panorama in Follow today).
+
+Question: do you want the pointing line on the Map view, and in which shape: along the heading to the skyline's ground on that bearing (from the kept horizon, a few milliseconds), or to where the phone's tilt meets the ground (a fresh ray per update, 256 to 765 ms in T334)?
+Recommendation: the skyline's ground on the heading, shown while a toggle on the map's compass control is on, with the hit point's distance and name; it needs no attitude source beyond the map's heading and is cheap. Build it after the one line-of-sight function (`2026-11-22-one-line-of-sight-function-in-shared.md`) so the hit comes from that API, not a ray of its own.
+Options:
+a) Skyline ground on the heading, a toggle on the compass control, after the line-of-sight function (recommended).
+b) The tilt's ray, with the attitude source running on the map.
+c) Both, the tilt used when the phone points below the horizon.
+d) Not worth building.
+
+Answer:
