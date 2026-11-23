@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-23
 
+- T341: Why a view is sparse, as a route; then the empty map between the world overview and the maps
 - T351: The Panorama's lens fills the window, its overlays placed by one rule
 - T344: The Panorama's pane becomes the List view, the switch's fourth segment
 - T343: The Download card says what the phone already holds there, and the chip and the button follow one rule
