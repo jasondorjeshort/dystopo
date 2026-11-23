@@ -157,6 +157,30 @@ class TrackRecorder(
     /** The reason of the gap the next kept fix will close (a pause, an auto-pause, a restart), or null. */
     val pendingGap: GapReason? get() = pending?.reason
 
+    /** T348: when the active track started (its creation time; a recovered track's own), or null when not recording. */
+    private var activeSince: Long? = null
+
+    /** T348: the time of the last fix seen that was not a terrain estimate ([ESTIMATE_SOURCE]), or null. */
+    private var lastLocatedAt: Long? = null
+
+    /**
+     * T348: when the recording last heard of its position: the last fix seen (kept or not, so a pause does not age it;
+     * a terrain estimate does not count, it is worked out from the last one), else, before any fix, the recording's start;
+     * never before the start (a fix seen before [start] is older than the recording). Null when not recording. What
+     * [RecordingAge]'s two rules read.
+     */
+    val lastFixAt: Long?
+        get() {
+            if (activeId == null) return null
+            val since = activeSince
+            val fix = lastLocatedAt
+            return when {
+                fix == null -> since
+                since == null -> fix
+                else -> maxOf(fix, since)
+            }
+        }
+
     private fun reset() {
         lastAccepted = null
         newSegment = true
@@ -190,12 +214,14 @@ class TrackRecorder(
         store.setActivity(s.id, profile.activity, profile, now)
         activeId = s.id
         reset()
+        activeSince = now // T348
         return store.summary(s.id) ?: s
     }
 
     /** Feeds one fix; returns true when it was appended to the active track. */
     fun onFix(fix: LocationFix): Boolean {
         lastFix = fix
+        if (fix.source != ESTIMATE_SOURCE) lastLocatedAt = fix.time // T348: an estimate is not a location update
         val id = activeId ?: return false
         val seen = prevSeen
         if (seen == null || fix.time > seen.time) prevSeen = fix
@@ -333,11 +359,12 @@ class TrackRecorder(
     /**
      * Stops recording; returns the finished track's summary, or null when nothing was recording. A pending
      * "stopped by the system" or "restarted" gap that no fix closed is written up to now: the track ended in it.
+     * T348: with [atLastFix] (the stale question's "Finish it") no such gap is written: the track ends at its last point.
      */
-    fun stop(): TrackSummary? {
+    fun stop(atLastFix: Boolean = false): TrackSummary? {
         val id = activeId ?: return null
         val now = clock()
-        pending?.let { h ->
+        if (!atLastFix) pending?.let { h ->
             val start = h.start
             if ((h.reason == GapReason.STOPPED_BY_SYSTEM || h.reason == GapReason.RESTARTED) && start != null && now > start) {
                 store.addGap(id, TrackGap(start, now, h.reason), now)
@@ -346,6 +373,7 @@ class TrackRecorder(
         }
         store.setRecording(id, false, now)
         activeId = null
+        activeSince = null // T348
         paused = false
         autoPaused = false
         pending = null
@@ -395,6 +423,7 @@ class TrackRecorder(
         val t = store.track(s.id) ?: return
         reset()
         activeId = s.id
+        activeSince = s.createdAt // T348
         t.profile?.let { profile = it }
         t.segments.forEach { live += ArrayList(it.points) }
         val last = t.points.lastOrNull()
@@ -402,6 +431,7 @@ class TrackRecorder(
         lastAccepted = last?.let { LocationFix(it.lat, it.lon, it.ele, lastTime, it.accuracyM) }
         lastKept = last // T251
         lastFix = lastAccepted
+        lastLocatedAt = t.points.lastOrNull { !it.estimated }?.time ?: lastLocatedAt // T348
         pending = Pending(GapReason.STOPPED_BY_SYSTEM, lastTime)
     }
 
@@ -426,5 +456,52 @@ class TrackRecorder(
         /** Teleports in a row after which the last kept fix is taken to be the stray one (see the class comment). */
         const val REANCHOR_AFTER = 5
     }
+}
+
+/**
+ * T348: the two rules on a recording's age, read from [TrackRecorder.lastFixAt] (the idea of 2026-11-11: a recording left
+ * for days still read as active, and its turn-back card gave a verdict from fixes days old). The figures are R3's survey
+ * of recording apps (no app ends a recording for its age; the one published figure is a 2-hour gap at which one app splits
+ * a track): no way-back verdict past [WAY_BACK_MAX_FIX_AGE_MS], so a long summit rest under a weak signal keeps its card;
+ * the question past [ASK_AFTER_MS]. No setting (ADR 0044: nothing is split, and it is safety-adjacent). Pure, tested; the
+ * words are ADR 0031's, the owner's to adjust.
+ */
+object RecordingAge {
+    private const val HOUR_MS = 3_600_000L
+
+    /** Past this the way-back clock gives no verdict. */
+    const val WAY_BACK_MAX_FIX_AGE_MS = 2 * HOUR_MS
+
+    /** Past this the recording is asked about at the next open ([question]). */
+    const val ASK_AFTER_MS = 24 * HOUR_MS
+
+    /** True when the way-back clock must give no verdict: the last fix is more than two hours old at [now]. */
+    fun wayBackStale(lastFixAt: Long?, now: Long): Boolean = lastFixAt != null && now - lastFixAt > WAY_BACK_MAX_FIX_AGE_MS
+
+    /**
+     * True when the recording is asked about: its last fix is more than a day old at [now], and "Keep recording" was not
+     * already answered for this same last fix ([keptFor], the last fix the answer was given at; a newer fix asks afresh).
+     */
+    fun asks(lastFixAt: Long?, now: Long, keptFor: Long? = null): Boolean =
+        lastFixAt != null && now - lastFixAt > ASK_AFTER_MS && keptFor != lastFixAt
+
+    /** An age in words: whole hours under two days ("1 hour", "26 hours"), whole days from two days ("3 days"). */
+    fun ageText(ageMs: Long): String {
+        val hours = (ageMs.coerceAtLeast(0) / HOUR_MS)
+        if (hours < 1) return "less than an hour"
+        if (hours < 48) return if (hours == 1L) "1 hour" else "$hours hours"
+        return "${hours / 24} days"
+    }
+
+    /** The question, for a last fix [ageMs] old. */
+    fun question(ageMs: Long): String =
+        "This recording stopped getting location updates ${ageText(ageMs)} ago. Finish it where it ended, or keep recording?"
+
+    /** The way-back card's line under "No turn-back time" while [wayBackStale]. */
+    fun wayBackLine(ageMs: Long): String = "The last location update was ${ageText(ageMs)} ago."
+
+    /** The question's two answers: "Finish it" ends the recording at its last fix; "Keep recording" leaves it running. */
+    const val FINISH = "Finish it"
+    const val KEEP = "Keep recording"
 }
 

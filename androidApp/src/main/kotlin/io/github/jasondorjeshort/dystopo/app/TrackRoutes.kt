@@ -157,6 +157,7 @@ object TrackRoutes {
         val t = Tracking.of(app)
         val p = params(r)
         weakSignalRoute(t, r, p)?.let { return it } // T333
+        staleRoute(t, r, p)?.let { return it } // T348
         when (r.method to r.path) {
             "POST" to "/location" -> {
                 val lat = p.d("lat")
@@ -168,7 +169,7 @@ object TrackRoutes {
                 }
                 return null
             }
-            "GET" to "/tracks" -> return Response.json(Tracking.readiness() + overview(t) + mapOf("weakSignal" to t.weakJson())) // T229: ready first; T333
+            "GET" to "/tracks" -> return Response.json(Tracking.readiness() + overview(t) + mapOf("weakSignal" to t.weakJson(), "stale" to t.staleJson())) // T229: ready first; T333; T348
             "GET" to "/tracks/ui" -> return Response.json(screenJson(t))
             "POST" to "/tracks/ui" -> return screenPost(app, t, p) // T262 (T219's sheet before)
             "POST" to "/waypoint" -> {
@@ -768,4 +769,34 @@ object TrackRoutes {
         return Response.json(t.weakJson())
     }
     // end T333
+
+    // T348: a recording left for days.
+    /**
+     * `GET /tracks/stale` is `GET /tracks`' `stale`: `recording`, `lastFixAt` and `lastFixAgeS` (what both rules read: the
+     * last fix seen, else the recording's start; or the debug age), `recorderLastFixAt`, `debugLastFixAt`, `wayBackStale`
+     * (no way-back verdict: older than `wayBackMaxAgeS`, two hours), `asked` and `question` (older than `askAfterS`, a day,
+     * and not answered "Keep recording" for this last fix, `keptFor`), `shown` (the card is up).
+     * `POST /tracks/stale?lastFixAgeH=<0..2000>|clear` makes the recording's last fix read that many hours old (kept for the
+     * recording across a cold start, until a newer fix or its end; with `hold=1` newer fixes do not undo it, for a screen
+     * that injects fixes; `clear` forgets it); `answer=finish|keep` taps the card's
+     * "Finish it" (the recording ends at its last fix) or "Keep recording" (409 unless the question is asked). 409 with
+     * nothing recording.
+     */
+    private fun staleRoute(t: Tracking, r: Request, p: Params): Response? {
+        if (r.path != "/tracks/stale") return null
+        if (r.method == "POST") {
+            p.s("lastFixAgeH")?.let { raw ->
+                val ms = if (raw == "clear") null else raw.toDoubleOrNull()?.takeIf { it in 0.0..2000.0 }?.let { (it * 3_600_000).toLong() }
+                    ?: return Response.json(mapOf("error" to "lastFixAgeH must be 0 to 2000 hours, or clear"), 400)
+                if (!t.setDebugLastFixAge(ms, hold = p.s("hold") == "1")) return Response.json(mapOf("error" to "nothing is recording"), 409)
+            }
+            when (p.s("answer")) {
+                null -> {}
+                "finish", "keep" -> if (!t.answerStale(p.s("answer") == "finish")) return Response.json(mapOf("error" to "the question is not asked", "stale" to t.staleJson()), 409)
+                else -> return Response.json(mapOf("error" to "answer must be finish or keep"), 400)
+            }
+        }
+        return Response.json(t.staleJson())
+    }
+    // end T348
 }
