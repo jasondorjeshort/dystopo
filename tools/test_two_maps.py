@@ -214,6 +214,24 @@ with tempfile.TemporaryDirectory() as raw:
     assert whats == ["T343:already-not-on-phone", "T343:off-phone-not-offered"], whats
 # end T343
 
+# T341's block: GET /why and the chip at the overview's zooms, offline and online.
+def t341_read(net, z, cause, serves, column, fetch_behind=False, errors=None):
+    return {"network": net, "zoom": z, "errors": errors or [], "cause": cause, "vector": {"serves": serves, "fetchBehind": fetch_behind},
+            "column": column, "chip": column}
+t341_good = {"reads": [
+    t341_read("off", 5.5, "overview-offline", "overview", "world"), t341_read("off", 6.5, "above-overview-top", "network", "wider"),
+    t341_read("off", 12, "none", "map", "pack"), t341_read("on", 5.5, "none", "cache", "network_public"),
+    t341_read("on", 6.5, "none", "network", "network_public"), t341_read("on", 12, "none", "map", "pack")]}
+assert part.t341_assertions({"t341": t341_good}) == [], part.t341_assertions({"t341": t341_good})
+assert part.t341_assertions({}) == []
+t341_bad = {"reads": [
+    t341_read("off", 5.5, "overview", "cache", "cache"), t341_read("off", 6.5, "empty-tile", "network", "no_data"),
+    t341_read("on", 5.5, "overview", "overview", "world"), t341_read("on", 6.5, "none", "network", "no_data"),
+    t341_read("on", 12, "below-maps-floor", "network", "no_data"), t341_read("on", 13, None, None, None, errors=["HTTP 500"])]}
+whats = sorted(f["what"] for f in part.t341_assertions({"t341": t341_bad}))
+assert whats == ["T341:chip-no-data", "T341:cut-from-overview", "T341:map-cause", "T341:overview-offline", "T341:overview-online", "T341:unread"], whats
+# end T341
+
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:
     sweep = fh.read()

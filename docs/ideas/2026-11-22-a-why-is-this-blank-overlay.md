@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: feature
-related: [2026-11-22-the-map-is-nearly-empty-at-the-zooms-between-the-world-overview-and-the-packs.md, 2026-11-22-a-zoom-label-by-the-scale-bar-as-an-option.md]
+related: [2026-11-22-a-zoom-label-by-the-scale-bar-as-an-option.md]
 ---
 
 # A "why is this blank?" overlay for a sparse view
@@ -21,3 +21,7 @@ the overview's top, a layer's minimum zoom, an empty tile, a failed fetch, a set
 and `docs/reference/android-debug-routes.md`. Verify on an emulator with a public pack (Rainier): z6, z9 and z13 inside it
 and one point outside, online and offline; each `cause` matches the screenshot. Out of scope: fixing any cause; a user toggle
 (a later question once the route has proved itself).
+
+2026-11-23 (T341): the route is built, `GET /why` (`androidApp/.../app/WhyRoutes.kt`, `docs/reference/android-debug-routes.md`),
+verified on the two-maps fixture online and offline; the empty-map idea it served is fixed and deleted. The user toggle
+above the route is the question left (the Plan's "a later question once the route has proved itself").

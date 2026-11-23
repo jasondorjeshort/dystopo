@@ -27,6 +27,7 @@ import io.github.jasondorjeshort.dystopo.app.SettingsUi
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.online.DirectPrefs
+import io.github.jasondorjeshort.dystopo.app.online.OnlineDetail
 import io.github.jasondorjeshort.dystopo.app.online.OnlineService
 import io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup
 import kotlin.concurrent.thread
@@ -64,8 +65,40 @@ fun DirectSourcesRows() {
                 }
             }
         }
+        OnlineDetailRow() // T341
     }
 }
+
+// T341
+/**
+ * T341 (ADR 0066): "More detail from online", the per-device setting `onlineDetail` ([OnlineDetail]; `POST /settings
+ * onlineDetail=1|0`), beside Mobile data; shown in Settings › Sources whether or not a server is set
+ * (`settings/SettingsPages.kt`). Its reach today is the world overview's zooms.
+ */
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+fun OnlineDetailRow() {
+    val app = DystopoApp.instance
+    var on by remember { mutableStateOf(OnlineDetail.on) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+        BasicText(ONLINE_DETAIL_LABEL, Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+        HelpIcon("direct.onlineDetail", Modifier.align(Alignment.CenterVertically))
+        for ((label, value) in listOf("On" to true, "Off" to false)) {
+            Choice(label, on == value) {
+                on = value
+                thread(name = "dystopo-direct-setting") { OnlineDetail.set(app, value) }
+            }
+        }
+    }
+}
+
+/** T341: the row's words and its help text (ADR 0066's label; ADR 0031: listed for the owner). */
+internal const val ONLINE_DETAIL_LABEL = "More detail from online"
+internal const val ONLINE_DETAIL_HELP =
+    "Where the network has more detail than what this phone holds, download it. With the phone's own sources this counts " +
+        "toward Mobile data and its limit. Off: the phone shows what it holds, and the network is asked only where nothing " +
+        "here covers the view."
+// end T341
 
 /**
  * T109: the help pop-ups of the two rows above, by the key each row's [HelpIcon] names; a row removed here takes its
@@ -85,6 +118,7 @@ internal val DIRECT_SOURCES_HELP: List<HelpText> = run {
                 "A first look at new ground can take 75 to 100 MB. At the limit the map says so and keeps what it has: " +
                 "download the area for offline use, or raise the limit."
         },
+        HelpText("direct.onlineDetail", ONLINE_DETAIL_LABEL, "$place › $ONLINE_DETAIL_LABEL", show = show) { ONLINE_DETAIL_HELP }, // T341
     )
 }
 

@@ -36,6 +36,8 @@ import java.io.File
  *   device's own location engine stays detached until `POST /location?device=1`. `GET /location`.
  * - `GET /settings`, `POST /settings?textScale=1.5&units=m&warmup=0`, `POST /settings/ui`, T103 `GET /settings/layout` and `POST /settings/open?group=`: user settings and the sheet's groups ([SettingsRoutes]).
  * - `GET /features` (alias `/labels`), `GET /features/text`: what the map drew ([FeatureRoutes]).
+ * - T341 `GET /why[?z=&lat=&lon=]`: why a view is sparse: the maps, the overview and the online source at the point, the
+ *   style's zooms and visible layers, the map options and one `cause` word ([WhyRoutes]).
  * - `POST /reload`: reopens the packs and reloads the style; `POST /cache/clear`: drops cached contour tiles.
  * - The `/debug/...` routes (T144's watchdog and freeze, T150's per-thread CPU and StrictMode counts) are documented in
  *   [io.github.jasondorjeshort.dystopo.app.debug.DebugRoutes]. `GET /health` has `watchdog` (short form) and
@@ -110,7 +112,7 @@ class Routes(private val app: DystopoApp) {
         // A Pack's own name is its role (`dem`, `osm`); the log names the region it belongs to.
         fun region(p: Pack?): String? = p?.let { pack -> t.packs.regions.firstOrNull { it.dem === pack || it.osm === pack }?.name ?: pack.file.name }
         when (kind) {
-            "osm" -> if (o != null && !o.packCoversOsm(z, x, y)) online else region(t.packs.osmCandidates(z, x, y).firstOrNull())
+            "osm" -> if (o != null && o.vectorAnswer(z, x, y).serves.let { it == io.github.jasondorjeshort.dystopo.packs.Holdings.Source.NETWORK || it == io.github.jasondorjeshort.dystopo.packs.Holdings.Source.CACHE }) online else region(t.packs.osmCandidates(z, x, y).firstOrNull()) // T341: the kept online tile at the overview's zooms
             "contours" -> if (o != null && !o.packCoversContour(z, x, y)) online else region(t.packs.demFor(z, x, y, io.github.jasondorjeshort.dystopo.packs.PackRoleZooms.CONTOUR))
             else -> if (o != null && !o.packCoversDem(z, x, y)) online else region(t.packs.demFor(z, x, y))
         }
@@ -198,6 +200,7 @@ class Routes(private val app: DystopoApp) {
         return when (r.method to r.path) {
             "GET" to "/health", "GET" to "/" -> Response.json(health())
             "GET" to "/stats" -> Response.json(stats())
+            "GET" to "/why" -> WhyRoutes(app).handle(r) // T341
             "GET" to "/stats/requests" -> { // T123
                 val limit = r.query["limit"]?.let { it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: return Response.json(mapOf("error" to "limit must be a whole number >= 0"), 400) }
                 if (r.query["format"] == "jsonl") Response(200, "application/x-ndjson", requestLog.jsonLines(limit ?: requestLog.capacity).toByteArray())

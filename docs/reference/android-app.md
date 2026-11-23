@@ -312,6 +312,18 @@ built into the app: coasts, borders and the names of countries and large cities.
 session and has since left the cache, as after a cache clear: in server mode MapLibre prefetches DEM tiles four zooms out,
 so a z9 view records z6 tiles that a z5 view shares, and those read "no data here" before); search and routes read as if it were not there (`MapCoverage`). The credits
 name Natural Earth and the OpenMapTiles schema from its metadata. The style draws country names (`countries`) below z7.
+T341 (ADR 0066): **More detail from online** (Settings › Sources, beside Mobile data, and alone under the server field when
+a server is set; `POST /settings onlineDetail=1|0`; per device, not synced, stored with the direct-source settings; on by
+default). Its words: "More detail from online"; help: "Where the network has more detail than what this phone holds,
+download it. With the phone's own sources this counts toward Mobile data and its limit. Off: the phone shows what it holds,
+and the network is asked only where nothing here covers the view." Its reach is the overview's zooms: there the online
+vector source (stored to z14, or a server's `osmMaxZoom`) is deeper than the overview, so each overview tile is answered at
+once and the online tile is fetched behind it (`OnlineTiles.fetchBehind`); once tiles land, one refresh of the vector source
+(the stall recovery's, settled over 10 s) redraws them from the cache, and from then on the kept tile answers, offline too.
+Off, or with no source, the overview answers as before. The rule is `shared/.../packs/Holdings.kt` (`vectorTile`, tested);
+the chip reads "from public sources" (or "viewed earlier") once the map was given the online tile, and at z6 and z7, where
+the network draws the vector map below the phone's own elevation (z8), it names that tile's source instead of "no data
+here". `GET /why` explains a view (`android-debug-routes.md`).
 T265: the map zooms out to z1 (`MapController.MIN_ZOOM`; z3 before), the whole world on one screen. The terrain layers
 start where their sources do (`MapLibreStyle`'s layer `minzoom`): the hillshade and the shade one map zoom below the DEM's
 lowest tile zoom (256-px tiles; online z6, so map z5; direct mode z8, so z7), the contours at theirs (online z8), so
