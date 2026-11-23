@@ -34,6 +34,12 @@ assert [p["id"] for p in fx.PLACES] == ["inside-both", "wide-only", "outside", "
 for p in fx.PLACES:
     got = [m["name"] for m in fx.MAPS if fx.inside(p, m)]
     assert got == p["inside"], (p["id"], got)
+outside = fx.PLACES[2]
+for m in fx.MAPS:  # outside both maps' tiles at every zoom, the coarsest (z8) included
+    assert not any(fx.tiles_hold(outside, m, z) for z in range(m["dem"][0], m["dem"][1] + 1)), m["name"]
+assert fx.tiles_hold(fx.PLACES[1], fine, 8) and not fx.tiles_hold(fx.PLACES[1], fine, 10), "wide-only is in the fine map's z8 tile only"
+w8, s8, e8, n8 = fx.tile_bounds(8, 41, 90)
+assert round(s8, 2) == 46.07 and round(n8, 2) == 47.04 and w8 < -121.95 and e8 > -121.45, (w8, s8, e8, n8)
 edge = fx.PLACES[3]
 assert edge["lat"] - fine["bbox"][1] < 0.005, "the edge place is within about 500 m of the fine map's edge"
 
@@ -92,7 +98,7 @@ assert fx.pack_names(None) == ([], [])
 reads = {
     "firstrun": {"noPack": False, "mapMessage": "none", "viewInside": True, "textShown": None, "cardVisible": False},
     "online": {"state": "online", "offerDownload": True, "chip": {"text": "On this phone", "source": "pack", "dot": "green"}},
-    "areasRows": {"rows": [{"id": "pack:rainier-wide", "state": "Saved", "detail": "x"}], "count": 1},
+    "areasRows": {"rows": [{"id": "pack:rainier-wide", "state": "Saved", "detail": ["Zooms z8-13", "Elevation: " + "x" * 80]}], "count": 1},
     "maps": {"packs": ["rainier-wide", "rainier-fine"], "inUse": ["rainier-fine"], "active": "rainier-fine", "startupPacks": 2},
     "horizon": {"horizon": {"source": "pack", "zoom": 12, "highestDeg": 3.2, "bearingsWithoutData": 0}, "horizonReason": None, "placeLine": {"text": "Here"}},
     "horizonFirst": None,
@@ -100,7 +106,7 @@ reads = {
 }
 sm = part.summarize(reads)
 assert sm["map"]["mapMessage"] == "none" and sm["chip"]["offerDownload"] is True and sm["chip"]["text"] == "On this phone"
-assert sm["rows"] == [{"id": "pack:rainier-wide", "state": "Saved", "detail": "x"}]
+assert sm["rows"] == [{"id": "pack:rainier-wide", "state": "Saved", "detail": ["Zooms z8-13"]}], "the long credit lines are left out"
 assert sm["horizon"]["source"] == "pack" and sm["horizon"]["highestDeg"] == 3.2 and sm["horizonFirst"]["source"] is None
 assert sm["panorama"]["demPacks"] == ["rainier-fine"] and sm["panorama"]["sweeps"] == 2 and sm["panorama"]["names"] == 1
 assert part.summarize({})["panoramaFirst"]["sweeps"] == 0

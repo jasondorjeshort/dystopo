@@ -29,6 +29,10 @@
 #                nodes under 48 dp of touch area, unlabelled, duplicate or overlapping, text outside its bounds, low contrast,
 #                the map's controls left under a screen, from GET /semantics, uiautomator dump and a screencap; red only on a
 #                finding tools/a11y-baseline.json does not list. Report a11y.json, the outlined frames and a11y/a11y-sheet.png.
+#   two-maps     (T339, debug build, after a11y) tools/two-maps-part.py: the two-maps fixture (two overlapping Rainier maps,
+#                tools/two-maps-fixture.py) in place of the phone's maps, and at four places with the network off and on the
+#                answers of /firstrun, /online, /areas/rows, /packs, /debug/startup, /horizon and /panorama: two-maps\table.json
+#                (eight rows) and two-maps\raw\. Red on a row not read or a failed restore (and the fixing tasks' assertions).
 #   bothunits    (T139, T129's follow-up; T147: in every device sweep, -NoBothUnits leaves it out) android-ui.py bothunits: the scale bar's Both units choice set on
 #                the sweep's emulator (debug build) reaches a second one through a sync peer and back. The second emulator
 #                is booted on the matrix pattern (AVD <Avd>-b, console -MatrixEmuPort, default -EmuPort+2, debug forward
@@ -308,8 +312,9 @@ $releaseBuildS = 1800
 # card's two restarts about 25 s); 1200 s leaves room for a loaded emulator and the routing graph's first build (about 125 s).
 $ceilings['a11y'] = 1200
 # end T270
-# T339: two-maps took TIMING on the implementer's emulator with the fixture copied from -DataDir (a build of the four
-# archives adds about BUILDTIME); 1500 s leaves room for a first build in a fresh checkout and a loaded emulator.
+# T339: two-maps took 86 to 154 s in six runs on the implementer's emulator with the fixture already built (each view
+# waits up to 30 s; the online horizon outside both maps took 15 to 47 s), and a build of the four archives adds about
+# 140 s; 1500 s leaves room for a first build in a fresh checkout and a loaded emulator.
 $ceilings['two-maps'] = 1500
 # end T339
 # T288: features took 322 to 421 s before its drive step; the step (Plan drives for, its help and three drives on the

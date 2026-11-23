@@ -70,11 +70,36 @@ PLACES = [
      "what": "Mount Rainier's summit, inside both maps"},
     {"id": "wide-only", "lat": 46.7300, "lon": -121.5600, "inside": ["rainier-wide"],
      "what": "south-east of the summit, inside the wide map only (13 km from the fine one)"},
-    {"id": "outside", "lat": 46.6000, "lon": -121.7000, "inside": [],
-     "what": "south of both maps, 9 km past the wide one's edge"},
+    {"id": "outside", "lat": 46.0000, "lon": -121.7000, "inside": [],
+     "what": "south of both maps and of the z8 tile both hold (a map's tiles reach past its box: at z8 one tile, 46.07 to 47.04 north)"},
     {"id": "fine-edge", "lat": 46.8025, "lon": -121.7500, "inside": ["rainier-wide", "rainier-fine"],
      "what": "280 m inside the fine map's south edge, its ring running out into the wide map"},
 ]
+
+
+def tile_bounds(z, x, y):
+    """(west, south, east, north) of Web Mercator tile z/x/y in degrees."""
+    import math
+    n = 2 ** z
+
+    def lat(t):
+        return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * t / n))))
+    return (x / n * 360 - 180, lat(y + 1), (x + 1) / n * 360 - 180, lat(y))
+
+
+def tiles_hold(place, m, z):
+    """Whether a tile of map `m` at zoom z (every tile its box touches) holds the place: a map answers its whole tiles."""
+    import math
+    n = 2 ** z
+
+    def xy(lon, lat):
+        r = math.radians(lat)
+        return (lon + 180) / 360 * n, (1 - math.asinh(math.tan(r)) / math.pi) / 2 * n
+    w, s, e, nn = m["bbox"]
+    x0, y0 = (int(v) for v in xy(w, nn))
+    x1, y1 = (int(v) for v in xy(e, s))
+    px, py = (int(v) for v in xy(place["lon"], place["lat"]))
+    return x0 <= px <= x1 and y0 <= py <= y1
 
 
 def recipe():
@@ -295,6 +320,9 @@ def install(dev, out_dir=OUT_DIR):
     folder = os.path.join(REPO, out_dir)
     rep = {"serial": dev.serial, "maps": [m["name"] for m in MAPS]}
     # Every other map aside, in both roots (an earlier part may have pushed to either); a second install finds them there.
+    # The fixture's own files are deleted, never moved aside (a second install would otherwise put them back at the restore).
+    names = " ".join(n for m in MAPS for n in files_of(m).values())
+    dev.runas(f"rm -f {' '.join('files/packs/' + n for n in names.split())}; true")
     dev.runas(f"mkdir -p files/{ASIDE} && for f in files/packs/*.pmtiles; do [ -f \"$f\" ] && mv \"$f\" files/{ASIDE}/; done; true")
     dev.shell(f"mkdir -p {EXTERNAL}/{ASIDE} && for f in {EXTERNAL}/packs/*.pmtiles; do [ -f \"$f\" ] && mv \"$f\" {EXTERNAL}/{ASIDE}/; done; true")
     _, aside = dev.runas(f"ls files/{ASIDE}")
@@ -329,6 +357,7 @@ def restore(dev):
     rep = {"serial": dev.serial, "network": network(dev, True)}
     names = " ".join(n for m in MAPS for n in files_of(m).values())
     dev.runas(f"cd files/packs && rm -f {names}; true")
+    dev.runas(f"cd files/{ASIDE} 2>/dev/null && rm -f {names}; true")  # never put back as "other maps"
     dev.runas(f"[ -d files/{ASIDE} ] && mv files/{ASIDE}/*.pmtiles files/packs/ 2>/dev/null; rmdir files/{ASIDE} 2>/dev/null; true")
     dev.shell(f"[ -d {EXTERNAL}/{ASIDE} ] && mv {EXTERNAL}/{ASIDE}/*.pmtiles {EXTERNAL}/packs/ 2>/dev/null; rmdir {EXTERNAL}/{ASIDE} 2>/dev/null; true")
     dev.restart()

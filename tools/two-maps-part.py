@@ -16,7 +16,8 @@ evidence, not a verdict. Each task that fixes a row (T340 to T343) adds its own 
 
 State it pins, so a row does not depend on what ran before it:
 - the maps: the fixture's install moves every other map aside (and the end puts them back), so only the pair is open;
-- the online tile cache is emptied first (`POST /online/cache/clear`): an earlier part's cached tiles would answer offline;
+- the online tile cache is emptied first (`POST /online/cache/clear`), and the direct sources' block cache (`cache/sources/`,
+  with the app stopped): an earlier part's cached tiles or blocks would answer offline;
 - each network phase starts with a cold start of the app, so a horizon or a Panorama place kept from the phase before
   (the views keep them, `horizonsKept`, `kept`) is not this phase's; the network-off phase runs first, on the empty cache;
 - the clock: the table leaves out the Sun, Satellites and Flights layers, the parts of the answers that move with it; what
@@ -78,7 +79,10 @@ def summarize(reads):
                 "mapHolds": get(fr, "mapHolds")},
         "chip": {"text": get(on, "chip", "text"), "source": get(on, "chip", "source"), "dot": get(on, "chip", "dot"),
                  "hidden": get(on, "chip", "hidden"), "offerDownload": get(on, "offerDownload"), "state": get(on, "state")},
-        "rows": [{"id": r.get("id"), "state": r.get("state"), "detail": r.get("detail")} for r in (get(rows, "rows") or []) if isinstance(r, dict)],
+        "rows": [{"id": r.get("id"), "state": r.get("state"), "detail": [d for d in (r.get("detail") or []) if isinstance(d, str) and len(d) <= 60]}
+                 for r in (get(rows, "rows") or []) if isinstance(r, dict)],
+        "direct": {"sessionBytes": get(on, "direct", "sessionBytes"), "requests": get(on, "direct", "requests"),
+                   "offlineFailures": get(on, "direct", "offlineFailures"), "demRendered": get(on, "direct", "demRendered")},
         "maps": {"packs": get(maps, "packs"), "inUse": get(maps, "inUse"), "active": get(maps, "active"), "startupPacks": get(maps, "startupPacks")},
         "horizonFirst": horizon(h0), "horizon": horizon(h),
         "panoramaFirst": panorama(p0), "panorama": panorama(p),
@@ -154,9 +158,13 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
         table["onlineCacheCleared"] = cleared if not err else {"error": err}
         table["settings"] = settings(dev)
         table["network"] = []
-        for net in PHASES:
+        for i, net in enumerate(PHASES):
             sw = fx.network(dev, net == "on")
             table["network"].append(sw)
+            if i == 0:  # the direct sources' block cache too, with the app stopped: it answers offline as the tile cache does
+                dev.adb("shell", "am", "force-stop", fx.PACKAGE, timeout=30)
+                _, du = dev.runas("du -sk cache/sources 2>/dev/null; rm -rf cache/sources; true")
+                table["sourceCacheClearedKb"] = int(du.split()[0]) if du.split() and du.split()[0].isdigit() else 0
             dev.restart()
             for place in fx.PLACES:
                 table["rows"].append(read_row(dev, place, net, wait_ms, raw_dir))
@@ -204,7 +212,8 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=8696)
     ap.add_argument("--out", default=os.path.join("out", "two-maps", "table.json"))
     ap.add_argument("--from", dest="from_dir", default="", help="a folder with the fixture built from the same recipe, copied instead of a build")
-    ap.add_argument("--wait-ms", type=int, default=15000, help="each view's ?wait= (default 15000)")
+    ap.add_argument("--wait-ms", type=int, default=30000,
+                    help="each view's ?wait= (default 30000: the online horizon outside both maps took 15 to 30 s on a task emulator)")
     ap.add_argument("--keep", action="store_true", help="leave the fixture installed at the end")
     a = ap.parse_args(argv)
     try:
