@@ -80,12 +80,20 @@ class MainActivity : ComponentActivity() {
             mapView.onCreate(savedInstanceState)
             StartupTrace.mark("map.attach")
             app.map.activity = this
+            // T347: a mark per prepare and one before the attach, so the step's growth is attributed (`map.attach: *`).
+            StartupTrace.mark("map.attach: OrientationUi")
             io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
+            StartupTrace.mark("map.attach: GnssUi")
             io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.prepare() // T307, T308: the Horizon view's Compose state, on the main thread
+            StartupTrace.mark("map.attach: ViewSwitch")
             io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.prepare() // T315: the switch's anchor state (both views read it)
+            StartupTrace.mark("map.attach: PanoramaUi")
             io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.prepare() // T326: the Panorama's aim, on the main thread
+            StartupTrace.mark("map.attach: PanoramaData")
             io.github.jasondorjeshort.dystopo.app.panorama.PanoramaData.prepare() // T326: its sweeps' revision
+            StartupTrace.mark("map.attach: AircraftUiState")
             io.github.jasondorjeshort.dystopo.app.aircraft.AircraftUiState.prepare() // T311: the Flights layer's Compose state (its ticker reads it)
+            StartupTrace.mark("map.attach: MapController.attach")
             app.map.attach(mapView, styleJson = { app.tiles.style() })
         }
         launch.run(Launch.ACTIVITY) { links() }

@@ -90,7 +90,7 @@ object Launch {
         reads = listOf(TILES), allowed = "the last fix and the saved view are preferences, loaded with settings",
     )
     val MAPVIEW = Stage(
-        "mapview", listOf("MapView", "mapView.onCreate", "map.attach"), needs = listOf("maplibre", "camera"), work = setOf(NATIVE, DISK),
+        "mapview", listOf("MapView", "mapView.onCreate", "map.attach", "map.attach: *"), needs = listOf("maplibre", "camera"), work = setOf(NATIVE, DISK),
         gate = FIRST_FRAME, allowed = "MapLibre's view reads its resources, and the map's attach the trail-disagreement store (StrictMode, T266)",
     )
     val ACTIVITY = Stage(
