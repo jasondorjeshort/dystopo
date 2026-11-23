@@ -136,6 +136,7 @@ No Gradle; launched after T340 is merged (the owner's Answer: "once T332's repor
 **Interacts with:** T341, through the setting's name and meaning.
 **Done when:** the proposal, the critic's numbered objections and the revision are on the branch; every reader named in the wave paragraph's code read is in its table with what it does today; the build tasks are listed with disjoint Owns.
 **Checks:** none.
+**Status: merged.** Verifier MERGE on a93e6a16 (merged as 9dadee41), docs only; ADR 0066 written at the merge. Follow-ups: the proposal's seven build tasks for a later wave (their file lists become Owns lines on the board); T341's setting is `onlineDetail`, "More detail from online", per device in Settings > Sources, default on, gating fetches only; `verify-task.ps1 -Skip boot,tour` alone asks for an emulator's arguments (stop,guard must be skipped too).
 
 ## Owner actions pending (as of 2026-10-27)
 
