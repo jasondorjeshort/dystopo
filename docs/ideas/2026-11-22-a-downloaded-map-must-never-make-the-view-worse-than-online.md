@@ -62,3 +62,5 @@ the network is on and Mobile data is allowed, with a setting to hold it to the p
 download must never lower the view.
 
 Answer: a setting, defaulting ON: the finer online tiles are fetched where the network can give more than the pack; a user who wants to save network data turns it off and accepts the lower detail (the owner, 2026-11-22, by multiple choice at triage).
+
+2026-11-23 (T350): proposal `docs/design/proposals/0066-one-lookup-for-what-the-phone-holds-here.md` is under review; it confirms the fault in the code (a map's DEM answers every zoom below its first, so the online source is never asked inside it) and recommends the online source ahead of a map only where the map would synthesise or overzoom, under the setting `onlineDetail` ("More detail from online", default on).
