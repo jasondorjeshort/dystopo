@@ -89,7 +89,9 @@ class WhyRoutes(private val app: DystopoApp) {
             }
             answer.serves == Holdings.Source.NETWORK -> when (last) {
                 OnlineService.ONLINE, OnlineService.CACHED -> "none"
-                OnlineTiles.WIDER -> if (ov != null && vz > ov.maxZoom && member?.allowed != true) "above-overview-top" else "wider-zoom"
+                OnlineTiles.WIDER -> o?.vectorWiderFrom("$vz/$vx/$vy.pbf").let { from ->
+                    if (ov != null && from != null && from <= ov.maxZoom && packs.worldAnswers(from, vx shr (vz - from), vy shr (vz - from))) "above-overview-top" else "wider-zoom"
+                }
                 else -> if (floorMap.isNotEmpty()) "below-maps-floor" else if (member?.allowed == false) "failed-fetch" else "empty-tile"
             }
             else -> "no-source"
@@ -102,7 +104,7 @@ class WhyRoutes(private val app: DystopoApp) {
             "overview" to linkedMapOf("zooms" to ov?.let { listOf(it.minZoom, it.maxZoom) }, "holdsVectorTile" to overviewHolds),
             "online" to if (o == null) linkedMapOf("set" to false) else linkedMapOf(
                 "set" to true, "server" to o.fetcher.server, "state" to o.fetcher.state,
-                "vector" to answer?.json(), "lastVector" to last, "elevation" to demSource, "elevationFromZoom" to o.demMinZoom,
+                "vector" to answer?.json(), "lastVector" to last, "lastVectorFromZoom" to o.vectorWiderFrom("$vz/$vx/$vy.pbf"), "elevation" to demSource, "elevationFromZoom" to o.demMinZoom,
             ) + o.overviewJson(),
             "style" to styleZooms(),
             "layers" to layers(zoom),

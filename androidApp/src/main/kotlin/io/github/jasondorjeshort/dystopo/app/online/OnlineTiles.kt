@@ -92,11 +92,32 @@ class OnlineTiles(
         val direct = fetcher.server == DirectSources.SERVER
         val stored = if (direct) OSM_MAX_ZOOM else (service.info?.get("osmMaxZoom") as? Number)?.toInt() ?: OSM_MAX_ZOOM
         val reason = when {
-            fetcher.state == "offline" -> "offline"
+            fetcher.state == "offline" || !hasNetwork() -> "offline"
             direct -> service.direct.notice()
             else -> null
         }
         return Holdings.Online(stored, reason == null, OnlineDetail.on, reason)
+    }
+
+    @Volatile private var networkAt = Long.MIN_VALUE / 2
+    @Volatile private var network = true
+
+    /**
+     * T341: the phone has an active network (read at most once a second). The fetcher's state reads `unknown` for a while after
+     * a start in airplane mode, and nothing is fetched behind the overview then. Not `OnlineUi.hasNetwork`, which reads true in
+     * airplane mode on the API 35 emulator (`terrain/TerrainRead.kt` reads it the same way).
+     */
+    private fun hasNetwork(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - networkAt < 1_000) return network
+        network = try {
+            val cm = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
+        } catch (e: RuntimeException) {
+            true // no app (a test): let the fetcher decide
+        }
+        networkAt = now
+        return network
     }
 
     /** T341: the world overview's stored zooms, or null when the phone has none. */
@@ -164,7 +185,7 @@ class OnlineTiles(
         }
     }
 
-    /** T341: the source (`online`, `cached`) of the last vector tiles the network path answered, newest kept ([VECTOR_KEEP]). */
+    /** T341: the source (`online`, `cached`, `wider:<zoom>`) of the last vector tiles the network path answered, newest kept ([VECTOR_KEEP]). */
     private val vectorSources = object : LinkedHashMap<String, String>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > VECTOR_KEEP
     }
@@ -172,7 +193,10 @@ class OnlineTiles(
     private fun noteVector(path: String, source: String) = synchronized(vectorSources) { vectorSources[path] = source }
 
     /** T341: how the network path answered vector tile [path] (`z/x/y.pbf`) last, or null. */
-    fun vectorSource(path: String): String? = synchronized(vectorSources) { vectorSources[path] }
+    fun vectorSource(path: String): String? = synchronized(vectorSources) { vectorSources[path] }?.substringBefore(':')
+
+    /** T341: the zoom vector tile [path] was last cut from ([WiderZoom]), or null. */
+    fun vectorWiderFrom(path: String): Int? = synchronized(vectorSources) { vectorSources[path] }?.substringAfter(':', "")?.toIntOrNull()
 
     /** T341: `GET /why`'s `overviewOnline`: the setting, the member and the counters. */
     fun overviewJson(): Map<String, Any?> {
@@ -261,7 +285,7 @@ class OnlineTiles(
         // T254: not on the phone and not fetched: cut from the nearest ancestor the phone holds; 404 only when none is.
         return widerOsm.vector(z, x, y)?.let { c ->
             service.widerServed("osm", c.fromZoom)
-            noteVector(path, WIDER) // T341
+            noteVector(path, "$WIDER:${c.fromZoom}") // T341: and the zoom it was cut from
             TileResult(200, "application/x-protobuf", c.bytes, widerZoom = c.fromZoom)
         } ?: TileResult.notFound()
     }
