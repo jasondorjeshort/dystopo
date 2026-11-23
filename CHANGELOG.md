@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-23
 
+- T340: The Horizon view and the Panorama read terrain one way: the finest map, a coarser one where it ends, then the online source
 - T346: A zoom label by the scale bar, as an option
 - T345: The tools' tests run with check
 - T339: One fixture of two overlapping maps for the emulator, and a sweep part that reads what the phone says on it
