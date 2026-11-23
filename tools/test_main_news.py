@@ -3,7 +3,8 @@ and two clones in a temporary folder; no network, no hooks). A commit pushed fro
 its short SHA, subject, the session id of its Claude-Session: trailer and the BOARD, HANDOFF or IDEAS tag (a merge read
 against its first parent); the count line; --exit-code's 3 when anything is listed and 0 when nothing is;
 push-verified.sh on main stopping with exit 3 and pushing nothing, and on a task branch pushing and printing VERIFIED
-as before, with no main-news run. Needs Git Bash on Windows (found beside git) or bash elsewhere; skipped without one.
+as before, with no main-news run; a hold/main branch on the remote refusing a push of main with exit 4 and its
+message, not a task branch, until it is deleted. Needs Git Bash on Windows (found beside git) or bash elsewhere; skipped without one.
 
     python -I tools/test_main_news.py
 """
@@ -144,6 +145,32 @@ class MainNews(unittest.TestCase):
         code, out, err = self.bash(self.b, PUSH)
         self.assertEqual(code, 0, out + err)
         self.assertIn("main-news: 0 new", out)
+        self.assertIn("VERIFIED: origin/main equals HEAD", out)
+
+    @unittest.skipIf(BASH is None, "no bash")
+    def test_a_hold_on_main_refuses_the_push_until_it_is_deleted(self):
+        # The coordinator's recipe (the wave skill): an empty commit on main naming who, why and the lift, pushed as hold/main.
+        hold = self.git(self.a, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m",
+                        "Hold: closing sweep of wave 9 runs in the other clone\n\nLift: the coordinator deletes hold/main at its end.")
+        self.git(self.a, "push", "-q", "origin", f"{hold}:refs/heads/hold/main")
+        start = self.git(self.b, "rev-parse", "HEAD")
+        self.commit(self.b, "docs/notes.md", "mine", "Mine")
+        code, out, err = self.bash(self.b, PUSH)
+        self.assertEqual(code, 4, out + err)
+        self.assertIn("origin/hold/main exists", err)
+        self.assertIn("Hold: closing sweep of wave 9 runs in the other clone", err)
+        self.assertIn("Lift: the coordinator deletes hold/main at its end.", err)
+        self.assertNotIn("VERIFIED", out)
+        self.assertEqual(self.git(self.b, "ls-remote", "origin", "refs/heads/main").split()[0], start)
+        # A task branch is not held.
+        self.git(self.b, "checkout", "-q", "-b", "task/T2")
+        code, out, err = self.bash(self.b, PUSH)
+        self.assertEqual(code, 0, out + err)
+        self.git(self.b, "checkout", "-q", "main")
+        # Deleted: the push goes through.
+        self.git(self.a, "push", "-q", "origin", "--delete", "hold/main")
+        code, out, err = self.bash(self.b, PUSH)
+        self.assertEqual(code, 0, out + err)
         self.assertIn("VERIFIED: origin/main equals HEAD", out)
 
 

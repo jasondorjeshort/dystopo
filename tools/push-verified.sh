@@ -3,7 +3,8 @@
 # A chained command's echo ("pushed") is not evidence; this script's VERIFIED line is.
 # Usage: bash tools/push-verified.sh [remote] [branch]   (defaults: origin, current branch)
 # Exit 0 only when origin/<branch> equals HEAD after the fetch; 1 otherwise, with both SHAs printed;
-# 3 on main when origin/main holds commits the local main lacks (tools/main-news.sh lists them; nothing is pushed).
+# 3 on main when origin/main holds commits the local main lacks (tools/main-news.sh lists them; nothing is pushed);
+# 4 on main while origin/hold/main exists (the hold's message printed; nothing is pushed).
 set -u
 echo "repo   $(git rev-parse --show-toplevel)"
 remote="${1:-origin}"
@@ -11,7 +12,18 @@ branch="${2:-$(git rev-parse --abbrev-ref HEAD)}"
 if [ "$branch" = "HEAD" ]; then echo "push-verified: detached HEAD; name the branch" >&2; exit 2; fi
 # On main, first list what another session pushed (tools/main-news.sh); any commit there stops the push with exit 3:
 # read those commits, merge them, and run this again.
+# A hold on main (a branch hold/main on the remote, set by the coordinator around a sweep or a release) refuses the
+# push with exit 4, naming the hold's commit message: who set it, why, and how it is lifted.
 if [ "$branch" = "main" ]; then
+  hold_sha=$(git ls-remote "$remote" refs/heads/hold/main | cut -f1)
+  if [ -n "$hold_sha" ]; then
+    git fetch -q "$remote" refs/heads/hold/main 2>/dev/null
+    hold_msg=$(git log -1 --format=%B "$hold_sha" 2>/dev/null | tr -d '\r' | grep -v '^Claude-Session:' | sed '/^$/d')
+    echo "push-verified: $remote/hold/main exists ($hold_sha); main is held:" >&2
+    echo "${hold_msg:-(no message)}" | sed 's/^/  /' >&2
+    echo "push-verified: nothing pushed; the setter clears the hold (git push $remote --delete hold/main) when done" >&2
+    exit 4
+  fi
   bash "$(dirname "$0")/main-news.sh" --exit-code main "$remote"
   news_exit=$?
   if [ "$news_exit" = 3 ]; then

@@ -11,6 +11,10 @@ needed, a Sonnet-class agent when a part fails or a sheet must be viewed.
 
 ## The command
 
+Before the closing sweep starts, the coordinator sets the hold on `main` and clears it once the summary is
+read, after any counted rerun, or keeps it through the release that follows (`wave` skill, A hold on main;
+`tools/push-verified.sh` refuses a push of `main` while it stands). A nightly or a task's sweep sets none.
+
 After the last merge of a wave: one command, `powershell -ExecutionPolicy Bypass -File tools\sweep.ps1`
 (T71; `-NoDevice` without an emulator, `-Skip`/`-Only <parts>`; `-Out` a folder relative to the checkout,
 `out\sweep-<date>` by default, T154: an absolute path or one outside the checkout is refused).

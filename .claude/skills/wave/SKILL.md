@@ -149,6 +149,19 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    `bash tools/push-verified.sh`; report the VERIFIED line.
 6. Rewrite the handoff when Now or Next changed (`handoff` skill).
 
+## A hold on main
+
+While a closing sweep or a release runs on `main` (a sweep reads the commit it started from; a release tags
+it), no other clone or session may push `main`: the coordinator sets a hold that `tools/push-verified.sh`
+sees and refuses with exit 4, printing the hold's message. Only the coordinator (the main session) sets and
+clears it; agents push no `hold/*` (`policy.json` unchanged). Set it, from the main checkout, in two calls:
+`git commit-tree HEAD^{tree} -p HEAD -m "Hold: <sweep or release, the wave or tag>, set by <session id>; lift:
+<what ends it>"`, then `git push origin <the printed sha>:refs/heads/hold/main`. Clear it when the sweep's
+summary is read (red or green, after any counted rerun) or the release is published or abandoned:
+`git push origin --delete hold/main`. A hold whose setter is gone is the owner's to delete. A push refused
+by a hold you did not set waits for it; the message says who and why. The hold refuses its setter's own
+pushes too: clear it, push, set it again on the new commit.
+
 ## Privacy at the coordinator
 
 Log entries and task reports describe personal areas generically; the hooks catch names and coordinates,

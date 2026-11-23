@@ -32,7 +32,9 @@ What holds on the development machine for every agent. The rules these facts sup
   VERIFIED; a task branch's merge is proved the same way, ADR 0043); `gh release view` for a release.
   On `main` it first runs `bash tools/main-news.sh`, which fetches and lists every commit on `origin/main`
   the local `main` lacks (short SHA, subject, session id, `BOARD`, `HANDOFF` or `IDEAS`); any listed commit
-  stops the push with exit 3 and nothing is pushed: read them, merge, push again.
+  stops the push with exit 3 and nothing is pushed: read them, merge, push again. While a branch
+  `hold/main` exists on origin (the coordinator's hold around a closing sweep or a release, `wave` skill),
+  a push of `main` stops with exit 4 and prints the hold's message.
 - The git hooks (`tools/git-hooks`, `git config core.hooksPath tools/git-hooks`, once per clone) run in
   worktrees too.
 
