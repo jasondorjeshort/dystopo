@@ -10,6 +10,8 @@ the network off and then on, what the phone answers:
 - the Panorama from there (`POST /horizon/switch?to=panorama`): `GET /panorama` at once and with `?wait=`;
 and writes one JSON table of eight rows (`--out`, default out/two-maps/table.json) with every answer in full beside it
 (`<out folder>/raw/<row>-<read>.json`). Each row's `summary` is the few fields the family's reports turn on.
+T352 adds `t352`, three rows inside both maps with the network off after the eight: each map as the primary in turn,
+and a map activated while the Panorama is open (`t352_rows`, whose docstring says what it pins).
 
 It fails only on a row it could not read (a route that did not answer, or answered an error): the rows are the reports'
 evidence, not a verdict. Each task that fixes a row (T340 to T343) adds its own assertion in a block at the end of this file.
@@ -139,12 +141,17 @@ def activate(dev, name, timeout_s=60.0):
     """T352: makes `name` the primary map (`POST /packs/activate`) and waits until GET /packs names it with both maps open."""
     t0 = time.time()
     st, body, err = dev.call(f"/packs/activate?name={name}", "POST", timeout=120)
+    both = {m["name"] for m in fx.MAPS}
+
+    def done(maps):  # the world overview is in use too
+        return maps["active"] == name and both <= set(maps["inUse"])
+
     maps = fx.read_maps(dev)
-    while time.time() - t0 < timeout_s and not (maps["active"] == name and len(maps["inUse"]) == len(fx.MAPS)):
+    while time.time() - t0 < timeout_s and not done(maps):
         time.sleep(1.0)
         maps = fx.read_maps(dev)
     return {"name": name, "status": st, "error": err, "active": maps["active"], "inUse": maps["inUse"],
-            "ok": not err and maps["active"] == name and len(maps["inUse"]) == len(fx.MAPS), "seconds": round(time.time() - t0, 1)}
+            "ok": not err and done(maps), "seconds": round(time.time() - t0, 1)}
 
 
 def t352_rows(dev, wait_ms, raw_dir):
