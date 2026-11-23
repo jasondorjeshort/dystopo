@@ -15,9 +15,8 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 
 ## Next
 
-1. Reconcile wave 47's board with the triage's Answer: lines before launching more of it (sent to the main session as a message): T349 takes `core.longpaths` plus one cleanup script and may fold in the coordinator's `origin/hold/main`; T344 and T351 meet the fourth view's new Use: line; the phone's sweep timing is all three parts, at most once a week. `git log --oneline --grep "^Triage"` lists the blocks.
-2. Run wave 47 by the order in its paragraph (two slots, each task after the one before it merges; T350 after T340, T341 after T343 and T350's decision). Fetch `main` before each board edit: the side session pushes there.
-3. A host check when the PC is quiet (optional, a Sonnet agent): `startup` alone on v0.1.41-alpha's tag; 80 again says the slower launch was a state of the machine.
+1. Run wave 47 by the order in its paragraph (two slots, each task after the one before it merges; T350 after T340, T341 after T343 and T350's decision); the board was reconciled with the triage's Answer: lines on 2026-11-23 (T349 took the hold on `main` and the Gradle-stop line; T344 notes the viewshed's list). Fetch `main` before each board edit: the side session pushes there.
+2. A host check when the PC is quiet (optional, a Sonnet agent): `startup` alone on v0.1.41-alpha's tag; 80 again says the slower launch was a state of the machine.
 
 ## Waiting on user
 
