@@ -129,13 +129,13 @@ assert b["stages"] == {"prepare": {"ceilingMs": 64, "medianMs": [40, 48]}, "trac
 assert b["factor"] == 1.25 and b["floorMs"] == 16 and b["set"] == {"date": "2026-11-13", "from": ["a/startup.json", "b/startup.json"]} and b["aliases"] == {}
 assert m.make_budget([r1], ["a"], "d", old={"aliases": {"old": "new"}, "rule": "R"})["aliases"] == {"old": "new"}
 # T306: --set-budget never lowers a ceiling: a higher old one is kept (with the new medians, `kept` its set date), a lower
-# one gives way; a `raised` note stays.
+# one gives way; a `raised` note stays, and T347's `lowered` note.
 was = {"set": {"date": "2026-11-13"}, "frames": {"firstFrameMs": {"ceilingMs": 4000, "medianMs": [3200]}},
-       "stages": {"prepare": {"ceilingMs": 90, "medianMs": [70], "raised": "why"}, "tracking": {"ceilingMs": 200, "medianMs": [150], "raised": "why"},
+       "stages": {"prepare": {"ceilingMs": 90, "medianMs": [70], "raised": "why"}, "tracking": {"ceilingMs": 200, "medianMs": [150], "raised": "why", "lowered": "less"},
                   "style": {"ceilingMs": 1200, "medianMs": [900], "kept": "2026-10-01"}}}
 nb = m.make_budget([r1, r2], ["a", "b"], "d", old=was)
 assert nb["stages"]["prepare"] == {"ceilingMs": 90, "medianMs": [40, 48], "raised": "why", "kept": "2026-11-13"}, nb["stages"]
-assert nb["stages"]["tracking"] == {"ceilingMs": 375, "medianMs": [300, None], "raised": "why"}, nb["stages"]
+assert nb["stages"]["tracking"] == {"ceilingMs": 375, "medianMs": [300, None], "lowered": "less", "raised": "why"}, nb["stages"]
 assert nb["stages"]["style"] == {"ceilingMs": 1200, "medianMs": [None, 800], "kept": "2026-10-01"}, nb["stages"]
 assert nb["frames"]["firstFrameMs"] == {"ceilingMs": 4625, "medianMs": [3600, 3700]}, nb["frames"]
 assert json.loads(m.format_budget(b)) == b, "the file's text reads back as the budget"
