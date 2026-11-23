@@ -17,3 +17,13 @@ Anchors: `shared/src/commonMain/kotlin/io/github/jasondorjeshort/dystopo/horizon
 - Depends on the open Question of `docs/ideas/2026-11-21-which-way-is-it-the-panorama-facing-a-selected-place.md` (a place selected on the map as the Panorama's target at your own location).
 - Whether peaks "just out of sight" in the Peaks list get the same ghost mark.
 - A hidden place below the level line needs the ground below the skyline to make sense of it.
+
+Plan: after "Which way is it?" (the answered Question of `2026-11-21-which-way-is-it-the-panorama-facing-a-selected-place.md`;
+not built at triage, `PanoramaTarget.kt` has no place kind) lands, one pass. When the Panorama's target is a selected
+place, `SightLine.of` (or the primitive's `between`) runs for it; a hidden place gets a hollow, faint mark at its true
+bearing and apparent angle in `PanoramaScene.kt`, drawn under the layers in `PanoramaLayers.kt` so the hiding ridge
+covers it, labelled with the sight's text ("Hidden by a ridge ..."); a place in view keeps the ordinary mark.
+`devtool panorama --target-place <lat,lon>` draws it; `GET /panorama` reports the target's sight. Verify: unit test on
+the scene's mark (hollow, under the layer); from Paradise a place behind Mazama Ridge drawn as a ghost and Mount Rainier
+as a plain mark, PNG and emulator screenshots viewed; strings in the report (ADR 0031). Out of scope: ghost marks for
+hidden peaks in the Peaks list; the ground below the skyline.
