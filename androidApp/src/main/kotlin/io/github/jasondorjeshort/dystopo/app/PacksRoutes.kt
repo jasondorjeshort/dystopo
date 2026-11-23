@@ -6,7 +6,7 @@ import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 /**
  * Debug routes for packs, the files behind the offline maps (registered with one line in [Routes]):
  * - `GET /packs`: every pack on the device (name, bounds, zooms, bytes, attribution, per-archive
- *   header facts) and which one is active.
+ *   header facts) and which one is active; T342: each pack's `off` ("Use on this phone" off: left closed, `POST /areas/rows/off`).
  * - `POST /packs/activate?name=`: switch packs; the camera moves to the pack's bounds.
  * - `POST /packs/download?url=[&name=][&activate=true]`: start (or resume) downloading a pack pair from
  *   a static host; `url` names `<name>-dem.pmtiles`, `<name>-outdoors.pmtiles` or the `<name>` prefix.
