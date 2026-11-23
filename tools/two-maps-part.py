@@ -10,6 +10,8 @@ the network off and then on, what the phone answers:
 - the Panorama from there (`POST /horizon/switch?to=panorama`): `GET /panorama` at once and with `?wait=`;
 and writes one JSON table of eight rows (`--out`, default out/two-maps/table.json) with every answer in full beside it
 (`<out folder>/raw/<row>-<read>.json`). Each row's `summary` is the few fields the family's reports turn on.
+T352 adds `t352`, three rows inside both maps with the network off after the eight: each map as the primary in turn,
+and a map activated while the Panorama is open (`t352_rows`, whose docstring says what it pins).
 
 It fails only on a row it could not read (a route that did not answer, or answered an error): the rows are the reports'
 evidence, not a verdict. Each task that fixes a row (T340 to T343) adds its own assertion in a block at the end of this file.
@@ -66,7 +68,9 @@ def summarize(reads):
                 "highestDeg": get(x, "horizon", "highestDeg"), "bearingsWithoutData": get(x, "horizon", "bearingsWithoutData"),
                 "reason": get(x, "horizonReason"), "peaksListed": len(get(x, "peaks", "visible") or []) if isinstance(get(x, "peaks", "visible"), list) else get(x, "peaks", "visible"),
                 "placeLine": get(x, "placeLine", "text"),
-                "terrain": get(x, "horizon", "terrain", "cells")}  # T340: the merged read's cells by source
+                "terrain": get(x, "horizon", "terrain", "cells"),  # T340: the merged read's cells by source
+                "peakCandidates": get(x, "peaks", "candidates"), "peakTiles": get(x, "peaks", "tilesRead"),  # T352: the peak read
+                "peakMaps": get(x, "peaks", "maps"), "peaksReason": get(x, "peaks", "reason")}
 
     def panorama(x):
         work = get(x, "work") or {}
@@ -75,7 +79,8 @@ def summarize(reads):
                 "sweeps": len(work.get("sweeps") or []), "stepDrawn": get(x, "stepDrawn"), "candidates": get(x, "candidates"),
                 "names": len(get(x, "names") or []), "firstSkylineMs": get(x, "firstSkylineMs"), "placeLine": get(x, "place", "placeLine"),
                 "source": get(work, "terrain", "text"), "terrain": get(work, "terrain", "cells"),  # T340: what answered, as the Horizon's `source`
-                "peaksLine": get(x, "peaksLine"), "waiting": get(x, "waiting")}
+                "peaksLine": get(x, "peaksLine"), "waiting": get(x, "waiting"),
+                "peakTiles": get(work, "peaks", "tiles"), "peakMaps": get(work, "peaks", "maps")}  # T352
 
     return {
         "map": {"noPack": get(fr, "noPack"), "mapMessage": get(fr, "mapMessage"), "viewInside": get(fr, "viewInside"),
@@ -93,8 +98,9 @@ def summarize(reads):
     }
 
 
-def read_row(dev, place, net, wait_ms, raw_dir, settle_s=3.0):
-    """One row: the reads at `place` with the network `net`; `unread` lists each read that did not answer."""
+def read_row(dev, place, net, wait_ms, raw_dir, settle_s=3.0, tag=None):
+    """One row: the reads at `place` with the network `net`; `unread` lists each read that did not answer. `tag` (T352's
+    rows) names the raw files in place of the place's id."""
     row = {"place": place["id"], "lat": place["lat"], "lon": place["lon"], "inside": place["inside"], "network": net}
     reads, unread, t0 = {}, [], time.time()
     lat, lon = place["lat"], place["lon"]
@@ -106,7 +112,7 @@ def read_row(dev, place, net, wait_ms, raw_dir, settle_s=3.0):
         if keep:
             reads[name] = body
             if raw_dir:
-                with open(os.path.join(raw_dir, f"{net}-{place['id']}-{name}.json"), "w", encoding="utf-8", newline="\n") as fh:
+                with open(os.path.join(raw_dir, f"{net}-{tag or place['id']}-{name}.json"), "w", encoding="utf-8", newline="\n") as fh:
                     json.dump({"path": path, "status": st, "error": err, "body": body}, fh, indent=1)
         return body
 
@@ -130,6 +136,95 @@ def read_row(dev, place, net, wait_ms, raw_dir, settle_s=3.0):
     row["ok"] = not unread
     row["seconds"] = round(time.time() - t0, 1)
     return row
+
+
+def activate(dev, name, timeout_s=60.0):
+    """T352: makes `name` the primary map (`POST /packs/activate`) and waits until GET /packs names it with both maps open."""
+    t0 = time.time()
+    st, body, err = dev.call(f"/packs/activate?name={name}", "POST", timeout=120)
+    both = {m["name"] for m in fx.MAPS}
+
+    def done(maps):  # the world overview is in use too
+        return maps["active"] == name and both <= set(maps["inUse"])
+
+    maps = fx.read_maps(dev)
+    while time.time() - t0 < timeout_s and not done(maps):
+        time.sleep(1.0)
+        maps = fx.read_maps(dev)
+    return {"name": name, "status": st, "error": err, "active": maps["active"], "inUse": maps["inUse"],
+            "ok": not err and done(maps), "seconds": round(time.time() - t0, 1)}
+
+
+def t352_rows(dev, wait_ms, raw_dir):
+    """T352: the two rows the owner's report asks for, inside both maps: each map as the primary in turn (a row read in full
+    after `POST /packs/activate`), and a map activated while the Panorama is open (the Panorama read before and after, the
+    Horizon after, and logcat's `Dystopo` lines in between for `ClosedChannelException` and the failed reads).
+
+    State it pins: the network off, with the online tile cache and the direct sources' block cache emptied (the app stopped
+    for the second): the block cache answers offline and `/online/cache/clear` leaves it, so an "offline" row could name the
+    online source; each row sets the primary itself; the stored primary (`files/packs/active`) is put back as found at the
+    end. Nothing here reads the clock but the waits."""
+    place = fx.PLACES[0]  # inside both maps
+    out = {"place": place["id"], "network": fx.network(dev, False), "rows": []}
+    _, active0 = dev.runas("cat files/packs/active 2>/dev/null; true")
+    out["storedPrimary"] = active0.strip() or None
+    dev.adb("shell", "am", "force-stop", fx.PACKAGE, timeout=30)
+    dev.runas("rm -rf cache/sources; true")
+    dev.restart()
+    st, cleared, err = dev.call("/online/cache/clear", "POST", timeout=120)
+    out["onlineCacheCleared"] = not err
+    try:
+        for m in fx.MAPS:
+            act = activate(dev, m["name"])
+            row = read_row(dev, place, "off", wait_ms, raw_dir, tag=f"primary-{m['name']}")
+            row.update(kind="primary", primary=m["name"], activate=act)
+            if not act["ok"]:
+                row["unread"].append({"read": "activate", "error": act})
+                row["ok"] = False
+            out["rows"].append(row)
+        # A map activated while the Panorama is open: the map that is not the primary now.
+        t0 = time.time()
+        last = out["rows"][-1].get("primary") if out["rows"] else None
+        other = fx.MAPS[0]["name"] if last != fx.MAPS[0]["name"] else fx.MAPS[1]["name"]
+        row = {"kind": "activate-open", "place": place["id"], "network": "off", "activated": other, "unread": []}
+        reads = {}
+
+        def do(name, path, method="GET", timeout=60):
+            st, body, err = dev.call(path, method, timeout=timeout)
+            if err or body is None:
+                row["unread"].append({"read": name, "path": path.split("?")[0], "status": st, "error": err or "no JSON body"})
+            reads[name] = body
+            if raw_dir:
+                with open(os.path.join(raw_dir, f"off-activate-open-{name}.json"), "w", encoding="utf-8", newline="\n") as fh:
+                    json.dump({"path": path, "status": st, "error": err, "body": body}, fh, indent=1)
+            return body
+
+        do("camera", f"/camera?lat={place['lat']}&lon={place['lon']}&zoom={ZOOM}&bearing=0", "POST")
+        time.sleep(3.0)
+        do("horizonOpen", f"/horizon/ui?lat={place['lat']}&lon={place['lon']}", "POST")
+        do("panoramaOpen", "/horizon/switch?to=panorama", "POST")
+        do("panoramaBefore", f"/panorama?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+        dev.adb("logcat", "-c", timeout=30)
+        row["activate"] = activate(dev, other)
+        time.sleep(2.0)  # the open Panorama sees the new map set (its place goes stale) and reads again
+        do("panorama", f"/panorama?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+        do("horizon", f"/horizon?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+        _, log = dev.adb("logcat", "-d", "-s", "Dystopo", timeout=60)
+        do("mapBack", "/horizon/switch?to=map", "POST")
+        lines = log.splitlines()
+        row["logcat"] = {"lines": len(lines), "closedChannel": sum("ClosedChannelException" in ln for ln in lines),
+                         "failed": [ln.strip()[-200:] for ln in lines if " failed" in ln][:10]}
+        sm = summarize({"panoramaFirst": reads.get("panoramaBefore"), "panorama": reads.get("panorama"), "horizon": reads.get("horizon")})
+        row["summary"] = {k: sm[k] for k in ("horizon", "panoramaFirst", "panorama")}
+        row["ok"] = not row["unread"] and row["activate"]["ok"]
+        row["seconds"] = round(time.time() - t0, 1)
+        out["rows"].append(row)
+    finally:
+        if out["storedPrimary"]:
+            dev.runas(f"echo {out['storedPrimary']} > files/packs/active; true")
+        else:
+            dev.runas("rm -f files/packs/active; true")
+    return out
 
 
 def settings(dev):
@@ -172,6 +267,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
             dev.restart()
             for place in fx.PLACES:
                 table["rows"].append(read_row(dev, place, net, wait_ms, raw_dir))
+        table["t352"] = t352_rows(dev, wait_ms, raw_dir)
         table["t342"] = t342_collect(dev, wait_ms, raw_dir)  # T342: the rows with a map switched off (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
@@ -229,6 +325,43 @@ def assertions(table):
         if r.get("place") == "outside" and r.get("network") == "on" and not (p.get("sweeps") and "online source" in (p.get("source") or "")):
             out.append({"what": "T340:outside-online", "row": row, "panorama": p.get("source"), "reason": p.get("reason")})
     # end T340
+    # T352: peaks in every row inside a map and the Panorama a skyline there; the peaks the same whichever map is primary;
+    # a map activated with the Panorama open leaves it a skyline and peaks, with no ClosedChannelException in logcat.
+    rows = table.get("rows") or []
+    for r in rows:
+        sm = r.get("summary")
+        if not isinstance(sm, dict) or not r.get("inside"):
+            continue
+        row = f"{r.get('network')}/{r.get('place')}"
+        h, p = sm.get("horizon") or {}, sm.get("panorama") or {}
+        if not h.get("peakCandidates"):
+            out.append({"what": "T352:horizon-peaks", "row": row, "reason": h.get("peaksReason"), "tiles": h.get("peakTiles")})
+        if not p.get("candidates") or not p.get("sweeps"):
+            out.append({"what": "T352:panorama-peaks", "row": row, "candidates": p.get("candidates"), "sweeps": p.get("sweeps"), "reason": p.get("reason")})
+    t = table.get("t352")
+    if t is None:
+        if (table.get("install") or {}).get("ok") and not table.get("error"):  # a run that installed the fixture and did not stop early
+            out.append({"what": "T352:rows-missing"})
+    else:
+        extra = t.get("rows") or []
+        if [x.get("kind") for x in extra] != ["primary"] * len(fx.MAPS) + ["activate-open"]:
+            out.append({"what": "T352:rows", "kinds": [x.get("kind") for x in extra]})
+        for x in extra:
+            row = f"t352/{x.get('kind')}/{x.get('primary') or x.get('activated')}"
+            if not x.get("ok"):
+                out.append({"what": "T352:unread", "row": row, "unread": x.get("unread")})
+            sm = x.get("summary") or {}
+            h, p = sm.get("horizon") or {}, sm.get("panorama") or {}
+            if not h.get("peakCandidates"):
+                out.append({"what": "T352:horizon-peaks", "row": row, "reason": h.get("peaksReason")})
+            if not p.get("candidates") or not p.get("sweeps"):
+                out.append({"what": "T352:panorama-peaks", "row": row, "candidates": p.get("candidates"), "sweeps": p.get("sweeps")})
+            if x.get("kind") == "activate-open" and (x.get("logcat") or {}).get("closedChannel"):
+                out.append({"what": "T352:closed-channel", "row": row, "logcat": x.get("logcat")})
+        prim = [((x.get("summary") or {}).get("horizon") or {}) for x in extra if x.get("kind") == "primary"]
+        if len({(h.get("peakCandidates"), h.get("source")) for h in prim}) > 1:
+            out.append({"what": "T352:primary-matters", "rows": [[h.get("peakCandidates"), h.get("source")] for h in prim]})
+    # end T352
     # T342
     out += t342_assertions(table)
     # end T342

@@ -81,3 +81,13 @@ asks), H5 and H6 remain, and the owner's earlier cold restarts also did not clea
 is the debug build's `GET /packs`, `GET /firstrun` `mapHolds.regions` and `GET /panorama` `reason` at the moment of
 the blank, or one `adb logcat -s Dystopo DystopoAssets` capture. (The other `skyRange` setting is the flights'
 range, not this one.)
+
+2026-11-23 (T340 and T352): built. T340: the Horizon view and the Panorama read terrain one way (the open maps cell by
+cell, the deepest first, a coarser one where it ends, then the online source), keep no "none" past a map opening or
+closing or the network returning, and read under a lease on the tile service. T352: the peak read asks the maps deepest
+first and steps past a tile with no peak names, under the same lease, and the Peaks line names the maps that gave them;
+`PackSet.open` reports each map it leaves closed with its reason in `GET /packs` `notOpened` and one logcat line
+(`PackSet.open: map <name> not opened: ...`); the two-maps fixture reads peaks in every row inside a map, each map as
+the primary, and an activate with the Panorama open. Left for the owner's capture on the phone, at the moment of the
+blank on the debug build: `GET /packs` (`notOpened`, `inUse`), `GET /firstrun` `mapHolds.regions`, `GET /horizon`
+`peaks` (`tilesRead`, `maps`) and `GET /panorama`, and one `adb logcat -s Dystopo DystopoAssets`.

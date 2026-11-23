@@ -59,9 +59,9 @@ fun peaksLine(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, units: ContourUn
     h == null -> HorizonText.PEAKS_WORKING
     h.profile == null -> HorizonText.PEAKS_NO_TERRAIN
     peaks == null -> HorizonText.PEAKS_WORKING
-    peaks.reason == HorizonText.PEAKS_NONE -> HorizonText.peaksNone(units, rangeM)
+    peaks.reason == HorizonText.PEAKS_NONE -> listOfNotNull(HorizonText.peaksNone(units, rangeM), HorizonData.namesFrom(peaks.maps)).joinToString(" ")
     peaks.reason != null -> peaks.reason
-    else -> HorizonText.peaksCount(peaks.candidates.size, units, rangeM)
+    else -> listOfNotNull(HorizonText.peaksCount(peaks.candidates.size, units, rangeM), HorizonData.namesFrom(peaks.maps)).joinToString(" ") // T352
 }
 
 /**

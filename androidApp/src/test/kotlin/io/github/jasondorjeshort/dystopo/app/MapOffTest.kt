@@ -117,4 +117,21 @@ class MapOffTest {
         val job = OfflineMapList.Job("new", "running", "downloading")
         assertNull(OfflineMapList.rows(OfflineMapList.Inputs(jobs = listOf(job))).single().off)
     }
+
+    @Test
+    fun anOffMapIsNeverAMapThatDidNotOpen() {
+        // A truncated archive is one T352's notOpened reports; switched off it is not opened at all, so not reported.
+        val root = rootWithTwoMaps()
+        val roots = listOf(root)
+        val fine = File(root, "${PackSet.PACKS_DIR}/fine-outdoors.pmtiles")
+        fine.writeBytes(fine.readBytes().copyOf((fine.length() / 2).toInt()))
+        PackSet.open(roots).let { p -> try { assertEquals(listOf("fine"), p.notOpened.map { it.pack }) } finally { p.close() } }
+        PackSet.storeOff(roots, "fine", true)
+        PackSet.open(roots).let { p ->
+            try {
+                assertTrue(p.notOpened.isEmpty(), p.notOpened.map { it.line }.toString())
+                assertEquals(listOf("fine"), p.off)
+            } finally { p.close() }
+        }
+    }
 }

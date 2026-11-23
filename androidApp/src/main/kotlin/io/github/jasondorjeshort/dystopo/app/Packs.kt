@@ -81,7 +81,16 @@ class Pack(val name: String, val file: File) : AutoCloseable {
  * of the map's area records ([io.github.jasondorjeshort.dystopo.app.areas.Areas.Record.off]) and, for a map no record
  * names, a list beside the stored primary ([OFF_FILE]); a primary that is off leaves the stored choice alone.
  */
-class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? = null, val world: Pack? = null, val off: List<String> = emptyList()) {
+class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? = null, val world: Pack? = null, val notOpened: List<NotOpened> = emptyList(), val off: List<String> = emptyList()) {
+    /**
+     * T352: an archive [open] left closed: [pack] its pack, [archive] `dem` or `osm`, [file] its name, [reason] why (the
+     * exception, or `short: <bytes> of <expected> bytes`), [dropped] whether the whole pack is left out (`GET /packs` `notOpened`).
+     */
+    class NotOpened(val pack: String, val archive: String, val file: String, val reason: String, val dropped: Boolean) {
+        fun json(): Map<String, Any?> = linkedMapOf("pack" to pack, "archive" to archive, "file" to file, "reason" to reason, "dropped" to dropped)
+        val line: String get() = "map $pack not opened: $archive $file: $reason" + if (dropped) " (the map is left out)" else " (the map opens without it)"
+    }
+
     /** One pack's opened archives. */
     class Region(val name: String, val dem: Pack?, val osm: Pack?, val primary: Boolean) {
         val demCoverage: PackCoverage? = dem?.let { coverage(name, it, primary, vector = false) }
@@ -231,27 +240,43 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
             val packs = onPhone.filter { it.name !in off } // T342
             val stored = PackNames.chooseActive(packs.map { PackFileSet(it.name, it.dem?.name, it.vector?.name) }, storedActive(roots))
             val glyphs = roots.map { File(it, "glyphs") }.firstOrNull { it.isDirectory }
+            val failed = HashMap<File, String>() // T352: why an archive stayed closed
             fun open(file: File?, label: String): Pack? {
                 val f = file ?: return null
-                val p = runCatching { Pack(label, f) }.getOrNull() ?: return null
-                if (f.length() < PackArchiveInfo.expectedBytes(p.header)) {
+                val p = try {
+                    Pack(label, f)
+                } catch (e: Exception) {
+                    failed[f] = e.javaClass.simpleName + (e.message?.let { ": $it" } ?: "")
+                    return null
+                }
+                val expected = PackArchiveInfo.expectedBytes(p.header)
+                if (f.length() < expected) {
                     p.close()
+                    failed[f] = "short: ${f.length()} of $expected bytes"
                     return null
                 }
                 return p
             }
+            val notOpened = ArrayList<NotOpened>()
             // T65: a vector-only pack (a server's single-file pack) is opened too: its map data is drawn wherever it is
             // the best vector archive, over another pack's DEM or the online one; it is never primary.
             val regions = packs.mapNotNull { set ->
                 val dem = open(set.dem, "dem")
                 val osm = open(set.vector, "osm")
-                if (dem == null && (set.dem != null || osm == null)) return@mapNotNull null
+                val dropped = dem == null && (set.dem != null || osm == null)
+                for ((f, label) in listOf(set.dem to "dem", set.vector to "osm")) if (f != null) failed[f]?.let { notOpened += NotOpened(set.name, label, f.name, it, dropped) }
+                if (dropped) {
+                    osm?.close()
+                    return@mapNotNull null
+                }
                 Region(set.name, dem, osm, primary = dem != null && set.name == stored)
             }
             val primary = stored?.takeIf { s -> regions.any { it.name == s && it.dem != null } } ?: regions.firstOrNull { it.dem != null }?.name
             // T264: the world overview, from the first root only (where the copy puts it); absent until the first start's copy lands.
             val world = roots.firstOrNull()?.let { File(it, WORLD_FILE) }?.takeIf { it.isFile }?.let { open(it, WORLD_NAME) }
-            return PackSet(regions, glyphs, primary, world, onPhone.map { it.name }.filter { it in off })
+            roots.firstOrNull()?.let { File(it, WORLD_FILE) }?.let { f -> failed[f]?.let { notOpened += NotOpened(WORLD_NAME, "osm", f.name, it, dropped = true) } }
+            if (notOpened.isNotEmpty()) runCatching { android.util.Log.w("Dystopo", "PackSet.open: " + notOpened.joinToString("; ") { it.line }) } // T352: one logcat line (none in JVM tests)
+            return PackSet(regions, glyphs, primary, world, notOpened, onPhone.map { it.name }.filter { it in off }) // T342: off maps are filtered before opening, so never in notOpened
         }
     }
 }

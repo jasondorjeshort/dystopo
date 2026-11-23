@@ -136,6 +136,41 @@ bad = [srow("on", "outside", "online source", None, pr="No elevation data here",
 assert sorted(f["what"] for f in part.assertions({"rows": bad})) == sorted([
     "T340:same-source", "T340:outside-online", "T340:peaks-unfinished", "T340:same-sentence", "T340:panorama-empty"]), part.assertions({"rows": bad})
 
+# T352's block: peaks and a skyline in every row inside a map; its three rows (each map primary, an activate with the
+# Panorama open) read, with peaks, the same whichever map is primary, and no ClosedChannelException.
+sm = part.summarize({"horizon": {"peaks": {"candidates": 5, "tilesRead": 9, "maps": ["rainier-wide"], "reason": None}},
+                     "panorama": {"candidates": 4, "work": {"sweeps": [{}], "peaks": {"tiles": 12, "maps": ["rainier-fine"]}}}})
+assert sm["horizon"]["peakCandidates"] == 5 and sm["horizon"]["peakMaps"] == ["rainier-wide"] and sm["horizon"]["peakTiles"] == 9
+assert sm["panorama"]["peakMaps"] == ["rainier-fine"] and sm["panorama"]["peakTiles"] == 12
+
+
+def prow(net, place, inside, hc, pc, sweeps=2):
+    return {"network": net, "place": place, "inside": inside, "ok": True, "summary": {
+        "horizon": {"source": "2 offline maps", "peakCandidates": hc}, "panorama": {"source": "2 offline maps", "candidates": pc, "sweeps": sweeps}}}
+
+
+def t352(kind, name, hc=5, pc=4, closed=0, ok=True, source="2 offline maps"):
+    r = {"kind": kind, "ok": ok, "summary": {"horizon": {"peakCandidates": hc, "source": source}, "panorama": {"candidates": pc, "sweeps": 2}}}
+    r["primary" if kind == "primary" else "activated"] = name
+    if kind == "activate-open":
+        r["logcat"] = {"closedChannel": closed}
+    return r
+
+
+good_rows = [prow("off", "inside-both", ["rainier-wide", "rainier-fine"], 5, 4), prow("off", "outside", [], 0, 0)]
+good_extra = {"rows": [t352("primary", "rainier-wide"), t352("primary", "rainier-fine"), t352("activate-open", "rainier-wide")]}
+assert part.assertions({"rows": good_rows, "t352": good_extra}) == [], part.assertions({"rows": good_rows, "t352": good_extra})
+assert part.assertions({"rows": good_rows}) == [], "a table without T352's rows from a run that did not install asserts nothing more"
+assert [f["what"] for f in part.assertions({"rows": good_rows, "install": {"ok": True}})] == ["T352:rows-missing"]
+bad_rows = [prow("on", "wide-only", ["rainier-wide"], 0, 3), prow("off", "fine-edge", ["rainier-wide", "rainier-fine"], 2, 0, 0)]
+bad_extra = {"rows": [t352("primary", "rainier-wide", hc=5), t352("primary", "rainier-fine", hc=0, source="offline map"),
+                      t352("activate-open", "rainier-wide", closed=2, ok=False)]}
+got = sorted(f["what"] for f in part.assertions({"rows": bad_rows, "t352": bad_extra}) if f["what"].startswith("T352"))
+assert got == sorted(["T352:horizon-peaks", "T352:panorama-peaks", "T352:horizon-peaks", "T352:unread", "T352:closed-channel",
+                      "T352:primary-matters"]), got
+assert [f["what"] for f in part.assertions({"rows": [], "t352": {"rows": good_extra["rows"][:2]}})] == ["T352:rows"]
+# end T352
+
 # T342's block: with the fine map off every reader is on the wide one, on again (no restart) it is read again, both off the
 # outside message with its action; the rows' switches and Storage's bytes in every case.
 W, F = fx.MAPS[0]["name"], fx.MAPS[1]["name"]

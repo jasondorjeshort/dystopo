@@ -40,8 +40,11 @@ import java.util.concurrent.atomic.AtomicLong
 object HorizonData {
     private val app get() = DystopoApp.instance
 
-    /** The peaks for one horizon: [reason] when there are none to show. */
-    class Peaks(val horizon: Gnss.HorizonState, val all: List<PeakView>, val candidates: List<PeakView>, val ranked: List<HorizonLabels.Scored>, val tiles: Int, val reason: String?, val ms: Long) {
+    /**
+     * The peaks for one horizon: [reason] when there are none to show. T352: [maps] the offline maps whose tiles gave the
+     * peak names (in the order they first did; the peaks line names them).
+     */
+    class Peaks(val horizon: Gnss.HorizonState, val all: List<PeakView>, val candidates: List<PeakView>, val ranked: List<HorizonLabels.Scored>, val tiles: Int, val reason: String?, val ms: Long, val maps: List<String> = emptyList()) {
         /** A candidate's score entry (null when not a candidate). */
         fun scoreOf(p: PeakView): HorizonLabels.Scored? = ranked.firstOrNull { it.label.ref === p }
     }
@@ -83,36 +86,122 @@ object HorizonData {
         val profile = h.profile ?: return none(HorizonText.PEAKS_NO_TERRAIN)
         val terrain = h.terrain ?: return none(HorizonText.PEAKS_NO_TERRAIN)
         return try {
-            val (found, tiles) = readPeaksAt(h.lat, h.lon, profile.rangeM, null)
-            if (tiles == 0) return none(HorizonText.PEAKS_NO_MAP)
-            peaksOn(h, terrain, profile, found, tiles, t0)
+            val read = readPeaksAt(h.lat, h.lon, profile.rangeM, null)
+            if (read.tiles == 0) return none(HorizonText.PEAKS_NO_MAP)
+            peaksOn(h, terrain, profile, read.found, read.tiles, t0, read.maps)
         } catch (e: Exception) {
             android.util.Log.w("Dystopo", "horizon peaks failed", e)
             none("${HorizonText.PEAKS_NO_MAP} (${e.javaClass.simpleName})")
         }
     }
 
+    // ---- T352: the peak read steps past a map with none ----
+
+    /** One vector map the peak read may ask: its [name], deepest zoom [maxZoom], box's [area] (degrees²) and its tile read. */
+    class PeakMap(val name: String, val maxZoom: Int, val area: Double, val tile: (Int, Int, Int) -> ByteArray?)
+
     /**
-     * T326: the named peaks of the active packs within [rangeM] of [lat], [lon] (at [zoom], else the round plot's default),
-     * and the tiles read: the Panorama reads them once per place and range (its `viewRange`, to 100 km; [Viewshed.peakZoom]).
+     * What a peak read found: [found] the peaks, [tiles] the tile places some map answered (0: no offline map with peak
+     * names here), [maps] the maps whose tiles held peaks, in the order they first did.
      */
-    fun readPeaksAt(lat: Double, lon: Double, rangeM: Double, zoom: Int?): Pair<List<io.github.jasondorjeshort.dystopo.dem.Peak>, Int> {
+    data class PeakRead(val found: List<io.github.jasondorjeshort.dystopo.dem.Peak>, val tiles: Int, val maps: List<String>)
+
+    /**
+     * The order the maps are asked in for one tile: T340's terrain order (`MergedTerrain.ORDER`): the deepest first, then the
+     * smaller box, then the name; which map is primary plays no part.
+     */
+    val PEAK_ORDER: Comparator<PeakMap> = compareBy<PeakMap>({ -it.maxZoom }, { it.area }, { it.name })
+
+    /**
+     * A tile read over [candidates] (the maps that may hold tile z/x/y): each map in [PEAK_ORDER] until one whose tile holds
+     * a named feature of [classes] in its `mountain_peak` layer; a map whose tile has none is stepped past (a fine map with
+     * its peaks thinned or left out must not hide a coarser map's). Counts into [tiles] each place some map answered and into
+     * [maps] the map that gave the peaks.
+     */
+    class PeakTiles(private val candidates: (Int, Int, Int) -> List<PeakMap>, private val classes: Set<String>) : (Int, Int, Int) -> ByteArray? {
         var tiles = 0
-        val read = { z: Int, x: Int, y: Int -> app.tiles.packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) }?.also { tiles++ } }
-        val found = if (zoom == null) Viewshed.readPeaks(read, lat, lon, rangeM) else Viewshed.readPeaks(read, lat, lon, rangeM, zoom)
-        return found to tiles
+            private set
+        val maps = LinkedHashSet<String>()
+
+        override fun invoke(z: Int, x: Int, y: Int): ByteArray? {
+            var answered = false
+            for (m in candidates(z, x, y).sortedWith(PEAK_ORDER)) {
+                val b = m.tile(z, x, y) ?: continue
+                answered = true
+                if (hasPeaks(b, classes)) {
+                    tiles++
+                    maps += m.name
+                    return b
+                }
+            }
+            if (answered) tiles++
+            return null
+        }
     }
+
+    /** Whether vector tile [bytes] holds a named feature of [classes] in its `mountain_peak` layer ([Viewshed.readPeaks]'s test). */
+    fun hasPeaks(bytes: ByteArray, classes: Set<String>): Boolean {
+        val layer = runCatching {
+            io.github.jasondorjeshort.dystopo.mvt.MvtDecoder.decode(io.github.jasondorjeshort.dystopo.search.LayerFilter.filter(bytes, setOf("mountain_peak"))).layer("mountain_peak")
+        }.getOrNull() ?: return false
+        return layer.features.any { f -> f.properties["class"]?.asText() in classes && !f.properties["name"]?.asText().isNullOrBlank() }
+    }
+
+    /** The named peaks within [rangeM] of [lat], [lon] at [zoom] (null: the round plot's default) over [candidates]. */
+    fun readPeaks(candidates: (Int, Int, Int) -> List<PeakMap>, lat: Double, lon: Double, rangeM: Double, zoom: Int?, classes: Set<String> = Viewshed.PEAK_CLASSES): PeakRead {
+        val read = PeakTiles(candidates, classes)
+        val found = if (zoom == null) Viewshed.readPeaks(read, lat, lon, rangeM, classes = classes) else Viewshed.readPeaks(read, lat, lon, rangeM, zoom, classes)
+        return PeakRead(found, read.tiles, read.maps.toList())
+    }
+
+    /**
+     * The vector maps of the tile service held on this thread ([DystopoApp.leaseTiles]) that may hold tile z/x/y
+     * (`PackSet.osmCandidates`: the world overview among them where its zooms reach), as [PeakMap]s.
+     */
+    private fun candidatesOf(packs: io.github.jasondorjeshort.dystopo.app.PackSet): (Int, Int, Int) -> List<PeakMap> {
+        val made = HashMap<io.github.jasondorjeshort.dystopo.app.Pack, PeakMap>()
+        return { z, x, y ->
+            packs.osmCandidates(z, x, y).map { pk ->
+                made.getOrPut(pk) {
+                    val h = pk.header
+                    PeakMap(packs.packOf(pk) ?: pk.name, h.maxZoom, (h.maxLon - h.minLon) * (h.maxLat - h.minLat)) { tz, tx, ty -> pk.tile(tz, tx, ty) }
+                }
+            }
+        }
+    }
+
+    /**
+     * The peaks line's last sentence, naming the maps that gave the names ([Peaks.maps]; ADR 0031: built in alpha): "Names
+     * from the offline map wide.", "Names from the offline maps fine and wide.", "Names from 3 offline maps."; null for none.
+     */
+    fun namesFrom(maps: List<String>): String? = when (maps.size) {
+        0 -> null
+        1 -> "Names from the offline map ${maps[0]}."
+        2 -> "Names from the offline maps ${maps[0]} and ${maps[1]}."
+        else -> "Names from ${maps.size} offline maps."
+    }
+
+    /** [block] on the maps of the tile service, held for the read so a map opening or closing meanwhile closes nothing under it. */
+    private fun <T> withMaps(block: ((Int, Int, Int) -> List<PeakMap>) -> T): T = app.leaseTiles().use { block(candidatesOf(app.tiles.packs)) }
+
+    /**
+     * T326: the named peaks of the open maps within [rangeM] of [lat], [lon] (at [zoom], else the round plot's default),
+     * and the tiles read: the Panorama reads them once per place and range (its `viewRange`, to 100 km; [Viewshed.peakZoom]).
+     * T352: through [PeakTiles] (deepest map first, stepping past a tile with no peaks) under the tile service's lease.
+     */
+    fun readPeaksAt(lat: Double, lon: Double, rangeM: Double, zoom: Int?): PeakRead = withMaps { readPeaks(it, lat, lon, rangeM, zoom) }
 
     /**
      * T326: [found] tested on [terrain] and [profile] (the Panorama's farthest skyline, as devtool `panorama` tests them),
      * as the Peaks section and the names read them: the candidates closest first and ranked. [h] is the horizon they belong to.
+     * T352: [maps] the maps that gave them.
      */
-    fun peaksOn(h: Gnss.HorizonState, terrain: io.github.jasondorjeshort.dystopo.dem.Terrain, profile: io.github.jasondorjeshort.dystopo.dem.HorizonProfile, found: List<io.github.jasondorjeshort.dystopo.dem.Peak>, tiles: Int, t0: Long = SystemClock.elapsedRealtime()): Peaks {
+    fun peaksOn(h: Gnss.HorizonState, terrain: io.github.jasondorjeshort.dystopo.dem.Terrain, profile: io.github.jasondorjeshort.dystopo.dem.HorizonProfile, found: List<io.github.jasondorjeshort.dystopo.dem.Peak>, tiles: Int, t0: Long = SystemClock.elapsedRealtime(), maps: List<String> = emptyList()): Peaks {
         if (tiles == 0) return Peaks(h, emptyList(), emptyList(), emptyList(), 0, HorizonText.PEAKS_NO_MAP, SystemClock.elapsedRealtime() - t0)
         val all = Viewshed.peaks(terrain, profile, found)
         val labels = PeakRim.labels(all)
         val candidates = labels.map { it.ref as PeakView }
-        return Peaks(h, all, candidates, HorizonLabels.rank(labels), tiles, if (candidates.isEmpty()) HorizonText.PEAKS_NONE else null, SystemClock.elapsedRealtime() - t0)
+        return Peaks(h, all, candidates, HorizonLabels.rank(labels), tiles, if (candidates.isEmpty()) HorizonText.PEAKS_NONE else null, SystemClock.elapsedRealtime() - t0, maps)
     }
 
     /** The sun's day at a point: [marks] the hour dots in the phone's zone. */
@@ -150,11 +239,13 @@ object HorizonData {
      * (none, or no offline map). Off the main thread: a few tiles read.
      */
     fun featureAt(lat: Double, lon: Double, radiusM: Double): io.github.jasondorjeshort.dystopo.dem.Peak? = try {
-        val tiles = { z: Int, x: Int, y: Int -> app.tiles.packs.osmCandidates(z, x, y).firstNotNullOfOrNull { it.tile(z, x, y) } }
-        io.github.jasondorjeshort.dystopo.readout.KnownHeights.READ_ZOOMS
-            .flatMap { z -> Viewshed.readPeaks(tiles, lat, lon, radiusM, zoom = z, classes = Viewshed.KNOWN_HEIGHT_CLASSES) }
-            .map { it to io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(lat, lon, it.lat, it.lon) }
-            .filter { it.second <= radiusM }.minByOrNull { it.second }?.first
+        withMaps { maps -> // T352: the peak read's order and step, under the lease
+            val tiles = PeakTiles(maps, Viewshed.KNOWN_HEIGHT_CLASSES)
+            io.github.jasondorjeshort.dystopo.readout.KnownHeights.READ_ZOOMS
+                .flatMap { z -> Viewshed.readPeaks(tiles, lat, lon, radiusM, zoom = z, classes = Viewshed.KNOWN_HEIGHT_CLASSES) }
+                .map { it to io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(lat, lon, it.lat, it.lon) }
+                .filter { it.second <= radiusM }.minByOrNull { it.second }?.first
+        }
     } catch (e: Exception) {
         android.util.Log.w("Dystopo", "horizon feature lookup failed", e)
         null
@@ -236,7 +327,7 @@ object HorizonData {
         linkedMapOf(
             "reason" to it.reason, "ms" to it.ms, "tilesRead" to it.tiles, "tested" to it.all.size, "visible" to it.all.count { v -> v.visible },
             "skyline" to it.all.count { v -> v.skyline }, "candidates" to it.candidates.size, "outOfSight" to it.candidates.count { v -> !PeakRim.inSight(v) },
-            "hiddenM" to PeakRim.HIDDEN_M, "named" to named?.size,
+            "hiddenM" to PeakRim.HIDDEN_M, "named" to named?.size, "maps" to it.maps,
             "peaks" to it.candidates.map { v ->
                 val s = it.scoreOf(v)
                 linkedMapOf(

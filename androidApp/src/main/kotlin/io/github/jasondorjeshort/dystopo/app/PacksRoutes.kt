@@ -6,7 +6,10 @@ import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 /**
  * Debug routes for packs, the files behind the offline maps (registered with one line in [Routes]):
  * - `GET /packs`: every pack on the device (name, bounds, zooms, bytes, attribution, per-archive
- *   header facts) and which one is active; T342: each pack's `off` ("Use on this phone" off: left closed, `POST /areas/rows/off`).
+ *   header facts) and which one is active. T352: `notOpened`, each archive the last open left closed (`pack`, `archive`
+ *   `dem` or `osm`, `file`, `reason`: the exception or `short: <bytes> of <expected> bytes`, `dropped`: the whole pack left
+ *   out), also one logcat line `PackSet.open: ...` under the tag `Dystopo` at each open.
+ *   T342: each pack's `off` ("Use on this phone" off: left closed, never in `notOpened`; `POST /areas/rows/off`).
  * - `POST /packs/activate?name=`: switch packs; the camera moves to the pack's bounds.
  * - `POST /packs/download?url=[&name=][&activate=true]`: start (or resume) downloading a pack pair from
  *   a static host; `url` names `<name>-dem.pmtiles`, `<name>-outdoors.pmtiles` or the `<name>` prefix.
@@ -45,7 +48,7 @@ object PacksRoutes {
         val m = PackManager.get(app)
         return try {
             when {
-                r.method == "GET" && r.path == "/packs" -> Response.json(m.json())
+                r.method == "GET" && r.path == "/packs" -> Response.json(m.json() + ("notOpened" to app.tiles.packs.notOpened.map { it.json() })) // T352
                 r.method == "POST" && r.path == "/packs/activate" -> Response.json(m.activate(r.query["name"] ?: return bad("name required")))
                 r.method == "POST" && r.path == "/packs/download" -> {
                     val url = r.query["url"] ?: r.bodyText.trim().takeIf { it.startsWith("http") } ?: return bad("url required")

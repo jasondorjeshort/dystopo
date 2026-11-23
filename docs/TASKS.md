@@ -86,6 +86,7 @@ Added 2026-11-23 from the owner's top-priority report `docs/ideas/2026-11-22-at-
 **Interacts with:** T340 (merged first; the order and the lease). T342, through `app/Packs.kt` and `app/PacksRoutes.kt` (this one merged first; T342 reads `notOpened` as a map that is off is not). T350, through the peak read as one more reader.
 **Done when:** `./gradlew check` green with a test of the peak read (a fine map whose tile has no peaks, a coarse one that has them: the peaks come from the coarse one; both empty: the line says none); on the fixture the table with its two new rows, peaks drawn in every row inside a map and the Panorama a skyline in each, the logcat free of `ClosedChannelException` across the activate; a map made unreadable on the emulator (a truncated copy pushed under a new name) listed in `notOpened` with its reason; the Horizon view's peaks frame at font 1.0 and 2.0 viewed; `tools/android-a11y.py --screens horizon,horizon-elsewhere` with nothing beyond the baseline. The verifier runs `-SweepThrough two-maps`.
 **Checks:** none.
+**Status: merged.** Verifier MERGE on 0b742855 (merged as a23e936f), no fix round. Follow-ups: T340's block flaked once at off/outside on the implementer's run (the Panorama's place went stale between `/panorama` and `?wait`, likely `TerrainRead.Epoch`'s reachable flag offline; the verifier's run was green); the activate row's logcat check holds only what was logged (0 Dystopo lines in one capture); the owner's capture on the phone is still wanted. Edits outside Owns: `SkyViewSections.kt` (the names sentence), `PanoramaData.kt` (`peakMaps`), `LayerFilter.kt` made public, `PackSetNotOpenedTest.kt`.
 
 ### T345. The tools' tests run with check
 First in its slot.
@@ -136,6 +137,7 @@ No Gradle; launched after T340 is merged (the owner's Answer: "once T332's repor
 **Interacts with:** T341, through the setting's name and meaning.
 **Done when:** the proposal, the critic's numbered objections and the revision are on the branch; every reader named in the wave paragraph's code read is in its table with what it does today; the build tasks are listed with disjoint Owns.
 **Checks:** none.
+**Status: merged.** Verifier MERGE on a93e6a16 (merged as 9dadee41), docs only; ADR 0066 written at the merge. Follow-ups: the proposal's seven build tasks for a later wave (their file lists become Owns lines on the board); T341's setting is `onlineDetail`, "More detail from online", per device in Settings > Sources, default on, gating fetches only; `verify-task.ps1 -Skip boot,tour` alone asks for an emulator's arguments (stop,guard must be skipped too).
 
 ## Owner actions pending (as of 2026-10-27)
 
