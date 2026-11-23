@@ -624,4 +624,43 @@ finally:
     a11y.time.sleep = _sleep
 # end T340
 
+# T342: the Offline maps list with a map off: the first row with a switch is turned off, the list opened; the end turns it
+# back on and closes the list. A phone with no map has no such row: the setup says so.
+class RowsSrv:
+    def __init__(self, rows):
+        self.calls, self.rows = [], rows
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        return {"rows": self.rows} if path == "/areas/rows" else {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+om = [s for s in a11y.SCREENS if s[0] == "offline-maps-off"]
+assert len(om) == 1 and om[0][3] == "screen" and om[0][2] is a11y.end_offline_maps_off, om
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    osrv = RowsSrv([{"id": "area:a0001", "off": None}, {"id": "pack:rainier fine", "off": False}, {"id": "pack:b", "off": False}])
+    ctx = type("C", (), {"srv": osrv})()
+    om[0][1](ctx)
+    assert [p for _m, p in osrv.calls] == ["/areas/rows", "/areas/rows/off?off=1&id=pack%3Arainier%20fine", "/packs/ui?show=true"], osrv.calls
+    osrv.calls.clear()
+    om[0][2](ctx)
+    assert [p for _m, p in osrv.calls] == ["/areas/rows/off?off=0&id=pack%3Arainier%20fine", "/packs/ui?show=false"], osrv.calls
+    none = type("C", (), {"srv": RowsSrv([{"id": "area:a0001", "off": None}])})()
+    try:
+        om[0][1](none)
+        raise AssertionError("a list with no switch must fail the setup")
+    except RuntimeError as e:
+        assert "no row" in str(e), e
+    om[0][2](none)  # nothing turned off: nothing to put back but the list
+    assert [p for _m, p in none.srv.calls] == ["/areas/rows", "/packs/ui?show=false"], none.srv.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T342
+
 print("test_android_a11y: ok")
