@@ -1,7 +1,8 @@
 # 0064. The Panorama view: one view, a lens, two ways to steer, the camera an option behind it
 
 Date: 2026-11-21
-Status: accepted
+Status: accepted; item 1 superseded by 0067
+Item 1 ("the third segment", "no fourth segment") is replaced by `0067-the-list-view-the-switchs-fourth-segment.md`; items 2 to 7 stand.
 
 Record: the planning with the owner on 2026-11-21 and the survey of that day, both in
 `docs/ideas/2026-11-20-a-panorama-view-a-scrolling-ribbon-of-the-horizon.md`; wave 44's paragraph and
