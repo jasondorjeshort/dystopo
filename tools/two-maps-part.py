@@ -36,6 +36,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("two_maps_fixture", os.path.join(HERE, "two-maps-fixture.py"))
@@ -239,8 +240,9 @@ def assertions(table):
 # with no restart (the app's pid the same), then with both maps off; both are put back on at the end, whatever failed. With
 # the fine map off every reader is on the wide one (the maps in use, the Horizon's and the Panorama's terrain); on again the
 # fine one is read again; both off, the map says "No offline map covers this view" with its action, never the first-run
-# card, and Storage still counts both maps. Depends on nothing an earlier part leaves: it switches the network off and
-# restarts the app itself; it needs only the fixture this part installed.
+# card, and Storage still counts both maps (with the online sources off as well, put back at the end: the network off alone
+# leaves the phone's own reading of the sources counted as drawing). Depends on nothing an earlier part leaves: it switches
+# the network off and restarts the app itself; it needs only the fixture this part installed.
 T342_CASES = ["fine-off", "fine-on-again", "both-off"]
 
 
@@ -281,12 +283,23 @@ def t342_collect(dev, wait_ms, raw_dir):
         read("fine-on-again")
         switch(fine, True)
         switch(wide, True)
+        # No online source either (the server and the phone's own reading of the sources, as a11y's map-outside does): with
+        # direct reading on, the map counts an online source as drawing the view even with the network off (T332's rule).
+        _, st, _ = dev.call("/settings")
+        _, d, _ = dev.call("/firstrun/direct")
+        out["onlineBefore"] = {"server": (st or {}).get("server") or "", "direct": bool((d or {}).get("enabled", True))}
+        dev.call("/settings?server=", "POST")
+        dev.call("/firstrun/direct?on=0", "POST")
         read("both-off")
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"[:300]
     finally:
         switch(fine, False)
         switch(wide, False)
+        before = out.get("onlineBefore")
+        if before:
+            dev.call("/settings?server=" + urllib.parse.quote(before["server"], safe=""), "POST")
+            dev.call(f"/firstrun/direct?on={1 if before['direct'] else 0}", "POST")
     return out
 
 
@@ -310,7 +323,7 @@ def t342_assertions(table):
         if not r.get("ok"):
             out.append({"what": "T342:unread", "case": case, "unread": r.get("unread")})
         sm = r.get("summary") or {}
-        in_use = get(sm, "maps", "inUse") or []
+        in_use = [n for n in get(sm, "maps", "inUse") or [] if n != "world"]  # the built-in world overview is no map of the list
         want_off = {"fine-off": {wide: False, fine: True}, "fine-on-again": {wide: False, fine: False}, "both-off": {wide: True, fine: True}}[case]
         if {k: (r.get("off") or {}).get(k) for k in want_off} != want_off:
             out.append({"what": "T342:rows-off", "case": case, "off": r.get("off")})
