@@ -1838,6 +1838,7 @@ def drive_body(dev, pack, dem, osm, drive, out, st, errors):
 HORIZON_SEGMENT = "^Horizon$"  # app/controls/ViewSwitch.kt: the switch's segments "Map" and "Horizon" (T309)
 MAP_SEGMENT = "^Map$"
 PANORAMA_SEGMENT = "^Panorama$"  # T326: the third segment
+LIST_SEGMENT = "^List$"  # T344: the fourth segment
 HORIZON_TOGGLES = "^(✓ )?(Satellites|Peaks|Sun|Flights)$"  # T312: Flights, shown while Flight tracking is on
 
 
@@ -1853,7 +1854,7 @@ def horizon_toggles(dev, nodes):
     return [n["text"] for n in nodes if n["text"] and re.match(HORIZON_TOGGLES, n["text"]) and in_button(n["bounds"])]
 
 
-SWITCH_LABEL = "Map, horizon or panorama view"  # app/controls/ViewSwitch.kt: the switch's spoken label, its whole rectangle (T315; T326: three segments)
+SWITCH_LABEL = "Map, horizon, panorama or list view"  # app/controls/ViewSwitch.kt: the switch's spoken label, its whole rectangle (T315; T326: three segments; T344: four)
 
 
 def switch_rects(nodes):
@@ -1870,7 +1871,7 @@ def under_switch(nodes, rect):
 
     def holds(b):
         return b[0] <= rect[0] and b[1] <= rect[1] and b[2] >= rect[2] and b[3] >= rect[3]
-    own = {SWITCH_LABEL, "Map", "Horizon", "Panorama"}
+    own = {SWITCH_LABEL, "Map", "Horizon", "Panorama", "List"}
     return [n["text"] or n["desc"] for n in nodes if (n["text"] or n["desc"]) and (n["text"] or n["desc"]) not in own and n["bounds"]
             and inter(n["bounds"]) and not holds(n["bounds"])]
 
@@ -2307,29 +2308,46 @@ def bearing_apart(a, b):
     return min(d, 360 - d)
 
 
+def list_row(dev, nodes, name, top):
+    """T344: scrolls the List view's list (slow swipes below [top] px and above the switch, no fling) until the row named
+    [name] stands whole in it; (the row's node or None, the nodes)."""
+    w = max((x["bounds"][2] for x in nodes if x["bounds"]), default=1080)
+    h = max((x["bounds"][3] for x in nodes if x["bounds"]), default=2400)
+    row = None
+    for _ in range(25):
+        row = next((x for x in nodes if x["text"] == name and x["bounds"] and x["bounds"][1] > top and x["bounds"][3] < h * 0.84), None)
+        if row:
+            break
+        y0 = int(top + (h * 0.84 - top) * 0.85)
+        dev.shell("input", "swipe", str(w // 2), str(y0), str(w // 2), str(int(y0 - (h * 0.84 - top) * 0.5)), "900")
+        time.sleep(0.8)
+        nodes = dev.nodes()
+    return row, nodes
+
+
 def panorama_target_and_arrow(dev, out, errors):
     """T327: by taps and one-finger swipes on the Panorama view: Mount Rainier's row in the Peaks list (scrolled to) makes
     it the target and turns the view to it (frame `panorama-target`); two swipes across the plot turn it off the view and
     the edge arrow stands with its line (frame `panorama-arrow`); a tap on the arrow turns the view back (the arrow gone).
-    Answers the nodes."""
+    T344: the Peaks list is the List view's: the Panorama's list button opens it, and the row's tap shows the Panorama
+    turned. Answers the nodes."""
     nodes = dev.nodes()
     plot = panorama_plot(nodes)
     if not plot:
         errors.append("no Panorama plot for the target's row")
         return nodes
     pb = plot["bounds"]
-    w = max((x["bounds"][2] for x in nodes if x["bounds"]), default=1080)
-    h = max((x["bounds"][3] for x in nodes if x["bounds"]), default=2400)
-    row = None
-    for _ in range(25):
-        row = next((x for x in nodes if x["text"] == PANORAMA_TARGET_PEAK and x["bounds"] and x["bounds"][1] > pb[3] and x["bounds"][3] < h * 0.84), None)
-        if row:
-            break
-        # Slow swipes in the pane, below the plot and above the switch: no fling.
-        y0 = int(pb[3] + (h * 0.84 - pb[3]) * 0.85)
-        dev.shell("input", "swipe", str(w // 2), str(y0), str(w // 2), str(int(y0 - (h * 0.84 - pb[3]) * 0.5)), "900")
-        time.sleep(0.8)
-        nodes = dev.nodes()
+    before = panorama_bearing(plot.get("desc"))
+    button = dev.find(LIST_BUTTON, nodes)
+    if not button:
+        errors.append(f"no list button on the Panorama (texts: {dev.texts(nodes)[:25]})")
+        return nodes
+    dev.tap(button)
+    title, nodes = dev.wait_for(LIST_TITLE, 10)
+    if not title or panorama_plot(nodes):
+        errors.append(f"the list button did not open the List view (texts: {dev.texts(nodes)[:25]})")
+        return nodes
+    row, nodes = list_row(dev, nodes, PANORAMA_TARGET_PEAK, title["bounds"][3])
     if not row:
         errors.append(f"no {PANORAMA_TARGET_PEAK!r} row in the Peaks list (texts: {dev.texts(nodes)[:30]})")
         return nodes
@@ -2339,10 +2357,11 @@ def panorama_target_and_arrow(dev, out, errors):
     if wanted is None:
         errors.append(f"the {PANORAMA_TARGET_PEAK!r} row's line has no bearing (line {line!r}); the step reads the bearing wanted from it")
         return nodes
-    before = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
     dev.tap(row)
-    time.sleep(1.5)  # the turn's 300 ms and a frame
+    time.sleep(2.0)  # the Panorama, the turn's 300 ms and a frame
     nodes = dev.nodes()
+    plot = panorama_plot(nodes) or plot
+    pb = plot["bounds"]
     out["frames"]["target"] = dev.screencap("panorama-target")[0]
     turned = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
     out["target"].update({"bearingBefore": before, "bearingAfter": turned})
@@ -2485,6 +2504,120 @@ def panorama_follow(dev, out, errors):
             dev.tap(m)
             time.sleep(1)
 # end T331
+
+
+# T344
+LIST_TITLE = "^List view$"  # the List view's heading (app/skylist/SkyListScreen.kt, SkyListStrings.TITLE)
+LIST_BUTTON = "^List view$"  # the Panorama's small list button (SkyListStrings.OPEN), in its heading row
+LIST_SECTIONS = ("Show:", "Peaks", "Sun", "Satellites")  # the pane's sections as the List shows them (T327's order)
+
+
+def panorama_list_step(dev):
+    """T344: the List view, the switch's fourth segment, all by taps and one-finger swipes. From the map with nothing
+    selected, "List" opens the List at the fix ("Your location"; the frame `panorama-list`: the place line, "List view"
+    with its help, "Show:" and the toggles, the terrain line, Peaks, Sun and Satellites), the switch at the map's own
+    anchor (`switchMapPx`, `switchViewPx`); the list scrolled to Mount Rainier's row (`panorama-list-row`) and the row
+    tapped: the Panorama shows, facing the bearing the row's second line gives within 3 degrees (`panorama-list-shown`);
+    the Panorama's list button opens the List again (`panorama-list-again`); then Back as a user presses it: the pick
+    first (the List stays), then the view closes to the map (`panorama-list-back`; `backsToMap`, 2 expected)."""
+    t0 = time.time()
+    out = {"frames": {}}
+    errors = []
+    n, nodes, backs = back_until(dev, LIST_SEGMENT)
+    if not n:
+        return {"ok": False, "backs": backs, "error": f"no List segment on the map after {backs} Back (texts: {dev.texts(nodes)[:25]})"}
+    on_map = switch_rects(nodes)
+    dev.tap(n)
+    title, nodes = dev.wait_for(LIST_TITLE, 15)
+    if not title:
+        return {"ok": False, "error": f"no 'List view' heading after the segment (texts: {dev.texts(nodes)[:25]})"}
+    deadline = time.time() + 120  # the terrain to the view range and the peaks (a just-booted emulator is slow)
+    while time.time() < deadline and any(t.startswith(PANORAMA_WORKING) or t.startswith("Working out") for t in dev.texts(nodes)):
+        time.sleep(2)
+        nodes = dev.nodes()
+    texts = dev.texts(nodes)
+    out["frames"]["list"] = dev.screencap("panorama-list")[0]
+    out["switchMapPx"], out["switchViewPx"] = on_map, switch_rects(nodes)
+    if out["switchViewPx"] and on_map and out["switchViewPx"][-1] != on_map[0]:
+        errors.append(f"the List's switch {out['switchViewPx']} is not at the map's anchor {on_map}")
+    out["atFix"] = PLACE_HERE in texts and dev.find(BACK_TO_HERE, nodes) is None
+    if not out["atFix"]:
+        errors.append(f"the segment with nothing selected did not open at {PLACE_HERE!r}")
+    if panorama_plot(nodes):
+        errors.append("the List shows a Panorama plot")
+    # The sections, read while the list is scrolled to its end (slow swipes), then back to its top.
+    seen = set(texts)
+    top = title["bounds"][3]
+    hh = max((x["bounds"][3] for x in nodes if x["bounds"]), default=2400)
+    ww = max((x["bounds"][2] for x in nodes if x["bounds"]), default=1080)
+    y0, y1 = int(top + (hh * 0.84 - top) * 0.85), int(top + (hh * 0.84 - top) * 0.15)
+    last = None
+    for _ in range(30):
+        cur = dev.texts(nodes)
+        seen |= set(cur)
+        if cur == last:
+            break
+        last = cur
+        dev.shell("input", "swipe", str(ww // 2), str(y0), str(ww // 2), str(y1), "600")
+        time.sleep(0.6)
+        nodes = dev.nodes()
+    for _ in range(30):
+        dev.shell("input", "swipe", str(ww // 2), str(y1), str(ww // 2), str(y0), "150")
+        time.sleep(0.3)
+        nodes = dev.nodes()
+        if dev.find("^" + re.escape(LIST_SECTIONS[0]), nodes):
+            break
+    row, nodes = list_row(dev, nodes, PANORAMA_TARGET_PEAK, top)
+    out["sections"] = [s for s in LIST_SECTIONS if any(t == s or t.startswith(s) for t in seen)]
+    if not row:
+        errors.append(f"no {PANORAMA_TARGET_PEAK!r} row in the List (texts: {dev.texts(nodes)[:30]})")
+    else:
+        out["frames"]["row"] = dev.screencap("panorama-list-row")[0]
+        line = row_second_line(nodes, row)
+        wanted = row_bearing(line)
+        out["row"] = {"line": line, "bearingWanted": wanted}
+        dev.tap(row)
+        time.sleep(2.0)
+        nodes = dev.nodes()
+        if not panorama_plot(nodes):
+            nodes = wait_panorama_ready(dev, nodes, 60)
+        out["frames"]["shown"] = dev.screencap("panorama-list-shown")[0]
+        facing = panorama_bearing((panorama_plot(nodes) or {}).get("desc"))
+        out["row"]["bearingShown"] = facing
+        if facing is None:
+            errors.append(f"the row's tap did not show the Panorama (texts: {dev.texts(nodes)[:25]})")
+        elif wanted is None or bearing_apart(facing, wanted) > 3:
+            errors.append(f"the row's tap did not turn the Panorama to {PANORAMA_TARGET_PEAK} (facing {facing}, wanted {wanted} within 3)")
+        button = dev.find(LIST_BUTTON, nodes)
+        if not button:
+            errors.append(f"no list button on the Panorama (texts: {dev.texts(nodes)[:25]})")
+        else:
+            dev.tap(button)
+            again, nodes = dev.wait_for(LIST_TITLE, 10)
+            out["frames"]["again"] = dev.screencap("panorama-list-again")[0]
+            out["buttonOpened"] = bool(again) and not panorama_plot(nodes)
+            if not out["buttonOpened"]:
+                errors.append("the Panorama's list button did not open the List")
+    missing = [s for s in LIST_SECTIONS if s not in out["sections"]]
+    if missing:
+        errors.append(f"the List lacks {missing}")
+    # Back as a user presses it: the pick first, then the view closes; the map's own List segment then stands.
+    presses = 0
+    while presses < 4 and dev.find(LIST_TITLE):
+        dev.shell("input", "keyevent", "KEYCODE_BACK")
+        presses += 1
+        time.sleep(1.2)
+    nodes = dev.nodes()
+    out["backsToMap"] = presses
+    out["frames"]["back"] = dev.screencap("panorama-list-back")[0]
+    if dev.find(LIST_TITLE, nodes) or not dev.find(LIST_SEGMENT, nodes):
+        errors.append(f"Back did not return to the map from the List after {presses} presses")
+    elif row and presses != 2:
+        errors.append(f"Back took {presses} presses to the map, not 2 (the pick, then the view)")
+    frames = out.pop("frames")
+    return {"ok": not errors, "png": frames.get("list"), "frames": frames, "openedBy": "switch", "backs": backs, **out,
+            "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
+# end T344
 
 
 # --- features: Flight tracking (T311) ----------------------------------------------------------------------------
@@ -3306,6 +3439,7 @@ def part_features(args):
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev)),
                      ("panorama", lambda: panorama_step(dev)),  # T326
+                     ("panorama-list", lambda: panorama_list_step(dev)),  # T344
                      ("flights", lambda: flights_step(dev)),  # T311: flights
                      ("horizonflights", lambda: horizon_flights_step(dev))):  # T312
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):

@@ -211,6 +211,9 @@ class HelpRegistryTest {
             // T342: an offline map's "Use on this phone".
             "areas.useOnPhone",
             // end T342
+            // T344: the List view.
+            "list.view",
+            // end T344
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
@@ -378,4 +381,13 @@ class HelpRegistryTest {
         assertEquals("Off: not used. Still stored, still counts toward the limit.", io.github.jasondorjeshort.dystopo.app.areas.OFF_LINE)
     }
     // end T342
+
+    // T344: the Panorama's sections moved to the List view with their texts (keys kept); the Panorama keeps its own.
+    @Test
+    fun theListViewCarriesTheSectionsHelp() {
+        for (k in listOf("list.view", "panorama.peaks", "panorama.sun", "panorama.flights")) assertEquals(setOf("SkyListScreen.kt"), references[k], k)
+        assertEquals(setOf("PanoramaScreen.kt"), references["panorama.view"])
+        assertTrue(HelpRegistry.byKey("panorama.peaks")!!.placed.contains("the switch's List"))
+    }
+    // end T344
 }

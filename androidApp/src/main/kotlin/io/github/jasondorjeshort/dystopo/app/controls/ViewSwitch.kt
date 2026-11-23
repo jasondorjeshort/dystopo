@@ -70,14 +70,21 @@ import io.github.jasondorjeshort.dystopo.ui.OverlayLayout
  * ([openAtSelection]), and between the two sky views the place and a picked peak stay. The credit line stands beside the
  * switch while its text fits whole there, else above it across the window (`about/AttributionLine.kt`, wave 45's (h)).
  * Debug: `POST /horizon/switch?to=map|horizon|panorama`.
+ *
+ * T344: four segments, "Map | Horizon | Panorama | List" (the List view, `app/skylist/`: the Panorama's pane as a page of
+ * its own). The segments' padding is 12 dp a side so the four fit a 411 dp window upright at map chrome's capped scale; the
+ * credit line follows the switch's width by the same rule (`OverlayLayout.creditAbove`). From the List, "Panorama" shows
+ * the Panorama as it was left when the List was opened from it ([io.github.jasondorjeshort.dystopo.app.skylist.SkyList.keepsAim]).
+ * Debug: `POST /horizon/switch?to=list`.
  */
 object ViewSwitch {
     const val MAP = "Map"
     const val HORIZON = "Horizon"
     const val PANORAMA = "Panorama"
+    const val LIST = "List" // T344
 
-    /** T315: the segments in order, left to right; T326: the three views. */
-    val SEGMENTS: List<SkyView> = listOf(SkyView.MAP, SkyView.HORIZON, SkyView.PANORAMA)
+    /** T315: the segments in order, left to right; T326: the three views; T344: and the List. */
+    val SEGMENTS: List<SkyView> = listOf(SkyView.MAP, SkyView.HORIZON, SkyView.PANORAMA, SkyView.LIST)
 
     /** Its height (dp): each segment's least, which its one line of text at map chrome's capped font scale stays under. */
     const val HEIGHT_DP = 48
@@ -85,18 +92,23 @@ object ViewSwitch {
     /** T315: the anchor's distance in from the left inset and up from the bottom inset (dp); the layout rule's [OverlayLayout.SWITCH_EDGE]. */
     const val EDGE_DP = OverlayLayout.SWITCH_EDGE
 
-    /** The group's spoken label; T326: naming the three. */
-    const val LABEL = "Map, horizon or panorama view"
+    /** The group's spoken label; T326: naming the three; T344: the four. */
+    const val LABEL = "Map, horizon, panorama or list view"
+
+    /** T344: each segment's padding at its sides (dp; 16 before the fourth). */
+    const val SEGMENT_PAD_DP = 12
 
     /** Test tags of the segments (the device tour taps them by their nodes' bounds). */
     const val TAG_MAP = "horizonSwitch.map"
     const val TAG_HORIZON = "horizonSwitch.horizon"
     const val TAG_PANORAMA = "horizonSwitch.panorama"
+    const val TAG_LIST = "horizonSwitch.list" // T344
 
     fun tagOf(v: SkyView): String = when (v) {
         SkyView.MAP -> TAG_MAP
         SkyView.HORIZON -> TAG_HORIZON
         SkyView.PANORAMA -> TAG_PANORAMA
+        SkyView.LIST -> TAG_LIST
     }
 
     /** T326: the view showing now: the map while no sky view is open, else the one [HorizonUi.view] names. */
@@ -140,11 +152,15 @@ object ViewSwitch {
      * open already, so this returns first).
      */
     fun select(to: SkyView) {
-        val action = HorizonPlace.switchAction(showing, to)
-        // T326: an opening of the Panorama (from the map or from the Horizon view): the aim at opening (choice c).
-        if (to == SkyView.PANORAMA && (action == SwitchAction.OPEN_AT_SELECTION || action == SwitchAction.KEEP_PLACE)) {
+        val from = showing
+        val action = HorizonPlace.switchAction(from, to)
+        // T326: an opening of the Panorama (from the map or from the Horizon view): the aim at opening (choice c). T344: from
+        // the List opened from the Panorama, the Panorama as it was left.
+        val list = io.github.jasondorjeshort.dystopo.app.skylist.SkyList
+        if (to == SkyView.PANORAMA && (action == SwitchAction.OPEN_AT_SELECTION || action == SwitchAction.KEEP_PLACE) && !(from == SkyView.LIST && list.keepsAim())) {
             io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.opened()
         }
+        if (to == SkyView.LIST && action != SwitchAction.NONE) list.entered(from) // T344
         when (action) {
             SwitchAction.NONE -> {}
             SwitchAction.CLOSE -> HorizonUi.close()
@@ -215,7 +231,7 @@ fun ViewSwitchRow(selected: SkyView, colours: ViewSwitchColours, modifier: Modif
                 Modifier.testTag(ViewSwitch.tagOf(view))
                     .selectable(selected = on, role = Role.Tab) { ViewSwitch.select(view) }
                     .heightIn(min = ViewSwitch.HEIGHT_DP.dp).widthIn(min = 64.dp).background(if (on) colours.ink else Color.Transparent, shape)
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = ViewSwitch.SEGMENT_PAD_DP.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 // T315: each segment as wide as the wider of its label's two weights whichever is selected, so the switch is

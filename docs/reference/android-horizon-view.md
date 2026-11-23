@@ -28,14 +28,17 @@ on the Horizon view and on the Panorama view, whatever cards are up, in both ori
   its verifier): where the room beside the three segments is under 240 dp (`OverlayLayout.CREDIT_BESIDE_MIN`,
   `creditRoomBeside`, `creditAbove`: pure, no text measured), the credit line stands above the switch across the window
   and the lower controls above it; with 240 dp or more it stays beside the switch. Either way it keeps its line cap (two
-  lines, three with the Flights layer's notice, ellipsised; a tap opens the full credits). On a 411 dp phone it stands
+  lines, three with the Flights layer's notice, ellipsised; a tap opens the full credits; T344: when the cap cuts the line
+  while the Flights layer draws, the feed's notice goes first, `CreditLine.noticeFirst`, so the ellipsis never falls on it).
+  T344: with the fourth segment the switch is 298 dp wide at font 1.0 (12 dp of padding a side per segment, 16 before). On a 411 dp phone it stands
   above at every font scale; at 914 dp on its side it is beside. The cards and panels drawn by their own code
   (the route card, the trip card, the update offer, the flights card, the track panels, the first-run card) stand on
   `AttributionInsets.bottom`, the higher of the credit line and the switch (`ViewSwitch.floorDp`). T309's ladder rung and
   T310's `firstRunCard` hiding are gone; so is the switch's height in the route card's cap (`BottomPanels.mapRowDp`), which
   hid it at font scale 2.0 when the route was planned before the font was raised.
-- **On the Horizon view** the same anchored control is drawn over the content. In portrait the scroll area runs under it
-  and ends with the switch's height and 8 dp more of room, so the last row clears it at the end of the scroll; in landscape
+- **On the Horizon view** the same anchored control is drawn over the content. In portrait the scroll area's viewport
+  ends the switch's height and 8 dp above the bottom (T344, T325's follow-up: before, it ran under the switch and the
+  Sky plot row passed under it mid-scroll), so no row passes under it; in landscape
   the square plot ends 8 dp above it (its side is the height less that room) and the right pane is clear of it. A flight's
   card in portrait stands above it. `GET /horizon` `drawn`: `switchPx` (in the Compose root, as `GET /layout`'s), and
   `paneOverSwitch`, `switchRoomDp`.
@@ -47,9 +50,10 @@ Panorama segment calls too): an open long-press card first (as its "Sky from her
 at the feature and named; the card closes), else a search result's marker while it is on the map (named; the marker
 stays), else the fix. A peak picked inside the view is not the map's selection. T326: "Panorama" from the map does the
 same; between Horizon and Panorama the view changes and keeps its place and a picked peak (`HorizonPlace.switchAction`).
-Each segment is a tab (`selectable`, `Role.Tab`), tags `horizonSwitch.map`, `horizonSwitch.horizon` and
-`horizonSwitch.panorama`; the group's label "Map, horizon or panorama view". Debug:
-`POST /horizon/switch?to=map|horizon|panorama` answers both rectangles (`map`, `view`), `showing` and `viewPx`. No compass shortcut: MapLibre's compass shows only while the map is turned, and its
+T344: the fourth segment, "List" (the List view, `android-panorama-view.md` › The List view), does the same.
+Each segment is a tab (`selectable`, `Role.Tab`), tags `horizonSwitch.map`, `horizonSwitch.horizon`,
+`horizonSwitch.panorama` and `horizonSwitch.list`; the group's label "Map, horizon, panorama or list view". Debug:
+`POST /horizon/switch?to=map|horizon|panorama|list` answers both rectangles (`map`, `view`), `showing` and `viewPx`. No compass shortcut: MapLibre's compass shows only while the map is turned, and its
 tap resets north. Every map frame of a sweep made before T315 differs by it (the switch, the credit line and every lower
 control moved).
 

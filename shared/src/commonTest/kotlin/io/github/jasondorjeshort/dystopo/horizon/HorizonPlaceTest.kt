@@ -174,7 +174,7 @@ class HorizonPlaceTest {
             assertEquals(s, HorizonPlace.switched(s, v, null))
         }
         assertEquals(SwitchAction.NONE, HorizonPlace.switchAction(SkyView.MAP, SkyView.MAP))
-        assertEquals(listOf("Map", "Horizon", "Panorama"), SkyView.entries.map { it.label })
+        assertEquals(listOf("Map", "Horizon", "Panorama", "List"), SkyView.entries.map { it.label }) // T344: the fourth
         assertEquals(SkyView.PANORAMA, SkyView.of("panorama"))
         assertNull(SkyView.of("camera"))
     }
@@ -196,4 +196,22 @@ class HorizonPlaceTest {
         assertNull(HorizonPlace.bearingOfKey(null))
         assertNull(HorizonPlace.bearingOfKey("no bearing"))
     }
+
+    // T344: the List view, the switch's fourth segment, keeps the place and a pick between the sky views as they do, opens
+    // at the map's selection from the map, and "Map" lets go.
+    @Test
+    fun theListIsASkyViewLikeTheOthers() {
+        assertEquals(SkyView.LIST, SkyView.of("list"))
+        assertEquals(SwitchAction.OPEN_AT_SELECTION, HorizonPlace.switchAction(SkyView.MAP, SkyView.LIST))
+        assertEquals(SkyState(SkyView.LIST, summit, null), HorizonPlace.switched(SkyState(SkyView.MAP, null, null), SkyView.LIST, summit))
+        for (v in listOf(SkyView.HORIZON, SkyView.PANORAMA)) {
+            assertEquals(SwitchAction.KEEP_PLACE, HorizonPlace.switchAction(v, SkyView.LIST))
+            assertEquals(SwitchAction.KEEP_PLACE, HorizonPlace.switchAction(SkyView.LIST, v))
+            val s = SkyState(v, summit, "Mount Rainier@3470")
+            assertEquals(s.copy(view = SkyView.LIST), HorizonPlace.switched(s, SkyView.LIST, null))
+        }
+        assertEquals(SwitchAction.CLOSE, HorizonPlace.switchAction(SkyView.LIST, SkyView.MAP))
+        assertEquals(SwitchAction.NONE, HorizonPlace.switchAction(SkyView.LIST, SkyView.LIST))
+    }
+    // end T344
 }

@@ -142,6 +142,12 @@ object PanoramaStrings {
  * is the wider of 320 dp and 40 percent of the width) and its full height less the switch's room, the pane at the right.
  * Where the pane's list would have under 96 dp left, only the place line stays fixed and the heading and a picked peak's
  * line scroll with the list.
+ *
+ * T344 (step one of the owner's Answer of 2026-11-22, first half): the pane's list moved to the List view, the switch's
+ * fourth segment (`app/skylist/`): "Show:" and the toggles, the terrain line, the Flights, Peaks, Sun and Satellites
+ * sections. The plot keeps its size; beside or under it stay the place line with "Back to here", the heading with its help
+ * and the small list button ([SkyListStrings.OPEN], a second way into the List, its place flagged for the owner), a picked
+ * peak's line and the weak-compass line. A flight picked on the lens still opens its card here. T351 fills the window.
  */
 @Composable
 fun PanoramaScreen() {
@@ -229,7 +235,7 @@ fun PanoramaScreen() {
                 null -> null
             }
             val listRoom = with(density) { (paneH - placeH - headingH - (if (picked != null) pickedH else 0)).toDp() }
-            val headingScrolls = paneH > 0 && listRoom < 96.dp
+            val headingScrolls = false // T344: no list under the heading any more; it always stays
             PanoramaUi.headingScrolls = headingScrolls
             val plot: @Composable () -> Unit = {
                 Box(Modifier.size(plotW, plotH)) {
@@ -249,46 +255,21 @@ fun PanoramaScreen() {
                 }
             }
             val heading: @Composable () -> Unit = {
-                Box(Modifier.onGloballyPositioned { headingH = it.size.height }) { SkyViewHeading(PanoramaStrings.TITLE, help = "panorama.view", pal = pal) }
+                // T344: the list button at the heading's end; above font scale 1.3 under it, at its end (beside it, on its side at
+                // 2.0 the title broke inside its word).
+                val listUnder = density.fontScale > 1.3f
+                Column(Modifier.onGloballyPositioned { headingH = it.size.height }, horizontalAlignment = Alignment.End) {
+                    SkyViewHeading(PanoramaStrings.TITLE, help = "panorama.view", pal = pal) { if (!listUnder) ListButton(pal) }
+                    if (listUnder) Box(Modifier.padding(end = 16.dp)) { ListButton(pal) }
+                }
                 if (picked != null) Box(Modifier.onGloballyPositioned { pickedH = it.size.height }) { PickedPeak(picked, pal, units) }
             }
             val pane: @Composable (Modifier) -> Unit = { m ->
                 Column(m.onGloballyPositioned { paneH = it.size.height }) {
                     Box(Modifier.onGloballyPositioned { placeH = it.size.height }) { PlaceRow(place, moved, pal, night) }
-                    if (!headingScrolls) heading()
-                    Column(
-                        Modifier.weight(1f).fillMaxWidth()
-                            .onGloballyPositioned { c ->
-                                // The list's viewport (before the scroll), as the screen shows it.
-                                val at = c.positionInRoot()
-                                PanoramaUi.listPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
-                            }
-                            .verticalScroll(scroll).testTag("panoramaList")
-                            .padding(bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),
-                    ) {
-                        if (headingScrolls) heading()
-                        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // T327: the four toggles, the Horizon view's own synced settings; at a chosen point Satellites and Flights disabled.
-                            LayerToggles(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), moved, pal)
-                            // T340: with no terrain the reason stands as the horizon, so the terrain line and Peaks say it and finish.
-                            val hr = h ?: work?.reason?.let { Gnss.HorizonState(pos!!.first, pos.second, null, it, null, null, 0) }
-                            TerrainLine(hr, pos, units, pal)
-                            // The sections in the Horizon view's order; a row's tap makes its thing the target and turns the view to it.
-                            flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units, help = "panorama.flights") }
-                            if (layers.peaks) PeaksSection(hr, peaks, selected, pal, units, help = "panorama.peaks", rangeM = rangeM)
-                            if (layers.sun) SunSection(
-                                pos != null, sunDay, sunNow, fn, pal, night, tick, help = "panorama.sun",
-                                onNow = { PanoramaUi.apply(PanoramaTargets.SunTapped(sunNow?.let { HorizonText.sunUp(it.apparentAltitudeDeg) } == true)) },
-                                nowChosen = target?.kind == TargetKind.SUN,
-                            )
-                            if (layers.satellites) SatellitesSection(
-                                sats, plotted, summary, fn, pal, units, tick, bump = { clock.bump() },
-                                onRow = { s -> PanoramaUi.apply(PanoramaTargets.SatelliteTapped(s.id, HorizonText.satelliteName(s))) },
-                                chosen = target?.takeIf { it.kind == TargetKind.SATELLITE }?.id,
-                            )
-                            if (layers.on.isEmpty()) BasicText(HorizonText.NO_LAYERS, style = TextStyle(color = pal.muted, fontSize = 14.sp))
-                        }
-                    }
+                    heading()
+                    // T344: the list that scrolled here is the List view's now (`app/skylist/SkyListScreen.kt`).
+                    PanoramaUi.listPx = null
                 }
             }
             // T331 (choice (h)): one quiet line under the plot while the compass reads weak in Follow.
@@ -418,20 +399,19 @@ internal val PANORAMA_HELP: List<HelpText> = run {
                 "an edge arrow points to it while out of view. With Follow phone on, point the phone; drag sideways to adjust the " +
                 "compass, and Reset undoes it."
         },
-        HelpText("panorama.peaks", HorizonText.PEAKS, "$placed, its ${HorizonText.PEAKS} list", show = show) { units ->
-            "Named peaks within your view range of ${UnitFormat.distance(AppSettings.viewRangeKm * 1000.0, units)} in view or just out of " +
-                "sight. The view names the highest on the skyline, then the closest; zoom in to name more. Tap a name or a row for its line; " +
-                "${HorizonText.VIEW_FROM_HERE} stands the view on its top."
-        },
-        // T327
-        HelpText("panorama.sun", HorizonText.SUN, "$placed, its ${HorizonText.SUN} section", show = show) { _ ->
-            "Today's path of the sun through the lens, with the hours, dashed where the terrain hides it, and the sun where it is now. " +
-                "Tap the line saying where it is now to turn the view to it while it is up."
-        },
-        HelpText("panorama.flights", HorizonText.FLIGHTS, "$placed, its ${HorizonText.FLIGHTS} list", show = show) { _ ->
-            "Each flight in the air is a dot where it is in the sky, with a tail of its last 90 s; hollow when hidden by the terrain " +
-                "or not heard lately, a ring for an emergency code. Tap a dot or a row for its card; the view turns to it."
-        },
-        // end T327
+        // T344: the Peaks, Sun and Flights texts moved with their sections to the List view (`app/skylist/SkyListScreen.kt`).
     )
+}
+
+/**
+ * T344: the Panorama's small list button, a second way into the List view (the switch's fourth segment is the first); in
+ * the heading row at its end, a place flagged for the owner (ADR 0031). A target of 48 dp.
+ */
+@Composable
+private fun ListButton(pal: GnssPalette) {
+    Box(Modifier.padding(start = 8.dp).testTag("panoramaListButton"), contentAlignment = Alignment.Center) {
+        io.github.jasondorjeshort.dystopo.app.gnss.Button(io.github.jasondorjeshort.dystopo.app.skylist.SkyListStrings.OPEN, pal) {
+            io.github.jasondorjeshort.dystopo.app.skylist.SkyList.openFromPanorama()
+        }
+    }
 }

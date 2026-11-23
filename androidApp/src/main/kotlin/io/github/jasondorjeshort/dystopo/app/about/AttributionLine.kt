@@ -54,6 +54,16 @@ object CreditLine {
     @Volatile var composedAt = 0L
         private set
 
+    /**
+     * T344: [text] with the flights' [notice] moved to its start when the line [overflowed] its cap (the notice is the
+     * feed's licence term, so it is the part that must not be cut); [text] as it is otherwise. Pure.
+     */
+    fun noticeFirst(text: String, notice: String?, overflowed: Boolean): String {
+        if (!overflowed || notice == null || text.startsWith(notice)) return text
+        val rest = text.replace(" | $notice", "").replace(notice, "").trim().trim('|').trim()
+        return if (notice in text) listOf(notice, rest).filter { it.isNotEmpty() }.joinToString(" | ") else text
+    }
+
     internal fun composed(text: String) {
         shown = text
         composedAt = System.currentTimeMillis()
@@ -71,9 +81,16 @@ fun AttributionLine(fallback: String, modifier: Modifier = Modifier) {
     val text = credits?.takeIf { it.packs.isNotEmpty() }?.compact
         ?: credits?.takeIf { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing }?.compact // T311: the feed's notice with no pack open
         ?: HtmlText.toPlain(fallback)
-    androidx.compose.runtime.SideEffect { CreditLine.composed(text) }
+    // T344 (T326's follow-up: at font 2.0 upright the capped line ended in an ellipsis before the flights' notice): when
+    // the line overflows its cap while the Flights layer draws, the feed's notice goes first ([CreditLine.noticeFirst]).
+    val drawing = io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing
+    val notice = if (drawing) io.github.jasondorjeshort.dystopo.sources.SourceRegistry.builtIn[io.github.jasondorjeshort.dystopo.aircraft.AdsbLolSource.REGISTRY_ID]?.attribution else null
+    var overflowed by androidx.compose.runtime.remember(text) { mutableStateOf(false) }
+    val shown = CreditLine.noticeFirst(text, notice, overflowed)
+    androidx.compose.runtime.SideEffect { CreditLine.composed(shown) }
     BasicText(
-        text,
+        shown,
+        onTextLayout = { r -> if (r.hasVisualOverflow && !overflowed) overflowed = true },
         style = TextStyle(color = Color(0xFF3B2A1A), fontSize = 11.sp),
         maxLines = if (io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.drawing) 3 else 2, // T311: room for the flights notice (ODbL) at the end
         overflow = TextOverflow.Ellipsis,

@@ -527,7 +527,7 @@ class MapLayoutTest {
             val t = if (scale > 1f) 1.75f else 1f // the cards' and the strip's curve
             val (w, h) = if (landscape) 914.3f to 411.4f else 411.4f to 914.3f
             val ins = if (landscape) floatArrayOf(48f, 24f, 0f, 24f) else floatArrayOf(0f, 48.8f, 0f, 24f)
-            val sw = size(249f * k, 48f * k) // T326: three segments
+            val sw = size(if (scale > 1f) SWITCH_WIDE_DP else SWITCH_DP, 48f * k) // T326: three segments; T344: four, as measured
             val anchor = ui.switchRect(w, h, ins[0], ins[3], sw)
             val creditH = if (landscape) 18f * t else 30f * t
             // T326 (choice h): under 240 dp beside the switch (upright here) the credit stands above it across the window.
@@ -586,7 +586,7 @@ class MapLayoutTest {
     fun aRouteCardPlannedBeforeTheFontWasRaisedLeavesTheSwitchShown() {
         val ui = io.github.jasondorjeshort.dystopo.ui.OverlayLayout
         fun size(w: Float, h: Float) = io.github.jasondorjeshort.dystopo.ui.OverlaySize(w, h)
-        val sw = size(249f, 48f) // T326: three segments; at 411 dp the credit line stands above them (choice h)
+        val sw = size(SWITCH_DP, 48f) // T326: three segments; T344: four; at 411 dp the credit line stands above them (choice h)
         val anchor = ui.switchRect(411.4f, 914.3f, 0f, 24f, sw)
         // The route card stands on the credit line's top (AttributionInsets.bottom), the credit 6 dp above the switch.
         fun card(creditH: Float) = io.github.jasondorjeshort.dystopo.ui.OverlayCard(420f, 140f, 44f, 395.4f,
@@ -602,7 +602,7 @@ class MapLayoutTest {
         assertTrue(ui.creditAbove(at1))
         val first = ui.place(at1)
         val raised = at1.copy(fontScale = 2f, search = size(ui.SEARCH_WIDTH, 63.2f), topRow = size(236.6f, 38.1f), credit = size(380f, 55.6f), trackBar = size(106.7f, 82.3f),
-            horizonSwitch = size(249f * 1.3f, 48f), planning = card(55.6f),
+            horizonSwitch = size(SWITCH_WIDE_DP, 48f), planning = card(55.6f),
             scaleBar = size(79.6f, 41.9f), strip = List(3) { size(130f, 66.4f) })
         for (p in listOf(ui.place(raised, first.latch), ui.place(raised))) {
             assertTrue(p.overlaps().isEmpty(), "${p.overlaps()}")
@@ -670,4 +670,29 @@ class MapLayoutTest {
         const val PLATE_H_2 = 41.9f
         val CARD_IDS = setOf(OverlayIds.NAV_CARD, OverlayIds.WARNING_CARD, OverlayIds.PLANNING_CARD, OverlayIds.TRIP_CARD, OverlayIds.UPDATE_CARD)
     }
+
+    // T344: the switch's four segments ("Map | Horizon | Panorama | List") within the window less its insets, upright and
+    // on its side, at font scale 1.0 and 2.0 (map chrome's cap 1.3), at the widths measured on the emulator (`GET
+    // /horizon/switch`'s rectangles: 782 and 881 px at 2.625 px per dp); the credit line above them upright, beside them on
+    // its side, by the rule that reads the switch's width.
+    @Test
+    fun theFourSegmentsFitTheWindowAndTheCreditFollowsTheirWidth() {
+        val ui = io.github.jasondorjeshort.dystopo.ui.OverlayLayout
+        for (wide in listOf(false, true)) for (landscape in listOf(false, true)) {
+            val sw = io.github.jasondorjeshort.dystopo.ui.OverlaySize(if (wide) SWITCH_WIDE_DP else SWITCH_DP, 48f)
+            val (w, h) = if (landscape) 914.3f to 411.4f else 411.4f to 914.3f
+            val ins = if (landscape) floatArrayOf(48f, 24f, 0f, 24f) else floatArrayOf(0f, 48.8f, 0f, 24f)
+            val r = ui.switchRect(w, h, ins[0], ins[3], sw)
+            val at = "wide=$wide landscape=$landscape"
+            assertTrue(r.right <= w - ins[2] - ui.SWITCH_EDGE, "$at: the switch $r within the window")
+            assertEquals(sw.width, r.right - r.left, at)
+            assertEquals(!landscape, ui.creditAbove(ui.creditRoomBeside(w, ins[0], ins[2], sw.width)), "$at: the credit above upright, beside on its side")
+        }
+    }
+    // end T344
 }
+
+// T344: the four-segment switch's width (dp) at font scale 1.0 and at map chrome's cap (font 2.0), measured.
+private const val SWITCH_DP = 298f
+private const val SWITCH_WIDE_DP = 335.6f
+// end T344

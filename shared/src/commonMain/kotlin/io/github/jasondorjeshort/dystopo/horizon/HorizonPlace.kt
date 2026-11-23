@@ -18,10 +18,11 @@ enum class SwitchFrom(val key: String) { LONG_PRESS("longPress"), SEARCH("search
 
 /**
  * T326: the views of the switch, left to right ("Map | Horizon | Panorama"): [key] as the debug routes name them,
- * [label] the segment's text.
+ * [label] the segment's text. T344: the fourth, the List view ("Map | Horizon | Panorama | List"): the Panorama's pane as a
+ * page of its own; it stands on the same place as the other sky views ([switchAction] keeps it between them).
  */
 enum class SkyView(val key: String, val label: String) {
-    MAP("map", "Map"), HORIZON("horizon", "Horizon"), PANORAMA("panorama", "Panorama");
+    MAP("map", "Map"), HORIZON("horizon", "Horizon"), PANORAMA("panorama", "Panorama"), LIST("list", "List");
 
     companion object {
         fun of(key: String?): SkyView? = entries.firstOrNull { it.key == key }

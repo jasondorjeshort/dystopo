@@ -327,6 +327,7 @@ private fun MapScreen(mapView: MapView, attribution: String, message: MapMessage
         io.github.jasondorjeshort.dystopo.app.share.QrScannerOverlay() // T57: the Share screen's QR scanner
         io.github.jasondorjeshort.dystopo.app.horizon.HorizonScreen() // T307, T308: the Horizon view (Settings > Navigation and tracking > Horizon view)
         io.github.jasondorjeshort.dystopo.app.panorama.PanoramaScreen() // T326: the Panorama view, the switch's third segment
+        io.github.jasondorjeshort.dystopo.app.skylist.SkyListScreen() // T344: the List view, the switch's fourth segment
         StartupTrace.composing("compose GlanceView and HelpHost")
         io.github.jasondorjeshort.dystopo.app.readout.GlanceView() // T210: the glance view (a tap on the readout bar), over every screen but help
         io.github.jasondorjeshort.dystopo.app.help.HelpHost() // T109, T115: the open help pop-up, last so it is over every screen above
