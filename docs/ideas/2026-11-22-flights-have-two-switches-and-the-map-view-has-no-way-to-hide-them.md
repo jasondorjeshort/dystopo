@@ -90,3 +90,36 @@ Built in alpha and shown in the report (ADR 0031/0033): the button's place, icon
 row, help wording, the new key. The owner decides: (a) does track keep polling when no view shows flights
 (recommended: no); (b) what hiking mode is; (c) separate Horizon and Panorama toggles; (d) a Layers sheet now
 instead of a button; (e) the same pattern for peaks on the map.
+
+## The owner's answers (2026-11-23, planning wave 48, by multiple choice with their own words)
+
+- On what a hidden layer does with polling: "I think at some point we want a research agent to try to figure out
+  how long dead reckoning on a reduced poll rate is going to be effective. Can we poll every 2, 5, 10 minutes and
+  still have reasonably accurate data? Is there a good way to show that a flight's data is out of date and being
+  guessed at based on dead reckoning?" Researched the same day:
+  `docs/findings/2026-11-23-flights-guessed-between-polls-at-slow-refresh.md` (2 min holds for the map and far
+  cruise traffic, 5 min for cruise on the map only, 10 min for nothing; a guessed state with a hollow mark and a
+  growing ring; a recorder and an error report before that is built).
+- On where the controls live: "Right now "flight tracking" is in map options even though it's a global option,
+  while horizon and pano options show in little toggles that only show up if that global option is on. The "flight
+  tracking" global needs to move out of map options to...somewhere. Map options can stay where it is for now and
+  get "Show flights", but eventually this is a map-view-specific thing that should move out of the settings view
+  (when its a view) and onto a map settings place somewhere (maybe where settings is now). Note though there is a
+  difference between map settings that require a full tile rerender for the png tile cache (we do have a png tile
+  cache right), versus things that move and MUST be overlays such as flights. In general I'd say the final form
+  here isn't really decided...a research agent to look at other apps might be cool, but I'm not sure anything else
+  has the same needs as us." Then, by choice: the global rows move to **Data and storage** for now.
+- The coordinator's note on the tile cache: the contour and shade tiles the phone renders are cached on disk; the
+  drawn vector map is not (`2026-11-07-rendered-tiles-cached-on-disk.md`, whose measurement pass is still owed).
+  So an option that changes contours or shade costs a re-render of cached tiles, and an overlay such as flights
+  costs none: the distinction the owner draws is real in the code.
+
+Plan: model A, in three passes. (1) Wave 48: measure the idle cost first (the architect's four states by replay);
+"Show flights" in Map options for the map view (`mapFlights`, synced, default on, shown while Flight tracking is
+on); the four global rows to Data and storage; a hidden map stops asking, stops redrawing and clears its marks
+once (the poller already makes no request when no view asks); the ticker stops while tracking is off and nothing
+is rebuilt or pushed while nothing shows flights; the pattern recorded in a short ADR. (2) Wave 48, devtool only:
+the finding's recorder and error report. (3) A later wave, from the measured table: the guessed state and its
+look, the guess horizon apart from the interval, "Automatic" refresh. Left open, the owner's: the final home of
+per-view settings (with the views-as-tabs idea), a Layers sheet, the same switch for peaks on the map, a hiking
+or low-power mode.

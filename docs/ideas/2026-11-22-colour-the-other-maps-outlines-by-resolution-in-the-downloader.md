@@ -41,7 +41,13 @@ built, and a pack with no record, whose detail comes from its metadata); whether
 "on this phone" card, the Offline maps rows (a swatch beside the state word) and the sweep's frames; the outline
 of an area being drawn stays distinct from a saved map's.
 
-Plan: first the research (a read-only agent, a finding), then one small task: the outline's colour and second cue from the
+2026-11-23 (planning wave 48): the research is done, `docs/findings/2026-11-23-outline-colours-by-map-detail.md`:
+an indigo ramp ordered by lightness for four levels with width and dash as the second cue, a grey for a map that
+is off, the draft kept teal and the only filled shape, day and night values with their contrast, the overlap rule
+(finest on top), a key on the card and a swatch on each row. Today every outline and the draft share one teal
+constant in `areas/AreasScreen.kt`, and the night palette does not change it.
+
+Plan: first the research (done, above), then one small task: the outline's colour and second cue from the
 map's detail through one function in `app/areas/` with a test of the mapping (every detail has a colour, the night
 palette's pairs differ), a swatch and the level's name on the row, a legend, the outline colours in the a11y frames, a
 debug field on `GET /areas/rows` giving each row's detail and colour; strings in the report (ADR 0031).

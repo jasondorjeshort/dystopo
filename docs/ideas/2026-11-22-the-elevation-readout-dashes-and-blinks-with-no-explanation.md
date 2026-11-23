@@ -29,3 +29,20 @@ yet reproduced on a device:
 - Whether a restart should clear the height at all: holding the last height dimmed for a while may be better
   than a dash.
 - Whether the dim should have a hold (hysteresis) so a short gap does not blink.
+
+2026-11-23 (planning wave 48): read from the code by a read-only agent,
+`docs/findings/2026-11-23-the-readouts-dash-and-blink-read-from-the-code.md`. Corrections to the above: a jump
+onto a GPS fix with altitude shows no dash (only one onto a network or no-altitude fix does); `reset()` runs only
+from the debug route; the gap already has a caption ("no fix 8 s"); two more paths exist, a cold start and an
+activity change. A calibrated barometer stops the elevation dimming, so a blink means it was not fused then.
+
+Plan: one pass, the finding's rule. Reproduce both cases on the emulator first (the finding's steps), recording
+`GET /readout`. Then, in `shared`: a jump restarts the horizontal state and keeps the elevation filter and the
+barometer offset (the jump check moves from `LiveReadout` into the estimator); a clock going back holds the last
+height dimmed, reason `held`, until the new filter has a height or 60 s pass; the dim leaves only on the second
+fix of a run whose fixes came within `gapMs` of each other; gaps measured on elapsed realtime; every dimmed
+elevation carries a reason code; one dim strength for the bar and the glance view; elevation's "no height yet"
+draws the climb's "?" and not a dash. `GET /readout` gains the last restart's cause and time and a count of dim
+toggles. Tests as the finding lists. The words that explain each state are the question-mark policy's first build
+(`2026-11-22-every-value-that-can-dash-or-dim-gets-a-question-mark-and-a-reason.md`), a separate pass after this
+one. Visible changes for the owner (ADR 0031): the steady dim, the height kept across a jump, "?" for no height.

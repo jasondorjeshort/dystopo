@@ -67,3 +67,25 @@ recenter button disabled tint (`RecenterButton.kt:212`); GNSS screen dashes per 
 - Bar "?" always visible on a non-normal value, or revealed by the tap only?
 - The puck is a MapLibre layer: explain it by its own tap, or through the bar?
 - "?" and dash distinct everywhere (as the climb does: "?" too little data, dash contradiction), or one mark?
+
+## Audit (2026-11-23, planning wave 48)
+
+The owner's step 2 is done by a read-only agent: `docs/findings/2026-11-23-audit-of-values-that-dash-dim-or-hide.md`
+(every state per surface, what explains it, how to reach it on an emulator, eight build tasks with disjoint files,
+eight behaviours to fix rather than explain). It corrects the survey above: a tap on the bar already opens the
+glance view, so a tap on a value cannot open its reason; the puck is already explained; Settings help already
+explains the speed dash and the climb's marks.
+
+The owner, 2026-11-23, by multiple choice: the reason shows **in the glance view**, one line under the value, and
+the bar's value carries a small "?" while it is not normal; the bar's tap stays as it is. And, in the owner's
+words the same day: "On the gps/pressure glance tap we have a question mark, but we could easily fit in data about
+recent errors here. If there's a gps drop or etc in the last 60 seconds we can trivially fit that on the screen."
+So the glance view also lists what went wrong in the last 60 seconds, even when the values are normal again.
+
+Plan: built per surface, the bar first, each its own pass with the finding's file lists. First pass (wave 48):
+the reason table beside the help registry with a test that every (entry, state, reason code) has a sentence, the
+readout's reason codes as a closed set in `shared`, the "?" mark on the bar, the reason lines in the glance view,
+state words in the bar's accessibility text, and a11y screens for the bar's states and the glance view so the
+click-through can open them. Later passes: map controls (the position button's dead tap), the pressure card's way
+down, the GPS view, downloads and storage, lists; then the click-through on debug and release builds with the
+finding's table as the checklist.
