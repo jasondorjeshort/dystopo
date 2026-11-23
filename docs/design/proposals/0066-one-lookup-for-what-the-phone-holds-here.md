@@ -1,7 +1,7 @@
 # 0066. One lookup for what the phone holds here, and the order every reader takes from it
 
 Date: 2026-11-23
-Status: under review (revised on the critic's 14 objections, `0066-critic-review.md`)
+Status: promoted to ADR 0066 (accepted, the ADR follows; revised on the critic's 14 objections, `0066-critic-review.md`; the owner's answers of 2026-11-23 below)
 
 ## Question
 
@@ -323,18 +323,23 @@ it online under the setting with a size cap is recorded as a later option.
    `// end Tnn`).
 4. **Point and elevation readers** (after task 3). `app/terrain/TerrainRead.kt` (a point read),
    `ShadeService.pyramidAt` (a block closed by `// end Tnn`), `trips/Trips.kt` (`demSampler`, `editor`),
-   `readout/PressureCard.kt` (`PressureWatch`, `WayDownWatch`), `readout/LiveReadout.kt`, `tracking/TerrainSource.kt`
-   (holdings on the phone only, never a fetch), `routing/RouteExposure.kt`, `routing/RouteBestStart.kt`,
-   `routing/RoutePlanner.kt` (the crow line only), `nav/NavShade.kt`, `tracking/LongPressMenu.kt`,
-   `controls/ScaleBarRoutes.kt`; the point readers' rule by the owner's answer to Question (a).
+   `readout/PressureCard.kt` (`PressureWatch`, `WayDownWatch`), `readout/LiveReadout.kt`, `tracking/TerrainSource.kt`,
+   `routing/RouteExposure.kt`, `routing/RouteBestStart.kt`, `routing/RoutePlanner.kt` (the crow line only),
+   `nav/NavShade.kt`, `tracking/LongPressMenu.kt`, `controls/ScaleBarRoutes.kt`. By the owner's answer to Question
+   (a): the readout, the pressure card's ground height and the position estimate read the deepest elevation by the
+   map's rule, the network's included under `onlineDetail` (default on); the position estimate reads only tiles
+   already fetched or cached and starts no fetch of its own. Done when: the readout at a fix inside a medium map
+   with a server set reads the z15 elevation with the setting on and the map's with it off.
 5. **Coverage readers** (after task 1). `app/online/OnlineView.kt` (the chip's source from the lookup),
    `online/OnlineOverlay.kt` (`offerDownload` from the lookup's "network adds" and T343's function),
    `search/PlaceSearch.kt` (`coverage`), `firstrun/FirstRun.kt` (inputs only), T343's function re-pointed.
 6. **The coverage panel** (after task 5). New `app/online/CoveragePanel.kt`, the chip's tap block in
    `OnlineOverlay.kt` closed by `// end Tnn`, a `Help.kt` block, the a11y tool's block (screen `coverage-panel`),
    docs; strings to the owner.
-7. **"Show first"** by the owner's answer to Question (b): `areas/OfflineMapList.kt`, `areas/AreasScreen.kt`,
-   `docs/reference/android-app.md` (its line).
+7. **"Show first" becomes "Start here"** (the owner's answer to Question (b)): the action is renamed; it now sets the
+   map the app opens on (its start view, unit seeding, the contour warm-up) and the one that wins between two maps
+   of equal detail, no longer the map shown first over a deeper one. Owns: `areas/OfflineMapList.kt` (the label and
+   its help), `areas/AreasScreen.kt`, `docs/reference/android-app.md` (its line); the string in the report.
 
 ## What would change this recommendation
 
@@ -351,7 +356,9 @@ it online under the setting with a size cap is recorded as a later option.
 - Row 2: a map's DEM answers every zoom from its first down (`PackPrecedence.zoomOk`, `DEM -> z >= c.minZoom`), so
   `OnlineTiles.packCoversDem` is true at z14 and z15 inside a z13 map and the fetcher is not asked.
 - Row 6: `TileService.kt:534` caps the DEM source at the deepest map's zoom whenever any map has a DEM.
-- Rows 14, 15, 17, 18, 34 read only the primary map (`Trips.elevation()` = `dem.get(app.tiles.packs.dem)`).
+- Rows 14, 15, 17, 18, 34 read only the primary map (`Trips.elevation()` = `dem.get(app.tiles.packs.dem)`); the
+  pressure card uses the ground elevation only to calibrate (`PressureCard.kt:194`), and `TerrainSource` can read
+  the fetcher's cache without fetching (`OnlineFetcher.cachedOnly`), which the owner's answer to Question (a) needs.
 - `MergedTerrain.ORDER` puts every map before the online source whatever its depth, and `pointZoom` takes the deepest
   map holding the point (`MergedTerrain.kt:45-77`); `TerrainRead.kt:50` gives online `DEM_MAX_ZOOM`.
 - The default online DEM stores to z12 (`DirectSources.DEFAULT_MAX_ZOOM`, `DirectPrefs.maxZoom`); a server declares
@@ -377,11 +384,20 @@ read? A source that changes as the signal comes and goes moves the calibration a
   estimate stays on what the phone holds.
 - C. As today: the map chosen last.
 
+Answer: "I want a setting, defaulting on, to use network data when the phone download is lower res." (the owner,
+2026-11-23, by multiple choice, after asking whether this was ground elevation or pressure: it is ground elevation;
+the pressure card uses it only to calibrate). So the readout, the pressure card's ground height and the
+terrain-aided position estimate read the network's deeper elevation under `onlineDetail` (default on), the same
+rule as the map. The coordinator's detail: the position estimate reads only what is already fetched or cached and
+starts no fetch of its own.
+
 Question (b): "Show first" on the Offline maps list (`areas/OfflineMapList.kt:161`) made a map the one shown first.
 After depth goes first, it sets only where the map opens and which map wins between two of equal detail.
 - A. Rename it to what it now does, "Start here" (recommended).
 - B. Remove the action.
 - C. Keep "Show first" with its old meaning for that one map (the chosen map wins over a deeper one: A1 for it).
+
+Answer: "Rename to "Start here"" (the owner, 2026-11-23, by multiple choice).
 
 ## Revision: the critic's objections and responses
 
