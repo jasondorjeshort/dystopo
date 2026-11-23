@@ -288,7 +288,7 @@ private fun UseOnPhone(id: String, off: Boolean, help: Boolean, onToggle: () -> 
             ) { Box(Modifier.size(16.dp).background(Color.White, CircleShape)) }
             BasicText(USE_ON_PHONE, style = TextStyle(color = Ink, fontSize = 14.sp))
         }
-        if (help) HelpIcon(USE_ON_PHONE_KEY)
+        if (help) HelpIcon("areas.useOnPhone") // [USE_ON_PHONE_KEY]
     }
     if (!on) BasicText(OFF_LINE, style = TextStyle(color = Color(0xFF8A5A00), fontSize = 12.sp))
 }
@@ -491,7 +491,7 @@ internal const val USE_ON_PHONE = "Use on this phone"
 internal const val OFF_LINE = "Off: not used. Still stored, still counts toward the limit."
 internal const val USE_ON_PHONE_KEY = "areas.useOnPhone"
 internal val USE_ON_PHONE_HELP: List<HelpText> = listOf(
-    HelpText(USE_ON_PHONE_KEY, USE_ON_PHONE, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, a map's row", show = { Areas.screenOpen = true }) {
+    HelpText("areas.useOnPhone", USE_ON_PHONE, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, a map's row", show = { Areas.screenOpen = true }) {
         "Turn off to stop the app using this map without deleting it. You can turn it on again at any time."
     },
 )

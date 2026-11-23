@@ -208,6 +208,9 @@ class HelpRegistryTest {
             // T346: Show zoom level.
             "map.zoomLabel",
             // end T346
+            // T342: an offline map's "Use on this phone".
+            "areas.useOnPhone",
+            // end T342
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
