@@ -68,12 +68,14 @@ fun peaksLine(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, units: ContourUn
  * T309: the peaks in view or just out of sight: how many, then each (name, height, distance, bearing) closest first; a tap
  * picks one ([HorizonUi.selected], the key [HorizonUi.keyOf]), bold while the plot names it ([HorizonUi.namedKeys]).
  * T325: [h] the horizon the peaks were found on, [peaks] those found, [selected] the picked key. T326: [rangeM] the host's
- * reach, as the count's line says it (the Horizon view's 30 km, the Panorama's view range).
+ * reach, as the count's line says it (the Horizon view's 30 km, the Panorama's view range). T344: [onRow] a row's tap in
+ * place of the pick's toggle (the List view: the peak picked and shown in the Panorama); null: the toggle.
  */
 @Composable
 fun PeaksSection(
     h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, selected: String?, pal: GnssPalette, units: ContourUnits, help: String,
     rangeM: Double = io.github.jasondorjeshort.dystopo.dem.Horizon.DEFAULT_RANGE_M,
+    onRow: ((key: String, p: io.github.jasondorjeshort.dystopo.dem.PeakView) -> Unit)? = null, // T344
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionHead(HorizonText.PEAKS, pal) { HelpIcon(help) }
@@ -84,7 +86,7 @@ fun PeaksSection(
             val chosen = key == selected
             Column(
                 Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { this.selected = chosen }
-                    .clickable(role = Role.Button) { HorizonUi.selected = if (chosen) null else key }.padding(vertical = 4.dp),
+                    .clickable(role = Role.Button) { if (onRow != null) onRow(key, p) else HorizonUi.selected = if (chosen) null else key }.padding(vertical = 4.dp),
             ) {
                 BasicText(
                     p.peak.name, style = TextStyle(color = if (chosen) pal.link else pal.ink, fontSize = 15.sp, fontWeight = if (key in named || chosen) FontWeight.Bold else FontWeight.Normal),

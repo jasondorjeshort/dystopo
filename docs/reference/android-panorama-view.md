@@ -1,11 +1,11 @@
 ---
-verified: 2026-11-22
-source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327, T330, T331)
+verified: 2026-11-23
+source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327, T330, T331, T344)
 ---
 
 # The Panorama view
 
-The third view of the switch ("Map | Horizon | Panorama"; ADR 0064, its Plan built in three passes, waves 44 to 46,
+The third view of the switch ("Map | Horizon | Panorama | List"; ADR 0064, its Plan built in three passes, waves 44 to 46,
 the idea file deleted with the third): the land's skyline one way, as through a lens, beside the Horizon view's round
 plot of the whole sky, steered by a drag or by the phone itself (Follow phone, below). Code: `app/panorama/` (the
 screen, the plot, the terrain and sweeps, Follow, the routes), the scene, the aim and the phone's attitude in
@@ -18,13 +18,14 @@ Debug routes: `android-debug-routes.md` (Panorama view). The choices it is built
 
 - **The switch** (`app/controls/ViewSwitch.kt`, `android-horizon-view.md` › The switch): from the map, "Panorama" opens
   the view at the map's selection by the same call as "Horizon" (`ViewSwitch.openAtSelection`: an open long-press card,
-  else a search result's marker, else the fix); between Horizon and Panorama the view keeps the place it stands on and a
-  picked peak; "Map" closes either. The pure rule is `HorizonPlace.switchAction` and `switched` (`SkyView`).
+  else a search result's marker, else the fix); between the sky views (Horizon, Panorama, List) the view keeps the place
+  it stands on and a picked peak; "Map" closes any. The pure rule is `HorizonPlace.switchAction` and `switched` (`SkyView`).
 - **One open state** (choice i): `HorizonUi.open` is true for either sky view and `HorizonUi.view` says which; the
   Panorama's own state (the aim) is `PanoramaUi`'s. "Sky from here", "View from here" and "Back to here" are the Horizon
   view's and act on the same point; Back lets go of a pick, then a chosen point, then closes (`SkyViewEffects`).
-- **The aim at opening** (choice c; an opening is the segment from the map or from the Horizon view; a "View from here"
-  hop and "Back to here" keep the aim): 60 degrees across the plot's width, the tilt that puts the level line two thirds
+- **The aim at opening** (choice c; an opening is the segment from the map or from the Horizon view, or from the List
+  when the List was not opened from the Panorama (T344: `SkyList.keepsAim`); a "View from here" hop and "Back to here"
+  keep the aim, and so does a return from the List opened from the Panorama): 60 degrees across the plot's width, the tilt that puts the level line two thirds
   down, and the bearing by `HorizonPlace.openingBearing`: toward a picked peak, else at the fix the compass heading (the
   compass starts at the opening; its first reading within 1.5 s is taken once unless the user has steered), else north.
   `GET /panorama` `aim.opening` says which (`peak`, `heading`, `heading-late`, `north`). On an emulator the rotation
@@ -36,14 +37,24 @@ Debug routes: `android-debug-routes.md` (Panorama view). The choices it is built
 - **Layout** (choice e): upright, the plot is the window's full width and three quarters of that tall, at most 45
   percent of the window's height (411 by 309 dp on a Pixel 6), the pane under it; on its side the plot is at the left
   (the window's width less the pane, the wider of 320 dp and 40 percent of the width) and the window's height less the
-  switch's room, the pane at the right. Where the pane's list would have under 96 dp, only the place line stays fixed and
-  the heading and a picked peak's line scroll with the list (`headingScrolls`).
-- **The pane** hosts the Horizon view's parts (`app/horizon/SkyViewParts.kt`, `SkyViewSections.kt`): the place line with
-  "Back to here", the heading "Panorama view" and its help, a picked peak's line with "View from here", "Show:" with the
-  Horizon view's toggles (Satellites, Peaks, Sun, and Flights while Flight tracking is on: the same synced settings; at a
-  chosen point Satellites and Flights disabled with the Horizon view's sentence), the terrain line, then the Flights,
-  Peaks (its count says the view range), Sun and Satellites sections in the Horizon view's order, and a flight's card
-  over the pane's lower part. No Close button.
+  switch's room, the pane at the right (T351 makes the plot the whole window).
+- **The pane** (T344: its list moved to the List view, below) holds the Horizon view's parts that say where the view
+  stands (`app/horizon/SkyViewParts.kt`): the place line with "Back to here", the heading "Panorama view" with its help
+  and the small button "List view" at the row's end (the List's second way in; its place is flagged for the owner, ADR
+  0031), a picked peak's line with "View from here", and a flight's card (a flight picked on the lens) over its lower
+  part. No Close button. `GET /panorama` `listPx` is null and `headingScrolls` false since.
+- **The List view** (T344; `app/skylist/`, the owner's Answer of 2026-11-22, step one's first half): the switch's fourth
+  segment, "List", and the Panorama's "List view" button open one page for the same place and moment: the place line and
+  "List view" with its help (they stay), a picked peak's line, then a list that scrolls: "Show:" with the Horizon view's
+  toggles (Satellites, Peaks, Sun, and Flights while Flight tracking is on: the same synced settings; at a chosen point
+  Satellites and Flights disabled with the Horizon view's sentence), the terrain line, then the Flights, Peaks (its count
+  says the view range), Sun and Satellites sections in the Horizon view's order (`SkyList.PARTS`; `SkyListTest` holds the
+  List to the pane's parts). Its data is the Panorama's (`PanoramaData`, the steps the plot last asked for). A tap on a
+  peak's row, on the sun's "Now ..." line while it is up or on a satellite's row shows the Panorama turned to it (the
+  target's rule below; a second tap on the List's row does not let it go); a flight's row opens its card over the list.
+  The list's viewport ends above the switch. Back is the sky views' ladder (a picked flight, a picked peak, a chosen
+  point, then the view closes). After Satellites the page leaves room for the viewshed's places to go (not built). Debug:
+  `GET /skylist`, `POST /skylist?open=1|row=` (`android-debug-routes.md`).
 - **The plot** (`PanoramaPlot.kt`) draws T324's scene: the skylines at 3, 10 and 30 km and the view range far to near,
   each tinted from the style's tokens between the paper's line tone and the hillshade's shadow (night by the map's night
   colours), the sky from the paper's light at the level to a cool tone overhead, the level line dashed, the bearing tape

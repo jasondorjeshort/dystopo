@@ -298,7 +298,7 @@ try:
     ps = PanoFlightsSrv()
     pf[0][1](type("C", (), {"srv": ps})())
     assert ps.calls == [("POST", "/aircraft/replay?name=a11y&undulationM=-18.4"), ("POST", "/horizon?flights=1&skyRange=all"), ("POST", "/horizon/switch?to=panorama"),
-                        ("GET", "/panorama?wait=60000"), ("GET", "/panorama"), ("POST", "/panorama?bearing=123.4"), ("POST", "/horizon?scroll=450")], ps.calls
+                        ("GET", "/panorama?wait=60000"), ("GET", "/panorama"), ("POST", "/panorama?bearing=123.4")], ps.calls  # T344: no scroll
     ps.calls.clear()
     pf[0][2](type("C", (), {"srv": ps})())
     assert ps.calls[1] == ("POST", "/horizon/switch?to=map") and ps.calls[-1] == ("POST", "/settings?aircraft=0"), ps.calls
@@ -697,5 +697,22 @@ try:
 finally:
     a11y.time.sleep = _sleep
 # end T348
+
+# T344: the List view with the Flights replay: opened by the switch's "List", waited for its peaks; its end is the
+# panorama-flights end (the replay stopped, Flight tracking off).
+pl = [s for s in a11y.SCREENS if s[0] == "panorama-list"]
+assert len(pl) == 1 and pl[0][3] == "screen" and pl[0][2] is a11y.end_panorama_list, pl
+a11y.time.sleep = lambda s: None
+try:
+    ls = PanoFlightsSrv()
+    pl[0][1](type("C", (), {"srv": ls})())
+    assert ls.calls == [("POST", "/aircraft/replay?name=a11y&undulationM=-18.4"), ("POST", "/horizon?flights=1&skyRange=all"),
+                        ("POST", "/horizon/switch?to=list"), ("GET", "/skylist?wait=60000")], ls.calls
+    ls.calls.clear()
+    pl[0][2](type("C", (), {"srv": ls})())
+    assert ls.calls[1] == ("POST", "/horizon/switch?to=map") and ls.calls[-1] == ("POST", "/settings?aircraft=0"), ls.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T344
 
 print("test_android_a11y: ok")

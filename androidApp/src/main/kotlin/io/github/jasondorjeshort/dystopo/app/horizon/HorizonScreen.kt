@@ -352,7 +352,10 @@ fun HorizonScreen() {
                     SkyViewHeading(HorizonText.TITLE, help = "horizon.view", pal = pal)
                     picked?.let { p -> PickedPeak(p, pal, units) }
                     Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = if (paneOverSwitch) maxOf(16.dp, switchRoom) else 16.dp),
+                        // T344 (T325's follow-up: the Sky plot row passed under the switch mid-scroll): the viewport ends above
+                        // the switch where the pane runs over it, so no row passes under it.
+                        Modifier.weight(1f).fillMaxWidth().padding(bottom = if (paneOverSwitch) switchRoom else 0.dp).verticalScroll(scroll)
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         LayerToggles(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), moved, pal)

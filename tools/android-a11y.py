@@ -890,8 +890,8 @@ def end_panorama(c):
 # T327
 def scr_panorama_flights(c):
     """T327: the Panorama view with the Flights layer on T311's replay fixture, turned to the closest flight low in the sky (dots, tails
-    and names through the lens, the credit in the plot's corner) and the pane scrolled to the Flights list (each row a
-    button)."""
+    and names through the lens, the credit in the plot's corner). T344: the Flights list is the List view's now
+    (`panorama-list`), so no scroll."""
     with open(FLIGHTS_REPLAY, "rb") as f:
         c.srv.ok("POST", "/aircraft/replay?name=a11y&undulationM=-18.4&wait=3500", body=f.read())
     c.srv.ok("POST", "/horizon?flights=1&skyRange=all")
@@ -903,7 +903,6 @@ def scr_panorama_flights(c):
     low = [a for a in aircraft if 2 <= a[3] <= 30] or aircraft  # the closest low in the sky: the skyline and several flights in view
     if low:
         c.srv.ok("POST", f"/panorama?bearing={low[0][2]}")
-    c.srv.ok("POST", "/horizon?scroll=450")
     time.sleep(1.0)
 
 
@@ -1197,6 +1196,26 @@ def end_recording_stale(c):
 # end T348
 
 
+# T344
+def scr_panorama_list(c):
+    """T344: the List view, the switch's fourth segment, at the fix (Paradise) with the Flights layer on T311's replay
+    fixture, opened by the switch's route as a tap on its segment does: the place line, "List view" with its help, "Show:"
+    and the four toggles, the terrain line, the Flights list (each row a button), the Peaks list (each row a button), Sun
+    and Satellites below. State it leaves, put back by end_panorama_list: the replay and Flight tracking (as
+    end_panorama_flights puts them back)."""
+    with open(FLIGHTS_REPLAY, "rb") as f:
+        c.srv.ok("POST", "/aircraft/replay?name=a11y&undulationM=-18.4&wait=3500", body=f.read())
+    c.srv.ok("POST", "/horizon?flights=1&skyRange=all")
+    c.srv.ok("POST", "/horizon/switch?to=list", timeout=30.0)
+    c.srv.ok("GET", "/skylist?wait=60000", timeout=120.0)
+    time.sleep(4.0)  # a poll
+
+
+def end_panorama_list(c):
+    end_panorama_flights(c)
+# end T344
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1246,6 +1265,9 @@ SCREENS = [
     # T348
     ("recording-stale", scr_recording_stale, end_recording_stale, "map"),
     # end T348
+    # T344
+    ("panorama-list", scr_panorama_list, end_panorama_list, "screen"),
+    # end T344
 ]
 
 

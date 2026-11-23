@@ -116,7 +116,7 @@ object HorizonRoutes {
             }
             "POST" to "/horizon/switch" -> {
                 val to = io.github.jasondorjeshort.dystopo.horizon.SkyView.of(r.query["to"])
-                    ?: return Response.json(mapOf("error" to "to=map, to=horizon or to=panorama"), 400)
+                    ?: return Response.json(mapOf("error" to "to=map, to=horizon, to=panorama or to=list"), 400) // T344: list
                 val horizon = to != io.github.jasondorjeshort.dystopo.horizon.SkyView.MAP
                 app.map.onMain { io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.select(to) }
                 // T321: from a long-press card the view opens once its named feature is looked up (a thread of its own).
@@ -161,7 +161,11 @@ object HorizonRoutes {
             "view" to if (HorizonUi.open) HorizonUi.switchPx else null,
             // T326: the view showing and the sky view's own switch (the Horizon view's or the Panorama's).
             "showing" to io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.showing.key,
-            "viewPx" to if (!HorizonUi.open) null else if (HorizonUi.view == io.github.jasondorjeshort.dystopo.horizon.SkyView.PANORAMA) io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.switchPx else HorizonUi.switchPx,
+            "viewPx" to if (!HorizonUi.open) null else when (HorizonUi.view) {
+                io.github.jasondorjeshort.dystopo.horizon.SkyView.PANORAMA -> io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.switchPx
+                io.github.jasondorjeshort.dystopo.horizon.SkyView.LIST -> io.github.jasondorjeshort.dystopo.app.skylist.SkyList.switchPx // T344
+                else -> HorizonUi.switchPx
+            },
         )
     }
 
