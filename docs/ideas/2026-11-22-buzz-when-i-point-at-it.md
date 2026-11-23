@@ -18,3 +18,13 @@ Why: it is the first use of the Panorama that needs no eyes on the screen (dark,
 - Tilt as well as bearing (a second kind of tick for up and down), or bearing only.
 - A setting for the buzz (ADR 0044) and what TalkBack users get instead of, or beside, it.
 - The compass's error: the buzz is only as good as the heading, so it should say so while the compass status is low (T331's weak-compass rule).
+
+Question: build the buzz as a mode of the Panorama's Follow the phone (bearing only, on the target `PanoramaTarget` already holds, ticks closing in from the angle `OffView` gives, a steady buzz within a few degrees) behind a setting off by default, or as its own "Point me at it" finder opened from the map's selected place?
+Recommendation: inside Follow first, bearing only, the buzz counted on `NavDevice`'s `vibrations` counter and read by a debug route so the emulator can test it; the finder from a selected place fits after "Which way is it?" (answered in `2026-11-21-which-way-is-it-the-panorama-facing-a-selected-place.md`) is built, its natural entry. The setting follows ADR 0044, the low-compass note T331's rule.
+Options:
+a) A mode of Follow, bearing only, a setting off by default (recommended).
+b) Its own small finder from the selected place, without the drawing.
+c) Both, with tilt as a second kind of tick.
+d) Not worth building.
+
+Answer:
