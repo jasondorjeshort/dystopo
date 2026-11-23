@@ -20,6 +20,11 @@ a threshold are decided by the coordinator and reported, the rest are asked. The
 recommendations (the ideas-stats tool) calibrates the threshold. Anchors: the triage skill's step 6,
 `docs/ideas/README.md` (the block format), ADR 0065, `.claude/skills/triage/SKILL.md`.
 
+The owner, later the same day: "okay that one nay wasn't that significant this time. but in a lot of ideas
+that are design for the documents, the expert user is going to have much better input than an agent will."
+So the kind of question weighs more than the streak: design of the project's own documents and process is
+where the owner's input beats the agent's, and belongs below the threshold whatever the record says.
+
 ## Open
 
 - What earns confidence, and which classes never auto-accept (safety, privacy, new data flows, the app's identity).
