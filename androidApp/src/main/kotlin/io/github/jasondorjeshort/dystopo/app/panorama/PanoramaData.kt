@@ -70,6 +70,7 @@ object PanoramaData {
         /** T340: the maps open and the network's generation when the place was made, and what its read took cells from. */
         val epoch: TerrainRead.Epoch = TerrainRead.epoch()
         @Volatile var answered: TerrainRead.Answered? = null
+        internal val watched = java.util.concurrent.atomic.AtomicBoolean(false)
         val skylines = java.util.concurrent.ConcurrentHashMap<Double, LayeredSkyline>()
         val sweeps = java.util.concurrent.CopyOnWriteArrayList<Sweep>()
         internal val pending = java.util.concurrent.ConcurrentHashMap.newKeySet<Double>()
@@ -92,7 +93,7 @@ object PanoramaData {
         fun json(): Map<String, Any?> = linkedMapOf(
             "lat" to lat, "lon" to lon, "rangeKm" to rangeM / 1000, "fix" to isFix, "reason" to reason,
             "terrain" to (linkedMapOf<String, Any?>("ms" to terrainMs, "tiles" to tilesRead, "bytes" to bytesRead, "network" to (answered?.online == true), "demPacks" to demPacks,
-                "layers" to terrain?.layers?.map { l -> linkedMapOf("zoom" to l.window.zoom, "width" to l.window.width, "height" to l.window.height) }) + (answered?.json() ?: emptyMap())), // T340
+                "layers" to terrain?.layers?.map { l -> linkedMapOf("zoom" to l.window.zoom, "width" to l.window.width, "height" to l.window.height) }) + (answered?.json() ?: emptyMap()) + (if (terrain == null) mapOf("text" to null) else emptyMap())), // T340: no terrain horizon, no source named
             "sweeps" to sweeps.map { s -> linkedMapOf("stepDeg" to s.stepDeg, "samples" to s.samples, "ms" to s.ms, "atMs" to s.atMs) },
             "pending" to pending.sorted(),
             "peaks" to linkedMapOf("tiles" to peakTiles, "read" to found?.size, "candidates" to peaks?.candidates?.size, "testedOnStepDeg" to peaksStep, "ms" to peaks?.ms),
@@ -152,8 +153,27 @@ object PanoramaData {
         } finally {
             p.pending.remove(step)
             main.post { revision++ }
+            if (p.pending.isEmpty() && !(p.epoch.network && p.epoch.reachable) && (p.terrain == null || p.answered?.complete == false)) watch(p)
         }
     }
+
+    /**
+     * T340: a place read with no network that lacked cells (or found none) is looked at every [WATCH_MS] while kept, and the
+     * view read again once the network is back ([Place.stale]): nothing else asks while the view stands still.
+     */
+    private fun watch(p: Place) {
+        if (!p.watched.compareAndSet(false, true)) return
+        val check = object : Runnable {
+            override fun run() {
+                if (!places.contains(p)) return
+                if (p.stale(TerrainRead.epoch())) revision++ else main.postDelayed(this, WATCH_MS)
+            }
+        }
+        main.postDelayed(check, WATCH_MS)
+    }
+
+    /** T340: how often a place read with no network looks for it, ms. */
+    const val WATCH_MS = 2_000L
 
     /**
      * T340: [p]'s terrain by the merged read ([TerrainRead]), the Horizon view's; where there is none, the Horizon view's own

@@ -605,4 +605,23 @@ finally:
     a11y.time.sleep = _sleep
 # end T331
 
+# T340: the Panorama at a chosen point (Mount Rainier's summit, as "Sky from here" then the switch open it); its end goes
+# back to the map, lets the point go and puts the steering back as found.
+pe = [s for s in a11y.SCREENS if s[0] == "panorama-elsewhere"]
+assert len(pe) == 1 and pe[0][3] == "screen" and pe[0][2] is a11y.end_panorama_elsewhere, pe
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    esrv = AttitudeSrv("follow")
+    ctx = type("C", (), {"srv": esrv})()
+    pe[0][1](ctx)
+    assert [p for _m, p in esrv.calls] == ["/settings", "/settings?panoramaSteering=drag", "/horizon/ui?lat=46.8529&lon=-121.7604&wait=90000",
+                                           "/horizon/switch?to=panorama", "/panorama?wait=90000"], esrv.calls
+    esrv.calls.clear()
+    pe[0][2](ctx)
+    assert [p for _m, p in esrv.calls] == ["/horizon/switch?to=map", "/horizon/ui?open=0", "/settings?panoramaSteering=follow"], esrv.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T340
+
 print("test_android_a11y: ok")

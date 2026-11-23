@@ -358,7 +358,9 @@ fun PanoramaPlot(
         if (scene == null) {
             BasicText(
                 PanoramaData.waiting(work),
-                Modifier.align(Alignment.Center).padding(16.dp).testTag("panoramaWaiting"),
+                // T340: clear of the buttons' column at the right, where the sentence ran under "Follow phone".
+                Modifier.align(Alignment.CenterStart).padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = with(density) { (wPx - corner.left).toFloat().toDp() } + 8.dp)
+                    .testTag("panoramaWaiting"),
                 style = TextStyle(color = pal.muted, fontSize = 15.sp),
             )
         }

@@ -14,12 +14,12 @@ import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
  * T340: the one terrain read for a chosen point that the Horizon view (`Gnss.sweep`), the Panorama (`PanoramaData`) and the
  * viewshed (`ViewshedSession`) share: [MergedTerrain]'s rule (the open maps cell by cell, the deepest that holds data first, a
  * coarser one where it ends, then the online source) over the maps [PackSet][io.github.jasondorjeshort.dystopo.app.PackSet]
- * opens, each through a small [DemPyramid] of its own, and the online DEM ([OnlineTiles.pyramid]: the same fetcher, so the
- * same Mobile data and session limit rules as the map's online tiles and the Horizon view's read before T340).
+ * opens, each through a small [DemPyramid] of its own, and the online DEM's own tiles ([onlinePyramid]: the map's fetcher,
+ * so the same cache and the same Mobile data and session limit rules as the map's online tiles).
  *
  * A read holds the tile service it was opened on ([DystopoApp.leaseTiles]) until [close], so a map opening or closing
- * meanwhile does not close the archives under it. [epoch] names the maps open and the online source's generation (it
- * changes when the network comes back), so a view can tell that an answer it keeps was made before either changed.
+ * meanwhile does not close the archives under it. [epoch] names the maps open and whether the phone has a network, so a
+ * view can tell that an answer it keeps was made before either changed.
  */
 class TerrainRead private constructor(private val lease: AutoCloseable, val tiles: TileService, withOnline: Boolean) : AutoCloseable {
     private val pyramids = HashMap<String, DemPyramid>()
@@ -47,8 +47,24 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
                 }
                 p.window(w.zoom, w.x0, w.y0, w.width, w.height)
             }
-        } + listOfNotNull(online?.let { o -> ElevationSource(MergedTerrain.ONLINE, OnlineTiles.DEM_MAX_ZOOM, null) { w -> o.pyramid().window(w.zoom, w.x0, w.y0, w.width, w.height) } }),
+        } + listOfNotNull(online?.let { o -> ElevationSource(MergedTerrain.ONLINE, OnlineTiles.DEM_MAX_ZOOM, null) { w -> onlinePyramid(o).window(w.zoom, w.x0, w.y0, w.width, w.height) } }),
     )
+
+    @Volatile private var onlinePyramid: DemPyramid? = null
+    @Volatile var onlineTiles = 0
+        private set
+
+    /**
+     * The online DEM's tiles alone, from the fetcher (its cache first: what was viewed earlier and the tiles of an offline map
+     * kept as tiles, then the network under the fetcher's rules). Not [OnlineTiles.pyramid], which answers a tile a map's box
+     * overlaps from that map: the merged read asks the maps itself, and those cells would read as the online source's.
+     */
+    private fun onlinePyramid(o: OnlineTiles): DemPyramid = onlinePyramid ?: synchronized(this) {
+        onlinePyramid ?: DemPyramid(o.demMinZoom, OnlineTiles.DEM_MAX_ZOOM, TileService.demDecoder(), cacheTiles = 48) { z, x, y ->
+            if (z !in o.demMinZoom..OnlineTiles.DEM_MAX_ZOOM) null
+            else (o.fetcher.get("dem", "$z/$x/$y.png") as? io.github.jasondorjeshort.dystopo.app.online.Fetch.Hit)?.bytes?.also { synchronized(this) { onlineTiles++ } }
+        }.also { onlinePyramid = it }
+    }
 
     /** [w] by the rule, counted in [tally]. */
     fun read(w: MercatorWindow): ElevationGrid = MergedTerrain.read(w, sources, tally)
@@ -57,7 +73,10 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
     fun pointZoom(lat: Double, lon: Double, cap: Int): Int? = MergedTerrain.pointZoom(sources, lat, lon, cap)
 
     /** What answered so far, in the views' words and as JSON. */
-    fun answered(): Answered = Answered(tally.maps, tally.online, tally.complete, tally.json() + linkedMapOf("tiles" to tilesRead, "bytes" to bytesRead, "onlineAsked" to (online != null)))
+    fun answered(): Answered = Answered(tally.maps, tally.online, tally.complete, tally.json() + linkedMapOf("tiles" to tilesRead, "bytes" to bytesRead, "onlineAsked" to (online != null), "onlineTiles" to onlineTiles, "epoch" to epoch.json()))
+
+    /** The epoch the read was opened in. */
+    val epoch: Epoch = Companion.epoch()
 
     override fun close() {
         synchronized(pyramids) { pyramids.clear() }
@@ -87,19 +106,51 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
         }
 
         /**
-         * The maps open and the online source's generation now: a kept answer made under another epoch may be stale (a map
-         * opened or closed: any answer; the network came back: an answer with cells missing).
+         * The maps open and whether the phone has a network now: a kept answer made under another epoch may be stale (a map
+         * opened or closed: any answer; the network came back: an answer with cells missing, or none). Not the fetcher's
+         * generation: with the phone reading the sources itself it moved on every offline read (a local answer counts as
+         * the source reachable), so a "none" was read again and again with no network.
          */
         fun epoch(): Epoch {
-            val t = DystopoApp.instance.tiles
-            return Epoch(System.identityHashCode(t.packs), t.online?.fetcher?.generation ?: -1)
+            val app = DystopoApp.instance
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - networkAt > 1_000) { // the views ask on every composition: the binder call at most once a second
+                val was = network
+                network = hasNetwork(app)
+                networkAt = now
+                // Back: the fetcher's backoff and failure memo from the offline reads would answer the read again with
+                // "unavailable" for up to a minute, and that answer, made with a network, would be kept.
+                if (network && !was) runCatching { app.tiles.online?.fetcher?.retryNow() }
+            }
+            val reachable = app.tiles.online?.fetcher?.state == "online"
+            return Epoch(System.identityHashCode(app.tiles.packs), network, reachable)
         }
+
+        /**
+         * An active network with capabilities. Not `OnlineUi.hasNetwork`: in airplane mode on the API 35 emulator it read
+         * true (no active network, and its failure reads as a network), so a "none" made offline never went stale.
+         */
+        private fun hasNetwork(app: DystopoApp): Boolean = try {
+            val cm = app.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
+        } catch (e: RuntimeException) {
+            false
+        }
+
+        @Volatile private var network = false
+        @Volatile private var networkAt = Long.MIN_VALUE / 2
     }
 
-    /** [maps] the opened map set's identity, [network] the online source's generation. */
-    data class Epoch(val maps: Int, val network: Int) {
+    /**
+     * [maps] the opened map set's identity, [network] whether the phone had a network, [reachable] whether the online source
+     * answered lately (the fetcher's `online`: a read made in the minute after the network came back can meet its backoff).
+     */
+    data class Epoch(val maps: Int, val network: Boolean, val reachable: Boolean = network) {
         /** Whether an answer made under this epoch, [complete] or not, should be read again now ([now]). */
-        fun stale(now: Epoch, complete: Boolean): Boolean = maps != now.maps || (!complete && network != now.network)
+        fun stale(now: Epoch, complete: Boolean): Boolean =
+            maps != now.maps || (!complete && ((!network && now.network) || (!reachable && now.reachable)))
+
+        fun json(): Map<String, Any?> = linkedMapOf("maps" to maps, "network" to network, "reachable" to reachable)
     }
 }
 

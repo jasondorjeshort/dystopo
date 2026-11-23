@@ -1115,6 +1115,28 @@ def end_panorama_attitude(c):
 # end T331
 
 
+# T340
+def scr_panorama_elsewhere(c):
+    """T340: the Panorama at a chosen point, Mount Rainier's summit, as "Sky from here" and then the switch's Panorama open
+    it (the amber place line with "Back to here", the terrain line naming what answered: T340's merged read), its skyline
+    and peaks drawn."""
+    c.elsewhere_steering_found = (c.srv.ok("GET", "/settings") or {}).get("panoramaSteering")
+    c.srv.ok("POST", "/settings?panoramaSteering=drag")
+    c.srv.ok("POST", f"/horizon/ui?lat={SUMMIT[0]}&lon={SUMMIT[1]}&wait=90000", timeout=150.0)
+    c.srv.ok("POST", "/horizon/switch?to=panorama", timeout=30.0)
+    c.srv.ok("GET", "/panorama?wait=90000", timeout=150.0)
+    time.sleep(1.0)
+
+
+def end_panorama_elsewhere(c):
+    c.srv.call("POST", "/horizon/switch?to=map")
+    c.srv.call("POST", "/horizon/ui?open=0")
+    found = getattr(c, "elsewhere_steering_found", None)
+    if found:
+        c.srv.call("POST", f"/settings?panoramaSteering={found}")
+# end T340
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1155,6 +1177,9 @@ SCREENS = [
     # T331
     ("panorama-attitude", scr_panorama_attitude, end_panorama_attitude, "screen"),
     # end T331
+    # T340
+    ("panorama-elsewhere", scr_panorama_elsewhere, end_panorama_elsewhere, "screen"),
+    # end T340
 ]
 
 
