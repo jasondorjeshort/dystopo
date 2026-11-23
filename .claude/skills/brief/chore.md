@@ -8,6 +8,11 @@ Exact commands, in order (nothing to interpret; stop at the first failure and re
 Directory: <absolute path; use `git -C <path>` for git, and print `git rev-parse --show-toplevel`
 before any commit or push>.
 
+A worktree removal is one command, never a hand-written delete:
+`powershell -ExecutionPolicy Bypass -File <main>\tools\worktree-remove.ps1 -Path <worktrees>\Tnn -WorktreeRoot <worktrees>`
+(the long-path delete, the unlock and `git worktree prune` built in). Exit 4 names the process that holds a
+file: report it, stop nothing; exit 2 or 5 is a refusal to report as it stands.
+
 Do not touch: <paths, servers, emulators, ports that belong to others>. Stop only processes you
 started, by PID (record them in <file>) or emulator serial.
 

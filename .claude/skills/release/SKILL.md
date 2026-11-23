@@ -22,6 +22,11 @@ main is green, without asking again.
 
 ## Steps
 
+The hold on `main` stands from the closing sweep through step 6 (set it here when no sweep set it); the
+coordinator clears it once the release is published (`gh release view` read) or abandoned with its tag
+deleted (`wave` skill, A hold on main). The hold refuses its setter's pushes too: the coordinator clears it
+for the CHANGELOG push of step 1 and sets it again on that commit before tagging.
+
 1. Cut the CHANGELOG section before tagging.
 2. Tag `v0.<minor>.<patch>-alpha` on main (patch bumps per wave; the minor bumps when the owner calls
    a milestone), push the tag, and let `release.yml` build the draft (the version name is the tag, the

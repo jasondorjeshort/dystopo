@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-24
+verified: 2026-11-22
 source: observed on this machine (Windows 11, Windows PowerShell 5.1.26100, Git Bash); findings linked below
 ---
 
@@ -30,13 +30,31 @@ What holds on the development machine for every agent. The rules these facts sup
   `git -C <path> rev-parse --show-toplevel` (finding `../findings/2026-10-11-reported-push-that-never-happened.md`).
 - Prove a push from the remote: `bash tools/push-verified.sh` (push, fetch, compare SHAs, print
   VERIFIED; a task branch's merge is proved the same way, ADR 0043); `gh release view` for a release.
+  On `main` it first runs `bash tools/main-news.sh`, which fetches and lists every commit on `origin/main`
+  the local `main` lacks (short SHA, subject, session id, `BOARD`, `HANDOFF` or `IDEAS`); any listed commit
+  stops the push with exit 3 and nothing is pushed: read them, merge, push again. While a branch
+  `hold/main` exists on origin (the coordinator's hold around a closing sweep or a release, `wave` skill),
+  a push of `main` stops with exit 4 and prints the hold's message.
 - The git hooks (`tools/git-hooks`, `git config core.hooksPath tools/git-hooks`, once per clone) run in
   worktrees too.
 
 ## Worktrees
 
-- Gradle and Android build output exceeds the 260-character path limit, so `git worktree remove`
-  fails. Delete the directory with the long-path prefix, in PowerShell, single-quoted:
+- Gradle and Android build output exceeds the 260-character path limit: below the checkout, the
+  deepest path (an `androidApp` dex-archive file of a nested Compose lambda) is 248 characters, 292 in a
+  `dystopo-wt\Tnn` worktree and 299 in a `Tnn-verify` one (measured 2026-11-22, T349), so the package
+  path, not the worktree root, puts it over and a shorter root would not bring it under. A plain
+  `git worktree remove` then fails with "Filename too long". Set `git config core.longpaths true` once
+  per clone (in the main checkout; its worktrees share the setting).
+- Remove a worktree with one script, from the main checkout:
+  `powershell -ExecutionPolicy Bypass -File tools\worktree-remove.ps1 -Path <worktrees>\Tnn -WorktreeRoot <worktrees>`
+  (`-StopPid <pid>` for a Gradle daemon you started and recorded; `-DiscardChanges` to delete uncommitted
+  work). It deletes with the long-path prefix, unlocks a locked entry and runs `git worktree prune`, one git
+  command per call. It deletes nothing and exits 2 for a path that is not directly under `-WorktreeRoot`,
+  is the main checkout, belongs to another repository or holds a junction or symbolic link; 5 for
+  uncommitted changes; 4 when a process holds a file, naming it with its PID (stop it only if you
+  started it, by that PID); 0 when removed. The header of the script has the rest.
+- By hand, when the script cannot run: delete the directory with the long-path prefix, in PowerShell, single-quoted:
   `Remove-Item -LiteralPath ('\\?\' + $path) -Recurse -Force` (also removes read-only files), or
   `[System.IO.Directory]::Delete('\\?\' + $path, $true)` (fails on a read-only file), then
   `git worktree prune`. Without the prefix `Remove-Item` fails with "Could not find a part of the
@@ -44,8 +62,10 @@ What holds on the development machine for every agent. The rules these facts sup
   exist". Do not pass the prefix through Git Bash, which collapses `\\`. Fallback: an empty
   `robocopy <empty> <dir> /MIR`, then delete. A worktree the harness locked needs
   `git worktree unlock` first (finding `../findings/2026-10-12-windows-long-path-delete.md`).
-- Stop your Gradle daemons (`./gradlew --stop` in the worktree) before reporting, or a held directory
-  survives the delete.
+- A Gradle daemon left running holds files in the worktree, and the delete is refused. Never run
+  `./gradlew --stop`: it stops every Gradle daemon of the account, other agents' servers included
+  (`CLAUDE.md`, Working in parallel). Run Gradle with `--no-daemon` in a worktree that will be removed
+  (`tools/verify-task.ps1` does), or stop only a daemon you started, by its PID (`-StopPid`).
 - Never create a junction or symlink inside a worktree that points at the main checkout: a recursive
   delete of the worktree follows it (finding `../findings/2026-10-09-junction-into-main-checkout.md`).
 
