@@ -15,3 +15,12 @@ What it would take: a check (in `./gradlew check`, or the post-edit hook under `
 
 - False positives on comments that quote code on purpose; the check could be limited to lines a diff adds.
 - The wider gap: a debug route that silently loses a key breaks no test; a snapshot test of each route's key set would have caught this without any lint.
+
+Plan: [no-check: the new files are this pass's to create] Owns new `tools/task-comment-check.py`, new `tools/test_task_comment_check.py`, `build.gradle.kts` (root) and
+`.claude/rules/kotlin.md`. The check scans `*.kt` and `*.kts` outside `build/` (and `tools/*.py` for `# Tnnn`) for a
+task marker followed on the same line by code-like text: a quoted key and ` to `, `name = value,`, a call with a
+comma, a closing `)` `]` `}` after a comma; prints one JSON object (`files`, `hits` with file and line) and exits 1
+on a hit. Wire it into `check` as an `Exec` task beside `userTextCheck` (same Python lookup, inputs and a report
+file). One line in `kotlin.md`: a task marker stands at the end of a line or on its own line. Verify: the test
+feeds the T333 line (must hit) and a dozen real marker lines from the tree (must not); run it over the tree (no
+hits today by a first grep), then `./gradlew check`. Out of scope: per-route key-set snapshot tests (Open), diff-only mode.
