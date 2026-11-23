@@ -12,7 +12,9 @@ import kotlin.test.assertTrue
  * block) holds `mutableStateOf` or a sibling (`mutableIntStateOf`, `mutableStateListOf`, `derivedStateOf`, ...).
  * Each must either be prepared from `DystopoApp.onCreate` or `MainActivity.onCreate` or be a `*UiState` object. Prepared
  * is: its name appears as `Name.member` in either `onCreate`'s body, or in the body of the `prepare()` of an owner
- * those name (one level of calls, as `Tracking.prepare()` touches `TerrainSource.display`).
+ * those name (one level of calls, as `Tracking.prepare()` touches `TerrainSource.display`). T347: the deferred place counts
+ * as `onCreate`: the body of `MainActivity.prepareAfterFirstFrame()`, run on the main thread after the first frame for
+ * state the first composition does not read, as long as `MainActivity.onCreate` names it.
  *
  * The rest are named in [ALLOW], `path | Object | reason`, one line each: a follow-up, not a pass. A line that allows
  * nothing (the object is gone, prepared now or a `*UiState`) fails too. A regex read, not a parse: the checks that
@@ -43,17 +45,25 @@ class ComposeStatePrepareTest {
         val found = ArrayList<Pair<String, Found>>()
         val prepares = ArrayList<Prepare>()
         val onCreates = ArrayList<String>()
+        val deferred = ArrayList<String>()
+        var activityOnCreate = ""
         val unbalanced = ArrayList<String>()
         for (f in sources) {
             val scan = scan(f.readText())
             found += scan.objects.map { rel(f) to it }
             prepares += scan.prepares
             if (f.name == "DystopoApp.kt" || f.name == "MainActivity.kt") onCreates += scan.onCreates
+            if (f.name == "MainActivity.kt") { deferred += scan.deferred; activityOnCreate = scan.onCreates.joinToString(" ") }
             if (scan.unbalanced) unbalanced += rel(f)
         }
         assertEquals(emptyList(), unbalanced, "the braces of these files did not balance after strings and comments were blanked: has the reader's string handling failed?")
         assertTrue(onCreates.size == 2, "expected `fun onCreate(` bodies in DystopoApp.kt and MainActivity.kt (found ${onCreates.size}): has that pattern changed?")
-        val named = onCreates.flatMap { REF.findAll(it).map { m -> m.groupValues[1] } }.toSet()
+        // T347: the deferred place counts only while MainActivity.onCreate still calls it.
+        if (deferred.isNotEmpty()) assertTrue(
+            DEFERRED_CALL.containsMatchIn(activityOnCreate),
+            "MainActivity has `fun prepareAfterFirstFrame()` but its onCreate never names it: the state it prepares would be made by whichever thread touches it first",
+        )
+        val named = (onCreates + deferred).flatMap { REF.findAll(it).map { m -> m.groupValues[1] } }.toSet()
         val prepared = named + prepares.filter { it.owner in named }.flatMap { REF.findAll(it.body).map { m -> m.groupValues[1] } }
         assertTrue(
             "Areas" in prepared && "MapViewport" in prepared && "TrackingUiState" in prepared,
@@ -90,19 +100,22 @@ class ComposeStatePrepareTest {
             fun top() { }
             class Owner { companion object { fun prepare() { Holds.a; Derived.d } } }
             object Short { fun prepare() = Holds.a }
-            class App { override fun onCreate() { Holds.prepare() } }
+            class App { override fun onCreate() { later { prepareAfterFirstFrame() } }; private fun prepareAfterFirstFrame() { Derived.prepare() } }
         """.trimIndent()
         val s = scan(src)
         assertEquals(listOf("Holds", "Derived"), s.objects.map { it.name })
         assertEquals(listOf(4, 5), s.objects.map { it.line })
         assertEquals(listOf("Owner", "Short"), s.prepares.map { it.owner })
         assertEquals(1, s.onCreates.size)
+        assertEquals(1, s.deferred.size)
+        assertTrue("Derived.prepare" in s.deferred.single())
+        assertTrue(DEFERRED_CALL.containsMatchIn(s.onCreates.single()))
         assertEquals(false, s.unbalanced)
     }
 
     private class Found(val name: String, val line: Int)
     private class Prepare(val owner: String?, val body: String)
-    private class Scan(val objects: List<Found>, val prepares: List<Prepare>, val onCreates: List<String>, val unbalanced: Boolean)
+    private class Scan(val objects: List<Found>, val prepares: List<Prepare>, val onCreates: List<String>, val deferred: List<String>, val unbalanced: Boolean)
 
     private class Frame(val name: String?, val kind: String?, val header: String, val line: Int) {
         val own = StringBuilder()
@@ -116,6 +129,7 @@ class ComposeStatePrepareTest {
         val objects = ArrayList<Found>()
         val prepares = ArrayList<Prepare>()
         val onCreates = ArrayList<String>()
+        val deferred = ArrayList<String>()
         var line = 1
         var boundary = -1
         var unbalanced = false
@@ -150,6 +164,7 @@ class ComposeStatePrepareTest {
                         if (f.kind == "object" && f.name != null && STATE.containsMatchIn(f.own)) objects += Found(f.name, f.line)
                         if (FUN_PREPARE.containsMatchIn(f.header)) prepares += Prepare(owner(), f.all.toString())
                         if (FUN_ONCREATE.containsMatchIn(f.header)) onCreates += f.all.toString()
+                        if (FUN_DEFERRED.containsMatchIn(f.header)) deferred += f.all.toString()
                     }
                     boundary = i
                 }
@@ -166,7 +181,7 @@ class ComposeStatePrepareTest {
             }
         }
         if (stack.size != 1) unbalanced = true
-        return Scan(objects, prepares, onCreates, unbalanced)
+        return Scan(objects, prepares, onCreates, deferred, unbalanced)
     }
 
     /** A Kotlin source with comments and the insides of string and character literals replaced by spaces (newlines kept). */
@@ -230,6 +245,8 @@ class ComposeStatePrepareTest {
         val PARENS = Regex("""\([^()]*\)""")
         val FUN_PREPARE = Regex("""\bfun\s+prepare\s*\(""")
         val FUN_ONCREATE = Regex("""\bfun\s+onCreate\s*\(""")
+        val FUN_DEFERRED = Regex("""\bfun\s+prepareAfterFirstFrame\s*\(""")
+        val DEFERRED_CALL = Regex("""\bprepareAfterFirstFrame\s*\(\s*\)""")
         val PREPARE_EXPR = Regex("""fun\s+prepare\s*\(\s*\)\s*=\s*[^\n]*""")
     }
 }
