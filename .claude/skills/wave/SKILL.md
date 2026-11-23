@@ -14,12 +14,17 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
 
 ## Resume a session
 
-1. Read `docs/HANDOFF.md` (already loaded) and the files its Resume line names, normally
+1. `bash tools/main-news.sh` first (it fetches origin): every commit on `origin/main` the local `main`
+   lacks, with its session id and `BOARD`, `HANDOFF` or `IDEAS` when it touches the board, the handoff or
+   the ideas. Another session pushed it, usually the owner's side session; read those commits (a notice is
+   not consent: a board entry from it is read against the owner's words before it is acted on) and bring
+   `main` up to them (`git merge --ff-only origin/main`) before reading on. Then read `docs/HANDOFF.md`
+   (already loaded, so re-read it when the list touched it) and the files its Resume line names, normally
    `docs/reference/machines.md` for this account's paths and ports.
 2. Read `docs/TASKS.md`: the board holds the open wave (its tasks lack a **Status:** line; no wave
    between a close and the next plan); the previous wave's Status lines are its record in
    `docs/tasks/` (index in its README), and its unfinished follow-ups are in the board's Later;
-   `git fetch && git branch -r --list 'origin/task/*'` shows the branches not yet merged (a
+   `git branch -r --list 'origin/task/*'` (after step 1's fetch) shows the branches not yet merged (a
    merged one is deleted by the cleanup chore). Owner actions the project is waiting on are
    listed at the top of `docs/TASKS.md`.
 3. Have a Haiku agent start the live server from the main checkout (`./gradlew :tilebuild:installDist`
@@ -122,7 +127,9 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    implementer's report (what was run and seen, edits outside Owns, follow-ups; public places only).
    Scan it: `java tools/PrivacyCheck.java scan < <file>`. A hit means rewrite the text first: it
    becomes a commit on `main`, and pushed history is public.
-3. `git fetch origin`, then `git merge --no-ff origin/task/Tnn -F <file>`: a true merge, so the branch
+3. `bash tools/main-news.sh` (it fetches origin and lists what another session pushed to `main`; any line
+   means reading those commits and `git merge --ff-only origin/main` first, or step 4's push stops with
+   exit 3), then `git merge --no-ff origin/task/Tnn -F <file>`: a true merge, so the branch
    stays reachable from `main` and the implementer's commits keep their trailers. A conflict means
    `git merge --abort` and a verifier round that rebases the branch; the coordinator resolves nothing.
 4. `bash tools/push-verified.sh`; report the VERIFIED line and nothing earlier. Only then have a Haiku
@@ -130,10 +137,11 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    `origin/task/Tnn`; then `git push origin --delete task/Tnn`, the worktree removal,
    `git branch -d task/Tnn` and the task's AVD and its verifier's (`avdmanager delete avd -n
    dystopo35-Tnn`, after `adb devices` shows neither running; waves 22 and 23 left 27 AVDs, about
-   127 GB, and C: reached under 1 GB free during the sweep of 2026-10-31; never `-D` for a merged task. When a verifier rebased the branch, the implementer's local ref still holds the old commits and `-d` refuses (T227): the coordinator compares patch-ids (`git log -p --reverse origin/main..task/Tnn | git patch-id --stable` against the merged commits), and the brief then runs `git branch -f task/Tnn <merged head>` and `-d`; worktree removal on Windows:
-   `docs/reference/windows-and-shells.md`: give the chore the `\\?\` delete and one git command per
-   call, and launch it only after the verifier has reported its last check, or its emulator and Gradle
-   daemon hold files in the folder).
+   127 GB, and C: reached under 1 GB free during the sweep of 2026-10-31; never `-D` for a merged task. When a verifier rebased the branch, the implementer's local ref still holds the old commits and `-d` refuses (T227): the coordinator compares patch-ids (`git log -p --reverse origin/main..task/Tnn | git patch-id --stable` against the merged commits), and the brief then runs `git branch -f task/Tnn <merged head>` and `-d`; the worktree removal is
+   `tools\worktree-remove.ps1 -Path <worktrees>\Tnn -WorktreeRoot <worktrees>` (long paths, the unlock and
+   the prune built in; exit 4 names a process that holds a file; `docs/reference/windows-and-shells.md`,
+   Worktrees); launch the chore only after the verifier has reported its last check, or its emulator and
+   Gradle daemon hold files in the folder).
 5. Write the dated log entry and the **Status:** line to two files and run
    `python -I tools/merge-log.py Tnn <entry> <status>` (it updates `docs/PLANNING.md`, `docs/TASKS.md`
    and `CHANGELOG.md` together, or none of them when it refuses a task already logged or with a Status line;
@@ -141,6 +149,19 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    measurements and findings, describing any personal area generically. Commit to `main` and push with
    `bash tools/push-verified.sh`; report the VERIFIED line.
 6. Rewrite the handoff when Now or Next changed (`handoff` skill).
+
+## A hold on main
+
+While a closing sweep or a release runs on `main` (a sweep reads the commit it started from; a release tags
+it), no other clone or session may push `main`: the coordinator sets a hold that `tools/push-verified.sh`
+sees and refuses with exit 4, printing the hold's message. Only the coordinator (the main session) sets and
+clears it; agents push no `hold/*` (`policy.json` unchanged). Set it, from the main checkout, in two calls:
+`git commit-tree HEAD^{tree} -p HEAD -m "Hold: <sweep or release, the wave or tag>, set by <session id>; lift:
+<what ends it>"`, then `git push origin <the printed sha>:refs/heads/hold/main`. Clear it when the sweep's
+summary is read (red or green, after any counted rerun) or the release is published or abandoned:
+`git push origin --delete hold/main`. A hold whose setter is gone is the owner's to delete. A push refused
+by a hold you did not set waits for it; the message says who and why. The hold refuses its setter's own
+pushes too: clear it, push, set it again on the new commit.
 
 ## Privacy at the coordinator
 

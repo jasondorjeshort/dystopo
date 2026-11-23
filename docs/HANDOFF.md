@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-23, at commit 8c1cb9cf, by main session (wave 47 launched; v0.1.42-alpha is the latest release)
+Updated: 2026-11-23, at commit e4beaa56, by the triage session (the 2026-11-22 ideas triaged and answered; wave 47 launched from the main session; v0.1.42-alpha is the latest release)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-46.md`, the board's Later in `docs/TASKS.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
@@ -11,10 +11,11 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 - **Wave 46 is closed and v0.1.42-alpha is published** (2026-11-23 00:17 UTC, tag on c3778928, versionCode 2171; read from `gh release view`): the pressure unit setting (mbar by default), the Panorama's Follow phone, "Can I see it from here?", the weak-GPS note, the no-map messages. The closing sweep `out/sweep-20261122-w46` was red on `startup` alone; T338's bisection found the host slower (v0.1.41-alpha's own tag reads the same) and raised `mapview`'s ceiling to 138; the counted rerun `out/sweep-20261122-w46-rerun` was green. The log's close entry of 2026-11-22 has the figures; the record is `docs/tasks/wave-46.md`.
 - **Cost:** the 7-day meter read 14 when the wave went on the board and 26 at the close: 12 points against 12 figured (the `wave` skill's figures stand); the wave's agents' fresh tokens 8.6M. Reset 2026-11-28 03:00 UTC; the hold is 97.
 - **Wave 47 is launched** (the owner, 2026-11-23: "Run it."): thirteen tasks, T339 to T351, in `docs/TASKS.md`, after two surveys (written into T342 and T348) and a critic (LAUNCH AFTER EDITS, applied). First: T339 and T345 (the two Gradle slots) and T349 (no Gradle). The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; at most two Gradle agents and two emulators, a verifier counting as one; ports 9012 and 9013 are another program's.
+- **The ideas of 2026-11-22 are triaged and answered** (triage session, on `main` up to e4beaa56): 15 Plans, 20 Questions all answered by the owner by multiple choice (Answer: lines; the owner: "Our answers here override any decisions there", so they win over wave 47's board where the two differ), two photo duplicates folded, two ADR prediction chores filed (0040; 0064 and 0059), three brainstorm ideas recorded. New rule in `CLAUDE.md`: every question to the owner is multiple choice.
 
 ## Next
 
-1. Run wave 47 by the order in its paragraph (two slots, each task after the one before it merges; T350 after T340, T341 after T343 and T350's decision). Fetch `main` before each board edit: the side session pushes there.
+1. Run wave 47 by the order in its paragraph (two slots, each task after the one before it merges; T350 after T340, T341 after T343 and T350's decision); the board was reconciled with the triage's Answer: lines on 2026-11-23 (T349 took the hold on `main` and the Gradle-stop line; T344 notes the viewshed's list). Fetch `main` before each board edit: the side session pushes there.
 2. A host check when the PC is quiet (optional, a Sonnet agent): `startup` alone on v0.1.41-alpha's tag; 80 again says the slower launch was a state of the machine.
 
 ## Waiting on user

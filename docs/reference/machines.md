@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-18
+verified: 2026-11-23
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -15,7 +15,7 @@ wins and this file gets fixed.
 | What | Where |
 |---|---|
 | Main checkout | `C:\Users\Dorje\Documents\src\dystopo` (named `android-app` until 2026-10-13; never edited by a task agent) |
-| Task worktrees | `C:\Users\Dorje\Documents\src\dystopo-wt\<task-id>`: `git -C C:\Users\Dorje\Documents\src\dystopo worktree add C:\Users\Dorje\Documents\src\dystopo-wt\<task-id> -b task/<task-id> origin/main`, then copy `local.properties` from the main checkout |
+| Task worktrees | `C:\Users\Dorje\Documents\src\dystopo-wt\<task-id>`: `git -C C:\Users\Dorje\Documents\src\dystopo worktree add C:\Users\Dorje\Documents\src\dystopo-wt\<task-id> -b task/<task-id> origin/main`, then copy `local.properties` from the main checkout. Once per clone: `git -C C:\Users\Dorje\Documents\src\dystopo config core.longpaths true` (its worktrees share it; T349: the build's package paths reach 292 characters in a task worktree); remove a worktree with `tools\worktree-remove.ps1 -Path <worktrees>\<task-id> -WorktreeRoot C:\Users\Dorje\Documents\src\dystopo-wt` |
 | Shared download cache | `DYSTOPO_CACHE=C:\Users\Dorje\Documents\src\dystopo\cache` in every shell |
 | JDK 21 | `JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot` (Git Bash: `/c/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot`); the git hooks need it too |
 | Android SDK | `C:\Users\Dorje\Android\sdk` (named in `local.properties`); its `platform-tools` is on the user PATH from 2026-11-18, so a shell started before then needs the full path to `adb.exe` |

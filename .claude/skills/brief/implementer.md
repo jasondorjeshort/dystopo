@@ -4,7 +4,7 @@ text under "### Tnn" in `docs/TASKS.md` and the wave's paragraph at the top of i
 
 Machine facts for this run (they override the docs): main checkout `<path>` (never edit files there);
 make your worktree with `git -C <main> worktree add <worktrees>\Tnn -b task/Tnn origin/main` and work
-only inside it; copy `local.properties` from the main checkout; `JAVA_HOME=<jdk>` and
+only inside it; copy `local.properties` from the main checkout (the clone has `core.longpaths` set, T349); `JAVA_HOME=<jdk>` and
 `DYSTOPO_CACHE=<main>\cache` in every shell. Your ports: <host ports>; your emulator: AVD
 `<name>` under `<avd home>`, console port <n>, host port <p> (or "no emulator needed"). Servers you
 may read but never stop or ask to build: <the coordinator's live server, or "none">.

@@ -54,7 +54,7 @@ mechanism, the crossing scenario, or "none">.
 You do not edit the code. A small fix-up may go to the implementer directly (<its agent id>);
 anything that changes scope goes to the coordinator. Temporary files go in a folder of your own under
 the session scratchpad (`<scratchpad>\Tnn-verify\`): every agent of the session shares its root.
-The script stops its emulator and checks `adb devices`; after `-KeepEmulator`, stop it with `-Only stop,guard` and quote `adb devices` (an earlier verifier reported one stopped that still ran, holding 8 GB). Remove the verify worktree when done (`git worktree remove`; `docs/reference/windows-and-shells.md` for a folder that resists). Wait in the foreground (`until <check>; do sleep 5; done`), and if a command is moved to the background, poll it. Start no background sleep or monitor
+The script stops its emulator and checks `adb devices`; after `-KeepEmulator`, stop it with `-Only stop,guard` and quote `adb devices` (an earlier verifier reported one stopped that still ran, holding 8 GB). Remove the verify worktree when done: `powershell -ExecutionPolicy Bypass -File <main>\tools\worktree-remove.ps1 -Path <worktrees>\Tnn-verify -WorktreeRoot <worktrees>` (long paths and the prune built in; exit 4 names a process holding a file: stop it only if you started it, by PID, never `./gradlew --stop`; `docs/reference/windows-and-shells.md`, Worktrees), and quote its last line. Wait in the foreground (`until <check>; do sleep 5; done`), and if a command is moved to the background, poll it. Start no background sleep or monitor
 loop, and leave nothing of yours running when you report.
 
 **Haiku-class variant** (a task whose Done when is wholly in its Checks block: docs-only, test-only, a tool fix): run

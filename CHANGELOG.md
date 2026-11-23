@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-23
+
+- T349: The coordinator's tools: news from `main` before a push, and a worktree removed by one script
+
 ## v0.1.42-alpha (2026-11-22)
 
 ### 2026-11-22
