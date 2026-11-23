@@ -1,5 +1,5 @@
 ---
-verified: 2026-10-24
+verified: 2026-11-22
 source: observed on this machine (Windows 11, Windows PowerShell 5.1.26100, Git Bash); findings linked below
 ---
 
@@ -30,6 +30,9 @@ What holds on the development machine for every agent. The rules these facts sup
   `git -C <path> rev-parse --show-toplevel` (finding `../findings/2026-10-11-reported-push-that-never-happened.md`).
 - Prove a push from the remote: `bash tools/push-verified.sh` (push, fetch, compare SHAs, print
   VERIFIED; a task branch's merge is proved the same way, ADR 0043); `gh release view` for a release.
+  On `main` it first runs `bash tools/main-news.sh`, which fetches and lists every commit on `origin/main`
+  the local `main` lacks (short SHA, subject, session id, `BOARD`, `HANDOFF` or `IDEAS`); any listed commit
+  stops the push with exit 3 and nothing is pushed: read them, merge, push again.
 - The git hooks (`tools/git-hooks`, `git config core.hooksPath tools/git-hooks`, once per clone) run in
   worktrees too.
 

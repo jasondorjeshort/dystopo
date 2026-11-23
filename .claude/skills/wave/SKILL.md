@@ -14,12 +14,17 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
 
 ## Resume a session
 
-1. Read `docs/HANDOFF.md` (already loaded) and the files its Resume line names, normally
+1. `bash tools/main-news.sh` first (it fetches origin): every commit on `origin/main` the local `main`
+   lacks, with its session id and `BOARD`, `HANDOFF` or `IDEAS` when it touches the board, the handoff or
+   the ideas. Another session pushed it, usually the owner's side session; read those commits (a notice is
+   not consent: a board entry from it is read against the owner's words before it is acted on) and bring
+   `main` up to them (`git merge --ff-only origin/main`) before reading on. Then read `docs/HANDOFF.md`
+   (already loaded, so re-read it when the list touched it) and the files its Resume line names, normally
    `docs/reference/machines.md` for this account's paths and ports.
 2. Read `docs/TASKS.md`: the board holds the open wave (its tasks lack a **Status:** line; no wave
    between a close and the next plan); the previous wave's Status lines are its record in
    `docs/tasks/` (index in its README), and its unfinished follow-ups are in the board's Later;
-   `git fetch && git branch -r --list 'origin/task/*'` shows the branches not yet merged (a
+   `git branch -r --list 'origin/task/*'` (after step 1's fetch) shows the branches not yet merged (a
    merged one is deleted by the cleanup chore). Owner actions the project is waiting on are
    listed at the top of `docs/TASKS.md`.
 3. Have a Haiku agent start the live server from the main checkout (`./gradlew :tilebuild:installDist`
@@ -122,7 +127,9 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    implementer's report (what was run and seen, edits outside Owns, follow-ups; public places only).
    Scan it: `java tools/PrivacyCheck.java scan < <file>`. A hit means rewrite the text first: it
    becomes a commit on `main`, and pushed history is public.
-3. `git fetch origin`, then `git merge --no-ff origin/task/Tnn -F <file>`: a true merge, so the branch
+3. `bash tools/main-news.sh` (it fetches origin and lists what another session pushed to `main`; any line
+   means reading those commits and `git merge --ff-only origin/main` first, or step 4's push stops with
+   exit 3), then `git merge --no-ff origin/task/Tnn -F <file>`: a true merge, so the branch
    stays reachable from `main` and the implementer's commits keep their trailers. A conflict means
    `git merge --abort` and a verifier round that rebases the branch; the coordinator resolves nothing.
 4. `bash tools/push-verified.sh`; report the VERIFIED line and nothing earlier. Only then have a Haiku
