@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-23, at commit e29e69e8, by main session (wave 47 planned on the board, not launched; v0.1.42-alpha is the latest release)
+Updated: 2026-11-23, at commit 8c1cb9cf, by main session (wave 47 planned on the board, not launched; v0.1.42-alpha is the latest release)
 Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last closed wave's record
 `docs/tasks/wave-46.md`, the board's Later in `docs/TASKS.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
@@ -10,11 +10,11 @@ Resume: this file, `docs/reference/machines.md`, the `wave` skill, the last clos
 
 - **Wave 46 is closed and v0.1.42-alpha is published** (2026-11-23 00:17 UTC, tag on c3778928, versionCode 2171; read from `gh release view`): the pressure unit setting (mbar by default), the Panorama's Follow phone, "Can I see it from here?", the weak-GPS note, the no-map messages. The closing sweep `out/sweep-20261122-w46` was red on `startup` alone; T338's bisection found the host slower (v0.1.41-alpha's own tag reads the same) and raised `mapview`'s ceiling to 138; the counted rerun `out/sweep-20261122-w46-rerun` was green. The log's close entry of 2026-11-22 has the figures; the record is `docs/tasks/wave-46.md`.
 - **Cost:** the 7-day meter read 14 when the wave went on the board and 26 at the close: 12 points against 12 figured (the `wave` skill's figures stand); the wave's agents' fresh tokens 8.6M. Reset 2026-11-28 03:00 UTC; the hold is 97.
-- **Wave 47 is planned and not launched** (the owner, 2026-11-23: "Make the list but we wont run it yet"): eleven tasks, T339 to T349, in `docs/TASKS.md`; its premises were read from the code by two read-only agents; no research agent, critic or implementer has run. Nothing runs: no task branch, no task worktree, no emulator. The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; at most two Gradle agents and two emulators, a verifier counting as one; ports 9012 and 9013 are another program's.
+- **Wave 47 is planned and not launched** (the owner, 2026-11-23: "Make the list but we wont run it yet"): twelve tasks, T339 to T350, in `docs/TASKS.md`, following the Plans and Answers of the side session's triage of 2026-11-22 (found on `origin/main` only when the board's push was refused: fetch first); its premises were read from the code by two read-only agents; no research agent, critic or implementer has run. Nothing runs: no task branch, no task worktree, no emulator. The live viewer on 8765 is wanted (`out/coordinator-pids.txt`). Rules: no force push; `-Pkotlin.daemon.jvmargs=-Xmx4g`; at most two Gradle agents and two emulators, a verifier counting as one; ports 9012 and 9013 are another program's.
 
 ## Next
 
-1. Wave 47 waits on the owner's word, and on any change the owner makes to its list. Then, in the `wave` skill's order: the three surveys its wave paragraph names (R1 to R3) and the `triage` skill over the ideas of 2026-11-22 that carry no block; the critic; the launch (T339, T345 and T349 first). Left out of the wave by name, in its paragraph: the Panorama on the whole screen (joins on the owner's Answer), the reroute's amendment to ADR 0040, the routing work of `docs/findings/2026-11-16-research-for-pending-ideas.md`.
+1. Wave 47 waits on the owner's word, and on any change the owner makes to its list. Then, in the `wave` skill's order: the two surveys its wave paragraph names (R2 and R3); the critic, with the paragraph's two places where the code read differs from a Plan; the launch (T339, T345 and T349 first). What is left out is named in the wave paragraph (the reroute's amendment to ADR 0040 and the routing work among it).
 2. A host check when the PC is quiet (optional, a Sonnet agent): `startup` alone on v0.1.41-alpha's tag; 80 again says the slower launch was a state of the machine.
 
 ## Waiting on user
