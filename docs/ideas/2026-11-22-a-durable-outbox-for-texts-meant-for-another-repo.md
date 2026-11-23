@@ -12,3 +12,12 @@ The Hatchery idea drafted for ADR 0065 and three research reports lived in the s
 Lever: the Hatchery idea still waiting to be filed. Outranks the beta-defaults ledger, which has not lost anything yet.
 
 **What exists already (to be checked):** Nothing; drafts go to the scratchpad. A new `docs/` folder needs its line in `docs/ARCHITECTURE.md`.
+
+Question: Where should a text meant for another repository or a later session wait until it is filed: a new tracked `docs/outbox/` folder, a handoff subsection, or nowhere new?
+Recommendation: A; the handoff's 40-line hard cap cannot hold drafts, and a folder with one file per text (frontmatter `target`, `filer`, `date`; deleted by the filing commit; the handoff skill lists it at resume) is one small pass once chosen. It adds a `docs/` folder to the layout ADR 0020 and `where-things-live.md` describe, so the shape is put to you.
+Options:
+A. `docs/outbox/`, one file per text, a README and a line in `docs/ARCHITECTURE.md`; the handoff skill's resume reads it (a departure row).
+B. A one-line pointer per text in the handoff's Waiting on user, the text itself in a dated finding.
+C. Nothing new: file each text in its target the same session.
+
+Answer:
