@@ -1,6 +1,6 @@
 ---
 verified: 2026-11-23
-source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327, T330, T331, T344)
+source: observed on an API 35 emulator at Paradise and at Mount Rainier's summit in the Rainier pack (T326, T327, T330, T331, T344, T351)
 ---
 
 # The Panorama view
@@ -34,15 +34,38 @@ Debug routes: `android-debug-routes.md` (Panorama view). The choices it is built
 
 ## The screen
 
-- **Layout** (choice e): upright, the plot is the window's full width and three quarters of that tall, at most 45
-  percent of the window's height (411 by 309 dp on a Pixel 6), the pane under it; on its side the plot is at the left
-  (the window's width less the pane, the wider of 320 dp and 40 percent of the width) and the window's height less the
-  switch's room, the pane at the right (T351 makes the plot the whole window).
-- **The pane** (T344: its list moved to the List view, below) holds the Horizon view's parts that say where the view
-  stands (`app/horizon/SkyViewParts.kt`): the place line with "Back to here", the heading "Panorama view" with its help
-  and the small button "List view" at the row's end (the List's second way in; its place is flagged for the owner, ADR
-  0031), a picked peak's line with "View from here", and a flight's card (a flight picked on the lens) over its lower
-  part. No Close button. `GET /panorama` `listPx` is null and `headingScrolls` false since.
+- **Layout** (T351, step one's second half of the owner's Answer of 2026-11-22; the survey's layout, ADR 0067): the plot
+  is the whole window inside the system bars and the cutout, upright and on its side (411 by 842 dp upright and 866 by
+  363 dp on its side on the API 35 Pixel 6 emulator), the view switch over its lower left; the system bars stay (the
+  strip under the status bar carries the sky). There is no pane. `GET /panorama` `overlays.plotIsWindow` and
+  `drawn.plotDp` = `drawn.windowDp` say so. (Before T351: the plot at most 45 percent of the window's height upright,
+  the pane under it or at its right.)
+- **The overlays** (T351; `shared/.../horizon/PanoramaOverlays.kt`, the pure rule, and `PanoramaOverlaysTest`; hosted by
+  `app/panorama/PanoramaLens.kt`'s `LensOverlays`): each overlay is a box placed by one rule, and the scene's names keep
+  off every box (the edge arrow's included: T331's follow-up). The tape along the top; at the upper right "Layers" and
+  "List view" side by side (one above the other when they do not fit); at the upper left a column of the place line with
+  "Back to here" (at a chosen point only; at the fix the lens shows no place line, the plot's spoken label still starts
+  with it), a picked peak's line with "View from here" and the weak-compass line, beside the upper right buttons while
+  280 dp is left there, else under them across the width (a plate that would run into a lower one goes under the upper
+  right buttons when it fits there); at the lower right the zoom buttons and "Follow phone" above them (lifted above
+  the switch when the switch reaches under them, as on a 360 dp phone at font 2.0); at the lower left the compass
+  correction's line and then the flights' credit, in the band beside the switch while each fits there whole, else
+  stacked above it; the edge arrow at its edge point, else the nearest place clear of every box (a move along its edge
+  counting a third of one across). The waiting line ("Reading the terrain...") and a flight's card stand in the free band
+  between the upper and the lower overlays. Each plate is asked its size for the width it may take (its intrinsic
+  size), so text wraps at large fonts and nothing is cut. The rule promises no overlap at font 1.0 on any window and at
+  font 2.0 on a Pixel 6's window but for everything at once on its side (a chosen point's line, a pick, the weak-compass
+  line and a correction together are taller than 363 dp); a smaller window at 2.0 can still crowd. `GET /panorama`
+  `overlays` (`boxes` by key in the Compose root, `overlap`, `free`).
+- **Layers** (T351; the survey: the layers behind one control): the button opens a panel under it at the right (at most
+  360 dp wide): the heading "Panorama view" with its help, then "Show:" with the Horizon view's toggles (Satellites,
+  Peaks, Sun, and Flights while Flight tracking is on; the same synced settings; at a chosen point Satellites and
+  Flights disabled with the sentence why). A tap outside the panel, Back (before the target's step) or "Layers" again
+  closes it; the lens does not turn while it is open. `POST /panorama?layers=1|0`; `GET /panorama` `layersOpen`,
+  `layersPx`. **What the lens no longer shows without a tap:** the heading "Panorama view" and its help, the layer
+  toggles (behind Layers) and, at the fix, the "Your location" line.
+- **The list button** "List view" (T344; the List's second way in; its place is flagged for the owner, ADR 0031) stands
+  at the upper right beside "Layers". No Close button.
 - **The List view** (T344; `app/skylist/`, the owner's Answer of 2026-11-22, step one's first half): the switch's fourth
   segment, "List", and the Panorama's "List view" button open one page for the same place and moment: the place line and
   "List view" with its help (they stay), a picked peak's line, then a list that scrolls: "Show:" with the Horizon view's
@@ -127,15 +150,15 @@ Debug routes: `android-debug-routes.md` (Panorama view). The choices it is built
   the travel within the touch slop included), so a name follows the finger; the travel across the line does nothing.
   The names are held during the drag and placed after it. The correction is degrees added to the phone's true bearing
   (positive east) with the declination (`PanoramaFollow.axesOf`), and a change turns the drawn aim at once, resting or
-  not. While one stands, a plate at the plot's lower left (6 dp in, above the flights' credit while that shows; sized
-  for the widest line, two lines at most in three quarters of the width, clear of the buttons' column; its box given to
-  the scene's names and to the arrow, which keeps above it) reads `HeadingCorrection.line` ("Compass adjusted 4° east",
+  not. While one stands, a plate at the lower left (T351: beside the switch when it fits there whole, else above it;
+  sized for the widest line, wrapping as it needs, clear of the buttons' column; its box given to the scene's names and
+  to the arrow, the overlays' rule) reads `HeadingCorrection.line` ("Compass adjusted 4° east",
   "Compass adjusted 0°" when it comes back to none) with "Reset" (48 dp). The plot's node carries "Adjust compass left"
   and "Adjust compass right" (a degree each, left the view's bearing less) in place of Drag's four actions. A zoom, a
   pinch and a target keep it; Reset, leaving Follow and closing the view drop it; it is never kept between sessions.
 - **The weak-compass line** (T331, choice (h); `CompassHint`): while following, the attitude sensor's own accuracy
-  status at 1 (low) or 0 (unreliable) for over 2 s shows "Compass needs calibrating: move the phone in a figure 8" under
-  the plot (on its side the plot gives up the line's height); a better status or leaving Follow takes it away at once,
+  status at 1 (low) or 0 (unreliable) for over 2 s shows "Compass needs calibrating: move the phone in a figure 8" on a
+  plate in the lens's upper left column (T351; before, under the plot); a better status or leaving Follow takes it away at once,
   and the view never refuses to draw. The API 35 emulator's sensor reports 3 (high), so the line never shows there
   without `POST /panorama?compassStatus=`.
 - **The opening in Follow** (choice (j)) is the phone's attitude at once (`aim.opening` `attitude`); Drag's opening stands
