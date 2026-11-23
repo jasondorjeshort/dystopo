@@ -19,6 +19,9 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * peer) stay local, and so do units seeded from a region: only a choice the user made is published.
  * T110: the scale bar's both-units choice (`app.scaleBar.both`, `on` or `off`; [ScaleBarSettings], not a
  * [SettingsRoutes] key, so it is applied here and not through `POST /settings`) syncs too ([LOCAL_KEYS]).
+ * T346: so does the zoom label beside it (`app.scaleBar.zoom`, `on` or `off`), the same way. Only a change the user made is
+ * written to the log, so an install that never touched the row follows its build's default
+ * ([ScaleBarSettings.ZOOM_LABEL_DEFAULT]). Builds before T346 skip it (ADR 0033).
  * T126: spoken directions (`app.navSpeech`, `on` or `off`) are a [SettingsRoutes] key and sync through it.
  * T136: so is the trip corridor's width (`app.tripCorridorM`, whole metres, `0` off); the per-trip "not kept" choice
  * stays on the phone (T130).
@@ -71,6 +74,9 @@ object SettingsSync {
     /** T110: the scale bar's both-units choice, under its settings-file key. */
     const val SCALE_BAR_BOTH = "scaleBar.both"
 
+    /** T346: the zoom label beside the scale bar, under its settings-file key. */
+    const val SCALE_BAR_ZOOM = "scaleBar.zoom"
+
     /** T126: spoken turn directions, a [SettingsRoutes] key whose synced value is `on` or `off`. */
     const val NAV_SPEECH = "navSpeech"
 
@@ -115,7 +121,7 @@ object SettingsSync {
     // end T213
 
     /** T110: synced settings kept outside [SettingsRoutes] (applied by [applyLocal]). */
-    val LOCAL_KEYS = setOf(SCALE_BAR_BOTH)
+    val LOCAL_KEYS = setOf(SCALE_BAR_BOTH, SCALE_BAR_ZOOM)
 
     @Volatile private var applyingRemote = false
 
@@ -140,8 +146,9 @@ object SettingsSync {
         else -> null
     }
 
-    /** T110: the [LOCAL_KEYS] settings as they are now, by synced key. */
-    fun localValues(bothUnits: Boolean): Map<String, String> = mapOf(syncedKey(SCALE_BAR_BOTH) to onOff(bothUnits))
+    /** T110: the [LOCAL_KEYS] settings as they are now, by synced key. T346: and the zoom label's. */
+    fun localValues(bothUnits: Boolean, showZoom: Boolean = ScaleBarSettings.ZOOM_LABEL_DEFAULT): Map<String, String> =
+        mapOf(syncedKey(SCALE_BAR_BOTH) to onOff(bothUnits), syncedKey(SCALE_BAR_ZOOM) to onOff(showZoom))
 
     /** The synced settings as they are now, by synced key; null for units the user has not chosen. */
     fun current(): Map<String, String?> {
@@ -150,7 +157,7 @@ object SettingsSync {
         m[syncedKey("textScale")] = AppSettings.textScale.toString()
         val map = AppSettings.mapOptions.json(AppSettings.units)
         for (k in MapOptions.KEYS) m[syncedKey(k)] = map[k]?.toString()
-        m += localValues(ScaleBarSettings.bothUnits) // T110
+        m += localValues(ScaleBarSettings.bothUnits, ScaleBarSettings.showZoom) // T110, T346
         for (s in AppSettings.PLAIN) if (s.synced) m[syncedKey(s.key)] = s.syncValue() // T248: the registry's synced settings
         m[syncedKey(TURN_DEADLINE)] = AppSettings.turnDeadline // T163
         for (a in io.github.jasondorjeshort.dystopo.model.Activity.entries) m[syncedKey(RecordingProfiles.key(a))] = AppSettings.trackProfiles[a] // T172
@@ -213,7 +220,7 @@ object SettingsSync {
         publishKeys(app, keys)
     }
 
-    /** T110: after a [LOCAL_KEYS] setting changed on this device ([ScaleBarSettings.setBothUnits]); a pulled value is not sent back. */
+    /** T110: after a [LOCAL_KEYS] setting changed on this device ([ScaleBarSettings.setBothUnits], T346 [ScaleBarSettings.setShowZoom]); a pulled value is not sent back. */
     fun publishLocal(app: DystopoApp, settingsKey: String) {
         require(settingsKey in LOCAL_KEYS) { "$settingsKey is not a local synced setting" }
         publishKeys(app, listOf(syncedKey(settingsKey)))
@@ -268,6 +275,7 @@ object SettingsSync {
     /** T110: sets [LOCAL_KEYS] values a sync brought (on the main thread, where the scale bar reads them). */
     private fun applyLocal(app: DystopoApp, values: Map<String, Boolean>) {
         values[SCALE_BAR_BOTH]?.let { on -> app.map.onMain { ScaleBarSettings.setBothUnits(on, publish = false) } }
+        values[SCALE_BAR_ZOOM]?.let { on -> app.map.onMain { ScaleBarSettings.setShowZoom(on, publish = false) } } // T346
     }
 
     /** For `/sync/status` › `settingsSync`: `synced` is this device's values, `held` (T110) the synced log's `app.` settings. */

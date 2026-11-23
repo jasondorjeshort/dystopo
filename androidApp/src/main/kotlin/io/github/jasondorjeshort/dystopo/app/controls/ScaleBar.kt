@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -21,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -52,12 +55,23 @@ import org.maplibre.android.maps.MapLibreMap
  * row follow a change at once. Set by the Map options row and `POST /scalebar?both=on|off` ([ScaleBarRoutes]).
  * T110: synced like the other map choices (`app.scaleBar.both` through
  * [io.github.jasondorjeshort.dystopo.app.sync.SettingsSync]; it is no `MapOptions` key, so a change reloads no style).
+ * T346: the second option, "Show zoom level" (`scaleBar.zoom`, synced as `app.scaleBar.zoom` the same way; the default
+ * [ZOOM_LABEL_DEFAULT]): the camera's zoom beside the bar, inside its plate ([zoomLabelText]). `POST /scalebar?zoom=on|off`.
  */
 object ScaleBarSettings {
     private const val PREFS = "dystopo-settings" // AppSettings' file; the key is this object's own
     private const val KEY_BOTH = io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.SCALE_BAR_BOTH
+    private const val KEY_ZOOM = io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.SCALE_BAR_ZOOM
+
+    /**
+     * T346: the zoom label's default, for an install that never touched the Map options row "Show zoom level" (one that
+     * did keeps its choice). On through alpha and beta; **a post-beta release turns it off** (the owner, 2026-11-22: "we'll
+     * definitely want it off by default in a post beta release"); the `release` skill carries the line that says so.
+     */
+    const val ZOOM_LABEL_DEFAULT = true
 
     private var both by mutableStateOf(false)
+    private var zoomLabel by mutableStateOf(ZOOM_LABEL_DEFAULT)
     @Volatile private var loaded = false
 
     /** Whether the bar shows both unit systems (reading this in a composable recomposes it on a change). */
@@ -66,6 +80,27 @@ object ScaleBarSettings {
             if (!loaded) load()
             return both
         }
+
+    /** T346: whether the zoom label ("z8.4", [zoomLabelText]) shows beside the bar; Compose state like [bothUnits]. */
+    val showZoom: Boolean
+        get() {
+            if (!loaded) load()
+            return zoomLabel
+        }
+
+    /** T346: the zoom label's setting from what the settings file holds for it, null when the row was never touched. */
+    internal fun showZoomFrom(stored: Boolean?): Boolean = stored ?: ZOOM_LABEL_DEFAULT
+
+    /** T346: as [setBothUnits], for the zoom label. */
+    fun setShowZoom(on: Boolean, publish: Boolean = true) {
+        if (!loaded) load()
+        zoomLabel = on
+        runCatching { prefs().edit().putBoolean(KEY_ZOOM, on).apply() }
+        if (publish) {
+            val app = DystopoApp.instance
+            Thread({ io.github.jasondorjeshort.dystopo.app.sync.SettingsSync.publishLocal(app, KEY_ZOOM) }, "scalebar-publish").start()
+        }
+    }
 
     /** T110: creates the Compose state now; call on the main thread from `Application.onCreate` (sync reads it from other threads). */
     fun prepare() {
@@ -94,6 +129,8 @@ object ScaleBarSettings {
     private fun load() {
         loaded = true
         both = runCatching { prefs().getBoolean(KEY_BOTH, false) }.getOrDefault(false)
+        // T346: nothing stored is the default, so an untouched install follows a later build's default.
+        zoomLabel = showZoomFrom(runCatching { prefs().let { p -> if (p.contains(KEY_ZOOM)) p.getBoolean(KEY_ZOOM, ZOOM_LABEL_DEFAULT) else null } }.getOrNull())
     }
 
     private fun prefs() = DystopoApp.instance.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -128,6 +165,10 @@ object ScaleBarLayout {
     /** Each bar's length as drawn, in device pixels (tick centre to tick centre). */
     @Volatile var drawnPx: List<Float> = emptyList()
     @Volatile var boundsPx: FloatArray? = null
+
+    /** T346: the zoom label as drawn (null while it is off or the bar hidden) and its box in window pixels. */
+    @Volatile var zoomText: String? = null
+    @Volatile var zoomBoundsPx: FloatArray? = null
     @Volatile var windowHeightPx = 0f
     @Volatile var density = 1f
 
@@ -157,6 +198,8 @@ object ScaleBarLayout {
         bars = emptyList()
         drawnPx = emptyList()
         boundsPx = null
+        zoomText = null
+        zoomBoundsPx = null
         zoom = Double.NaN
         lat = Double.NaN
         tilt = Double.NaN
@@ -207,6 +250,8 @@ object ScaleBarLayout {
                 )
             },
             "boundsPx" to b?.map { Math.round(it) },
+            // T346: the zoom label inside the bar's plate (its box is part of `boundsPx`, the box the layout rule places).
+            "zoomLabel" to zoomLabelJson(visible, b),
             "bottomFromWindowBottomDp" to bottomDp?.let { round(it.toDouble(), 1) },
             "creditTopDp" to credit, "routeCardTopDp" to routeCard, "trackPanelsTopDp" to trackPanels, "bottomCardsTopDp" to cards, // T106
             "topLeftBottomDp" to topLeftBottomDp, // T115: the search box and the online indicator, from the window top
@@ -222,12 +267,41 @@ object ScaleBarLayout {
         )
     }
 
+    /** T346: `GET /scalebar` › `zoomLabel`: the setting, whether it is drawn, its text, its box and that box inside the plate's. */
+    private fun zoomLabelJson(visible: Boolean, plate: FloatArray?): Map<String, Any?> {
+        val text = zoomText
+        val box = zoomBoundsPx
+        val drawn = visible && text != null && box != null
+        return linkedMapOf(
+            "on" to ScaleBarSettings.showZoom,
+            "default" to ScaleBarSettings.ZOOM_LABEL_DEFAULT,
+            "shown" to drawn,
+            "text" to if (drawn) text else null,
+            "liveText" to zoom.takeIf { it.isFinite() }?.let { zoomLabelText(it) }, // from the zoom the bar was fitted at
+            "boundsPx" to if (drawn) box?.map { Math.round(it) } else null,
+            "insidePlate" to if (drawn && plate != null && box != null) box[0] >= plate[0] - 0.5f && box[1] >= plate[1] - 0.5f && box[2] <= plate[2] + 0.5f && box[3] <= plate[3] + 0.5f else null,
+        )
+    }
+
     private fun round(v: Double, digits: Int): Double {
         var s = 1.0
         repeat(digits) { s *= 10 }
         return Math.round(v * s) / s
     }
 }
+
+/**
+ * T346: the zoom label's text: "z" and the camera's zoom to one decimal, cut rather than rounded ("z8.4" from 8.4 up to
+ * 8.4999..., "z7.9" at 7.97), so the whole number is the zoom the map is at: a limit stated as "from z8" holds from the
+ * first "z8.0". A whole zoom keeps its ".0", so the label keeps its width as the zoom changes. Pure.
+ */
+fun zoomLabelText(zoom: Double): String {
+    val tenths = Math.floor(zoom.coerceAtLeast(0.0) * 10 + 1e-6).toLong() // 1e-6: 8.3999999999 from the camera's sums is 8.4
+    return "z" + (tenths / 10) + "." + (tenths % 10)
+}
+
+/** T346: the widest text [zoomLabelText] gives at the camera's zooms (to z25), the label's measured width at every zoom. */
+private const val ZOOM_LABEL_WIDEST = "z00.0"
 
 /** The longest a bar may be, in dp; the nice-length rule makes it 40 to 100% of this. */
 const val SCALE_BAR_MAX_DP = 100.0
@@ -253,6 +327,8 @@ const val TILT_MIN_DEG = 0.5
  * with [ScaleBarSettings.bothUnits] it is a two-sided ruler, the user's units above the line and the other
  * system below. Follows the camera during gestures (a camera-move listener) and the units, the night style
  * and the option within half a second. Dark ink on paper, light ink on a dark plate in the night style.
+ * T346: with "Show zoom level" on, the camera's zoom ([zoomLabelText]) stands beside the ruler inside the same plate,
+ * so the layout rule places and measures it with the bar (its width is the widest label's, so it keeps its size).
  */
 @Composable
 fun ScaleBar() {
@@ -322,8 +398,17 @@ fun ScaleBar() {
         ScaleBarLayout.navCardBottomDp = navCard.value
         ScaleBarLayout.warningCardBottomDp = warnCard.value
     }
+    // T346: the zoom label, beside the ruler inside the bar's plate, so the layout rule places it with the bar's box.
+    val zoomText = if (ScaleBarSettings.showZoom) zoomLabelText(v.zoom) else null
+    SideEffect {
+        ScaleBarLayout.zoomText = zoomText
+        if (zoomText == null) ScaleBarLayout.zoomBoundsPx = null
+    }
+    val zoomStyle = TextStyle(color = ink, fontSize = 12.sp, fontWeight = FontWeight.Normal)
+    val zoomMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val zoomMinWidth = with(density) { zoomMeasurer.measure(ZOOM_LABEL_WIDEST, zoomStyle).size.width.toDp() }
     Layout(
-        content = { Column(
+        content = { Row(
             // Where the bar sits before the rule's first pass; T239: drawn where the rule puts it.
             Modifier.navigationBarsPadding().padding(start = 8.dp, bottom = 32.dp)
                 .control("scaleBar") // T238
@@ -342,6 +427,7 @@ fun ScaleBar() {
                         ScaleBarLayout.tilt = v.tilt
                         ScaleBarLayout.metersPerDp = mppDp
                         ScaleBarLayout.bars = bars
+                        ScaleBarLayout.zoomText = zoomText // T346
                     }
                     ScaleBarLayout.shown = true
                     ScaleBarLayout.hiddenBecause = null
@@ -349,29 +435,39 @@ fun ScaleBar() {
                 .background(plate, RoundedCornerShape(4.dp))
                 .padding(horizontal = 6.dp, vertical = 3.dp)
                 .semantics { contentDescription = "Scale " + bars.joinToString(" and ") { it.label } },
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            BasicText(primary.label, style = labelStyle)
-            // The ruler: a line from 0 to the longer bar, a tick at 0 across both sides, the user's length ticked
-            // upward and, with both units, the other length ticked downward.
-            Canvas(Modifier.width((widest + STROKE_DP).dp).height(if (other != null) 14.dp else 8.dp).onGloballyPositioned { c ->
-                // T128: the ruler line's row in the window, where a tilted map's scale is measured (`read`)
-                val h = c.size.height.toFloat()
-                val strokePx = STROKE_DP.toFloat() * density.density
-                ScaleBarLayout.rowPx = c.boundsInRoot().top + if (other != null) h / 2 else h - strokePx / 2
-            }) {
-                val stroke = STROKE_DP.dp.toPx()
-                val x0 = stroke / 2
-                val lens = bars.map { it.px.dp.toPx() }
-                val y = if (other != null) size.height / 2 else size.height - stroke / 2
-                val top = stroke / 2
-                val bottom = size.height - stroke / 2
-                drawLine(ink, Offset(x0, y), Offset(x0 + lens.max(), y), stroke, StrokeCap.Square)
-                drawLine(ink, Offset(x0, top), Offset(x0, if (other != null) bottom else y), stroke, StrokeCap.Square)
-                drawLine(ink, Offset(x0 + lens[0], top), Offset(x0 + lens[0], y), stroke, StrokeCap.Square)
-                if (other != null) drawLine(ink, Offset(x0 + lens[1], y), Offset(x0 + lens[1], bottom), stroke, StrokeCap.Square)
-                ScaleBarLayout.drawnPx = lens
+            Column {
+                BasicText(primary.label, style = labelStyle)
+                // The ruler: a line from 0 to the longer bar, a tick at 0 across both sides, the user's length ticked
+                // upward and, with both units, the other length ticked downward.
+                Canvas(Modifier.width((widest + STROKE_DP).dp).height(if (other != null) 14.dp else 8.dp).onGloballyPositioned { c ->
+                    // T128: the ruler line's row in the window, where a tilted map's scale is measured (`read`)
+                    val h = c.size.height.toFloat()
+                    val strokePx = STROKE_DP.toFloat() * density.density
+                    ScaleBarLayout.rowPx = c.boundsInRoot().top + if (other != null) h / 2 else h - strokePx / 2
+                }) {
+                    val stroke = STROKE_DP.dp.toPx()
+                    val x0 = stroke / 2
+                    val lens = bars.map { it.px.dp.toPx() }
+                    val y = if (other != null) size.height / 2 else size.height - stroke / 2
+                    val top = stroke / 2
+                    val bottom = size.height - stroke / 2
+                    drawLine(ink, Offset(x0, y), Offset(x0 + lens.max(), y), stroke, StrokeCap.Square)
+                    drawLine(ink, Offset(x0, top), Offset(x0, if (other != null) bottom else y), stroke, StrokeCap.Square)
+                    drawLine(ink, Offset(x0 + lens[0], top), Offset(x0 + lens[0], y), stroke, StrokeCap.Square)
+                    if (other != null) drawLine(ink, Offset(x0 + lens[1], y), Offset(x0 + lens[1], bottom), stroke, StrokeCap.Square)
+                    ScaleBarLayout.drawnPx = lens
+                }
+                if (other != null) BasicText(other.label, style = labelStyle)
             }
-            if (other != null) BasicText(other.label, style = labelStyle)
+            if (zoomText != null) BasicText(
+                zoomText,
+                Modifier.padding(start = 8.dp).widthIn(min = zoomMinWidth)
+                    .onGloballyPositioned { c -> val r = c.boundsInRoot(); ScaleBarLayout.zoomBoundsPx = floatArrayOf(r.left, r.top, r.right, r.bottom) }
+                    .semantics { contentDescription = "Map zoom " + zoomText.removePrefix("z") },
+                style = zoomStyle, softWrap = false, maxLines = 1,
+            )
         }
             // T161: the live readout's bar on the scale bar's line (readout/ReadoutStrip). T177: always drawn while its
             // switch is on, dashes before a fix; off, the scale bar is alone on its line.

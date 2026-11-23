@@ -205,6 +205,9 @@ class HelpRegistryTest {
             // T337: Pressure units.
             "settings.pressureUnit",
             // end T337
+            // T346: Show zoom level.
+            "map.zoomLabel",
+            // end T346
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
