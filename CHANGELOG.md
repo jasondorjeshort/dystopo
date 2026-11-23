@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-23
 
+- T342: Turn an offline map off without deleting it
 - T352: The Horizon view's peaks step past a map with none, and a map that does not open says so
 - T350: A proposal: one "what does the phone hold here?" lookup for every reader
 - T340: The Horizon view and the Panorama read terrain one way: the finest map, a coarser one where it ends, then the online source
