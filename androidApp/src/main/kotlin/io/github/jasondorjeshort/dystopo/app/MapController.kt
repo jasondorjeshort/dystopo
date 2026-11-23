@@ -31,6 +31,26 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
+ * T347: runs [block] on the main thread after the first frame is drawn: from the second frame callback on, once the start
+ * trace has marked its first frame (a post after the frame that drew it; no open window, or about a second of frames,
+ * runs it anyway). So the work is never counted in the first composition's step. Main thread; work the first frame does
+ * not need.
+ */
+fun afterFirstFrame(block: () -> Unit) {
+    val choreographer = android.view.Choreographer.getInstance()
+    var frames = 0
+    lateinit var wait: android.view.Choreographer.FrameCallback
+    wait = android.view.Choreographer.FrameCallback {
+        frames++
+        val marked = StartupTrace.firstFrameAt() != null || !StartupTrace.isOpen
+        if (frames >= 2 && (marked || frames >= AFTER_FIRST_FRAME_MAX_FRAMES)) block() else choreographer.postFrameCallback(wait)
+    }
+    choreographer.postFrameCallback(wait)
+}
+
+private const val AFTER_FIRST_FRAME_MAX_FRAMES = 60
+
+/**
  * The bridge between the map on screen and the (background-thread) debug endpoints: camera, map
  * idle state, screenshots, injected locations. Everything that touches MapLibre runs on the main
  * thread through [onMain].
@@ -173,8 +193,14 @@ class MapController {
 
     fun attach(view: MapView, styleJson: () -> String, onStyle: (Style) -> Unit = {}) {
         mapView = view
-        runCatching { io.github.jasondorjeshort.dystopo.app.divergence.DivergenceLayer.bind(view) } // T213: the trail disagreements, on every style load
-        runCatching { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.bind(view) } // T311: the Flights layer, on every style load
+        // T347: the two layers bind after the first frame (19 and 13 ms of the launch's `map.attach` on the emulator): neither
+        // draws before the style, and each installs on a style already loaded (`getMapAsync { getStyle { } }`).
+        afterFirstFrame {
+            if (mapView !== view) return@afterFirstFrame // a later activity's view took over meanwhile
+            runCatching { io.github.jasondorjeshort.dystopo.app.divergence.DivergenceLayer.bind(view) } // T213: the trail disagreements, on every style load
+            runCatching { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.bind(view) } // T311: the Flights layer, on every style load
+        }
+        StartupTrace.mark("map.attach: listeners") // T347
         view.addOnWillStartRenderingFrameListener { mapLibreIdle = false }
         view.addOnDidFinishRenderingFrameListener { fully, _, _ ->
             framesRendered++

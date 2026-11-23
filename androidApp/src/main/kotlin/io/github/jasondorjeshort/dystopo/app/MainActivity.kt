@@ -80,15 +80,33 @@ class MainActivity : ComponentActivity() {
             mapView.onCreate(savedInstanceState)
             StartupTrace.mark("map.attach")
             app.map.activity = this
+            // T347: a mark per prepare and one before the attach, so the step's growth is attributed (`map.attach: *`). Only the
+            // state the first composition reads is made here; the rest after the first frame ([prepareAfterFirstFrame]).
+            StartupTrace.mark("map.attach: OrientationUi")
             io.github.jasondorjeshort.dystopo.app.controls.OrientationUi.prepare() // T100: its Compose state, on the main thread
-            io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.prepare() // T307, T308: the Horizon view's Compose state, on the main thread
+            StartupTrace.mark("map.attach: HorizonUi")
+            io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi.prepare() // T307, T326: whether a sky view is open (the first composition asks)
+            StartupTrace.mark("map.attach: ViewSwitch")
             io.github.jasondorjeshort.dystopo.app.controls.ViewSwitch.prepare() // T315: the switch's anchor state (both views read it)
-            io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.prepare() // T326: the Panorama's aim, on the main thread
-            io.github.jasondorjeshort.dystopo.app.panorama.PanoramaData.prepare() // T326: its sweeps' revision
+            StartupTrace.mark("map.attach: AircraftUiState")
             io.github.jasondorjeshort.dystopo.app.aircraft.AircraftUiState.prepare() // T311: the Flights layer's Compose state (its ticker reads it)
+            StartupTrace.mark("map.attach: MapController.attach")
             app.map.attach(mapView, styleJson = { app.tiles.style() })
+            afterFirstFrame { prepareAfterFirstFrame() } // T347
         }
         launch.run(Launch.ACTIVITY) { links() }
+    }
+
+    /**
+     * T347: Compose state that only an open sky view reads, made on the main thread after the first frame ([afterFirstFrame]),
+     * out of the launch's `map.attach`. Nothing opens a sky view before then (a tap, Settings or a debug route does; no link),
+     * and the first composition reads only [io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi], made above.
+     * `ComposeStatePrepareTest` counts a name here as prepared.
+     */
+    private fun prepareAfterFirstFrame() {
+        io.github.jasondorjeshort.dystopo.app.gnss.GnssUi.prepare() // T307, T308: the Horizon view's own Compose state
+        io.github.jasondorjeshort.dystopo.app.panorama.PanoramaUi.prepare() // T326: the Panorama's aim
+        io.github.jasondorjeshort.dystopo.app.panorama.PanoramaData.prepare() // T326: its sweeps' revision
     }
 
     /** The `activity` stage's body (T266): links and intents, the content, the permission request. */
