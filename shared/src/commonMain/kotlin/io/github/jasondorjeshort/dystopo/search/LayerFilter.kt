@@ -4,7 +4,7 @@ package io.github.jasondorjeshort.dystopo.search
  * Cuts a vector tile down to the layers a search index reads, before the full MVT decoder runs:
  * land cover, water polygons and the rest are most of a tile's bytes and hold none of its names.
  */
-internal object LayerFilter {
+object LayerFilter { // public since T352: the Horizon view's peak read tests a tile for peaks with it
     /**
      * The tile's bytes with only the layers named in [keep] (itself a valid MVT); [tile] itself when
      * nothing is dropped. Throws IllegalArgumentException on malformed input.

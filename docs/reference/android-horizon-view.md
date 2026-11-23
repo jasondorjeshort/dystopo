@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-22
+verified: 2026-11-23
 source: observed on an API 35 emulator at Paradise in the Rainier pack (T307, T308, T312 with T311's replay, T317 at the summit); moved from android-app.md in T308
 ---
 
@@ -91,8 +91,13 @@ said "from the online."). A horizon kept from before a map opened or closed is s
 Mount Rainier's summit it reads -1° from the maps and from the online source alike, which is the ground falling away
 around the top, not a fault (T340's check).
 
-**Peaks** (`HorizonData.peaksFor`): the named peaks of the active pack's `mountain_peak` layer within the profile's
-range (`Viewshed.readPeaks`, as `ViewshedSession` reads them) tested on the same terrain and profile
+**Peaks** (`HorizonData.peaksFor`): the named peaks of the open maps' `mountain_peak` layer within the profile's
+range (`Viewshed.readPeaks` over T352's tile read `HorizonData.PeakTiles`: per tile the maps that hold it, the deepest
+first, then the smaller box, then the name, as T340's terrain read orders them, the primary map playing no part; a map
+whose tile holds no named peak is stepped past to the next, so a fine map without them never hides a coarser map's; read
+under the tile service's lease, so a map activated meanwhile closes nothing under it). The Panorama and a long press's
+named feature read through the same rule. The Peaks line ends with the maps that gave the names ("Names from the offline
+map rainier-wide.", "... maps A and B.", "Names from 3 offline maps."; `peaks.maps` in `GET /horizon`) and tested on the same terrain and profile
 (`Viewshed.peaks(terrain, horizon, peaks)`, the overload on a `HorizonProfile`: no viewshed sweep), once per horizon on
 a thread of its own. T309 (the owner, 2026-11-20: "if there's a MUCH closer peak just barely out of sight we definitely
 want to show it"): the **candidates** are the peaks in sight or just out of sight, hidden by no more than 60 m of height
