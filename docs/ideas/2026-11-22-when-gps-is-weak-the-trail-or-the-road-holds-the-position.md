@@ -20,3 +20,13 @@ Anchors: the recorder and its fixes (`androidApp/.../app/tracking/Tracking.kt`),
 - It must be visible: a reckoned position drawn differently from a fix (the puck hollow, the track dashed), and recorded as such in the track, never passed off as GPS.
 - Off the known line (no route, no trail under the user) there is nothing to hold onto: say so and do nothing.
 - The driving half may be the first to build: one dimension (distance along the road), a clear start and end (a tunnel's portals are in the map data).
+
+Question: take this as a research pass then a proposal (dead reckoning along a known line, driving first: distance along the road through a tunnel from the last speed and the gyroscope's turns, `NavPath.project` for the line), rather than any build now?
+Recommendation: yes, research then a proposal, driving first; it changes what position the app shows and records, so the reckoned position's look (hollow puck, dashed track), its record in the track and when GPS takes back over want one decision, and the published error per minute decides whether it is worth it. The walking half (steps, barometer, trail) follows on the driving numbers.
+Options:
+a) Research, then a proposal, driving first (recommended).
+b) Research, then a proposal covering walking and driving together.
+c) Rest it until routing's next work.
+d) Not worth building.
+
+Answer:
