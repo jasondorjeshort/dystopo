@@ -10,6 +10,7 @@ refused unless -DiscardChanges. Windows only (PowerShell 5.1 and the \\\\?\\ pre
 """
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,15 @@ LP = "\\\\?\\"
 
 def lp(p):
     return LP + os.path.abspath(p)
+
+
+def rmtree(path):
+    """shutil.rmtree that also removes git's read-only object files, through the long-path prefix."""
+    def again(func, p, _):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    if os.path.exists(path):
+        shutil.rmtree(lp(path), onerror=again)
 
 
 @unittest.skipUnless(WINDOWS, "worktree-remove.ps1 is Windows-only (PowerShell and the long-path prefix)")
@@ -51,8 +61,7 @@ class WorktreeRemove(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", lp(cls.tmp)], capture_output=True)
-        shutil.rmtree(cls.tmp, ignore_errors=True)
+        rmtree(cls.tmp)  # rmtree removes a junction itself, never its target's files (Python 3.8+)
 
     @classmethod
     def git(cls, cwd, *args):
@@ -176,11 +185,13 @@ class WorktreeRemove(unittest.TestCase):
         link = os.path.join(path, "build", "j")
         r = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        code, out = self.run_script(path)
-        self.assertEqual(code, 2, out)
-        self.assertIn("junction or symbolic link", out)
-        self.assertTrue(os.path.exists(os.path.join(target, "keep.txt")))
-        os.rmdir(link)  # the link only
+        try:
+            code, out = self.run_script(path)
+            self.assertEqual(code, 2, out)
+            self.assertIn("junction or symbolic link", out)
+            self.assertTrue(os.path.exists(os.path.join(target, "keep.txt")))
+        finally:
+            os.rmdir(link)  # the link only
         self.assertTrue(os.path.exists(os.path.join(target, "keep.txt")))
 
     def test_stop_pid_takes_only_a_gradle_daemon(self):

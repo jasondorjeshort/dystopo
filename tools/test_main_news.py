@@ -10,6 +10,7 @@ message, not a task branch, until it is deleted. Needs Git Bash on Windows (foun
 """
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,14 @@ def find_bash():
             return cand
         d = os.path.dirname(d)
     return None
+
+
+def rmtree(path):
+    """shutil.rmtree that also removes git's read-only object files on Windows."""
+    def again(func, p, _):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    shutil.rmtree(path, onerror=again)
 
 
 BASH = find_bash()
@@ -64,7 +73,7 @@ class MainNews(unittest.TestCase):
         self.git(self.tmp, "clone", "-q", self.origin, self.b)
 
     def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        rmtree(self.tmp)
 
     def git(self, cwd, *args):
         r = subprocess.run(["git", *args], cwd=cwd, env=self.env, capture_output=True, text=True, timeout=60)
