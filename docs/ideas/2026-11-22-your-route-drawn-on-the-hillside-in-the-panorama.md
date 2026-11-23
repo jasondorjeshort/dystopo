@@ -17,3 +17,13 @@ It needs more ground than the Panorama draws today: the layered skylines show ri
 - Without the ground drawn: is the line over the layered skylines already useful, or only confusing?
 - The cost of testing every route point for sight against a kept horizon (cheap) or by rays (not).
 - With the camera behind the drawing (ADR 0064, item 3) this is the picture people expect from such an app; before the camera it is the drawn version of it.
+
+Question: build the route as a Panorama layer now, over the layered skylines (each route point projected through `LensView`, the stretches `SightLine` finds hidden dashed, as the sun's path is), or wait until the ground below the skyline is drawn (the window seat idea's second pass) or the camera is behind the drawing (ADR 0064, item 3)?
+Recommendation: wait for the ground drawn; over ridgelines alone a line that climbs a face has nothing to lie on and reads as floating, and the hidden test should come from the one line-of-sight function (`2026-11-22-one-line-of-sight-function-in-shared.md`) rather than a per-point ray of its own.
+Options:
+a) Wait for the ground below the skyline and the one line-of-sight function; then a pass (recommended).
+b) A first pass now over the skylines, with a frame each of a route in view and behind a ridge, for the owner to judge.
+c) Wait for the camera behind the drawing.
+d) Not worth building.
+
+Answer:
