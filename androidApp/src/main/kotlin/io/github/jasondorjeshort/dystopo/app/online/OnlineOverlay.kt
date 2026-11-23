@@ -214,7 +214,10 @@ class OnlineUi(
         "column" to column.name.lowercase(Locale.US), "open" to open, "hidden" to hidden,
         "detail" to listOf(stateSentence, sourceSentence), "figure" to cacheLine, "link" to link?.text,
         // T343: the button beside it, by the same rule (shown, its words, whether a tap opens the card, the maps it names), and the rule's answer.
-        "download" to linkedMapOf("shown" to offerDownload, "text" to downloadText, "enabled" to downloadEnabled, "maps" to alreadyIn),
+        "download" to linkedMapOf(
+            "shown" to (offerDownload && (downloadEnabled || !OnlineChip.cramped)), "text" to downloadText, "enabled" to downloadEnabled, "maps" to alreadyIn,
+            "cramped" to OnlineChip.cramped,
+        ),
         "held" to held?.json(),
     )
 
@@ -238,8 +241,11 @@ class OnlineUi(
     /** T343: the maps (or areas) that already hold the whole view at the button's detail, finest first; empty when a download would add something. */
     val alreadyIn: List<String> get() = held?.takeIf { it.verdict == HeldHere.Verdict.ALL }?.holders?.filter { it.atDetail }?.map { it.name }.orEmpty()
 
-    /** T343: the button's words: "Download this area", or "Already on this phone: <map>" where nothing would be new. */
-    val downloadText: String get() = if (alreadyIn.isEmpty()) DOWNLOAD else ALREADY_PREFIX + alreadyIn.joinToString(", ")
+    /**
+     * T343: the button's words: "Download this area", or "Already on this phone" where nothing would be new (no map's name: the
+     * Download card's first line names what holds it, and a name made the column too tall at font 2.0 on its side).
+     */
+    val downloadText: String get() = if (alreadyIn.isEmpty()) DOWNLOAD else ALREADY
 
     /** T343: a tap opens the Download card; not where nothing would be new. */
     val downloadEnabled: Boolean get() = alreadyIn.isEmpty()
@@ -272,8 +278,8 @@ class OnlineUi(
         const val SOURCES_NOT_ANSWERING = "The public map sources are not answering. The map still works where it is on this phone."
         /** T236: the overlay's button (ADR 0056: "area", not "region"). */
         const val DOWNLOAD = "Download this area"
-        /** T343 (ADR 0031: listed for the owner): the button where the phone holds the whole view at its detail, before the map's name. */
-        const val ALREADY_PREFIX = "Already on this phone: "
+        /** T343 (ADR 0031: listed for the owner): the button, disabled, where the phone holds the whole view at its detail. */
+        const val ALREADY = "Already on this phone"
         /** T343: the chip's source where a map that is off would hold the view; the card says [OFF_SENTENCE]. */
         const val MAP_OFF = "a map here is off"
 
@@ -330,6 +336,14 @@ object OnlineChip {
     @Volatile var cardPx: FloatArray? = null
         internal set
 
+    /**
+     * T343: the window is on its side at a large font (1.5 and up), where the column has no room for the disabled "Already on this
+     * phone" button beside the open card and the cards below (the device tour's cards step at 2.0 on its side): it is left out
+     * there, the Download card's first line saying what holds the view. Set by the composable from the configuration.
+     */
+    @Volatile var cramped = false
+        internal set
+
     /** `onlineCard` in `GET /layout` (main thread): the card's rectangle; it lies inside the online column (`M8`), which grows with it. */
     fun layoutJson(): Map<String, Any?> = linkedMapOf("open" to open, "rectPx" to cardPx?.map { Math.round(it) })
 }
@@ -363,6 +377,9 @@ fun OnlineOverlay() {
             io.github.jasondorjeshort.dystopo.app.Foreground.delay(1000) // T150: paused in the background
         }
     }
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    val cramped = cfg.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && cfg.fontScale >= CRAMPED_FONT_SCALE
+    OnlineChip.cramped = cramped
     val u = ui
     if (u == null || u.hidden) {
         OnlineChip.cardPx = null
@@ -398,7 +415,7 @@ fun OnlineOverlay() {
             // T153: the button opens the area picker's size-first summary for the visible box (no span cap, the detail chosen
             // for the view, the estimate, the pack path or the area path said); hidden while that card is up.
             if (u.offerDownload && io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.mode !is io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.Mode.Region) {
-                if (!u.downloadEnabled) Button(u.downloadText, enabled = false) {} // T343: nothing new here; it names the map
+                if (!u.downloadEnabled) { if (!cramped) Button(u.downloadText, enabled = false) {} } // T343: nothing new here; no room for it when cramped
                 else Button(OnlineUi.DOWNLOAD) {
                     message = null
                     thread(name = "region-open") {
@@ -422,6 +439,9 @@ fun OnlineOverlay() {
         }
     } }
 }
+
+/** T343: the font scale from which a window on its side is [OnlineChip.cramped]. */
+private const val CRAMPED_FONT_SCALE = 1.5f
 
 /** T236: the chip's card: the two sentences, the cache's figure (T242: the indexing line while partial), at most one link. */
 @Composable

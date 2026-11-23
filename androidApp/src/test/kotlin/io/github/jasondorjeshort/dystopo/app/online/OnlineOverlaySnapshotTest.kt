@@ -221,7 +221,7 @@ class OnlineOverlaySnapshotTest {
         val fine = ui(OnlineService.CACHED, held(map("rainier-fine", 14, 14)))
         assertTrue(fine.offerDownload)
         assertFalse(fine.downloadEnabled)
-        assertEquals("Already on this phone: rainier-fine", fine.downloadText)
+        assertEquals("Already on this phone", fine.downloadText)
         assertEquals(listOf("rainier-fine"), fine.alreadyIn)
         assertEquals("Online · on this phone", fine.text)
         assertEquals(OnlineUi.SAVED_OFFLINE_MAP, fine.sourceSentence)

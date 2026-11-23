@@ -208,7 +208,7 @@ assert sorted(f["what"] for f in part.t343_assertions({"t343": t343_bad})) == ["
 import tempfile
 with tempfile.TemporaryDirectory() as raw:
     with open(os.path.join(raw, "on-inside-both-online.json"), "w", encoding="utf-8") as fh:
-        json.dump({"body": {"chip": {"download": {"shown": True, "text": "Already on this phone: x", "enabled": False}}}}, fh)
+        json.dump({"body": {"chip": {"download": {"shown": True, "text": "Already on this phone", "enabled": False}}}}, fh)
     rows = [{"network": "on", "place": "inside-both", "summary": {"chip": {"source": "from public sources", "text": "Online · from public sources"}}}]
     whats = sorted(f["what"] for f in part.t343_assertions({"rows": rows, "t343": {"cards": t343_good["cards"], "rawDir": raw}}))
     assert whats == ["T343:already-not-on-phone", "T343:off-phone-not-offered"], whats
