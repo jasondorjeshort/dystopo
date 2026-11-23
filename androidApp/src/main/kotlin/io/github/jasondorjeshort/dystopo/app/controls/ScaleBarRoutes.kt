@@ -28,6 +28,10 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   Before, a hidden bar kept its last lengths and the read-back compared them with a camera that had moved.
  * - `POST /scalebar?both=on|off`: the Map options row "Scale bar: Both units" (one unit or both; T110: synced, `app.scaleBar.both`
  *   in `GET /sync/status` › `settingsSync`); answers like `GET` once the bar has redrawn. Anything else for `both` is a 400.
+ * - T346, the zoom label beside the bar, inside its plate: `GET /scalebar` › `zoomLabel` (`on` the setting, `default`
+ *   [ScaleBarSettings.ZOOM_LABEL_DEFAULT], `shown`, `text` as drawn ("z8.4", [zoomLabelText]), `liveText` from the zoom the
+ *   bar was fitted at, `boundsPx`, `insidePlate`); the plate's `boundsPx` includes it. `POST /scalebar?zoom=on|off` is the
+ *   Map options row "Show zoom level" (synced, `app.scaleBar.zoom`), alone or with `both`; anything else for `zoom` is a 400.
  *
  * T161, the live readout's strip on the bar's line ([io.github.jasondorjeshort.dystopo.app.readout.LiveReadout]):
  * - `GET /readout`: what the strip draws and why: `shown`, `hiddenBecause` (`notComposed`, T239 the layout rule's `yieldOrder` or
@@ -201,18 +205,30 @@ object ScaleBarRoutes {
     }
 
     private fun set(app: DystopoApp, r: Request): Response {
-        val raw = r.query["both"] ?: return Response.json(mapOf("error" to "both=on|off is required"), 400)
-        val on = when (raw.trim().lowercase()) {
-            "on", "1", "true", "yes" -> true
-            "off", "0", "false", "no" -> false
-            else -> return Response.json(mapOf("error" to "both must be on or off (got $raw)"), 400)
+        fun onOff(name: String): Pair<Boolean?, Response?> {
+            val raw = r.query[name] ?: return null to null
+            return when (raw.trim().lowercase()) {
+                "on", "1", "true", "yes" -> true to null
+                "off", "0", "false", "no" -> false to null
+                else -> null to Response.json(mapOf("error" to "$name must be on or off (got $raw)"), 400)
+            }
         }
-        app.map.onMain { ScaleBarSettings.setBothUnits(on) }
-        // Wait for the bar to recompose with one or two lengths (it polls the camera every 500 ms at most).
-        val want = if (on) 2 else 1
+        val (on, bad) = onOff("both")
+        val (zoom, badZoom) = onOff("zoom") // T346: the zoom label, the Map options row "Show zoom level"
+        (bad ?: badZoom)?.let { return it }
+        if (on == null && zoom == null) return Response.json(mapOf("error" to "both=on|off or zoom=on|off is required"), 400)
+        app.map.onMain {
+            on?.let { ScaleBarSettings.setBothUnits(it) }
+            zoom?.let { ScaleBarSettings.setShowZoom(it) }
+        }
+        // Wait for the bar to recompose with one or two lengths and with or without its zoom label.
+        val want = if (on ?: ScaleBarSettings.bothUnits) 2 else 1
         val until = System.currentTimeMillis() + 2000
-        while (System.currentTimeMillis() < until && ScaleBarLayout.shown && (ScaleBarLayout.bars.size != want || ScaleBarLayout.drawnPx.size != want)) Thread.sleep(50)
-        Thread.sleep(100) // one more frame, so drawnPx belongs to the new bars
+        while (System.currentTimeMillis() < until && ScaleBarLayout.shown &&
+            (ScaleBarLayout.bars.size != want || ScaleBarLayout.drawnPx.size != want ||
+                (zoom != null && (ScaleBarLayout.zoomText != null) != zoom) || (zoom == true && ScaleBarLayout.zoomBoundsPx == null))
+        ) Thread.sleep(50)
+        Thread.sleep(100) // one more frame, so drawnPx and the bounds belong to the new bar
         return Response.json(state(app))
     }
 

@@ -612,7 +612,62 @@ class MapLayoutTest {
         }
     }
 
+    /**
+     * T346: the zoom label stands inside the scale bar's plate, so the rule places it with the bar's box. With the label the
+     * box is wider (the plates as measured on the emulator, the ruler at its shortest and longest nice length), upright
+     * 411 x 914 and on its side 914 x 411, at font scale 1.0 and 2.0, with the readout strip on and off: the bar is shown,
+     * inside the window less its insets, above the switch, and nothing overlaps; the strip stands beside the bar or above
+     * it, never across it, and with all its core entries.
+     */
+    @Test
+    fun theScaleBarWithItsZoomLabelIsPlacedByTheRule() {
+        val ui = io.github.jasondorjeshort.dystopo.ui.OverlayLayout
+        fun size(w: Float, h: Float) = io.github.jasondorjeshort.dystopo.ui.OverlaySize(w, h)
+        for (scale in listOf(1f, 2f)) for (landscape in listOf(false, true)) for (ruler in listOf(SHORTEST_RULER, LONGEST_RULER)) for (readout in listOf(false, true)) for (label in listOf(false, true)) {
+            val k = if (scale > 1f) 1.3f else 1f // map chrome's capped font scale
+            val t = if (scale > 1f) 1.75f else 1f // the strip's curve
+            val (w, h) = if (landscape) 914.3f to 411.4f else 411.4f to 914.3f
+            val ins = if (landscape) floatArrayOf(48f, 24f, 0f, 24f) else floatArrayOf(0f, 48.8f, 0f, 24f)
+            val sw = size(249f * k, 48f * k)
+            val plateH = if (scale > 1f) PLATE_H_2 else PLATE_H_1
+            val bar = size(ruler + PLATE_PAD + (if (label) LABEL_GAP + (if (scale > 1f) LABEL_W_2 else LABEL_W_1) else 0f), plateH)
+            val o = io.github.jasondorjeshort.dystopo.ui.OverlayInput(
+                windowWidth = w, windowHeight = h, insetLeft = ins[0], insetTop = ins[1], insetRight = ins[2], insetBottom = ins[3], fontScale = scale,
+                search = size(ui.SEARCH_WIDTH, 48f * k), topRow = size(190f * k, 40f * k), credit = size(380f, if (landscape) 18f * t else 30f * t),
+                online = size(180f, 32f * k), trackBar = size(160f * k, 40f * k), routes = size(70f * k, 36f * k),
+                horizonSwitch = sw,
+                scaleBar = bar, strip = if (readout) List(4) { size(64f * t, 40f * t) } else emptyList(), stripCore = 3, buttons = 2,
+                cardsDrawn = true,
+            )
+            val at = "landscape=$landscape scale=$scale ruler=$ruler readout=$readout label=$label bar=$bar"
+            val p = ui.place(o)
+            assertTrue(p.overlaps().isEmpty(), "$at: ${p.overlaps()}")
+            val e = p[OverlayIds.SCALE_BAR]!!
+            assertEquals(OverlayState.SHOWN, e.state, "$at: $e")
+            val r = e.rect!!
+            assertEquals(bar.width, r.right - r.left, 0.01f, "$at: the whole box, the label in it")
+            assertTrue(r.left >= ins[0] && r.right <= w - ins[2] && r.top >= ins[1] && r.bottom <= h - ins[3], "$at: $r inside the window less its insets")
+            assertTrue(r.bottom <= ui.switchRect(w, h, ins[0], ins[3], sw).top, "$at: $r above the switch")
+            if (readout) {
+                val s = p[OverlayIds.STRIP]!!
+                assertTrue(s.rect != null, "$at: the strip is drawn: $s")
+                val sr = s.rect!!
+                assertTrue(sr.left >= r.right || sr.bottom <= r.top, "$at: the strip $sr beside or above the bar $r")
+                assertTrue(p.entriesDrawn >= 3, "$at: the strip keeps its core entries (${p.entriesDrawn})")
+            }
+        }
+    }
+
     private companion object {
+        // T346: the scale bar's plate on the emulator (dp; `GET /scalebar` `boundsPx` over `density`, the label's `zoomLabel.boundsPx`).
+        const val SHORTEST_RULER = 42f // the ruler's 40 dp at least, and its stroke
+        const val LONGEST_RULER = 102f
+        const val PLATE_PAD = 12f // 6 dp each side
+        const val LABEL_GAP = 8f
+        const val LABEL_W_1 = 28.2f // "z00.0" at 12 sp (measured: `zoomLabel.boundsPx`)
+        const val LABEL_W_2 = 58.3f
+        const val PLATE_H_1 = 28f
+        const val PLATE_H_2 = 41.9f
         val CARD_IDS = setOf(OverlayIds.NAV_CARD, OverlayIds.WARNING_CARD, OverlayIds.PLANNING_CARD, OverlayIds.TRIP_CARD, OverlayIds.UPDATE_CARD)
     }
 }

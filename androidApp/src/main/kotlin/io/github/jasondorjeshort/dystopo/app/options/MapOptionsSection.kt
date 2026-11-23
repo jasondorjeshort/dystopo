@@ -143,6 +143,11 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
         OptionRow("Scale bar: Both units", "adds the other system below the line, as on printed maps", help = "map.scaleBar") {
             OnOff(both) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setBothUnits(it) }
         }
+        // T346: the camera's zoom beside the scale bar; a device setting like the one above (POST /scalebar?zoom=on|off).
+        val zoom = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.showZoom
+        OptionRow("Show zoom level", ZOOM_LABEL_HINT, help = "map.zoomLabel") {
+            OnOff(zoom) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setShowZoom(it) }
+        }
     }
 }
 
@@ -210,6 +215,9 @@ private fun ViewshedRows() {
         }
     }
 }
+
+/** T346: under the Show zoom level row's On and Off. */
+internal const val ZOOM_LABEL_HINT = "the map's zoom beside the scale bar, such as z8.4"
 
 /** T188: under the Shade row's chips. */
 internal const val SHADE_HINT = "blue where the terrain hides the sun at the time below; night is all shade"
@@ -425,6 +433,11 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
         HelpText("map.scaleBar", "Scale bar", "$place › Scale bar: Both units", show = show) {
             "The bar in the lower left shows a round distance at the map's zoom, in your units. Both units adds the " +
                 "other system below the line, as on printed maps."
+        },
+        HelpText("map.zoomLabel", "Show zoom level", "$place › Show zoom level", show = show) { // T346
+            "Shows the map's zoom level beside the scale bar, such as z8.4. Zoom 0 shows the whole world; each whole " +
+                "step in halves the distance across the screen. Some of what the map shows starts at a zoom level, " +
+                "such as an offline map's detail, so the number tells you which you are looking at."
         },
     )
 }

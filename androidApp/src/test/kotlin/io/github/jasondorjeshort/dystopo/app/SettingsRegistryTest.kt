@@ -119,6 +119,9 @@ class SettingsRegistryTest {
     // T337 (ADR 0033: one key added, synced): Pressure units.
     private val t337Keys = listOf("pressureUnit")
     // end T337
+    // T346 (ADR 0033: one key added, synced): the scale bar's zoom label, `app.scaleBar.zoom` (no `GET /settings` key).
+    private val t346Keys = listOf("scaleBar.zoom")
+    // end T346
     private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot") +
         t308Keys + t308Keys.map { "app.$it" } +
         // T311 (ADR 0033: three keys added, synced): Flight tracking, its refresh and airport names.
@@ -134,8 +137,11 @@ class SettingsRegistryTest {
         t330Keys + t330Keys.map { "app.$it" } +
         // end T330
         // T337
-        t337Keys + t337Keys.map { "app.$it" }
+        t337Keys + t337Keys.map { "app.$it" } +
         // end T337
+        // T346
+        t346Keys.map { "app.$it" }
+        // end T346
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -146,9 +152,10 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one, T337 one")
-        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1, t257Synced().size)
-        assertTrue(t257Synced().filterKeys { it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys && it.removePrefix("app.") !in t337Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one, T337 one, T346 one")
+        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1, t257Synced().size)
+        assertEquals("on", SettingsSync.current()["app.scaleBar.zoom"], "T346: nothing stored, the default (on)")
+        assertTrue(t257Synced().filterKeys { it != "app.scaleBar.zoom" && it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys && it.removePrefix("app.") !in t337Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
         assertEquals("all", SettingsSync.current()["app.aircraftRouteLines"], "T314: the seeded all syncs as all")
         assertEquals("follow", SettingsSync.current()["app.panoramaSteering"], "T330: the seeded follow syncs as follow")
         assertEquals("inhg", SettingsSync.current()["app.pressureUnit"], "T337: the seeded inhg syncs as inhg")
