@@ -20,7 +20,7 @@ import io.github.jasondorjeshort.dystopo.gnss.GnssCases
 import io.github.jasondorjeshort.dystopo.gnss.GnssHealth
 import io.github.jasondorjeshort.dystopo.gnss.Satellite
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
-import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.app.terrain.TerrainRead
 import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
@@ -40,10 +40,11 @@ import java.util.concurrent.atomic.AtomicLong
  * - **Injection** (debug, `POST /gnss?case=`): a synthetic status from [GnssCases] replaces the real one in [satellites]
  *   until [clear]; the emulator's GNSS reports one fixed set, so the weak and faulty cases are testable only this way.
  * - **The terrain's horizon** ([horizonAt]): `Horizon.sweep`'s [HorizonProfile] (1 degree bearings from true north, eye
- *   height [Horizon.EYE_HEIGHT_M]) at the phone's position, over the DEM pyramid under it (`ShadeService.pyramidAt`: the
- *   offline map's, else the online DEM, as the sun and shade's point answer reads it), worked out on its own thread and
+ *   height [Horizon.EYE_HEIGHT_M]) at the phone's position, over T340's merged read ([TerrainRead]: the open maps cell by
+ *   cell, the deepest first, then the online source; the Panorama reads the same), worked out on its own thread and
  *   kept until the position moves [HORIZON_MOVE_M]; [HorizonState.reason] says why there is none. T321: up to
  *   [HORIZON_KEEP] are kept (the fix's beside the Horizon view's chosen points), so going back to the fix sweeps nothing.
+ *   T340: one made before a map opened or closed, or lacking cells (or none) before the network came back, is swept again.
  */
 object Gnss {
     /** The horizon is worked out again once the phone is this far from where it was, metres. */
@@ -284,12 +285,23 @@ object Gnss {
 
     // ---- the terrain's horizon ----
 
-    /** A horizon at a point, or why there is none ([reason]); [source] `offline map` or `online`. */
+    /**
+     * A horizon at a point, or why there is none ([reason]); [source] what answered in the terrain line's words (T340:
+     * [TerrainText.from][io.github.jasondorjeshort.dystopo.app.terrain.TerrainText.from], "offline map", "2 offline maps and
+     * the online source").
+     */
     class HorizonState(
         val lat: Double, val lon: Double, val profile: HorizonProfile?, val reason: String?, val source: String?, val zoom: Int?, val ms: Long,
         /** T308: the terrain [profile] was swept over, kept for the Horizon view's peaks (`Viewshed.peaks` on the profile). */
         val terrain: io.github.jasondorjeshort.dystopo.dem.Terrain? = null,
-    )
+        /** T340: the maps open and the network's generation when it was read; null for one not made by a read. */
+        val epoch: TerrainRead.Epoch? = null,
+        /** T340: what the read took its cells from. */
+        val read: TerrainRead.Answered? = null,
+    ) {
+        /** T340: read again now: a map opened or closed since, or the network came back and this one lacks cells (a "none" included). */
+        fun stale(now: TerrainRead.Epoch = TerrainRead.epoch()): Boolean = epoch?.stale(now, profile != null && read?.complete != false) == true
+    }
 
     /**
      * T321 (T317's follow-up): the horizons kept, newest use first, at most [HORIZON_KEEP]: the fix's stays beside a chosen
@@ -323,7 +335,9 @@ object Gnss {
     }
 
     fun horizonAt(lat: Double, lon: Double): HorizonState? {
+        val now = TerrainRead.epoch()
         synchronized(horizons) {
+            horizons.removeAll { it.stale(now) } // T340: no "none" or partial answer kept past a map opening or closing or the network returning
             val i = horizons.indexOfFirst { TrackStats.distanceM(it.lat, it.lon, lat, lon) < HORIZON_MOVE_M }
             if (i >= 0) {
                 val h = horizons.removeAt(i)
@@ -366,20 +380,30 @@ object Gnss {
         }
     }
 
+    /**
+     * T340: the horizon at a point over the merged read ([TerrainRead]: the open maps cell by cell, the deepest first, then
+     * the online source), at the zoom of the deepest map holding the point ([TerrainRead.pointZoom]). Before T340 it read one
+     * pyramid (`ShadeService.pyramidAt`: the map `PackPrecedence` chose, else the online DEM), so a ring leaving that map
+     * found no data, and a place outside every map read online here while the Panorama read the maps alone.
+     */
     private fun sweep(lat: Double, lon: Double): HorizonState {
         val t0 = SystemClock.elapsedRealtime()
         horizonSweeps.incrementAndGet()
-        fun none(why: String) = HorizonState(lat, lon, null, why, null, null, SystemClock.elapsedRealtime() - t0)
+        val epoch = TerrainRead.epoch()
+        fun none(why: String, read: TerrainRead.Answered? = null) = HorizonState(lat, lon, null, why, null, null, SystemClock.elapsedRealtime() - t0, epoch = epoch, read = read)
         return try {
-            val tiles = app.tiles
-            val p = tiles.shade.pyramidAt(lat, lon) ?: return none(GnssText.NO_TERRAIN)
-            val zoom = minOf(p.maxZoom, ShadeTiles.POINT_ZOOM)
-            val inPack = tiles.packs.demFor(zoom, WebMercator.lonToX(lon, zoom).toInt(), WebMercator.latToY(lat, zoom).toInt()) != null
-            val terrain = Horizon.terrainAround(lat, lon, zoom, tileSize = p.tileSize) { w -> p.window(w.zoom, w.x0, w.y0, w.width, w.height) }
-            val profile = Horizon.sweep(terrain, lat, lon, observerHeightM = Horizon.EYE_HEIGHT_M)
-            HorizonState(lat, lon, profile, null, if (inPack) "offline map" else "online", zoom, SystemClock.elapsedRealtime() - t0, terrain)
-        } catch (e: IllegalArgumentException) {
-            none(GnssText.NO_TERRAIN_HERE)
+            TerrainRead.open().use { r ->
+                if (r.sources.isEmpty()) return none(GnssText.NO_TERRAIN)
+                val zoom = r.pointZoom(lat, lon, ShadeTiles.POINT_ZOOM) ?: return none(GnssText.NO_TERRAIN_HERE)
+                val terrain = Horizon.terrainAround(lat, lon, zoom) { w -> r.read(w) }
+                val a = r.answered()
+                val profile = try {
+                    Horizon.sweep(terrain, lat, lon, observerHeightM = Horizon.EYE_HEIGHT_M)
+                } catch (e: IllegalArgumentException) {
+                    return none(GnssText.NO_TERRAIN_HERE, a)
+                }
+                HorizonState(lat, lon, profile, null, a.text, zoom, SystemClock.elapsedRealtime() - t0, terrain, epoch, a)
+            }
         } catch (e: Exception) {
             none("${GnssText.NO_TERRAIN_ERROR} (${e.javaClass.simpleName})")
         }
@@ -417,6 +441,7 @@ object Gnss {
             "groundM" to Math.round(p.groundM), "highestDeg" to r1(p.angleDeg[top]), "highestBearingDeg" to r1(p.bearingDeg(top)),
             "highestDistanceM" to Math.round(p.distanceM[top]), "bearingsWithoutData" to p.bearingsWithoutData,
             "angleDeg" to p.angleDeg.map(::r1),
+            "terrain" to h.read?.json(), // T340: the cells by source, the maps and whether the online source gave any
         )
     }
 

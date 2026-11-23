@@ -64,14 +64,17 @@ def summarize(reads):
         return {"source": get(x, "horizon", "source"), "zoom": get(x, "horizon", "zoom"),
                 "highestDeg": get(x, "horizon", "highestDeg"), "bearingsWithoutData": get(x, "horizon", "bearingsWithoutData"),
                 "reason": get(x, "horizonReason"), "peaksListed": len(get(x, "peaks", "visible") or []) if isinstance(get(x, "peaks", "visible"), list) else get(x, "peaks", "visible"),
-                "placeLine": get(x, "placeLine", "text")}
+                "placeLine": get(x, "placeLine", "text"),
+                "terrain": get(x, "horizon", "terrain", "cells")}  # T340: the merged read's cells by source
 
     def panorama(x):
         work = get(x, "work") or {}
         return {"showing": get(x, "showing"), "reason": work.get("reason"), "demPacks": get(work, "terrain", "demPacks"),
                 "tiles": get(work, "terrain", "tiles"), "network": get(work, "terrain", "network"),
                 "sweeps": len(work.get("sweeps") or []), "stepDrawn": get(x, "stepDrawn"), "candidates": get(x, "candidates"),
-                "names": len(get(x, "names") or []), "firstSkylineMs": get(x, "firstSkylineMs"), "placeLine": get(x, "place", "placeLine")}
+                "names": len(get(x, "names") or []), "firstSkylineMs": get(x, "firstSkylineMs"), "placeLine": get(x, "place", "placeLine"),
+                "source": get(work, "terrain", "text"), "terrain": get(work, "terrain", "cells"),  # T340: what answered, as the Horizon's `source`
+                "peaksLine": get(x, "peaksLine"), "waiting": get(x, "waiting")}
 
     return {
         "map": {"noPack": get(fr, "noPack"), "mapMessage": get(fr, "mapMessage"), "viewInside": get(fr, "viewInside"),
@@ -203,6 +206,27 @@ def assertions(table):
     out = []
     # --- T340 to T343: one assertion block per fixing task below, each opened by a comment naming the task and closed by
     # `# end Tnn` (docs/TASKS.md, wave 47's ownership paragraph). Nothing above this line asserts a row. ---
+    # T340: the Horizon view and the Panorama read terrain one way. In every row both name the same source (the terrain
+    # line's words, None for none) and, where there is none, the same sentence; the Panorama never waits on an empty lens
+    # (a skyline or a sentence) and its Peaks line is never "Finding the peaks..." once the wait is over; online, outside
+    # both maps, it draws a skyline from the online source.
+    for r in table.get("rows") or []:
+        sm = r.get("summary")
+        if not isinstance(sm, dict):
+            continue
+        row = f"{r.get('network')}/{r.get('place')}"
+        h, p = sm.get("horizon") or {}, sm.get("panorama") or {}
+        if h.get("source") != p.get("source"):
+            out.append({"what": "T340:same-source", "row": row, "horizon": h.get("source"), "panorama": p.get("source")})
+        if h.get("source") is None and h.get("reason") != p.get("reason"):
+            out.append({"what": "T340:same-sentence", "row": row, "horizon": h.get("reason"), "panorama": p.get("reason")})
+        if not p.get("sweeps") and not p.get("reason"):
+            out.append({"what": "T340:panorama-empty", "row": row, "waiting": p.get("waiting")})
+        if p.get("peaksLine") == "Finding the peaks in view...":
+            out.append({"what": "T340:peaks-unfinished", "row": row})
+        if r.get("place") == "outside" and r.get("network") == "on" and not (p.get("sweeps") and "online source" in (p.get("source") or "")):
+            out.append({"what": "T340:outside-online", "row": row, "panorama": p.get("source"), "reason": p.get("reason")})
+    # end T340
     return out
 
 

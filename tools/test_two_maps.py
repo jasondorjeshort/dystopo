@@ -122,7 +122,19 @@ assert [f["what"] for f in part.verdict(short)] == ["rows"]
 bad = dict(full, rows=full["rows"][:7] + [row("on", "fine-edge", ok=False)])
 assert [f["what"] for f in part.verdict(bad)] == ["unread"] and part.verdict(bad)[0]["row"] == "on/fine-edge"
 assert [f["what"] for f in part.verdict(dict(full, restore={"ok": False}))] == ["restore"]
-assert part.assertions(full) == [], "no task's assertion yet"
+assert part.assertions(full) == [], "rows without a summary assert nothing"
+
+# T340's block: the same source and sentence in both views, no empty lens, Peaks finished, a skyline online outside.
+def srow(net, place, hs, ps, hr=None, pr=None, sweeps=2, peaks="3 peaks"):
+    return {"network": net, "place": place, "ok": True, "summary": {
+        "horizon": {"source": hs, "reason": hr}, "panorama": {"source": ps, "reason": pr, "sweeps": sweeps, "peaksLine": peaks}}}
+good = [srow("on", "outside", "online source", "online source"), srow("off", "outside", None, None, "No data.", "No data.", 0, "No terrain.")]
+assert part.assertions({"rows": good}) == [], part.assertions({"rows": good})
+bad = [srow("on", "outside", "online source", None, pr="No elevation data here", sweeps=0),
+       srow("on", "inside-both", "2 offline maps", "2 offline maps", peaks="Finding the peaks in view..."),
+       srow("off", "outside", None, None, "No data.", None, 0)]
+assert sorted(f["what"] for f in part.assertions({"rows": bad})) == sorted([
+    "T340:same-source", "T340:outside-online", "T340:peaks-unfinished", "T340:same-sentence", "T340:panorama-empty"]), part.assertions({"rows": bad})
 
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:

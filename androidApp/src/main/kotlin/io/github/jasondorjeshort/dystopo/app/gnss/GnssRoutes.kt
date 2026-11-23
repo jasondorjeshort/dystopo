@@ -12,7 +12,7 @@ import io.github.jasondorjeshort.dystopo.gnss.GnssCases
  *   (`holders`, `engine`, `error`, `permission`, `source`: `device` or `injected:<case>`, `statusCallbacks`, `fixes`,
  *   `statusAgeMs`), `summary` (`inView`, `used`, `best4`, `best4Mean`, `constellations`, `bands`, `bandLine`,
  *   `accuracyM`, `fixAgeMs`, `ttffMs`: the app's own first fix, `engineTtffMs`), `bandLine` (as the view words it),
- *   `satellites` (the list's order, each with `behindTerrain`), `horizon` (`source`: `offline map` or `online`, `zoom`,
+ *   `satellites` (the list's order, each with `behindTerrain`), `horizon` (`source`: what answered in the terrain line's words, T340: `offline map`, `2 offline maps and the online source`; `terrain`: the merged read's `maps`, `online`, `complete`, `cells`; `zoom`,
  *   `ms`, `stepDeg`, `eyeHeightM`, `groundM`, `highestDeg`, `highestBearingDeg`, `highestDistanceM`, `angleDeg`: one per
  *   degree from true north) or null with `horizonReason`, `orientation`, `headingDeg`, `check` (`state`, `seconds`,
  *   `elapsedS`, `secondsLeft`, `last` with `verdict`, `headline`, `advice`, `figures`, or `stopped`), `lastReset`. No position.

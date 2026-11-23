@@ -80,6 +80,9 @@ import io.github.jasondorjeshort.dystopo.render.UnitFormat
 object PanoramaStrings {
     const val TITLE = "Panorama view"
     const val WORKING = "Working out the skyline..."
+
+    /** T340: while the terrain is read, in place of an empty lens. */
+    const val READING = "Reading the terrain..."
     const val ZOOM_IN = "Zoom in"
     const val ZOOM_OUT = "Zoom out"
     const val TURN_LEFT = "Turn left"
@@ -267,10 +270,12 @@ fun PanoramaScreen() {
                         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             // T327: the four toggles, the Horizon view's own synced settings; at a chosen point Satellites and Flights disabled.
                             LayerToggles(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), moved, pal)
-                            TerrainLine(h ?: work?.reason?.let { Gnss.HorizonState(pos!!.first, pos.second, null, it, null, null, 0) }, pos, units, pal)
+                            // T340: with no terrain the reason stands as the horizon, so the terrain line and Peaks say it and finish.
+                            val hr = h ?: work?.reason?.let { Gnss.HorizonState(pos!!.first, pos.second, null, it, null, null, 0) }
+                            TerrainLine(hr, pos, units, pal)
                             // The sections in the Horizon view's order; a row's tap makes its thing the target and turns the view to it.
                             flights?.let { FlightsSection(it, fix != null, HorizonUi.selectedFlight, pal, units, help = "panorama.flights") }
-                            if (layers.peaks) PeaksSection(h, peaks, selected, pal, units, help = "panorama.peaks", rangeM = rangeM)
+                            if (layers.peaks) PeaksSection(hr, peaks, selected, pal, units, help = "panorama.peaks", rangeM = rangeM)
                             if (layers.sun) SunSection(
                                 pos != null, sunDay, sunNow, fn, pal, night, tick, help = "panorama.sun",
                                 onNow = { PanoramaUi.apply(PanoramaTargets.SunTapped(sunNow?.let { HorizonText.sunUp(it.apparentAltitudeDeg) } == true)) },

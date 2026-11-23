@@ -26,11 +26,13 @@ import io.github.jasondorjeshort.dystopo.horizon.SkyView
  *   layout, the place line, the layers, the steps wanted), `place` (`point`, `placeLine`), `range` (`viewRangeKm`),
  *   `names` (each placed: `name`, `x`, `y`, `markX`, `markY`, `dominant`, `distanceKm`, `bearingDeg`, `angleDeg`, `leader`),
  *   `leftOut` (`name`, `reason`: `behind the viewer`, `off the view`, `no room`), `dominant` and `closest` (the candidates'),
- *   `tape` (`tickStepDeg`, `labelStepDeg`, `labels`), `work` (the place's terrain: `tiles`, `bytes`, `network` (always
- *   false: offline maps only), `ms`, `demPacks`; `sweeps` done with `stepDeg`, `samples`, `ms`, `atMs`; `pending`; `peaks`),
+ *   `tape` (`tickStepDeg`, `labelStepDeg`, `labels`), `work` (the place's terrain: `tiles`, `bytes`, `network` (T340: the
+ *   online source gave cells), `ms`, `demPacks`, T340's merged read: `text`, `maps`, `online`, `complete`, `cells`,
+ *   `missing`; `sweeps` done with `stepDeg`, `samples`, `ms`, `atMs`; `pending`; `peaks`), T340: `waiting` (the plot's
+ *   line while it has no skyline) and `peaksLine` (the Peaks section's first line),
  *   `kept` (the places kept, at most two), `sceneMs` (`last`, `max`, `builds`, `offMain`), `firstSkylineMs` (from the
  *   opening to the first skyline drawn), `gnss` (`held`). `wait=<ms>` waits until the plot has drawn the step the zoom
- *   asks for and the peaks are tested, or that long. T327: `layers` (what the Sun, Satellites and Flights drew through the
+ *   asks for and the peaks are tested (T340: or the place has no terrain and says why), or that long. T327: `layers` (what the Sun, Satellites and Flights drew through the
  *   lens: `sun` (`pathSamples`, `pathOnView`, `hourMarks`, `hoursOnView`, `nowAltDeg`, `nowAzDeg`, `nowDrawn`, `nowPx`),
  *   `satellites` (`listed`, `onView`, `ids`), `flights` (`listed`, `onView`, `names`, `hollow`, `emergency`, `tailPoints`,
  *   `credit`, `picked`, `aircraft`: hex, label, bearing and elevation of each listed); a layer that is off is absent), `buttons` and `disabledButtons` in `drawn`, `target` (`kind`,
@@ -271,10 +273,12 @@ object PanoramaRoutes {
             val ready = app.map.onMain {
                 val place = PanoramaData.kept.firstOrNull()
                 val s = PanoramaUi.scene
-                HorizonUi.open && HorizonUi.view == SkyView.PANORAMA && place != null && s != null && place.pending.isEmpty() &&
-                    place.rangeM == AppSettings.viewRangeKm * 1000.0 && place.skylines.isNotEmpty() &&
-                    (place.peaks != null || place.reason != null) && PanoramaUi.wanted.all { place.skylines.containsKey(it) } &&
-                    place.finest === place.skylines[place.skylines.keys.min()]
+                HorizonUi.open && HorizonUi.view == SkyView.PANORAMA && place != null && place.pending.isEmpty() &&
+                    place.rangeM == AppSettings.viewRangeKm * 1000.0 && (
+                        place.reason != null || // T340: no terrain, its sentence said: nothing more to wait for
+                            s != null && place.skylines.isNotEmpty() && place.peaks != null && PanoramaUi.wanted.all { place.skylines.containsKey(it) } &&
+                            place.finest === place.skylines[place.skylines.keys.min()]
+                        )
             }
             if (ready) {
                 Thread.sleep(500) // the frame that draws the finest step and the names on it
@@ -330,6 +334,11 @@ object PanoramaRoutes {
             "dominant" to ranked.firstOrNull { it.label.dominant }?.label?.name,
             "closest" to ranked.minByOrNull { it.label.distanceM }?.label?.name,
             "candidates" to place?.peaks?.candidates?.size,
+            // T340: the plot's line while it has no skyline, and the Peaks section's first line, as the screen says them.
+            "waiting" to if (scene == null) PanoramaData.waiting(place) else null,
+            "peaksLine" to place?.let { pl ->
+                io.github.jasondorjeshort.dystopo.app.horizon.peaksLine(pl.state ?: pl.reason?.let { Gnss.HorizonState(pl.lat, pl.lon, null, it, null, null, 0) }, pl.peaks, AppSettings.units, pl.rangeM)
+            },
             "pickedOnPlot" to scene?.names?.firstOrNull { (it.label.ref as? PeakView)?.let { v -> HorizonUi.keyOf(v) } == HorizonUi.selected }?.label?.name,
             "tape" to scene?.tape?.let { t -> linkedMapOf("tickStepDeg" to t.tickStepDeg, "labelStepDeg" to t.labelStepDeg, "labels" to t.labels.map { it.text }) },
             "layersDrawn" to scene?.layers?.map { l -> linkedMapOf("index" to l.index, "rangeKm" to l.rangeM / 1000, "rings" to l.rings.size) },
