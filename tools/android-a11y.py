@@ -871,7 +871,8 @@ def scr_horizon_elsewhere(c):
 def scr_panorama(c):
     """T326: the Panorama view at the fix (Paradise), opened by the switch's route as a tap on its third segment does, its
     skyline swept to the view range and its peaks named: the plot (its spoken label and four actions), the zoom buttons, the
-    pane's place line, heading, Peaks toggle and list."""
+    pane's place line, heading, Peaks toggle and list. T351: the lens fills the window; on it Layers, List view, Follow phone
+    and the zoom buttons (the heading and toggles are behind Layers: panorama-layers)."""
     c.srv.ok("POST", "/settings?aircraft=1")  # T327: Flight tracking on, so "Show:" has its four toggles
     # T330: the view in Drag (its four actions, "Follow phone" off) whatever an earlier run left; put back at the end.
     c.steering_found = (c.srv.ok("GET", "/settings") or {}).get("panoramaSteering")
@@ -1241,6 +1242,30 @@ def end_panorama_list(c):
 # end T344
 
 
+# T351
+def scr_panorama_layers(c):
+    """T351: the Panorama view at the fix (Paradise) with the layers' panel open (POST /panorama?layers=1, as a tap on
+    "Layers" does): the heading "Panorama view" with its help, "Show:" and the toggles (Satellites, Peaks, Sun, and
+    Flights with Flight tracking on) over the lens, the lens's own controls under the panel. State it leaves, put back by
+    end_panorama_layers: the panel closed, Flight tracking off, the steering setting as found."""
+    c.srv.ok("POST", "/settings?aircraft=1")  # Flight tracking on, so the panel has its four toggles
+    c.layers_steering_found = (c.srv.ok("GET", "/settings") or {}).get("panoramaSteering")
+    c.srv.ok("POST", "/settings?panoramaSteering=drag")
+    c.srv.ok("POST", "/horizon/switch?to=panorama", timeout=30.0)
+    c.srv.ok("GET", "/panorama?wait=60000", timeout=120.0)
+    c.srv.ok("POST", "/panorama?layers=1")
+    time.sleep(1.0)
+
+
+def end_panorama_layers(c):
+    c.srv.call("POST", "/panorama?layers=0")
+    end_panorama(c)
+    found = getattr(c, "layers_steering_found", None)
+    if found:
+        c.srv.call("POST", f"/settings?panoramaSteering={found}")
+# end T351
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1296,6 +1321,9 @@ SCREENS = [
     # T344
     ("panorama-list", scr_panorama_list, end_panorama_list, "screen"),
     # end T344
+    # T351
+    ("panorama-layers", scr_panorama_layers, end_panorama_layers, "screen"),
+    # end T351
 ]
 
 

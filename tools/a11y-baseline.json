@@ -72,6 +72,8 @@
 {"screen": "panorama-elsewhere:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "panorama-flights:1.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "panorama-flights:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
+{"screen": "panorama-layers:1.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
+{"screen": "panorama-layers:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "panorama-list:1.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "panorama-list:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "profile:1.0", "kind": "contrast", "label": "Close", "boundsDp": [354, 659, 386, 674]},

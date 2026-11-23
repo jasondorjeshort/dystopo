@@ -73,6 +73,11 @@ import io.github.jasondorjeshort.dystopo.app.horizon.TerrainLine
 import io.github.jasondorjeshort.dystopo.horizon.HorizonLayer
 import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
 import io.github.jasondorjeshort.dystopo.horizon.PanoramaSweep
+import io.github.jasondorjeshort.dystopo.horizon.PanoramaOverlays
+import io.github.jasondorjeshort.dystopo.horizon.PanoramaOverlays.Item
+import io.github.jasondorjeshort.dystopo.horizon.PanoramaScene
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import io.github.jasondorjeshort.dystopo.horizon.SkyView
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 
@@ -126,28 +131,31 @@ object PanoramaStrings {
     const val ADJUST_RIGHT = "Adjust compass right"
     const val RESET = "Reset"
     // end T331
+
+    // T351: the control that opens the layers' switches, and its state as spoken.
+    const val LAYERS = "Layers"
+    const val LAYERS_OPEN = "Open"
+    const val LAYERS_CLOSED = "Closed"
+    // end T351
 }
 
 /**
  * T326: the Panorama view (ADR 0064, pass two's first half; wave 45's choices (a) to (j)): the third segment of the switch,
  * a lens looking one way ([PanoramaPlot]: the skylines to the view range drawn far to near, the level line, the bearing
- * tape, the peaks named) over the Horizon view's own pane, hosted from its parts (`app/horizon/SkyViewParts.kt`,
- * `SkyViewSections.kt`): the place line with "Back to here", the heading "Panorama view" with its help, a picked peak's
- * line with "View from here", "Show:" with the Peaks toggle alone, the terrain line, the Peaks list. The effects are
- * [SkyViewEffects]' (the compass held for the opening's bearing, Back's ladder: a pick, a chosen point, then the view
- * closes). No Close button: the switch's "Map" and Back leave.
- *
- * The layout (choice (e)): upright, the plot the window's full width and three quarters of that tall, at most 45 percent
- * of the window's height, the pane under it; on its side, the plot at the left (the window's width less the pane, which
- * is the wider of 320 dp and 40 percent of the width) and its full height less the switch's room, the pane at the right.
- * Where the pane's list would have under 96 dp left, only the place line stays fixed and the heading and a picked peak's
- * line scroll with the list.
+ * tape, the peaks named). The effects are [SkyViewEffects]' (the compass held for the opening's bearing, Back's ladder: a
+ * pick, a chosen point, then the view closes). No Close button: the switch's "Map" and Back leave.
  *
  * T344 (step one of the owner's Answer of 2026-11-22, first half): the pane's list moved to the List view, the switch's
- * fourth segment (`app/skylist/`): "Show:" and the toggles, the terrain line, the Flights, Peaks, Sun and Satellites
- * sections. The plot keeps its size; beside or under it stay the place line with "Back to here", the heading with its help
- * and the small list button ([SkyListStrings.OPEN], a second way into the List, its place flagged for the owner), a picked
- * peak's line and the weak-compass line. A flight picked on the lens still opens its card here. T351 fills the window.
+ * fourth segment (`app/skylist/`).
+ *
+ * T351 (step one's second half; the survey's layout, ADR 0067): the plot is the whole window inside the system bars and
+ * the cutout, upright and on its side, behind the switch; the system bars stay. On it stand overlays placed by one rule
+ * ([PanoramaOverlays], hosted by [LensOverlays]), each a box the names keep off: the bearing tape; "Layers" and the list
+ * button "List view" at the upper right; the place line with "Back to here" (at a chosen point only), a picked peak's
+ * line with "View from here" and the weak-compass line at the upper left; the zoom buttons and "Follow phone" at the
+ * lower right; the compass correction's line and the flights' credit at the lower left, beside or above the switch; the
+ * edge arrow. "Layers" opens the layers' panel ([LayersPanel]: the heading "Panorama view" with its help and the four
+ * layers' toggles). A flight picked on the lens opens its card in the free band above the lower overlays.
  */
 @Composable
 fun PanoramaScreen() {
@@ -165,48 +173,35 @@ fun PanoramaScreen() {
     val skyRange = AppSettings.skyRange
     // The compass for the opening's bearing (choice c); T327: the GNSS held while Satellites draws and the flights' poller
     // asked (owner `horizon`) while Flights draws, as the Horizon view holds them (the one open state, choice i); both off
-    // at a chosen point (HorizonPlace.layers). Back lets go of the target first (PanoramaTargets.Back).
+    // at a chosen point (HorizonPlace.layers). Back lets go of the target first (PanoramaTargets.Back); T351: an open
+    // layers' panel closes before that.
     // T330 (choice (a)): Follow when the setting says so and the phone has an attitude sensor (a synced follow acts as Drag
     // on a phone with none); then the attitude is held instead of the heading sensor Drag's opening takes.
-    val follow = PanoramaSteering.follows(AppSettings.panoramaSteering, io.github.jasondorjeshort.dystopo.app.controls.Heading.attitudeAvailable)
+    val sensor = io.github.jasondorjeshort.dystopo.app.controls.Heading.attitudeAvailable
+    val follow = PanoramaSteering.follows(AppSettings.panoramaSteering, sensor)
     val clock = SkyViewEffects(
         SkyViewHolds(compass = !follow, satellites = layers.satellites, flightsAt = fix?.takeIf { layers.flights }?.let { it.latitude to it.longitude }, skyRange = skyRange), night,
-        back = { PanoramaUi.apply(PanoramaTargets.Back) },
+        back = { if (PanoramaUi.layersOpen) { PanoramaUi.layersOpen = false; true } else PanoramaUi.apply(PanoramaTargets.Back) },
     )
     FollowEffects(follow, clock.started)
-    val tick = clock.tick
+    @Suppress("UNUSED_VARIABLE") val tick = clock.tick // read so the view redraws on the clock's tick
     val pos = HorizonPlace.source(point, fix?.latitude, fix?.longitude)
     val place = HorizonPlace.line(point, fix?.latitude, fix?.longitude, units)
     val rangeM = AppSettings.viewRangeKm * 1000.0
     val density = LocalDensity.current
-    val scroll = rememberScrollState()
-    HorizonUi.scrollTo?.let { px ->
-        LaunchedEffect(px) {
-            scroll.scrollTo(px.coerceAtMost(scroll.maxValue))
-            HorizonUi.scrollTo = null
-        }
-    }
-    // The heights the choice (e) rule reads (px): the pane, the place line, the heading, a picked peak's line.
-    var paneH by remember { mutableStateOf(0) }
-    var placeH by remember { mutableStateOf(0) }
-    var headingH by remember { mutableStateOf(0) }
-    var pickedH by remember { mutableStateOf(0) }
-    // T331 (choice (h)): the weak-compass line under the plot, and its height (px) the plot gives up on its side.
+    // T331 (choice (h)): the weak-compass line while the compass reads weak in Follow.
     val hint = PanoramaFollow.hintShown && follow
-    var hintH by remember { mutableStateOf(0) }
     Box(Modifier.fillMaxSize().background(pal.paper).pointerInput(Unit) { detectTapGestures { } }.testTag("panoramaView")) {
         BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding()) {
             val landscape = maxWidth > maxHeight
-            val switchW = ViewSwitch.widthDp.dp
-            val switchRoom = ViewSwitch.reserveDp.dp + 8.dp
-            val paneW = if (landscape) maxOf(320.dp, maxWidth * 0.4f).coerceAtMost(maxWidth * 0.6f) else maxWidth
-            val plotW = if (landscape) maxWidth - paneW else maxWidth
-            val hintRoom = if (hint) with(density) { hintH.toDp() } else 0.dp
-            val plotH = if (landscape) maxHeight - switchRoom - hintRoom else minOf(maxWidth * 0.75f, maxHeight * 0.45f)
-            val paneOverSwitch = !landscape || plotW < switchW + ViewSwitch.EDGE_DP.dp + 8.dp
+            // T351: the plot is the whole window (inside the system bars and the cutout), the switch over its lower left.
+            val plotW = maxWidth
+            val plotH = maxHeight
+            val d = density.density.toDouble()
+            val wPx = with(density) { plotW.toPx() }.toDouble()
+            val hPx = with(density) { plotH.toPx() }.toDouble()
             // The place the view stands on, swept to the view range at the steps the zoom asks for (choice f).
             val aim = PanoramaUi.aim
-            val wPx = with(density) { plotW.toPx() }.toDouble()
             val steps = PanoramaSweep.steps(aim?.fovDeg ?: io.github.jasondorjeshort.dystopo.horizon.PanoramaAim.OPENING_FOV_DEG, wPx)
             val work = pos?.let { PanoramaData.request(it.first, it.second, rangeM, steps, point == null) }
             val h = work?.state
@@ -216,82 +211,83 @@ fun PanoramaScreen() {
             val pickedLabel = picked?.let { p -> peaks.scoreOf(p)?.label }
             // T327: the Sun, Satellites and Flights, as the Horizon view reads them, over the Panorama's own skyline (the view range).
             val nowMs = PanoramaUi.sunAtMs ?: System.currentTimeMillis()
-            val fn = h?.profile?.let { pr -> { az: Double -> pr.angleAt(az) } }
             val sunNow = if (layers.sun && pos != null) io.github.jasondorjeshort.dystopo.nav.Sun.position(pos.first, pos.second, nowMs) else null
             val sunDay = if (layers.sun && pos != null) HorizonData.sunFor(h?.takeIf { it.profile != null }, pos.first, pos.second, HorizonUi.date, nowMs) else null
             val sats = if (layers.satellites) Gnss.satellites else emptyList()
             val plotted = plotSats(sats)
-            val summary = GnssHealth.summarize(sats)
             val flights = if (layers.flights) HorizonData.flightsFor(h, fix, skyRange, System.currentTimeMillis()) else null
             val flight = pickedFlight()
             val lens = LensLayers(sunDay?.takeIf { pos != null }, sunNow, plotted, layers.satellites, flights, HorizonUi.selectedFlight, night)
             // T327: the target follows the picks (a row, a name, the pick's ×, the card's Close, Back), and its direction now.
             val target = PanoramaUi.targets.target
-            PanoramaUi.targetDir = when (target?.kind) {
+            val dir = when (target?.kind) {
                 TargetKind.PEAK -> work?.peaks?.candidates?.firstOrNull { HorizonUi.keyOf(it) == target.id }?.let { it.angleDeg to it.bearingDeg }
                 TargetKind.SUN -> (sunNow ?: pos?.let { io.github.jasondorjeshort.dystopo.nav.Sun.position(it.first, it.second, nowMs) })?.let { it.apparentAltitudeDeg to it.azimuthDeg }
                 TargetKind.FLIGHT -> flights?.list?.firstOrNull { it.hex == target.id }?.let { it.elevationDeg to it.bearingDeg }
                 TargetKind.SATELLITE -> Gnss.satellites.firstOrNull { it.id == target.id }?.let { it.elevationDeg to it.azimuthDeg }
                 null -> null
             }
-            val listRoom = with(density) { (paneH - placeH - headingH - (if (picked != null) pickedH else 0)).toDp() }
-            val headingScrolls = false // T344: no list under the heading any more; it always stays
-            PanoramaUi.headingScrolls = headingScrolls
-            val plot: @Composable () -> Unit = {
-                Box(Modifier.size(plotW, plotH)) {
-                    PanoramaPlot(plotW, plotH, pal, night, work, peaks?.ranked.orEmpty(), pickedLabel, place.text, wanted = steps, lensLayers = lens)
-                    // T327: the feed's credit while the Flights layer draws, in the plot's lower left (the zoom buttons are at its right).
-                    flights?.let { f ->
-                        BasicText(
-                            f.credit,
-                            // On a plate: the plot's lower left is the near ground, where muted text alone did not read.
-                            Modifier.align(Alignment.BottomStart).padding(start = 6.dp, bottom = 6.dp).widthIn(max = plotW * 0.45f)
-                                .background(pal.card.copy(alpha = 0.88f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 1.dp)
-                                .testTag("panoramaFlightsCredit"),
-                            style = TextStyle(color = pal.muted, fontSize = with(density) { 10.dp.toSp() }, lineHeight = with(density) { 12.dp.toSp() }),
-                            maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        )
-                    }
-                }
+            PanoramaUi.targetDir = dir
+            // T327: the edge arrow while the target is off the view; T351: its point by the lens (not the scene, which keeps
+            // its names off the arrow's box), its plate placed by the overlays' rule.
+            val arrow = if (aim != null && work?.finest != null && target != null && dir != null && wPx > 0 && hPx > 0) {
+                val m = PanoramaOverlays.MARGIN_DP * d
+                io.github.jasondorjeshort.dystopo.horizon.OffView.of(
+                    aim.lens(wPx, hPx, d), dir.first, dir.second, target.name,
+                    io.github.jasondorjeshort.dystopo.horizon.RimBox(m, PanoramaScene.TAPE_DP * d + m, wPx - m, hPx - m),
+                    follow = aim.follow, // T330: by the screen's axes in Follow
+                )
+            } else null
+            PanoramaUi.arrow = arrow
+            val sign = aim?.follow == true // T331 (choice (i)): in Follow the arrow is a sign, no edge and no tap
+            PanoramaUi.arrowClickable = arrow != null && !sign
+            if (arrow == null) PanoramaUi.arrowPx = null
+            // T331 (choice (f)): the correction's line with Reset while a correction stands in Follow.
+            val correction = PanoramaFollow.correctionDeg?.takeIf { PanoramaFollow.following && aim?.follow == true }
+            if (correction == null) { PanoramaUi.correctionPx = null; PanoramaUi.resetPx = null }
+            if (!sensor || aim == null) PanoramaUi.followPx = null
+            if (!hint) PanoramaUi.hintPx = null
+            // The switch's box on the plot (px): its anchor at the lower left, the same insets as the plot's at the left and bottom.
+            val switchBox = io.github.jasondorjeshort.dystopo.horizon.RimBox(
+                ViewSwitch.EDGE_DP * d, hPx - ViewSwitch.reserveDp * d, (ViewSwitch.EDGE_DP + ViewSwitch.widthDp) * d, hPx - ViewSwitch.EDGE_DP * d,
+            )
+            val slots = LinkedHashMap<Item, @Composable () -> Unit>()
+            slots[Item.LAYERS] = { LayersButton(pal) }
+            slots[Item.LIST] = { ListButton(pal) }
+            if (aim != null) {
+                slots[Item.ZOOM_IN] = { ZoomButton(true, pal) }
+                slots[Item.ZOOM_OUT] = { ZoomButton(false, pal) }
+                if (sensor) slots[Item.FOLLOW] = { FollowButton(PanoramaFollow.following, pal) }
             }
-            val heading: @Composable () -> Unit = {
-                // T344: the list button at the heading's end; above font scale 1.3 under it, at its end (beside it, on its side at
-                // 2.0 the title broke inside its word).
-                val listUnder = density.fontScale > 1.3f
-                Column(Modifier.onGloballyPositioned { headingH = it.size.height }, horizontalAlignment = Alignment.End) {
-                    SkyViewHeading(PanoramaStrings.TITLE, help = "panorama.view", pal = pal) { if (!listUnder) ListButton(pal) }
-                    if (listUnder) Box(Modifier.padding(end = 16.dp)) { ListButton(pal) }
-                }
-                if (picked != null) Box(Modifier.onGloballyPositioned { pickedH = it.size.height }) { PickedPeak(picked, pal, units) }
-            }
-            val pane: @Composable (Modifier) -> Unit = { m ->
-                Column(m.onGloballyPositioned { paneH = it.size.height }) {
-                    Box(Modifier.onGloballyPositioned { placeH = it.size.height }) { PlaceRow(place, moved, pal, night) }
-                    heading()
-                    // T344: the list that scrolled here is the List view's now (`app/skylist/SkyListScreen.kt`).
-                    PanoramaUi.listPx = null
-                }
-            }
-            // T331 (choice (h)): one quiet line under the plot while the compass reads weak in Follow.
-            val hintLine: @Composable () -> Unit = {
-                if (hint) BasicText(
+            if (moved) slots[Item.PLACE] = { PlaceRow(place, moved, pal, night) }
+            if (picked != null) slots[Item.PICKED] = { PickedPeak(picked, pal, units) }
+            if (hint) slots[Item.HINT] = {
+                BasicText(
                     CompassHint.LINE,
-                    Modifier.width(plotW).padding(horizontal = 12.dp, vertical = 4.dp).testTag("panoramaCompassHint")
-                        .onGloballyPositioned { c ->
-                            hintH = c.size.height + with(density) { 8.dp.roundToPx() }
-                            val at = c.positionInRoot()
-                            PanoramaUi.hintPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
-                        },
-                    style = TextStyle(color = pal.muted, fontSize = 13.sp),
-                ) else PanoramaUi.hintPx = null
+                    Modifier.testTag("panoramaCompassHint").onGloballyPositioned { c ->
+                        val at = c.positionInRoot()
+                        PanoramaUi.hintPx = listOf(at.x, at.y, at.x + c.size.width, at.y + c.size.height).map { Math.round(it) }
+                    }.background(pal.card.copy(alpha = 0.9f), androidx.compose.foundation.shape.RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = TextStyle(color = pal.ink, fontSize = 13.sp),
+                )
             }
-            if (landscape) Row(Modifier.fillMaxSize()) {
-                Column(Modifier.width(plotW).fillMaxHeight()) { plot(); hintLine() }
-                pane(Modifier.width(paneW).fillMaxHeight().padding(top = 8.dp))
-            } else Column(Modifier.fillMaxSize()) {
-                plot()
-                hintLine()
-                pane(Modifier.weight(1f).fillMaxWidth())
+            // T327: the feed's credit while the Flights layer draws, on a plate (the near ground under muted text alone did not read).
+            flights?.let { f ->
+                slots[Item.CREDIT] = {
+                    BasicText(
+                        f.credit,
+                        Modifier.background(pal.card.copy(alpha = 0.88f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 1.dp)
+                            .testTag("panoramaFlightsCredit"),
+                        style = TextStyle(color = pal.muted, fontSize = with(density) { 10.dp.toSp() }, lineHeight = with(density) { 12.dp.toSp() }),
+                        maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (correction != null) slots[Item.CORRECTION] = { CorrectionPlate(correction, pal) }
+            if (arrow != null) slots[Item.ARROW] = { EdgeArrow(arrow, pal, sign = sign) }
+            Box(Modifier.size(plotW, plotH)) {
+                PanoramaPlot(plotW, plotH, pal, night, work, peaks?.ranked.orEmpty(), pickedLabel, place.text, wanted = steps, lensLayers = lens)
+                LensOverlays(plotW, plotH, switchBox, arrow, slots)
             }
             // T331 (T326's note): the strip under the status bar over the plot carries the plot's sky on upward (it was paper).
             val topInset = androidx.compose.foundation.layout.WindowInsets.statusBars.union(androidx.compose.foundation.layout.WindowInsets.displayCutout).getTop(density) // the padding the content stands under
@@ -301,19 +297,25 @@ fun PanoramaScreen() {
                     Modifier.offset { androidx.compose.ui.unit.IntOffset(0, -topInset) }.size(plotW, with(density) { topInset.toDp() }).testTag("panoramaSkyStrip"),
                 ) {
                     val a = PanoramaUi.aim
-                    val (w, h, dp) = PanoramaUi.plotSize ?: Triple(size.width.toDouble(), 0.0, this.density.toDouble())
-                    drawRect(skyBrush(a, tints, a?.lens(w, h, dp), w, h, dy = size.height))
+                    val (w, hh, dp) = PanoramaUi.plotSize ?: Triple(size.width.toDouble(), 0.0, this.density.toDouble())
+                    drawRect(skyBrush(a, tints, a?.lens(w, hh, dp), w, hh, dy = size.height))
                 }
             }
-            // T327: T311's flight card, as the Horizon view hosts it: over the pane's lower part, beside or under the plot.
+            // T327: T311's flight card; T351: in the overlays' free band, at its foot (at most 480 dp wide).
+            val free = PanoramaUi.overlays?.free
             flight?.let { a ->
-                FlightCardHost(
-                    a,
-                    (if (landscape) Modifier.align(Alignment.BottomEnd).width(paneW) else Modifier.align(Alignment.BottomCenter).fillMaxWidth())
-                        .heightIn(max = (if (landscape) maxHeight else maxHeight - plotH) * 0.9f).padding(8.dp)
-                        .padding(bottom = if (landscape) 0.dp else switchRoom - 8.dp),
-                )
+                val top = with(density) { (free?.top ?: 0.0).toFloat().toDp() }
+                val bandH = with(density) { ((free?.let { it.bottom - it.top } ?: hPx)).toFloat().toDp() }
+                Box(Modifier.offset(y = top).size(plotW, bandH)) {
+                    FlightCardHost(a, Modifier.align(Alignment.BottomCenter).widthIn(max = 480.dp).fillMaxWidth().heightIn(max = bandH).padding(horizontal = 8.dp))
+                }
             }
+            // T351: the layers' panel over the lens while open.
+            if (PanoramaUi.layersOpen) {
+                LayersPanel(layers, HorizonLayers.buttons(tracking), HorizonPlace.disabled(moved), moved, pal, plotW, plotH) {
+                    SkyViewHeading(PanoramaStrings.TITLE, help = "panorama.view", pal = pal)
+                }
+            } else PanoramaUi.layersPx = null
             // T327: the target follows HorizonUi's picks, whatever changed them (a row, a name, the pick's ×, the card's Close, Back).
             val sel = HorizonUi.selected
             val selFlight = HorizonUi.selectedFlight
@@ -324,14 +326,13 @@ fun PanoramaScreen() {
             SideEffect {
                 PanoramaUi.drawn = linkedMapOf(
                     "landscape" to landscape, "windowDp" to listOf(Math.round(maxWidth.value), Math.round(maxHeight.value)), "fontScale" to density.fontScale,
-                    "plotDp" to listOf(Math.round(plotW.value), Math.round(plotH.value)), "paneDp" to Math.round(paneW.value),
-                    "paneOverSwitch" to paneOverSwitch, "headingScrolls" to headingScrolls, "listRoomDp" to Math.round(listRoom.value),
+                    "plotDp" to listOf(Math.round(plotW.value), Math.round(plotH.value)),
                     "night" to night, "layers" to layers.json(), "selected" to picked?.peak?.name,
                     "buttons" to HorizonLayers.buttons(tracking).map { it.key }, "disabledButtons" to HorizonPlace.disabled(moved).map { it.key },
                     "flightCard" to (flight != null), "selectedFlight" to flight?.hex, "creditShown" to flights?.credit,
                     "point" to point?.let { p -> linkedMapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name) }, "placeLine" to place.text,
                     "moved" to place.moved, "backShown" to moved, "rangeKm" to rangeM / 1000, "stepsWanted" to steps,
-                    "scrollPx" to scroll.value, "scrollMaxPx" to scroll.maxValue,
+                    "layersOpen" to PanoramaUi.layersOpen,
                 )
             }
         }
@@ -352,7 +353,6 @@ fun PanoramaScreen() {
         }
     }
 }
-
 /**
  * T330: Follow's effects while the Panorama is open: [PanoramaFollow.following] written; the attitude source started while
  * following and [started] (the activity in the foreground), stopped otherwise and when the view closes; leaving Follow sets
@@ -404,14 +404,29 @@ internal val PANORAMA_HELP: List<HelpText> = run {
 }
 
 /**
- * T344: the Panorama's small list button, a second way into the List view (the switch's fourth segment is the first); in
- * the heading row at its end, a place flagged for the owner (ADR 0031). A target of 48 dp.
+ * T344: the Panorama's small list button, a second way into the List view (the switch's fourth segment is the first); its
+ * place is flagged for the owner (ADR 0031). T351: at the upper right beside "Layers", by the overlays' rule.
  */
 @Composable
 private fun ListButton(pal: GnssPalette) {
-    Box(Modifier.padding(start = 8.dp).testTag("panoramaListButton"), contentAlignment = Alignment.Center) {
+    Box(Modifier.testTag("panoramaListButton"), contentAlignment = Alignment.Center) {
         io.github.jasondorjeshort.dystopo.app.gnss.Button(io.github.jasondorjeshort.dystopo.app.skylist.SkyListStrings.OPEN, pal) {
             io.github.jasondorjeshort.dystopo.app.skylist.SkyList.openFromPanorama()
         }
+    }
+}
+
+/**
+ * T351: "Layers", the one control that opens the four layers' switches ([LayersPanel]; the survey: the layers behind one
+ * control), drawn filled while the panel is open; a tap opens or closes it.
+ */
+@Composable
+private fun LayersButton(pal: GnssPalette) {
+    val open = PanoramaUi.layersOpen
+    Box(
+        Modifier.testTag("panoramaLayersButton").semantics { stateDescription = if (open) PanoramaStrings.LAYERS_OPEN else PanoramaStrings.LAYERS_CLOSED },
+        contentAlignment = Alignment.Center,
+    ) {
+        io.github.jasondorjeshort.dystopo.app.gnss.Button(PanoramaStrings.LAYERS, pal, filled = open) { PanoramaUi.layersOpen = !PanoramaUi.layersOpen }
     }
 }

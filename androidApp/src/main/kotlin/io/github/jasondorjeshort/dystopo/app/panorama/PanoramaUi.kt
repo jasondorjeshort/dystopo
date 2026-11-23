@@ -38,14 +38,18 @@ object PanoramaUi {
     /** From the opening to the first skyline drawn, ms (null until drawn). */
     @Volatile var firstSkylineMs: Long? = null
 
-    /** The plot as last laid out: its size (px) and px per dp; its rectangle and the list's in the Compose root (px). */
+    /** The plot as last laid out: its size (px) and px per dp; its rectangle and the switch's in the Compose root (px). */
     @Volatile var plotSize: Triple<Double, Double, Double>? = null
     @Volatile var plotPx: List<Int>? = null
-    @Volatile var listPx: List<Int>? = null
     @Volatile var switchPx: List<Int>? = null
 
-    /** Whether the heading and a picked peak's line scroll with the list (choice (e): under 96 dp left for the list). */
-    @Volatile var headingScrolls = false
+    // T351: the overlays as last placed on the plot by their rule (plot px; Compose state: the scene keeps its names off
+    // them, and the waiting line and a flight's card stand in its free band), whether the layers' panel is open (the
+    // Layers button, Back and a tap outside close it) and the panel's rectangle in the Compose root (px).
+    var overlays by mutableStateOf<io.github.jasondorjeshort.dystopo.horizon.PanoramaOverlays.Layout?>(null)
+    var layersOpen by mutableStateOf(false)
+    @Volatile var layersPx: List<Int>? = null
+    // end T351
 
     /** The scene as last drawn, its build time (ms) last and most since the opening, and the builds counted. */
     @Volatile var scene: PanoramaScene? = null
@@ -101,6 +105,7 @@ object PanoramaUi {
         aim; openings; gesturing; targets; turnRequests; sunAtMs
         PanoramaFollow.following; PanoramaFollow.moving // T330
         PanoramaFollow.correctionDeg; PanoramaFollow.hintShown // T331
+        overlays; layersOpen // T351
     }
 
     /**
@@ -147,6 +152,7 @@ object PanoramaUi {
         lastTurn = null
         PanoramaFollow.correct(PanoramaCorrection.Closed) // T331: a correction is never kept from one opening to the next
         correctionPx = null
+        layersOpen = false // T351: the layers' panel opens closed
     }
 
     fun resetSceneCost() {

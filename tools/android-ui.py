@@ -2178,8 +2178,9 @@ def wait_panorama_ready(dev, nodes, seconds=120):
 
 def panorama_step(dev):
     """T326: the switch's third segment, all by taps and one-finger swipes. From the map with nothing selected, "Panorama"
-    opens the Panorama view at the fix ("Your location"; the frame `panorama`: the layered skyline, the level line, the
-    bearing tape, the peaks named, the zoom buttons, the pane with "Panorama view", the Peaks toggle and list); a sideways
+    opens the Panorama view at the fix (its label "Panorama from: Your location"; the frame `panorama`: T351's lens on the
+    whole window, the layered skyline, the level line, the bearing tape, the peaks named, Layers and List view, Follow
+    phone and the zoom buttons); T351: "Layers" opens and closes the panel (`panorama-layers`); a sideways
     swipe across the plot turns the view (its spoken label's bearing changes; `panorama-turned`); "Zoom in" twice narrows
     the field of view (`panorama-zoomed`); the view's "Map" segment closes it. Then a long-press at Mount Rainier's summit
     and the segment: the Panorama opens there (the frame `panorama-point`: the amber place line "At Mount Rainier, ... of
@@ -2195,15 +2196,17 @@ def panorama_step(dev):
         return {"ok": False, "backs": backs, "error": f"no Panorama segment on the map after {backs} Back (texts: {dev.texts(nodes)[:25]})"}
     on_map = switch_rects(nodes)
     dev.tap(n)
-    title, nodes = dev.wait_for(PANORAMA_TITLE, 15)
-    if not title:
-        return {"ok": False, "error": f"no 'Panorama view' heading after the segment (texts: {dev.texts(nodes)[:25]})"}
+    # T351: the plot fills the window and the heading "Panorama view" is behind Layers: the plot's node says it opened.
+    opened, nodes = dev.wait_for(PANORAMA_PLOT, 15)
+    if not opened:
+        return {"ok": False, "error": f"no Panorama plot after the segment (texts: {dev.texts(nodes)[:25]})"}
     nodes = wait_panorama_ready(dev, nodes)
     nodes = panorama_follow_off(dev, nodes, out, errors, "followAtStart")  # T331: the setting outlives a failed run
     texts = dev.texts(nodes)
     out["frames"]["panorama"] = dev.screencap("panorama")[0]
     plot = panorama_plot(nodes)
-    out["atFix"] = PLACE_HERE in texts and dev.find(BACK_TO_HERE, nodes) is None
+    # T351: at the fix the lens shows no place line; the plot's spoken label still starts with it.
+    out["atFix"] = (plot or {}).get("desc", "").startswith(f"Panorama from: {PLACE_HERE}") and dev.find(BACK_TO_HERE, nodes) is None
     if not out["atFix"]:
         errors.append(f"the segment with nothing selected did not open at {PLACE_HERE!r}")
     if not plot:
@@ -2240,12 +2243,13 @@ def panorama_step(dev):
     out["zoomed"] = {"facing": facing2[0], "fovDeg": facing2[1]}
     if facing2[1] is None or facing1[1] is None or facing2[1] >= facing1[1]:
         errors.append(f"Zoom in did not narrow the view ({facing1[1]} then {facing2[1]})")
+    nodes = panorama_layers(dev, out, errors)  # T351
     nodes = panorama_target_and_arrow(dev, out, errors)
     m = dev.find(MAP_SEGMENT, nodes)
     if m:
         dev.tap(m)
         time.sleep(1)
-    if dev.find(PANORAMA_TITLE):
+    if panorama_plot(dev.nodes()):
         errors.append("the Map segment did not close the Panorama view")
     # The segment with a long-press card open at Mount Rainier's summit: the Panorama stands there (choice a).
     w, h, d = screen(dev)
@@ -2271,11 +2275,67 @@ def panorama_step(dev):
             # The summit's named feature: Columbia Crest on the Rainier pack (Mount Rainier's own point lies 100 m off).
             if not place or not place.startswith("At "):
                 errors.append(f"the place line at the summit is {place!r}, not a named feature's ('At ..., ... of you')")
-        back_to_fix_and_map(dev, out, errors)
+        panorama_back_to_fix_and_map(dev, out, errors)  # T351
     panorama_follow(dev, out, errors)  # T331
     frames = out.pop("frames")
     return {"ok": not errors, "png": frames.get("panorama"), "frames": frames, "openedBy": "switch", "backs": backs, **out,
             "seconds": round(time.time() - t0, 1), **({"error": "; ".join(errors)} if errors else {})}
+
+
+# T351
+LAYERS_BUTTON = "^Layers$"  # the lens's control that opens the layers' panel (PanoramaStrings.LAYERS)
+LAYER_TOGGLES = ("Satellites", "Peaks", "Sun")  # the panel's toggles ("✓ Peaks" when on; Flights only with Flight tracking on)
+
+
+def panorama_layers(dev, out, errors):
+    """T351: "Layers" on the lens opens the layers' panel (frame `panorama-layers`: the heading "Panorama view" with its
+    help and "Show:" with the toggles); a second tap on "Layers" closes it (the heading gone). Answers the nodes."""
+    b, nodes = dev.wait_for(LAYERS_BUTTON, 5)
+    if not b:
+        errors.append(f"no 'Layers' button on the lens (texts: {dev.texts(nodes)[:25]})")
+        return nodes
+    dev.tap(b)
+    title, nodes = dev.wait_for(PANORAMA_TITLE, 5)
+    out["frames"]["layers"] = dev.screencap("panorama-layers")[0]
+    texts = dev.texts(nodes)
+    toggles = [l for l in LAYER_TOGGLES if any(t.endswith(l) for t in texts)]
+    out["layers"] = {"heading": bool(title), "toggles": toggles}
+    if not title or len(toggles) != len(LAYER_TOGGLES):
+        errors.append(f"'Layers' did not open the panel with the heading and toggles {LAYER_TOGGLES} (heading {bool(title)}, found {toggles})")
+    b = dev.find(LAYERS_BUTTON, nodes)
+    if b:
+        dev.tap(b)
+        time.sleep(1.0)
+    nodes = dev.nodes()
+    out["layers"]["closed"] = dev.find(PANORAMA_TITLE, nodes) is None
+    if not out["layers"]["closed"]:
+        errors.append("a second tap on 'Layers' did not close the panel")
+    return nodes
+
+
+def panorama_back_to_fix_and_map(dev, out, errors):
+    """T351: "Back to here" returns the Panorama to the fix (the place line gone, the plot's label "Panorama from: Your
+    location"); the view's "Map" segment then closes it."""
+    back = dev.find(BACK_TO_HERE)
+    if back:
+        dev.tap(back)
+    deadline = time.time() + 10
+    nodes = dev.nodes()
+    while time.time() < deadline:
+        plot = panorama_plot(nodes)
+        if plot and plot["desc"].startswith(f"Panorama from: {PLACE_HERE}") and dev.find(BACK_TO_HERE, nodes) is None:
+            break
+        time.sleep(1)
+        nodes = dev.nodes()
+    plot = panorama_plot(nodes)
+    out["backReturned"] = bool(plot) and plot["desc"].startswith(f"Panorama from: {PLACE_HERE}") and dev.find(BACK_TO_HERE, nodes) is None
+    if not out["backReturned"]:
+        errors.append("Back to here did not return the Panorama to Your location")
+    m = dev.find(MAP_SEGMENT, nodes)
+    if m:
+        dev.tap(m)
+        time.sleep(1)
+# end T351
 
 
 # T327
@@ -2451,7 +2511,7 @@ def panorama_follow(dev, out, errors):
         errors.append("no Panorama segment on the map for Follow phone")
         return
     dev.tap(n)
-    title, nodes = dev.wait_for(PANORAMA_TITLE, 15)
+    _plot, nodes = dev.wait_for(PANORAMA_PLOT, 15)  # T351: the plot, not the heading (behind Layers)
     nodes = wait_panorama_ready(dev, nodes, 60)
     try:
         b = dev.find(FOLLOW_PHONE, nodes)
