@@ -83,7 +83,7 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
      */
     class NotOpened(val pack: String, val archive: String, val file: String, val reason: String, val dropped: Boolean) {
         fun json(): Map<String, Any?> = linkedMapOf("pack" to pack, "archive" to archive, "file" to file, "reason" to reason, "dropped" to dropped)
-        val line: String get() = "pack $pack not opened: $archive $file: $reason" + if (dropped) " (the pack is left out)" else " (the pack opens without it)"
+        val line: String get() = "map $pack not opened: $archive $file: $reason" + if (dropped) " (the map is left out)" else " (the map opens without it)"
     }
 
     /** One pack's opened archives. */

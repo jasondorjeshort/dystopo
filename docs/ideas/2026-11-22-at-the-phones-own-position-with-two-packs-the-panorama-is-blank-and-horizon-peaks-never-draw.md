@@ -87,7 +87,7 @@ cell, the deepest first, a coarser one where it ends, then the online source), k
 closing or the network returning, and read under a lease on the tile service. T352: the peak read asks the maps deepest
 first and steps past a tile with no peak names, under the same lease, and the Peaks line names the maps that gave them;
 `PackSet.open` reports each map it leaves closed with its reason in `GET /packs` `notOpened` and one logcat line
-(`PackSet.open: pack <name> not opened: ...`); the two-maps fixture reads peaks in every row inside a map, each map as
+(`PackSet.open: map <name> not opened: ...`); the two-maps fixture reads peaks in every row inside a map, each map as
 the primary, and an activate with the Panorama open. Left for the owner's capture on the phone, at the moment of the
 blank on the debug build: `GET /packs` (`notOpened`, `inUse`), `GET /firstrun` `mapHolds.regions`, `GET /horizon`
 `peaks` (`tilesRead`, `maps`) and `GET /panorama`, and one `adb logcat -s Dystopo DystopoAssets`.
