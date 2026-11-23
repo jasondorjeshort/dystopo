@@ -269,6 +269,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
                 table["rows"].append(read_row(dev, place, net, wait_ms, raw_dir))
         table["t352"] = t352_rows(dev, wait_ms, raw_dir)
         table["t342"] = t342_collect(dev, wait_ms, raw_dir)  # T342: the rows with a map switched off (its block, below)
+        table["t343"] = t343_collect(dev, raw_dir)  # T343: the Download card at three places (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
     finally:
@@ -365,6 +366,9 @@ def assertions(table):
     # T342
     out += t342_assertions(table)
     # end T342
+    # T343
+    out += t343_assertions(table)
+    # end T343
     return out
 
 
@@ -479,6 +483,90 @@ def t342_assertions(table):
                 out.append({"what": "T342:both-off-message", "inUse": in_use, "map": m})
     return out
 # end T342
+
+
+# T343
+# The status chip, the map's "Download this area" button and the Download card follow one rule (HeldHere over the view's box at
+# the detail the card opens at). In every one of the eight rows, from its `GET /online` answer: a button that reads "Already on
+# this phone" goes with the chip's "on this phone", and a chip that says the view is not on the phone goes with a button that
+# offers the download. Then, with the network on and a cold start (whatever the phases and T342's rows left), the card is opened
+# (`POST /areas/region`) at three views and its lines read (`GET /areas/picker`): the wide map only at z12 (held coarser: the
+# card says what is held and offers Download), the summit at z13 inside the fine map (nothing new: no Download, the line names
+# the fine map) and outside both (nothing held: no line, Download). Depends on nothing an earlier part leaves: it switches the
+# network on and restarts the app itself, and the maps T342 switched off are back on by then.
+T343_VIEWS = [("wide-only", 12, "coarser"), ("inside-both", 13, "nothing-new"), ("outside", 12, "nothing")]
+
+
+def t343_collect(dev, raw_dir):
+    out = {"cards": [], "rawDir": raw_dir}  # rawDir: where the assertions read each row's GET /online answer
+    try:
+        out["network"] = fx.network(dev, True)
+        dev.restart()
+        for pid, zoom, case in T343_VIEWS:
+            place = next(p for p in fx.PLACES if p["id"] == pid)
+            dev.call("/areas/picker/close", "POST")
+            dev.call(f"/camera?lat={place['lat']}&lon={place['lon']}&zoom={zoom}&bearing=0", "POST")
+            time.sleep(4.0)
+            _, on, err1 = dev.call("/online")
+            _, opened, err2 = dev.call("/areas/region?wait=60000", "POST", timeout=120)
+            _, pk, err3 = dev.call("/areas/picker")
+            card = {"case": case, "place": pid, "zoom": zoom, "errors": [e for e in (err1, err2, err3) if e],
+                    "chip": get(on, "chip", "text"), "source": get(on, "chip", "source"), "button": get(on, "chip", "download"),
+                    "verdict": get(on, "chip", "held", "verdict")}
+            card.update({k: (pk or {}).get(k) for k in ("detail", "heldLine", "nothingNew", "canDownload", "sizeLine")})
+            if raw_dir:
+                with open(os.path.join(raw_dir, f"t343-{case}.json"), "w", encoding="utf-8", newline="\n") as fh:
+                    json.dump({"online": on, "picker": pk}, fh, indent=1)
+            out["cards"].append(card)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        dev.call("/areas/picker/close", "POST")
+    return out
+
+
+def t343_assertions(table):
+    out = []
+    # One rule in every row: "Already on this phone" only where the chip says on this phone; a view the chip says is not on
+    # the phone always offered for download.
+    for r in table.get("rows") or []:
+        chip = get(r, "summary", "chip") or {}
+        row = f"{r.get('network')}/{r.get('place')}"
+        raw = None
+        try:
+            with open(os.path.join(get(table, "t343", "rawDir") or "", f"{r.get('network')}-{r.get('place')}-online.json"), encoding="utf-8") as fh:
+                raw = json.load(fh).get("body")
+        except (OSError, ValueError, TypeError):
+            pass
+        button = get(raw, "chip", "download") if raw is not None else None
+        if not isinstance(button, dict):
+            continue  # a table read without the raw answers (or from before T343): the cards below still assert
+        if str(button.get("text") or "").startswith("Already on this phone") and chip.get("source") != "on this phone":
+            out.append({"what": "T343:already-not-on-phone", "row": row, "chip": chip.get("text"), "button": button})
+        if chip.get("source") not in ("on this phone", None) and button.get("shown") and not button.get("enabled"):
+            out.append({"what": "T343:off-phone-not-offered", "row": row, "chip": chip.get("text"), "button": button})
+    t = table.get("t343")
+    if not isinstance(t, dict):
+        return out
+    if t.get("error"):
+        out.append({"what": "T343:error", "error": t["error"]})
+    cards = {c.get("case"): c for c in t.get("cards") or []}
+    for _pid, _z, case in T343_VIEWS:
+        c = cards.get(case)
+        if c is None:
+            out.append({"what": "T343:missing", "case": case})
+            continue
+        if c.get("errors"):
+            out.append({"what": "T343:unread", "case": case, "errors": c["errors"]})
+        if case == "coarser" and not (c.get("heldLine") and c.get("canDownload") and c.get("button", {}).get("enabled")):
+            out.append({"what": "T343:coarser", "card": c})
+        if case == "nothing-new" and not (c.get("nothingNew") and "rainier-fine" in c["nothingNew"] and c.get("canDownload") is False
+                                         and c.get("source") == "on this phone" and (c.get("button") or {}).get("enabled") is False):
+            out.append({"what": "T343:nothing-new", "card": c})
+        if case == "nothing" and (c.get("heldLine") or c.get("nothingNew") or not c.get("canDownload")):
+            out.append({"what": "T343:nothing", "card": c})
+    return out
+# end T343
 
 
 def main(argv=None):

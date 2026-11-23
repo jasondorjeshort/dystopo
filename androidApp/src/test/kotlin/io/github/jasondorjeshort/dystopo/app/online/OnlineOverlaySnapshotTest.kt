@@ -240,7 +240,7 @@ class OnlineOverlaySnapshotTest {
         val off = ui(OnlineService.ONLINE, held(map("rainier-fine", 14, 14, off = true)))
         assertEquals(OnlineUi.Column.OFF, off.column)
         assertEquals("Online · a map here is off", off.text)
-        assertEquals("A map here is off: rainier-fine. Turn it on in Offline maps to use it here.", off.sourceSentence)
+        assertEquals("A map here is off. Turn it on in Offline maps to use it.", off.sourceSentence)
         assertEquals(OnlineUi.Link.OFFLINE_MAPS, off.link)
         assertTrue(off.downloadEnabled, "an off map holds nothing: the download is offered")
         // Drawn from another map on the phone: that map is what the chip names.

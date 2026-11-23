@@ -1160,6 +1160,23 @@ def end_offline_maps_off(c):
 # end T342
 
 
+# T343
+def scr_download_card(c):
+    """T343: the Download card ("Download this area", `POST /areas/region`) over the view at Mount Rainier's summit at z13: the
+    card opens with what the phone holds there (its first line, `GET /areas/picker` `heldLine`) and, where the phone holds every
+    tile at the detail shown, the line in place of Download (`nothingNew`); closed by end_download_card."""
+    c.srv.ok("POST", f"/camera?lat={SUMMIT[0]}&lon={SUMMIT[1]}&zoom=13&bearing=0")
+    time.sleep(2.0)
+    c.srv.ok("POST", "/areas/region?wait=60000", timeout=120.0)
+    time.sleep(1.5)
+
+
+def end_download_card(c):
+    c.srv.call("POST", "/areas/picker/close")
+    c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
+# end T343
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1206,6 +1223,9 @@ SCREENS = [
     # T342
     ("offline-maps-off", scr_offline_maps_off, end_offline_maps_off, "screen"),
     # end T342
+    # T343
+    ("download-card", scr_download_card, end_download_card, "map"),
+    # end T343
 ]
 
 

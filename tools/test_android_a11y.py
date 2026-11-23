@@ -663,4 +663,22 @@ finally:
     a11y.time.sleep = _sleep
 # end T342
 
+# T343: the Download card at Mount Rainier's summit (z13), opened as the map's button does; its end closes it and puts the
+# camera back on the view the screens start from.
+dc = [s for s in a11y.SCREENS if s[0] == "download-card"]
+assert len(dc) == 1 and dc[0][3] == "map" and dc[0][2] is a11y.end_download_card, dc
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    dsrv = RowsSrv([])
+    ctx = type("C", (), {"srv": dsrv})()
+    dc[0][1](ctx)
+    assert [p for _m, p in dsrv.calls] == ["/camera?lat=46.8529&lon=-121.7604&zoom=13&bearing=0", "/areas/region?wait=60000"], dsrv.calls
+    dsrv.calls.clear()
+    dc[0][2](ctx)
+    assert [p for _m, p in dsrv.calls][0] == "/areas/picker/close" and dsrv.calls[1][1].startswith("/camera?"), dsrv.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T343
+
 print("test_android_a11y: ok")

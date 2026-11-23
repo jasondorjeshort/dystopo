@@ -193,6 +193,27 @@ assert sorted(f["what"] for f in part.t342_assertions({"t342": t342_bad})) == so
     "T342:on-again-horizon", "T342:on-again-panorama", "T342:restarted", "T342:both-off-message"]), part.t342_assertions({"t342": t342_bad})
 # end T342
 
+# T343's block: the three cards (held coarser, nothing new, nothing held) and the chip and the button agreeing in every row.
+def t343_card(case, held=None, nothing_new=None, can=True, source="on this phone", enabled=True):
+    return {"case": case, "errors": [], "heldLine": held, "nothingNew": nothing_new, "canDownload": can, "source": source,
+            "button": {"shown": True, "enabled": enabled}}
+t343_good = {"cards": [t343_card("coarser", held="On this phone at low detail, with routing and place search"),
+                       t343_card("nothing-new", held="On this phone at full detail", nothing_new=f"Already on this phone in {F}: nothing new at this detail",
+                                 can=False, enabled=False),
+                       t343_card("nothing", source="no data here")]}
+assert part.t343_assertions({"t343": t343_good}) == [], part.t343_assertions({"t343": t343_good})
+assert part.t343_assertions({}) == [], "a table without the block's cards asserts nothing"
+t343_bad = {"cards": [t343_card("coarser"), t343_card("nothing-new", can=True), t343_card("nothing", held="On this phone at low detail")]}
+assert sorted(f["what"] for f in part.t343_assertions({"t343": t343_bad})) == ["T343:coarser", "T343:nothing", "T343:nothing-new"], part.t343_assertions({"t343": t343_bad})
+import tempfile
+with tempfile.TemporaryDirectory() as raw:
+    with open(os.path.join(raw, "on-inside-both-online.json"), "w", encoding="utf-8") as fh:
+        json.dump({"body": {"chip": {"download": {"shown": True, "text": "Already on this phone: x", "enabled": False}}}}, fh)
+    rows = [{"network": "on", "place": "inside-both", "summary": {"chip": {"source": "from public sources", "text": "Online · from public sources"}}}]
+    whats = sorted(f["what"] for f in part.t343_assertions({"rows": rows, "t343": {"cards": t343_good["cards"], "rawDir": raw}}))
+    assert whats == ["T343:already-not-on-phone", "T343:off-phone-not-offered"], whats
+# end T343
+
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:
     sweep = fh.read()

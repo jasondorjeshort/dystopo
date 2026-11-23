@@ -658,7 +658,8 @@ internal const val OTHER_RADIUS = "Other:"
 private val Ink = Color(0xFF2B2420)
 private val Muted = Color(0xFF6B5A4A)
 private val Paper = Color(0xFFFFFCF5)
-private val Link = Color(0xFF2C7BB6)
+/** T343: the links' blue, darkened from 0xFF2C7BB6 (4.4:1 on [Paper], under 4.5) to 5.7:1 (the a11y screen download-card). */
+private val Link = Color(0xFF1F6A9E)
 private val Teal = Color(0xFF00796B)
 private val Red = Color(0xFFB0302A)
 private val Line = Color(0xFFE2D8C6)

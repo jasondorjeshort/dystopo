@@ -184,7 +184,7 @@ class OnlineUi(
         column == Column.CACHE_KEPT -> KEPT_TILES
         column == Column.WIDER -> CUT_FROM_WIDER
         column == Column.WORLD -> FROM_WORLD
-        column == Column.OFF -> offSentence(held?.off?.map { it.name }.orEmpty()) // T343
+        column == Column.OFF -> OFF_SENTENCE // T343
         sourceText == NO_DATA -> "Nothing on this phone covers this view."
         sourceText == VIEWED -> "You viewed this part earlier. It stays until space is needed."
         else -> "This part of the map is coming over the network and is kept only until space is needed."
@@ -274,12 +274,14 @@ class OnlineUi(
         const val DOWNLOAD = "Download this area"
         /** T343 (ADR 0031: listed for the owner): the button where the phone holds the whole view at its detail, before the map's name. */
         const val ALREADY_PREFIX = "Already on this phone: "
-        /** T343: the chip's source where a map that is off would hold the view; the card says [offSentence]. */
+        /** T343: the chip's source where a map that is off would hold the view; the card says [OFF_SENTENCE]. */
         const val MAP_OFF = "a map here is off"
 
-        /** T343: the card's sentence for [Column.OFF], naming the maps that are off here. Pure, tested. */
-        fun offSentence(names: List<String>): String =
-            "A map here is off" + (if (names.isEmpty()) "" else ": ${names.joinToString(", ")}") + ". Turn it on in ${Screens.OFFLINE_MAPS} to use it here."
+        /**
+         * T343: the card's sentence for [Column.OFF]. The maps are not named (`held.off` in `GET /online` names them): at font 2.0 on
+         * its side the names took a line more and the layout rule hid the whole column for want of room.
+         */
+        const val OFF_SENTENCE = "A map here is off. Turn it on in ${Screens.OFFLINE_MAPS} to use it."
         private val NETWORK = setOf(Column.NETWORK_PUBLIC, Column.NETWORK_SERVER, Column.NETWORK_PEER)
 
         /** The snapshot for camera [cam] (read on the UI thread, source unknown): everything else is read here, on a worker. */
