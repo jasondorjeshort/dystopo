@@ -76,6 +76,7 @@ object PanoramaData {
         internal val pending = java.util.concurrent.ConcurrentHashMap.newKeySet<Double>()
         @Volatile var found: List<Peak>? = null
         @Volatile var peakTiles = 0
+        @Volatile var peakMaps: List<String> = emptyList() // T352: the maps that gave the names
         @Volatile var peaks: HorizonData.Peaks? = null
         @Volatile var peaksStep: Double? = null
         @Volatile var state: Gnss.HorizonState? = null
@@ -96,7 +97,7 @@ object PanoramaData {
                 "layers" to terrain?.layers?.map { l -> linkedMapOf("zoom" to l.window.zoom, "width" to l.window.width, "height" to l.window.height) }) + (answered?.json() ?: emptyMap()) + (if (terrain == null) mapOf("text" to null) else emptyMap())), // T340: no terrain horizon, no source named
             "sweeps" to sweeps.map { s -> linkedMapOf("stepDeg" to s.stepDeg, "samples" to s.samples, "ms" to s.ms, "atMs" to s.atMs) },
             "pending" to pending.sorted(),
-            "peaks" to linkedMapOf("tiles" to peakTiles, "read" to found?.size, "candidates" to peaks?.candidates?.size, "testedOnStepDeg" to peaksStep, "ms" to peaks?.ms),
+            "peaks" to linkedMapOf("tiles" to peakTiles, "maps" to peakMaps, "read" to found?.size, "candidates" to peaks?.candidates?.size, "testedOnStepDeg" to peaksStep, "ms" to peaks?.ms),
         )
     }
 
@@ -139,12 +140,13 @@ object PanoramaData {
             p.state = Gnss.HorizonState(p.lat, p.lon, p.finest!!.outer, null, p.answered?.text, null, p.terrainMs + (SystemClock.elapsedRealtime() - t0), terrain, p.epoch, p.answered)
             // The peaks: read once per place and range, tested again on each finer skyline.
             if (p.found == null) {
-                val (found, tiles) = HorizonData.readPeaksAt(p.lat, p.lon, p.rangeM, Viewshed.peakZoom(p.lat, p.rangeM))
-                p.found = found
-                p.peakTiles = tiles
+                val read = HorizonData.readPeaksAt(p.lat, p.lon, p.rangeM, Viewshed.peakZoom(p.lat, p.rangeM))
+                p.peakTiles = read.tiles
+                p.peakMaps = read.maps
+                p.found = read.found
             }
             if (p.peaksStep == null || finestStep < p.peaksStep!!) {
-                p.peaks = HorizonData.peaksOn(p.state!!, terrain, p.finest!!.outer, p.found.orEmpty(), p.peakTiles)
+                p.peaks = HorizonData.peaksOn(p.state!!, terrain, p.finest!!.outer, p.found.orEmpty(), p.peakTiles, maps = p.peakMaps)
                 p.peaksStep = finestStep
             }
         } catch (e: Exception) {
