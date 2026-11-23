@@ -9,6 +9,9 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
  * holds none, once the packs and the areas have been read. A phone that holds one, with the view wholly outside every
  * region and area and no online source drawing the view, reads [OUTSIDE_TEXT] with [OUTSIDE_ACTION]; an online source
  * draws the view, so it says nothing then.
+ *
+ * T342: a map switched off is held but covers nothing ([choose]'s `heldOff`): a phone whose maps are all off never sees the
+ * first-run card, and with nothing online reads [OUTSIDE_TEXT] wherever the view is.
  */
 enum class MapMessage(val code: String, val firstRun: Boolean, val hidesControls: Boolean) {
     /** The packs or the areas are still being read: no card and no text yet. */
@@ -26,11 +29,12 @@ enum class MapMessage(val code: String, val firstRun: Boolean, val hidesControls
         /**
          * Pure, tested. [opened]: the packs and the area records have been read. [regions] and [areas]: the boxes of the
          * open regions and of the downloaded areas. [view]: the visible box (null while the map is not up). [online]: an
-         * online source (a server, or the phone's own reading of the public sources) draws the view.
+         * online source (a server, or the phone's own reading of the public sources) draws the view. T342: [heldOff], a map
+         * that is off is on the phone: held, covering nothing.
          */
-        fun choose(opened: Boolean, regions: List<PackBounds>, areas: List<PackBounds>, view: PackBounds?, online: Boolean): MapMessage = when {
+        fun choose(opened: Boolean, regions: List<PackBounds>, areas: List<PackBounds>, view: PackBounds?, online: Boolean, heldOff: Boolean = false): MapMessage = when {
             !opened -> OPENING
-            regions.isEmpty() && areas.isEmpty() -> if (online) NOTHING_HELD_ONLINE else NOTHING_HELD
+            regions.isEmpty() && areas.isEmpty() && !heldOff -> if (online) NOTHING_HELD_ONLINE else NOTHING_HELD
             online || view == null -> NONE
             covers(regions + areas, view) -> NONE
             else -> OUTSIDE

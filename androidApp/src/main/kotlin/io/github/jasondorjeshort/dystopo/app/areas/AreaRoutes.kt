@@ -52,6 +52,9 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   unreadable (`area:<id>`); `state` is the row's word as drawn, `actions` the labels its opened row offers. `POST
  *   /areas/rows/action?id=<row id>&action=<label>` runs one as its tap does (Remove: every record naming the pack, then the pack and
  *   its download; an update or a trail-network fetch is only stopped) and answers its `result` with the rows after it.
+ *   T342: each row's `off` is its "Use on this phone" switch (true: the map is off, false: on, null: a row without one);
+ *   `POST /areas/rows/off?id=pack:<name>&off=1|0` sets it as the switch does, without a restart (`name=<pack>` for `id`), and
+ *   answers its `result` (`off`, `records` changed, `listed`, `offNames`, `active`, `inUse`) with the rows after it.
  * - T221, a removal you can see: `DELETE /areas/{id}` answers when the tiles are gone (`ms`, `tilesDeleted`); until then the area
  *   stays in `GET /areas` and `GET /areas/{id}` with `state` `removing` and `removing` (`done`, `total`, `line` as the row reads
  *   it, `ms`). `chunkDelayMs=N` (0 to 10000) waits after each chunk of 256 tiles, so a screenshot can catch the row.
@@ -178,6 +181,12 @@ object AreaRoutes {
                 return Response.json(mapOf("open" to open))
             }
             "GET" to "/areas/rows" -> return Response.json(rowsJson()) // T234
+            "POST" to "/areas/rows/off" -> { // T342: a map's "Use on this phone"
+                val name = r.query["name"] ?: r.query["id"]?.removePrefix(OfflineMapList.PACK)?.takeIf { r.query["id"]!!.startsWith(OfflineMapList.PACK) }
+                    ?: throw IllegalArgumentException("id=pack:<name> (GET /areas/rows) or name=<map>")
+                val off = when (r.query["off"]) { "1", "true" -> true; "0", "false" -> false; else -> throw IllegalArgumentException("off=1|0") }
+                return Response.json(linkedMapOf("id" to OfflineMapList.PACK + name, "result" to io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(app).setOff(name, off)) + rowsJson())
+            }
             "POST" to "/areas/rows/action" -> { // T234: a row's action, as its tap
                 val inputs = offlineMapInputs(app)
                 val id = r.query["id"] ?: throw IllegalArgumentException("id=<row id> (GET /areas/rows)")

@@ -52,7 +52,9 @@ object Areas : VersionPins {
     /** T242: [coverage]'s `why` while the online cache's index is built (the share is unknown until it is whole). */
     const val INDEXING = "indexing"
     private val app: DystopoApp get() = DystopoApp.instance
-    private val dir: File by lazy { File(app.filesDir, "areas").apply { mkdirs() } }
+    /** T342: the records' folder under the app's files dir ([offPacksIn] reads it before the records are loaded). */
+    const val DIR = "areas"
+    private val dir: File by lazy { File(app.filesDir, DIR).apply { mkdirs() } }
     private val file: File get() = File(dir, "areas.json")
     /** T140 (ADR 0041 §2): what a version-1 reader cannot parse whole. */
     private val sibling: File get() = File(dir, "areas2.json")
@@ -88,6 +90,11 @@ object Areas : VersionPins {
         val autoResume: AutoResume? = null,
         /** T170 (T151's follow-up): the download makes the contour tiles too (`contours=1`), kept for its resume and Retry. */
         val contours: Boolean = false,
+        /**
+         * T342: the map this record names ([pack]) is off: kept on the phone and in the list, read by nothing ([offPacksIn]).
+         * Written only when set; a record without it reads on (ADR 0033: an older build's save drops it, the map then reads on).
+         */
+        val off: Boolean = false,
     ) {
         val kind: String get() = if (pack != null) "pack" else "tiles"
 
@@ -110,6 +117,7 @@ object Areas : VersionPins {
             if (cancelled) m["cancelled"] = true
             autoResume?.let { m["autoResume"] = it.json() }
             if (contours) m["contours"] = true // T170: only when set, so other records are written as before
+            if (off) m["off"] = true // T342: the same
         }
 
         /** T140: an unreadable record's raw JSON and the sentence that refused it. */
@@ -165,6 +173,7 @@ object Areas : VersionPins {
                 cancelled = m["cancelled"] == true,
                 autoResume = (m["autoResume"] as? Map<*, *>)?.let { AutoResume.parse(it) },
                 contours = m["contours"] == true, // T170
+                off = m["off"] == true, // T342: absent reads on
             )
         }
     }
@@ -401,6 +410,19 @@ object Areas : VersionPins {
         records[id] = n
         changed()
         return n
+    }
+
+    /**
+     * T342: sets [Record.off] on every readable record naming the map [pack]; the number of records changed or already so
+     * (0: no record names it, and the caller keeps the state in the list beside the primary, [io.github.jasondorjeshort.dystopo.app.PackSet.storeOff]).
+     */
+    @Synchronized
+    fun setPackOff(pack: String, off: Boolean): Int {
+        load()
+        val ids = records.values.filter { it.pack == pack && it.opaque == null }.map { it.id }
+        for (id in ids) records[id] = records[id]!!.copy(off = off)
+        if (ids.isNotEmpty()) changed()
+        return ids.size
     }
 
     /** Pins or unpins [id]; unpinned tiles rejoin the cache's LRU order (and go first when it is over its cap). */
@@ -773,6 +795,19 @@ internal class AreaFiles(val records: List<Areas.Record>, val unreadable: List<M
             return AreaFiles(records.values.toList(), unreadable)
         }
     }
+}
+
+/**
+ * T342: the maps the records in [dir] (the app's `areas/`) turn off: those a readable record names with `off`. Read from the
+ * files, so [io.github.jasondorjeshort.dystopo.app.PackSet.open] has it at start before the records are loaded, and each
+ * reload sees the last save ([Areas] writes on every change). Pure on files, tested.
+ */
+internal fun offPacksIn(dir: File): Set<String> {
+    fun text(name: String) = runCatching { File(dir, name).takeIf { it.isFile }?.readText() }.getOrNull()
+    val main = text("areas.json")
+    val sibling = text("areas2.json")
+    if (main == null && sibling == null) return emptySet()
+    return AreaFiles.decode(main, sibling).records.filter { it.off && it.opaque == null }.mapNotNull { it.pack }.toSet()
 }
 
 /**

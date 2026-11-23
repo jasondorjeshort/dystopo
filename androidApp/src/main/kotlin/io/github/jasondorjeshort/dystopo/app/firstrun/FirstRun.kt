@@ -123,6 +123,7 @@ object FirstRun {
     fun mapMessage(app: DystopoApp, view: PackBounds?): MapMessage = MapMessage.choose(
         opened = io.github.jasondorjeshort.dystopo.app.areas.Areas.isRead,
         regions = regionBoxes(app), areas = areaBoxes(), view = view, online = app.tiles.online != null,
+        heldOff = app.tiles.packs.off.isNotEmpty(), // T342: a map that is off is held and covers nothing
     )
 
     /** T332: what the map last chose (`GET /firstrun` `mapMessage`), set by the map screen each half second. */
@@ -243,6 +244,7 @@ object FirstRun {
             "mapHolds" to linkedMapOf(
                 "opened" to io.github.jasondorjeshort.dystopo.app.areas.Areas.isRead, "regions" to app.tiles.packs.regions.size, "areas" to areaBoxes().size,
                 "online" to (app.tiles.online != null),
+                "off" to app.tiles.packs.off, // T342: maps on the phone that are off (held, covering nothing)
             ),
             "mapMessage" to lastMessage?.code, "textShown" to FirstRunCardState.text, "actionShown" to FirstRunCardState.action,
             "viewInside" to lastView?.let { v -> MapMessage.covers(regionBoxes(app) + areaBoxes(), v) },

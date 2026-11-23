@@ -14,9 +14,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
@@ -31,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -163,6 +168,14 @@ private fun CountrySheet() {
  */
 internal fun rowAction(row: OfflineMapList.Row, action: String, inputs: OfflineMapList.Inputs?, removing: (String, Boolean) -> Unit, done: () -> Unit) {
     val app = DystopoApp.instance
+    if (action == USE_ON_PHONE) { // T342: the row's switch
+        val pack = row.pack ?: return
+        thread(name = "dystopo-offline-map-off") {
+            runCatching { PackManager.get(app).setOff(pack, row.off != true) }.exceptionOrNull()?.let { android.util.Log.w(Areas.TAG, "${row.id}: $action failed", it) }
+            app.map.onMain { done() }
+        }
+        return
+    }
     if (action == OfflineMapList.STORAGE) {
         Areas.screenOpen = false
         io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true
@@ -216,7 +229,7 @@ internal fun PickerButton(text: String, onClick: () -> Unit) {
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-internal fun MapRow(row: OfflineMapList.Row, open: Boolean, onAction: (String) -> Unit) {
+internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = false, onAction: (String) -> Unit) {
     var renaming by remember(row.id) { mutableStateOf<String?>(null) } // T142: the card's Rename
     Column(
         Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).clickable { Areas.toggleDetail(row.detailKey) }.padding(10.dp),
@@ -237,6 +250,8 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, onAction: (String) -
             BasicText(if (open) " ▾" else " ▸", style = TextStyle(color = Muted, fontSize = 13.sp)) // T221: the row opens
         }
         BasicText(OfflineMapList.sizeText(row.bytes), style = TextStyle(color = Muted, fontSize = 12.sp))
+        // T342: "Use on this phone" on every map that opens, so whether it is used shows without opening the row.
+        row.off?.let { off -> UseOnPhone(row.id, off, help) { onAction(USE_ON_PHONE) } }
         if (open) {
             for (line in row.detail) BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -249,6 +264,33 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, onAction: (String) -
             }
         }
     }
+}
+
+/**
+ * T342: the row's switch, "Use on this phone", on by default; the whole line toggles it (a 48 dp target, role Switch). Off, the
+ * line [OFF_LINE] follows. The switch shows the tapped state at once ([pending]) until the rows are read again. [help]: the
+ * help icon ([USE_ON_PHONE_HELP]) on this row (the list's first switch only: one icon per key on a screen).
+ */
+@Composable
+private fun UseOnPhone(id: String, off: Boolean, help: Boolean, onToggle: () -> Unit) {
+    var pending by remember(id, off) { mutableStateOf<Boolean?>(null) }
+    val on = !(pending ?: off)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.weight(1f, fill = false).heightIn(min = 48.dp)
+                .toggleable(value = on, role = androidx.compose.ui.semantics.Role.Switch) { pending = !it; onToggle() }
+                .testTag("useOnPhone:$id"),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier.size(width = 40.dp, height = 22.dp).background(if (on) Teal else Color(0xFFD8CEBE), RoundedCornerShape(11.dp)).padding(3.dp),
+                contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+            ) { Box(Modifier.size(16.dp).background(Color.White, CircleShape)) }
+            BasicText(USE_ON_PHONE, style = TextStyle(color = Ink, fontSize = 14.sp))
+        }
+        if (help) HelpIcon(USE_ON_PHONE_KEY)
+    }
+    if (!on) BasicText(OFF_LINE, style = TextStyle(color = Color(0xFF8A5A00), fontSize = 12.sp))
 }
 
 /** T234: a state word's colour by its tone. */
@@ -288,6 +330,7 @@ internal fun offlineMapInputs(app: DystopoApp = DystopoApp.instance): OfflineMap
         older = records.mapNotNull { r -> if (Areas.older(r).isNullOrEmpty()) null else r.id to Areas.fromOtherSource(r) }.toMap(),
         active = manager.activeName(), units = AppSettings.units, now = now,
         indexing = !service.cache.ready, // T242
+        off = manager.offNames(), // T342
     )
 }
 
@@ -443,6 +486,16 @@ internal fun CorridorWidthRow() {
  * here takes its text with it. `POST /help/open` opens the sheet. The budget and the corridor width are read when the
  * pop-up opens: the pinned budget as set, the corridor in the units setting ([UnitFormat.distance]).
  */
+/** T342 (R2 in docs/TASKS.md; ADR 0031: listed for the owner): the row's switch, its line when off, and its help. */
+internal const val USE_ON_PHONE = "Use on this phone"
+internal const val OFF_LINE = "Off: not used. Still stored, still counts toward the limit."
+internal const val USE_ON_PHONE_KEY = "areas.useOnPhone"
+internal val USE_ON_PHONE_HELP: List<HelpText> = listOf(
+    HelpText(USE_ON_PHONE_KEY, USE_ON_PHONE, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, a map's row", show = { Areas.screenOpen = true }) {
+        "Turn off to stop the app using this map without deleting it. You can turn it on again at any time."
+    },
+)
+
 internal val AREAS_HELP: List<HelpText> = run {
     val show = { Areas.screenOpen = true }
     listOf(

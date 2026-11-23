@@ -69,14 +69,19 @@ class Pack(val name: String, val file: File) : AutoCloseable {
  * `<name>-dem.pmtiles` and `<name>-outdoors.pmtiles` ([PackNames]); the unnamed pair `dem.pmtiles` +
  * `osm.pmtiles` that tools/android-push-pack.ps1 pushes is the pack `default`.
  *
- * [TileService] asks [demFor] / [osmFor] per tile: the archives are ranked by [PackPrecedence] (vector:
- * outdoors profile over plain OpenMapTiles, then the deeper archive, then the primary pack, then the
- * smaller box), and a tile goes to the first archive that holds all of it, else the first that overlaps.
+ * [TileService] asks [demFor] / [osmFor] per tile: the archives are ranked by [PackPrecedence.ORDER] (vector:
+ * outdoors profile over plain OpenMapTiles, then the primary pack, then the deeper archive, then the
+ * smaller box, then the name), and a tile goes to the first archive that holds all of it, else the first that overlaps.
  * The primary pack ([name], stored in `files/packs/active`, set by
  * [io.github.jasondorjeshort.dystopo.app.packs.PackManager.activate]) is where the map starts, what the
  * contour warm-up prepares and a tie-breaker in the ranking; [dem] and [osm] are its archives.
+ *
+ * T342: a map switched off ("Use on this phone" off) is not opened, so nothing that reads maps through this set (the tile
+ * server, the terrain reads, search, routing, peers' tiles) sees it; [off] names those on the phone. The state is a field
+ * of the map's area records ([io.github.jasondorjeshort.dystopo.app.areas.Areas.Record.off]) and, for a map no record
+ * names, a list beside the stored primary ([OFF_FILE]); a primary that is off leaves the stored choice alone.
  */
-class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? = null, val world: Pack? = null) {
+class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? = null, val world: Pack? = null, val off: List<String> = emptyList()) {
     /** One pack's opened archives. */
     class Region(val name: String, val dem: Pack?, val osm: Pack?, val primary: Boolean) {
         val demCoverage: PackCoverage? = dem?.let { coverage(name, it, primary, vector = false) }
@@ -194,13 +199,36 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
             f.writeText(name + "\n")
         }
 
+        /** T342: the list beside [ACTIVE_FILE] of the maps that are off and named by no area record, one name a line. */
+        const val OFF_FILE = "off"
+
+        /** T342: the names in [OFF_FILE]; empty when there is none. */
+        fun storedOff(roots: List<File>): Set<String> =
+            roots.firstOrNull()?.let { File(it, "$PACKS_DIR/$OFF_FILE") }?.takeIf { it.isFile }?.readLines()?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet().orEmpty()
+
+        /** T342: [name] added to or taken from [OFF_FILE] (the file goes when it would be empty). */
+        fun storeOff(roots: List<File>, name: String, off: Boolean) {
+            val now = storedOff(roots)
+            val next = if (off) now + name else now - name
+            if (next == now) return
+            val f = File(roots.first(), "$PACKS_DIR/$OFF_FILE")
+            if (next.isEmpty()) { f.delete(); return }
+            f.parentFile?.mkdirs()
+            f.writeText(next.sorted().joinToString("\n", postfix = "\n"))
+        }
+
+        /** T342: every map that is off: those in [OFF_FILE] and those an area record marks off. */
+        fun offNames(roots: List<File>): Set<String> =
+            storedOff(roots) + roots.firstOrNull()?.let { io.github.jasondorjeshort.dystopo.app.areas.offPacksIn(File(it, io.github.jasondorjeshort.dystopo.app.areas.Areas.DIR)) }.orEmpty()
+
         /**
          * Opens every pack that has a DEM whose archives open and are complete (a truncated vector archive is
          * left out, the pack's DEM still shows), and (T65) every vector-only pack whose archive opens and is
-         * complete. [skip] names packs to leave closed (being deleted).
+         * complete. [skip] names packs to leave closed (being deleted); T342: [off] the maps that are off, left closed too.
          */
-        fun open(roots: List<File>, skip: Set<String> = emptySet()): PackSet {
-            val packs = catalog(roots).filter { it.name !in skip }
+        fun open(roots: List<File>, skip: Set<String> = emptySet(), off: Set<String> = offNames(roots)): PackSet {
+            val onPhone = catalog(roots).filter { it.name !in skip }
+            val packs = onPhone.filter { it.name !in off } // T342
             val stored = PackNames.chooseActive(packs.map { PackFileSet(it.name, it.dem?.name, it.vector?.name) }, storedActive(roots))
             val glyphs = roots.map { File(it, "glyphs") }.firstOrNull { it.isDirectory }
             fun open(file: File?, label: String): Pack? {
@@ -223,7 +251,7 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
             val primary = stored?.takeIf { s -> regions.any { it.name == s && it.dem != null } } ?: regions.firstOrNull { it.dem != null }?.name
             // T264: the world overview, from the first root only (where the copy puts it); absent until the first start's copy lands.
             val world = roots.firstOrNull()?.let { File(it, WORLD_FILE) }?.takeIf { it.isFile }?.let { open(it, WORLD_NAME) }
-            return PackSet(regions, glyphs, primary, world)
+            return PackSet(regions, glyphs, primary, world, onPhone.map { it.name }.filter { it in off })
         }
     }
 }

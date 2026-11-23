@@ -365,4 +365,14 @@ class HelpRegistryTest {
         }
     }
     // end T331
+
+    // T342: an offline map's "Use on this phone" says what off does and that it can be undone (R2's words).
+    @Test
+    fun theUseOnThisPhoneHelpSaysOffKeepsTheMap() {
+        val h = HelpRegistry.byKey(io.github.jasondorjeshort.dystopo.app.areas.USE_ON_PHONE_KEY)!!
+        assertEquals("Use on this phone", h.title)
+        assertEquals("Turn off to stop the app using this map without deleting it. You can turn it on again at any time.", h.text(ContourUnits.METERS))
+        assertEquals("Off: not used. Still stored, still counts toward the limit.", io.github.jasondorjeshort.dystopo.app.areas.OFF_LINE)
+    }
+    // end T342
 }

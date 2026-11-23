@@ -90,8 +90,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.aircraft.AIRCRAFT_HELP +
             // end T311
             // T333: the recording panel's weak-signal line.
-            io.github.jasondorjeshort.dystopo.app.tracking.WEAK_SIGNAL_HELP
+            io.github.jasondorjeshort.dystopo.app.tracking.WEAK_SIGNAL_HELP +
             // end T333
+            // T342: an offline map's "Use on this phone".
+            io.github.jasondorjeshort.dystopo.app.areas.USE_ON_PHONE_HELP
+            // end T342
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }
