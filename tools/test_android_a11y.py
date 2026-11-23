@@ -738,4 +738,23 @@ finally:
     a11y.time.sleep = _sleep
 # end T344
 
+# T351: the Panorama with its layers' panel open: Flight tracking on, the steering read and pinned in Drag, the switch's
+# Panorama, the wait, then Layers; its end closes the panel first and puts back what it found.
+py = [s for s in a11y.SCREENS if s[0] == "panorama-layers"]
+assert len(py) == 1 and py[0][3] == "screen" and py[0][2] is a11y.end_panorama_layers, py
+a11y.time.sleep = lambda s: None
+try:
+    ys = PanoSrv()
+    yctx = type("C", (), {"srv": ys})()
+    py[0][1](yctx)
+    assert ys.calls == [("POST", "/settings?aircraft=1"), ("GET", "/settings"), ("POST", "/settings?panoramaSteering=drag"),
+                        ("POST", "/horizon/switch?to=panorama"), ("GET", "/panorama?wait=60000"), ("POST", "/panorama?layers=1")], ys.calls
+    ys.calls.clear()
+    yctx.layers_steering_found = "follow"
+    py[0][2](yctx)
+    assert ys.calls[0] == ("POST", "/panorama?layers=0") and ys.calls[-1] == ("POST", "/settings?panoramaSteering=follow"), ys.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T351
+
 print("test_android_a11y: ok")

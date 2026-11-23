@@ -594,8 +594,8 @@ internal fun CorrectionPlate(deg: Double, pal: GnssPalette) {
     ) {
         val lineStyle = TextStyle(color = pal.ink, fontSize = LINE_TEXT_SP.sp)
         Box(Modifier.weight(1f, fill = false).padding(end = LINE_GAP_DP.dp)) {
-            BasicText(WIDEST_LINE, Modifier.clearAndSetSemantics { }, style = lineStyle.copy(color = Color.Transparent), maxLines = 2)
-            BasicText(io.github.jasondorjeshort.dystopo.horizon.HeadingCorrection.line(deg), style = lineStyle, maxLines = 2)
+            BasicText(WIDEST_LINE, Modifier.clearAndSetSemantics { }, style = lineStyle.copy(color = Color.Transparent))
+            BasicText(io.github.jasondorjeshort.dystopo.horizon.HeadingCorrection.line(deg), style = lineStyle) // T351: as many lines as it needs (the rule asks its height)
         }
         Box(
             Modifier.heightIn(min = PanoramaScene.ZOOM_BUTTON_DP.dp)

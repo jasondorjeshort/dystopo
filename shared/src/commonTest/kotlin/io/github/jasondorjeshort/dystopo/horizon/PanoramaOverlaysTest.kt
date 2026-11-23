@@ -168,10 +168,14 @@ class PanoramaOverlaysTest {
     @Test
     fun theCorrectionStandsAtTheLowerLeftBesideOrAboveTheSwitchAndTheCreditBelowIt() {
         for ((wDp, hDp) in windows) for (font in listOf(1.0, 2.0)) {
-            val l = PanoramaOverlays.place(input(wDp, hDp, font, null, Case.FOLLOW_AT_FIX))
+            val i = input(wDp, hDp, font, null, Case.FOLLOW_AT_FIX)
+            val l = PanoramaOverlays.place(i)
             val c = l[Item.CORRECTION]!!
             val sw = l[Item.SWITCH]!!
             val beside = c.left >= sw.right
+            // Whole beside the switch: as wide as above it, never squeezed (on the emulator a squeezed plate read "Co m").
+            val stackWidth = min(0.75 * wDp * dp, l[Item.ZOOM_IN]!!.left - 12 * dp)
+            if (beside) assertTrue(c.right - c.left >= i.correction!!.size(stackWidth).width - 0.5, "window $wDp x $hDp font $font: correction squeezed to $c")
             assertTrue(beside || c.bottom <= sw.top, "window $wDp x $hDp font $font: $c not beside or above $sw")
             if (!beside) assertEquals(6 * dp, c.left, 0.01)
             assertTrue(c.right <= l[Item.ZOOM_IN]!!.left || c.bottom <= l[Item.FOLLOW]!!.top)

@@ -22,7 +22,7 @@ import kotlin.math.min
  * - at the **lower right**, the zoom buttons ([BUTTON_DP] square, [BUTTON_MARGIN_DP] from the edges and apart) and
  *   "Follow phone" above them, lifted above the switch when the switch reaches under them;
  * - at the **lower left**, the compass correction's line and then the flights' credit: in the band beside the switch
- *   while each fits whole there (no more lines than above it), else stacked above the switch, clear of the lower right
+ *   while each fits whole there (as wide as it stands above it), else stacked above the switch, clear of the lower right
  *   column;
  * - the **edge arrow** at the point [OffView] gives, else the nearest place clear of every box above, a move along its
  *   edge counting a third of one across (T331's follow-up: names lay under its plate, its box not given to the scene).
@@ -141,13 +141,14 @@ object PanoramaOverlays {
         val bandRight = boxes.filterKeys { it == Item.ZOOM_IN || it == Item.ZOOM_OUT || it == Item.FOLLOW }.values
             .filter { sw != null && it.top < sw.bottom && it.bottom > sw.top }.minOfOrNull { it.left - g } ?: (w - m)
         var bandLeft = (sw?.right ?: 0.0) + g
-        val stackWidth = min(w * LOWER_LEFT_WIDTH, lowerRightLeft - g - m)
+        val stackWidth = min(w * LOWER_LEFT_WIDTH, min(zoomIn.left, zoomOut.left) - g - m)
+        val narrowWidth = min(w * LOWER_LEFT_WIDTH, lowerRightLeft - g - m)
         for ((item, plate) in listOf(Item.CORRECTION to i.correction, Item.CREDIT to i.credit)) {
             if (plate == null) continue
             if (sw != null && bandRight - bandLeft > 0) {
-                val s = plate.size(bandRight - bandLeft)
-                // Whole there: no more lines than in the stack's width (a line cut short to fit is not whole).
-                if (s.width <= bandRight - bandLeft + 0.5 && s.height <= plate.size(stackWidth).height + 0.5 && s.height <= sw.bottom - tape.bottom) {
+                // Whole there: as wide as it is in the stack's width (a plate squeezed narrower wraps or cuts its line).
+                val s = plate.size(stackWidth)
+                if (s.width <= bandRight - bandLeft + 0.5 && s.height <= sw.bottom - tape.bottom) {
                     val b = RimBox(bandLeft, sw.bottom - s.height, bandLeft + s.width, sw.bottom)
                     if (boxes.values.none { it.overlaps(b) }) {
                         boxes[item] = b
@@ -156,8 +157,13 @@ object PanoramaOverlays {
                     }
                 }
             }
-            val s = plate.size(stackWidth)
-            val b = RimBox(m, stackTop - s.height, m + min(s.width, stackWidth), stackTop)
+            // Clear of the zoom buttons; as narrow as Follow phone's edge only when it would reach up beside it.
+            var s = plate.size(stackWidth)
+            var b = RimBox(m, stackTop - s.height, m + min(s.width, stackWidth), stackTop)
+            if (boxes.values.any { it.overlaps(b) }) {
+                s = plate.size(narrowWidth)
+                b = RimBox(m, stackTop - s.height, m + min(s.width, narrowWidth), stackTop)
+            }
             boxes[item] = b
             stackTop = b.top - g
         }
