@@ -195,6 +195,73 @@ class OnlineOverlaySnapshotTest {
         assertFalse(OnlineUi("online", view(OnlineService.CACHED), mapOf("state" to "building"), true).offerDownload)
     }
 
+    // T343: the chip, the button and the Download card follow one rule (HeldHere over the view's box at the button's detail).
+    private val box = io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.78, 46.83, -121.74, 46.87) // near Mount Rainier's summit
+    private fun rainier(source: String) = OnlineView(46.85, -121.76, 13.0, box, source)
+    private fun map(name: String, vector: Int?, dem: Int?, off: Boolean = false) = io.github.jasondorjeshort.dystopo.packs.HeldHere.Holding(
+        name, io.github.jasondorjeshort.dystopo.packs.HeldHere.Kind.MAP, io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.95, 46.68, -121.45, 46.98),
+        vector, dem, routing = vector != null, off = off,
+    )
+    private fun held(vararg h: io.github.jasondorjeshort.dystopo.packs.HeldHere.Holding, detail: String = "full", routing: Boolean = true) =
+        io.github.jasondorjeshort.dystopo.packs.HeldHere.held(box, io.github.jasondorjeshort.dystopo.packs.HeldHere.Want(detail, routing), h.toList())
+    private fun ui(source: String, held: io.github.jasondorjeshort.dystopo.packs.HeldHere.Held?) =
+        OnlineUi("online", rainier(source), mapOf("state" to "idle"), false, direct = true, held = held)
+
+    @Test
+    fun theButtonIsOfferedOverACoarserMapAndSaysAlreadyWhereNothingIsNew() {
+        // A coarser map under the view (the owner's medium map-only case): the chip says on this phone, the button is an upgrade.
+        val coarse = ui(OnlineTiles.PACK, held(map("us-medium", 14, 13)))
+        assertTrue(coarse.offerDownload)
+        assertTrue(coarse.downloadEnabled)
+        assertEquals("Download this area", coarse.downloadText)
+        assertEquals("Online · on this phone", coarse.text)
+        assertEquals("On this phone at medium detail, with routing and place search", io.github.jasondorjeshort.dystopo.app.areas.heldLine(coarse.held))
+        assertNull(io.github.jasondorjeshort.dystopo.app.areas.nothingNewLine(coarse.held))
+        // A full-detail map: nothing new. The button names it and is disabled; the chip says on this phone whatever tile matched.
+        val fine = ui(OnlineService.CACHED, held(map("rainier-fine", 14, 14)))
+        assertTrue(fine.offerDownload)
+        assertFalse(fine.downloadEnabled)
+        assertEquals("Already on this phone", fine.downloadText)
+        assertEquals(listOf("rainier-fine"), fine.alreadyIn)
+        assertEquals("Online · on this phone", fine.text)
+        assertEquals(OnlineUi.SAVED_OFFLINE_MAP, fine.sourceSentence)
+        assertEquals("Already on this phone in rainier-fine: nothing new at this detail", io.github.jasondorjeshort.dystopo.app.areas.nothingNewLine(fine.held))
+        // Nothing held: the plain button, no card line.
+        val none = ui(OnlineService.ONLINE, held())
+        assertTrue(none.downloadEnabled && none.offerDownload)
+        assertEquals("Online · from public sources", none.text)
+        assertNull(io.github.jasondorjeshort.dystopo.app.areas.heldLine(none.held))
+        // Not worked out: as before T343, hidden over a map.
+        assertFalse(ui(OnlineTiles.PACK, null).offerDownload)
+    }
+
+    @Test
+    fun theChipSaysAMapHereIsOffWhereTheViewIsNotDrawnFromThePhone() {
+        val off = ui(OnlineService.ONLINE, held(map("rainier-fine", 14, 14, off = true)))
+        assertEquals(OnlineUi.Column.OFF, off.column)
+        assertEquals("Online · a map here is off", off.text)
+        assertEquals("A map here is off. Turn it on in Offline maps to use it.", off.sourceSentence)
+        assertEquals(OnlineUi.Link.OFFLINE_MAPS, off.link)
+        assertTrue(off.downloadEnabled, "an off map holds nothing: the download is offered")
+        // Drawn from another map on the phone: that map is what the chip names.
+        val onWide = ui(OnlineTiles.PACK, held(map("rainier-wide", 13, 11), map("rainier-fine", 14, 14, off = true)))
+        assertEquals("Online · on this phone", onWide.text)
+    }
+
+    @Test
+    fun aRegionWantsRoutingOnlyOnThePackPath() {
+        assertTrue(io.github.jasondorjeshort.dystopo.app.areas.regionWant(box, "full").routing)
+        assertFalse(io.github.jasondorjeshort.dystopo.app.areas.regionWant(box, "medium").routing)
+        assertFalse(io.github.jasondorjeshort.dystopo.app.areas.regionWant(io.github.jasondorjeshort.dystopo.packs.PackBounds(-125.0, 42.0, -117.0, 49.0), "full").routing)
+        // Part held: the card says part, at the finest holding's detail.
+        val part = io.github.jasondorjeshort.dystopo.packs.HeldHere.held(
+            io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.72, 46.85, -121.64, 46.88), io.github.jasondorjeshort.dystopo.packs.HeldHere.Want("less", false),
+            listOf(io.github.jasondorjeshort.dystopo.packs.HeldHere.Holding("view-1", io.github.jasondorjeshort.dystopo.packs.HeldHere.Kind.AREA,
+                io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.82, 46.80, -121.68, 46.90), 13, 13, routing = false)),
+        )
+        assertEquals("Part of this area is on this phone at less detail, map only", io.github.jasondorjeshort.dystopo.app.areas.heldLine(part))
+    }
+
     @Test
     fun progressWhileRunning() {
         val d = mapOf<String, Any?>("state" to "building", "name" to "view-x", "percent" to 24.6, "packLabel" to "outdoors, Overpass")

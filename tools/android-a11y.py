@@ -134,8 +134,11 @@ def label_of(n):
 def key_label(text):
     """The label a baseline keys by: a number (digits, a decimal point) read as #, a byte unit after it (B, kB, KB,
     MB, GB, TB) read as B, white space folded, at most 60 characters ("30 MB", "3.4 MB" and "840 kB" key alike as
-    "# B", so a size that crosses a unit keeps its baseline line)."""
+    "# B", so a size that crosses a unit keeps its baseline line). T343: a reading's no-value mark before its unit ("?" or a dash,
+    "pressure – mbar", "climb ? ft/h": the readout before the barometer or the climb has a reading) is read as # too, so a line
+    holds whether the reading has come yet or not."""
     folded = re.sub(r"\d+(?:[.,]\d+)*", "#", text or "")
+    folded = re.sub(r"(?<!\S)[?–—-](?=\s+(?:ft/h|m/h|ft|m|mbar|hPa|inHg|mmHg|mi|km)(?![A-Za-z]))", "#", folded)  # T343
     folded = re.sub(r"#\s*(?:B|kB|KB|MB|GB|TB)(?![A-Za-z])", "# B", folded)
     return re.sub(r"\s+", " ", folded).strip()[:60] or "-"
 
@@ -1196,6 +1199,28 @@ def end_recording_stale(c):
 # end T348
 
 
+# T343
+def scr_download_card(c):
+    """T343: the Download card ("Download this area", `POST /areas/region`) over the view at Mount Rainier's summit at z13: the
+    card opens with what the phone holds there (its first line, `GET /areas/picker` `heldLine`) and, where the phone holds every
+    tile at the detail shown, the line in place of Download (`nothingNew`); closed by end_download_card. The readout strip
+    under the card is one overlap line of the baseline: its climb is pinned to no reading (`POST /readout/reset`, then a fresh
+    fix at Paradise), since a climb left by an earlier screen's fixes ("climb ↓1.2k ft/h") keyed apart; the pressure keys alike
+    with a reading or without ("pressure – mbar", key_label)."""
+    c.srv.ok("POST", "/readout/reset")
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+    c.srv.ok("POST", f"/camera?lat={SUMMIT[0]}&lon={SUMMIT[1]}&zoom=13&bearing=0")
+    time.sleep(2.0)
+    c.srv.ok("POST", "/areas/region?wait=60000", timeout=120.0)
+    time.sleep(1.5)
+
+
+def end_download_card(c):
+    c.srv.call("POST", "/areas/picker/close")
+    c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
+# end T343
+
+
 # T344
 def scr_panorama_list(c):
     """T344: the List view, the switch's fourth segment, at the fix (Paradise) with the Flights layer on T311's replay
@@ -1265,6 +1290,9 @@ SCREENS = [
     # T348
     ("recording-stale", scr_recording_stale, end_recording_stale, "map"),
     # end T348
+    # T343
+    ("download-card", scr_download_card, end_download_card, "map"),
+    # end T343
     # T344
     ("panorama-list", scr_panorama_list, end_panorama_list, "screen"),
     # end T344

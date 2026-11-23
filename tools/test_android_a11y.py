@@ -698,6 +698,29 @@ finally:
     a11y.time.sleep = _sleep
 # end T348
 
+# T343: the Download card at Mount Rainier's summit (z13), opened as the map's button does; its end closes it and puts the
+# camera back on the view the screens start from.
+dc = [s for s in a11y.SCREENS if s[0] == "download-card"]
+assert len(dc) == 1 and dc[0][3] == "map" and dc[0][2] is a11y.end_download_card, dc
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    dsrv = RowsSrv([])
+    ctx = type("C", (), {"srv": dsrv})()
+    dc[0][1](ctx)
+    calls = [p for _m, p in dsrv.calls]
+    assert calls[0] == "/readout/reset" and calls[1].startswith("/location?") and calls[2:] == [
+        "/camera?lat=46.8529&lon=-121.7604&zoom=13&bearing=0", "/areas/region?wait=60000"], dsrv.calls
+    dsrv.calls.clear()
+    dc[0][2](ctx)
+    assert [p for _m, p in dsrv.calls][0] == "/areas/picker/close" and dsrv.calls[1][1].startswith("/camera?"), dsrv.calls
+finally:
+    a11y.time.sleep = _sleep
+# The readout keys alike with and without its readings (the barometer's "–", the climb's "?"), never a "?" in prose.
+assert a11y.key_label("elevation 5405 ft · climb ? ft/h · pressure – mbar") == a11y.key_label("elevation 5405 ft · climb 0 ft/h · pressure 1013 mbar")
+assert a11y.key_label("What? Tap here") == "What? Tap here"
+# end T343
+
 # T344: the List view with the Flights replay: opened by the switch's "List", waited for its peaks; its end is the
 # panorama-flights end (the replay stopped, Flight tracking off).
 pl = [s for s in a11y.SCREENS if s[0] == "panorama-list"]

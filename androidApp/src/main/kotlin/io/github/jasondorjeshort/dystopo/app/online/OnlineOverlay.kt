@@ -32,10 +32,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.areas.Areas
 import io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList
 import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 import io.github.jasondorjeshort.dystopo.app.storage.Storage
+import io.github.jasondorjeshort.dystopo.packs.HeldHere
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -46,6 +48,8 @@ private val Line = Color(0xFFE2D8C6)
 private val Chip = Color(0xEEFFFCF5)
 private val Green = Color(0xFF3C8A3F)
 private val Grey = Color(0xFF9A8F84)
+/** T343: the disabled button's words (the picker's muted ink, over 4.5:1 on the chip's paper). */
+private val Muted = Color(0xFF6B5A4A)
 private val Red = Color(0xFFB0302A)
 private val LinkBlue = Color(0xFF2C7BB6)
 
@@ -65,6 +69,11 @@ class OnlineUi(
     val state: String, val view: OnlineView?, val download: Map<String, Any?>, val running: Boolean, val notice: String? = null, val direct: Boolean = false,
     val firstRunCard: Boolean = false,
     val network: Boolean = true, val serverSet: Boolean = !direct, val server: String? = null, val cache: CacheFigures? = null,
+    /**
+     * T343: what the phone holds over the view's box at the detail "Download this area" would open at ([HeldHere], the one rule
+     * of the chip, the button and the Download card); null when not worked out (no view, or it failed): the rules before T343.
+     */
+    val held: HeldHere.Held? = null,
 ) {
     enum class Dot { GREEN, GREY, RED }
 
@@ -78,7 +87,7 @@ class OnlineUi(
      * T236: the table's columns: where the view's map is. A network tile names its source: public, the user's server, a nearby
      * phone. T255: [WIDER], a tile the phone lacked, cut from the nearest one it holds at a wider zoom (T254, [OnlineTiles.WIDER]).
      */
-    enum class Column { PACK, NETWORK_PUBLIC, NETWORK_SERVER, NETWORK_PEER, CACHE_KEPT, CACHE, WIDER, WORLD, NO_DATA }
+    enum class Column { PACK, NETWORK_PUBLIC, NETWORK_SERVER, NETWORK_PEER, CACHE_KEPT, CACHE, WIDER, WORLD, NO_DATA, OFF }
 
     /** T236: the online tile cache's figures for the card, read with [TileCache]'s getters (never a whole-index method). */
     class CacheFigures(val bytes: Long, val pinnedBytes: Long, val capMb: Long, val partial: Boolean)
@@ -112,8 +121,21 @@ class OnlineUi(
     /** The chip's state word and its dot. */
     val label: Pair<String, Dot> get() = row.word to row.dot
 
-    /** T236: the view's column (a cache hit inside an offline map on the list is "kept"; T80: a network tile names its source). */
-    val column: Column get() = when (view?.source) {
+    /**
+     * T236: the view's column (a cache hit inside an offline map on the list is "kept"; T80: a network tile names its source).
+     * T343, one rule with the button ([held]): a view the phone holds whole at the button's detail is on this phone (an offline
+     * map, or a tile area's kept tiles), whatever tile was matched; a view not drawn from the phone where a map that is off
+     * (T342) would hold part of it is [Column.OFF], "a map here is off".
+     */
+    val column: Column get() {
+        val h = held
+        if (h != null && h.verdict == HeldHere.Verdict.ALL) return if (h.holders.any { it.atDetail && it.kind == HeldHere.Kind.MAP }) Column.PACK else Column.CACHE_KEPT
+        val c = tileColumn
+        return if (h != null && h.off.isNotEmpty() && c != Column.PACK && c != Column.CACHE_KEPT) Column.OFF else c
+    }
+
+    /** The column of the tile matched at the view's centre ([OnlineView.source]). */
+    private val tileColumn: Column get() = when (view?.source) {
         OnlineTiles.PACK -> Column.PACK
         OnlineService.ONLINE -> if (direct) Column.NETWORK_PUBLIC else if (serverSet) Column.NETWORK_SERVER else Column.NETWORK_PEER
         OnlineService.CACHED -> if (view.kept) Column.CACHE_KEPT else Column.CACHE
@@ -134,6 +156,7 @@ class OnlineUi(
         Column.CACHE -> VIEWED
         Column.WIDER -> WIDER_ZOOM
         Column.WORLD -> WORLD_OVERVIEW
+        Column.OFF -> MAP_OFF
     }
 
     /** T236: the chip's whole text. */
@@ -161,6 +184,7 @@ class OnlineUi(
         column == Column.CACHE_KEPT -> KEPT_TILES
         column == Column.WIDER -> CUT_FROM_WIDER
         column == Column.WORLD -> FROM_WORLD
+        column == Column.OFF -> OFF_SENTENCE // T343
         sourceText == NO_DATA -> "Nothing on this phone covers this view."
         sourceText == VIEWED -> "You viewed this part earlier. It stays until space is needed."
         else -> "This part of the map is coming over the network and is kept only until space is needed."
@@ -189,6 +213,12 @@ class OnlineUi(
         "text" to text, "word" to row.word, "source" to sourceText, "dot" to row.dot.name.lowercase(Locale.US), "row" to row.name.lowercase(Locale.US),
         "column" to column.name.lowercase(Locale.US), "open" to open, "hidden" to hidden,
         "detail" to listOf(stateSentence, sourceSentence), "figure" to cacheLine, "link" to link?.text,
+        // T343: the button beside it, by the same rule (shown, its words, whether a tap opens the card, the maps it names), and the rule's answer.
+        "download" to linkedMapOf(
+            "shown" to (offerDownload && (downloadEnabled || !OnlineChip.cramped)), "text" to downloadText, "enabled" to downloadEnabled, "maps" to alreadyIn,
+            "cramped" to OnlineChip.cramped,
+        ),
+        "held" to held?.json(),
     )
 
     /** The progress line while a download runs, else null. */
@@ -200,8 +230,25 @@ class OnlineUi(
         return String.format(Locale.US, "%s %s%s: %.0f%%", phase, download["name"], kind, pct)
     }
 
-    /** "Download this area" is offered: online (T236: with a network), a view, not all pack, nothing running; T220: not while the first-run card is up (its first choice is the same thing). */
-    val offerDownload: Boolean get() = !running && state == "online" && network && view != null && view.source != OnlineTiles.PACK && !firstRunCard
+    /**
+     * "Download this area" is offered: online (T236: with a network), a view, nothing running; T220: not while the first-run card is
+     * up (its first choice is the same thing). T343: over an offline map too, where a download would add to it (a finer detail, or
+     * routing and search); where it would add nothing the button stays, disabled, as "Already on this phone: <map>"
+     * ([downloadText]). Without [held] (not worked out) it is hidden over a map, as before T343.
+     */
+    val offerDownload: Boolean get() = !running && state == "online" && network && view != null && !firstRunCard && (held != null || view.source != OnlineTiles.PACK)
+
+    /** T343: the maps (or areas) that already hold the whole view at the button's detail, finest first; empty when a download would add something. */
+    val alreadyIn: List<String> get() = held?.takeIf { it.verdict == HeldHere.Verdict.ALL }?.holders?.filter { it.atDetail }?.map { it.name }.orEmpty()
+
+    /**
+     * T343: the button's words: "Download this area", or "Already on this phone" where nothing would be new (no map's name: the
+     * Download card's first line names what holds it, and a name made the column too tall at font 2.0 on its side).
+     */
+    val downloadText: String get() = if (alreadyIn.isEmpty()) DOWNLOAD else ALREADY
+
+    /** T343: a tap opens the Download card; not where nothing would be new. */
+    val downloadEnabled: Boolean get() = alreadyIn.isEmpty()
 
     /** The line after a finished or failed download, or null. T236: "Saved as an offline map: <name>" (ADR 0056). */
     val result: Pair<String, Dot?>? get() = when (download["state"]) {
@@ -231,25 +278,51 @@ class OnlineUi(
         const val SOURCES_NOT_ANSWERING = "The public map sources are not answering. The map still works where it is on this phone."
         /** T236: the overlay's button (ADR 0056: "area", not "region"). */
         const val DOWNLOAD = "Download this area"
+        /** T343 (ADR 0031: listed for the owner): the button, disabled, where the phone holds the whole view at its detail. */
+        const val ALREADY = "Already on this phone"
+        /** T343: the chip's source where a map that is off would hold the view; the card says [OFF_SENTENCE]. */
+        const val MAP_OFF = "a map here is off"
+
+        /**
+         * T343: the card's sentence for [Column.OFF]. The maps are not named (`held.off` in `GET /online` names them): at font 2.0 on
+         * its side the names took a line more and the layout rule hid the whole column for want of room.
+         */
+        const val OFF_SENTENCE = "A map here is off. Turn it on in ${Screens.OFFLINE_MAPS} to use it."
         private val NETWORK = setOf(Column.NETWORK_PUBLIC, Column.NETWORK_SERVER, Column.NETWORK_PEER)
 
         /** The snapshot for camera [cam] (read on the UI thread, source unknown): everything else is read here, on a worker. */
         fun make(service: OnlineService, app: DystopoApp, cam: OnlineView?): OnlineUi {
             val view = cam?.let { OnlineView.resolve(app, it) }
+            val held = view?.bounds?.let { box -> runCatching { heldFor(box, view.zoom) }.getOrNull() } // T343
             val server = AppSettings.server
             val c = service.cache // T242: the getters never wait and are partial while the index is built
             return OnlineUi(
                 service.state(), view, service.region.json(), service.region.running, if (service.isDirect) service.direct.notice() else null, service.isDirect,
                 io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState.visible,
                 network = hasNetwork(app), serverSet = server.isNotEmpty() && service.fetcher != null, server = server.ifEmpty { null },
-                cache = CacheFigures(c.bytes, c.pinnedBytes, AppSettings.onlineCacheMb, c.partial),
+                cache = CacheFigures(c.bytes, c.pinnedBytes, AppSettings.onlineCacheMb, c.partial), held = held,
             )
         }
 
-        /** T236: the phone has a network now (an active one with capabilities, as [DirectSources.onCellular] reads it). */
+        /**
+         * T343: [HeldHere] over [box] for "Download this area" from a view at [zoom]: the detail the card opens at
+         * ([io.github.jasondorjeshort.dystopo.app.areas.regionWant]) and everything on the phone ([Areas.holdings]). The chip asks
+         * it once a second, so its cells stop at [CHIP_CELLS]. Not on the UI thread.
+         */
+        fun heldFor(box: io.github.jasondorjeshort.dystopo.packs.PackBounds, zoom: Double): HeldHere.Held =
+            HeldHere.held(box, io.github.jasondorjeshort.dystopo.app.areas.regionWant(box, io.github.jasondorjeshort.dystopo.app.areas.regionDetail(zoom)), Areas.holdings(), CHIP_CELLS)
+
+        /** T343: the chip's cap on [HeldHere]'s cells (a 64 by 64 grid). */
+        const val CHIP_CELLS = 4096
+
+        /**
+         * T236: the phone has a network now (an active one with capabilities, as [DirectSources.onCellular] reads it). T343 (T340's
+         * finding): no active network is no network; it asked for the capabilities of none, whose failure read as a network, so
+         * the chip said Online in airplane mode.
+         */
         fun hasNetwork(context: android.content.Context): Boolean = runCatching {
             val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            cm.getNetworkCapabilities(cm.activeNetwork) != null
+            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
         }.getOrDefault(true)
     }
 }
@@ -261,6 +334,14 @@ class OnlineUi(
 object OnlineChip {
     var open by mutableStateOf(false)
     @Volatile var cardPx: FloatArray? = null
+        internal set
+
+    /**
+     * T343: the window is on its side at a large font (1.5 and up), where the column has no room for the disabled "Already on this
+     * phone" button beside the open card and the cards below (the device tour's cards step at 2.0 on its side): it is left out
+     * there, the Download card's first line saying what holds the view. Set by the composable from the configuration.
+     */
+    @Volatile var cramped = false
         internal set
 
     /** `onlineCard` in `GET /layout` (main thread): the card's rectangle; it lies inside the online column (`M8`), which grows with it. */
@@ -296,6 +377,9 @@ fun OnlineOverlay() {
             io.github.jasondorjeshort.dystopo.app.Foreground.delay(1000) // T150: paused in the background
         }
     }
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    val cramped = cfg.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && cfg.fontScale >= CRAMPED_FONT_SCALE
+    OnlineChip.cramped = cramped
     val u = ui
     if (u == null || u.hidden) {
         OnlineChip.cardPx = null
@@ -331,7 +415,8 @@ fun OnlineOverlay() {
             // T153: the button opens the area picker's size-first summary for the visible box (no span cap, the detail chosen
             // for the view, the estimate, the pack path or the area path said); hidden while that card is up.
             if (u.offerDownload && io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.mode !is io.github.jasondorjeshort.dystopo.app.areas.AreaPicker.Mode.Region) {
-                Button(OnlineUi.DOWNLOAD) {
+                if (!u.downloadEnabled) { if (!cramped) Button(u.downloadText, enabled = false) {} } // T343: nothing new here; no room for it when cramped
+                else Button(OnlineUi.DOWNLOAD) {
                     message = null
                     thread(name = "region-open") {
                         message = try {
@@ -354,6 +439,9 @@ fun OnlineOverlay() {
         }
     } }
 }
+
+/** T343: the font scale from which a window on its side is [OnlineChip.cramped]. */
+private const val CRAMPED_FONT_SCALE = 1.5f
 
 /** T236: the chip's card: the two sentences, the cache's figure (T242: the indexing line while partial), at most one link. */
 @Composable
@@ -390,14 +478,14 @@ private fun color(d: OnlineUi.Dot) = when (d) {
 }
 
 @Composable
-private fun Button(label: String, onClick: () -> Unit) {
+private fun Button(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     BasicText(
         label,
-        style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium),
+        style = TextStyle(color = if (enabled) Ink else Muted, fontSize = 14.sp, fontWeight = FontWeight.Medium),
         modifier = Modifier
             .background(Chip, RoundedCornerShape(16.dp))
             .border(1.dp, Line, RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick) // T343: disabled where nothing is new (read as disabled)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     )
 }

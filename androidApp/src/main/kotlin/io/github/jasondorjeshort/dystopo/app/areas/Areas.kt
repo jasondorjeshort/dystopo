@@ -17,6 +17,7 @@ import io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp
 import io.github.jasondorjeshort.dystopo.areas.PolygonRings
 import io.github.jasondorjeshort.dystopo.areas.TileSet
 import io.github.jasondorjeshort.dystopo.areas.TilesItem
+import io.github.jasondorjeshort.dystopo.packs.HeldHere
 import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
 import java.io.File
 
@@ -274,6 +275,38 @@ object Areas : VersionPins {
             ).also { recordedPins = all to it }
         }
         return pins.isPinned(key)
+    }
+
+    /** T343: the finished tile areas as holdings, built again only when [list] changes ([holdings]). */
+    @Volatile private var heldAreas: Pair<List<Record>, List<HeldHere.Holding>>? = null
+
+    /**
+     * T343: everything on the phone as [HeldHere] holdings, for the status chip, the map's
+     * Download button and the Download card: each offline map on the phone (its box and its archives' deepest zooms; with
+     * a map archive it brings routing and place search, as its row says; T342: [HeldHere.Holding.off] when it is off), and
+     * each finished tile area (its own cells at its zooms, map only). A map that does not open (T352) holds nothing. Any
+     * thread but the UI one (it reads the maps' headers, cached by [PackManager]).
+     */
+    fun holdings(): List<HeldHere.Holding> {
+        val pm = PackManager.get(app)
+        val inUse = pm.inUse().toSet()
+        val off = pm.offNames()
+        val maps = pm.list().filter { it.info.name in inUse || it.info.name in off }.mapNotNull { l ->
+            val box = l.info.bounds ?: return@mapNotNull null
+            HeldHere.Holding(
+                l.info.name, HeldHere.Kind.MAP, box, l.info.vector?.maxZoom, l.info.dem?.maxZoom, routing = l.info.vector != null, off = l.info.name in off,
+            )
+        }
+        awaitLoaded()
+        val all = list
+        val areas = heldAreas?.takeIf { it.first === all }?.second ?: all.filter { it.pack == null && it.opaque == null && it.state == "done" }.map { r ->
+            val sets = java.util.concurrent.ConcurrentHashMap<Int, TileSet>()
+            HeldHere.Holding(
+                r.name, HeldHere.Kind.AREA, r.area.bounds, r.area.maxZoom, r.area.demMaxZoom ?: r.area.maxZoom, routing = false,
+                cells = { z, x, y -> sets.getOrPut(z) { io.github.jasondorjeshort.dystopo.areas.TileCover.of(r.area, z) }.contains(x, y) },
+            )
+        }.also { heldAreas = all to it }
+        return maps + areas
     }
 
     /** T95 ([VersionPins]): the pins with their versions, for the fetcher's lookups and version changes. */
