@@ -37,7 +37,7 @@ first imports N synthetic GPX tracks over Rainier (areas.json's box; fixed ids i
 none) through `POST /tracks/import`, T280's `--clear-online-cache` empties the online tile cache (`POST /online/cache/clear`;
 the `cacheIndex` stage walks every cached file, reported per launch as `cacheWalk`), `--clear-divergences` deletes the kept
 trail divergences (`files/divergence.json`: a recording after the seed runs them over the 52 synthetic tracks, 56 records in
-80 KB, and `map.attach` parses that on the main thread, `mapview` 58 to about 200 ms), and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
+80 KB, which `map.attach` parsed on the main thread until T347 moved the read to a thread of its own, `mapview` 58 to about 200 ms), and `--dem`/`--osm` copy the packs to `files/packs/` (as `android-emu.ps1` does) when
 the phone's copy differs in size; then the device's load is waited out (`android_debug.wait_quiet`). `--budget` compares
 the medians with the file's ceilings (`budget`: one row per stage and frame, `red` and its `reasons`) and exits 1 when a
 median is over its ceiling or a stage shows an undeclared StrictMode kind; a stage missing from the run or from the file
@@ -256,10 +256,11 @@ def _keep(entry, was, old):
     after the device parts and reads some stages slower (T268: `maplibre` 178 ms on a task's emulator, 203 to 241 on sweep
     emulators), and a lower ceiling is set by hand in the commit that lands an improvement (the rule). When `was` (the old
     file's entry) has the higher ceiling, the entry keeps it and says so in `kept` (the old file's set date); its `raised`
-    note stays either way."""
+    and `lowered` notes (T347) stay either way."""
     was = was or {}
-    if was.get("raised"):
-        entry["raised"] = was["raised"]
+    for note in ("lowered", "raised"):
+        if was.get(note):
+            entry[note] = was[note]
     if (was.get("ceilingMs") or 0) > entry["ceilingMs"]:
         entry["ceilingMs"] = was["ceilingMs"]
         entry["kept"] = was.get("kept") or ((old or {}).get("set") or {}).get("date") or True
@@ -553,7 +554,7 @@ def main():
     ap.add_argument("--clear-online-cache", action="store_true",
                     help="T280: with the seed, empty the online tile cache first (pinned tiles stay): the cacheIndex stage walks every cached file")
     ap.add_argument("--clear-divergences", action="store_true",
-                    help="T280: with the seed, delete the kept trail divergences (files/divergence.json), which the map parses on the main thread at launch")
+                    help="T280: with the seed, delete the kept trail divergences (files/divergence.json), which the map parses at launch (off the main thread since T347)")
     ap.add_argument("--quiet", type=float, default=0, help="before the launches, wait up to this many s for a quiet device")
     ap.add_argument("--budget", help="the ceilings file (tools/launch-budget.json): compare, exit 1 when red")
     ap.add_argument("--set-budget", nargs="+", metavar="REPORT", help="write --budget from the reports (eight or more, T306) instead of launching")
