@@ -38,6 +38,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("two_maps_fixture", os.path.join(HERE, "two-maps-fixture.py"))
@@ -267,6 +268,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
             for place in fx.PLACES:
                 table["rows"].append(read_row(dev, place, net, wait_ms, raw_dir))
         table["t352"] = t352_rows(dev, wait_ms, raw_dir)
+        table["t342"] = t342_collect(dev, wait_ms, raw_dir)  # T342: the rows with a map switched off (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
     finally:
@@ -360,7 +362,123 @@ def assertions(table):
         if len({(h.get("peakCandidates"), h.get("source")) for h in prim}) > 1:
             out.append({"what": "T352:primary-matters", "rows": [[h.get("peakCandidates"), h.get("source")] for h in prim]})
     # end T352
+    # T342
+    out += t342_assertions(table)
+    # end T342
     return out
+
+
+# T342: a map switched off ("Use on this phone", `POST /areas/rows/off`). After the eight rows, with the network off and a
+# cold start (so nothing kept from the phases answers): the place inside both maps read with the fine map off, then on again
+# with no restart (the app's pid the same), then with both maps off; both are put back on at the end, whatever failed. With
+# the fine map off every reader is on the wide one (the maps in use, the Horizon's and the Panorama's terrain); on again the
+# fine one is read again; both off, the map says "No offline map covers this view" with its action, never the first-run
+# card, and Storage still counts both maps (with the online sources off as well, put back at the end: the network off alone
+# leaves the phone's own reading of the sources counted as drawing). Depends on nothing an earlier part leaves: it switches
+# the network off and restarts the app itself; it needs only the fixture this part installed.
+T342_CASES = ["fine-off", "fine-on-again", "both-off"]
+
+
+def t342_collect(dev, wait_ms, raw_dir):
+    place = next(p for p in fx.PLACES if p["id"] == "inside-both")
+    wide, fine = fx.MAPS[0]["name"], fx.MAPS[1]["name"]
+    out = {"switches": [], "rows": []}
+
+    def switch(name, off):
+        st, body, err = dev.call(f"/areas/rows/off?name={name}&off={1 if off else 0}", "POST", timeout=120)
+        out["switches"].append({"name": name, "off": off, "status": st, "error": err, "inUse": get(body, "result", "inUse"),
+                                "offNames": get(body, "result", "offNames")})
+
+    def read(case):
+        row = read_row(dev, place, f"t342-{case}", wait_ms, raw_dir)
+        raw = {}
+        for name in ("horizon", "panorama"):
+            try:
+                with open(os.path.join(raw_dir, f"t342-{case}-{place['id']}-{name}.json"), encoding="utf-8") as fh:
+                    raw[name] = json.load(fh).get("body")
+            except (OSError, ValueError):
+                raw[name] = None
+        _, rows, _ = dev.call("/areas/rows")
+        _, storage, _ = dev.call("/storage")
+        stored = {p.get("name"): p.get("bytes") for p in (get(storage, "stores", "packs", "packs") or []) if isinstance(p, dict)}
+        row.update(case=case, pid=fx.ad.app_pid(dev.exe, dev.serial),
+                   horizonMaps=get(raw["horizon"], "horizon", "terrain", "maps"), panoramaMaps=get(raw["panorama"], "work", "terrain", "maps"),
+                   off={r.get("pack"): r.get("off") for r in (get(rows, "rows") or []) if isinstance(r, dict) and r.get("pack")},
+                   storageBytes={n: stored.get(n) for n in (wide, fine)})
+        out["rows"].append(row)
+
+    try:
+        out["network"] = fx.network(dev, False)
+        dev.restart()
+        switch(fine, True)
+        read("fine-off")
+        switch(fine, False)
+        read("fine-on-again")
+        switch(fine, True)
+        switch(wide, True)
+        # No online source either (the server and the phone's own reading of the sources, as a11y's map-outside does): with
+        # direct reading on, the map counts an online source as drawing the view even with the network off (T332's rule).
+        _, st, _ = dev.call("/settings")
+        _, d, _ = dev.call("/firstrun/direct")
+        out["onlineBefore"] = {"server": (st or {}).get("server") or "", "direct": bool((d or {}).get("enabled", True))}
+        dev.call("/settings?server=", "POST")
+        dev.call("/firstrun/direct?on=0", "POST")
+        read("both-off")
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        switch(fine, False)
+        switch(wide, False)
+        before = out.get("onlineBefore")
+        if before:
+            dev.call("/settings?server=" + urllib.parse.quote(before["server"], safe=""), "POST")
+            dev.call(f"/firstrun/direct?on={1 if before['direct'] else 0}", "POST")
+    return out
+
+
+def t342_assertions(table):
+    out = []
+    t = table.get("t342")
+    if not isinstance(t, dict):
+        return out  # not run: the phases failed before it (the table's error says why), or a table from before T342
+    wide, fine = fx.MAPS[0]["name"], fx.MAPS[1]["name"]
+    if t.get("error"):
+        out.append({"what": "T342:error", "error": t["error"]})
+    for sw in t.get("switches") or []:
+        if sw.get("error"):
+            out.append({"what": "T342:switch", "switch": sw})
+    rows = {r.get("case"): r for r in t.get("rows") or []}
+    for case in T342_CASES:
+        r = rows.get(case)
+        if r is None:
+            out.append({"what": "T342:missing", "case": case})
+            continue
+        if not r.get("ok"):
+            out.append({"what": "T342:unread", "case": case, "unread": r.get("unread")})
+        sm = r.get("summary") or {}
+        in_use = [n for n in get(sm, "maps", "inUse") or [] if n != "world"]  # the built-in world overview is no map of the list
+        want_off = {"fine-off": {wide: False, fine: True}, "fine-on-again": {wide: False, fine: False}, "both-off": {wide: True, fine: True}}[case]
+        if {k: (r.get("off") or {}).get(k) for k in want_off} != want_off:
+            out.append({"what": "T342:rows-off", "case": case, "off": r.get("off")})
+        if any(not isinstance(b, int) or b <= 0 for b in (r.get("storageBytes") or {}).values()) or not r.get("storageBytes"):
+            out.append({"what": "T342:storage", "case": case, "storageBytes": r.get("storageBytes")})
+        if case == "fine-off":
+            for what, maps in (("inUse", in_use), ("horizon", r.get("horizonMaps")), ("panorama", r.get("panoramaMaps"))):
+                if list(maps or []) != [wide]:
+                    out.append({"what": f"T342:fine-off-{what}", "maps": maps})
+        if case == "fine-on-again":
+            for what, maps in (("inUse", in_use), ("horizon", r.get("horizonMaps")), ("panorama", r.get("panoramaMaps"))):
+                if fine not in (maps or []):
+                    out.append({"what": f"T342:on-again-{what}", "maps": maps})
+            before = rows.get("fine-off", {}).get("pid")
+            if not before or r.get("pid") != before:
+                out.append({"what": "T342:restarted", "pids": [before, r.get("pid")]})
+        if case == "both-off":
+            m = sm.get("map") or {}
+            if in_use or m.get("mapMessage") != "outside" or not m.get("actionShown") or m.get("noPack") or m.get("cardVisible"):
+                out.append({"what": "T342:both-off-message", "inUse": in_use, "map": m})
+    return out
+# end T342
 
 
 def main(argv=None):

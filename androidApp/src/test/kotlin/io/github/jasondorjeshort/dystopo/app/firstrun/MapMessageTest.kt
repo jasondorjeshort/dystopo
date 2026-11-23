@@ -92,4 +92,19 @@ class MapMessageTest {
         assertFalse(MapMessage.heldArea("cancelled", isPack = false))
         assertFalse(MapMessage.heldArea("done", isPack = true)) // a pack area is a region, counted there
     }
+
+    // T342: a map switched off is held and covers nothing: every map off never shows the first-run card; offline the view
+    // reads the outside message with its action, online nothing.
+    @Test
+    fun everyMapOffReadsTheOutsideMessageAndNeverTheFirstRun() {
+        val m = MapMessage.choose(opened = true, regions = emptyList(), areas = emptyList(), view = inside, online = false, heldOff = true)
+        assertEquals(MapMessage.OUTSIDE, m)
+        assertFalse(m.firstRun)
+        assertFalse(m.hidesControls)
+        assertEquals(MapMessage.NONE, MapMessage.choose(true, emptyList(), emptyList(), inside, online = true, heldOff = true))
+        assertEquals(MapMessage.NOTHING_HELD, MapMessage.choose(true, emptyList(), emptyList(), inside, online = false, heldOff = false))
+        // One map on and one off: the one on decides, as before.
+        assertEquals(MapMessage.NONE, MapMessage.choose(true, listOf(rainier), emptyList(), inside, online = false, heldOff = true))
+    }
+    // end T342
 }

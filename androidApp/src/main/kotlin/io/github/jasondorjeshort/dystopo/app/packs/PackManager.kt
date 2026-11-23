@@ -46,6 +46,25 @@ class PackManager private constructor(private val app: DystopoApp) {
     /** T41: every pack the map draws from now. */
     fun inUse(): List<String> = app.tiles.packs.regions.map { it.name }
 
+    /** T342: the maps on the phone that are off ("Use on this phone" off): kept, listed, counted, read by nothing. */
+    fun offNames(): Set<String> = PackSet.offNames(roots())
+
+    /**
+     * T342: turns map [name] on or off for this phone, without a restart: the state goes on every area record naming it, else
+     * in the list beside the primary ([PackSet.storeOff]); turning on clears both. The packs are opened again ([DystopoApp.reload]),
+     * so the tile server, the terrain reads, search and routing stop or start reading it. The stored primary is left alone.
+     */
+    @Synchronized
+    fun setOff(name: String, off: Boolean): Map<String, Any?> {
+        find(name) ?: throw NoSuchElementException("no map '$name'")
+        val records = io.github.jasondorjeshort.dystopo.app.areas.Areas.setPackOff(name, off)
+        PackSet.storeOff(roots(), name, off && records == 0)
+        val was = name in inUse()
+        if (was == off) app.reload()
+        Log.i(TAG, "map $name ${if (off) "off" else "on"} (records $records)")
+        return linkedMapOf("name" to name, "off" to off, "records" to records, "listed" to (name in PackSet.storedOff(roots())), "offNames" to offNames().sorted(), "active" to activeName(), "inUse" to inUse())
+    }
+
     /** Header and metadata of one archive, cached by path, size and mtime. Errors are reported, not thrown. */
     private fun archive(file: File?): Cached? {
         file ?: return null
@@ -80,6 +99,7 @@ class PackManager private constructor(private val app: DystopoApp) {
     fun json(): Map<String, Any?> {
         val active = activeName()
         val used = inUse().toSet()
+        val off = offNames()
         val packs = list()
         return linkedMapOf(
             "active" to active,
@@ -87,7 +107,7 @@ class PackManager private constructor(private val app: DystopoApp) {
             "dir" to packsDir.path,
             "roots" to roots().map { File(it, PackSet.PACKS_DIR).path },
             "count" to packs.size,
-            "packs" to packs.map { it.json(it.info.name == active) + mapOf("inUse" to (it.info.name in used)) },
+            "packs" to packs.map { it.json(it.info.name == active) + mapOf("inUse" to (it.info.name in used), "off" to (it.info.name in off)) }, // T342: off
             "downloads" to downloads.activeCount(),
             "search" to io.github.jasondorjeshort.dystopo.app.search.PlaceSearch.json(app), // T39, T41: every pack's search index (build progress)
             "routing" to io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.json(app), // T45: active pack trail graph (build progress)
@@ -173,6 +193,7 @@ class PackManager private constructor(private val app: DystopoApp) {
         PlaceSearch.forget(name)
         ShippedGraphs.forget(name) // T189
         catalogClient.forget(name) // T53: its recorded content hashes
+        PackSet.storeOff(roots(), name, false) // T342: a map of that name downloaded again starts on
         io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner.forget(name) // T49
         // T41: and its contour tiles (no DEM file on the device has that identity any more).
         app.collectContourGarbage()

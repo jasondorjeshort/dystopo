@@ -1137,6 +1137,29 @@ def end_panorama_elsewhere(c):
 # end T340
 
 
+# T342
+def scr_offline_maps_off(c):
+    """T342: the Offline maps list with a map switched off: the first row with a "Use on this phone" switch turned off
+    (`POST /areas/rows/off`), so the row draws the switch off and its line "Off: not used. ..."; put back on by
+    end_offline_maps_off, also after a failed setup."""
+    rows = (c.srv.ok("GET", "/areas/rows") or {}).get("rows") or []
+    row = next((r for r in rows if r.get("off") is not None), None)
+    if row is None:
+        raise RuntimeError("no row with a \"Use on this phone\" switch (no map on the phone)")
+    c.offline_off_id = row["id"]
+    c.srv.ok("POST", "/areas/rows/off?off=1&id=" + urllib.parse.quote(row["id"]), timeout=60.0)
+    c.srv.ok("POST", "/packs/ui?show=true")
+    time.sleep(2.0)  # the list's poll reads the rows again
+
+
+def end_offline_maps_off(c):
+    rid = getattr(c, "offline_off_id", None)
+    if rid:
+        c.srv.call("POST", "/areas/rows/off?off=0&id=" + urllib.parse.quote(rid))
+    c.srv.call("POST", "/packs/ui?show=false")
+# end T342
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1180,6 +1203,9 @@ SCREENS = [
     # T340
     ("panorama-elsewhere", scr_panorama_elsewhere, end_panorama_elsewhere, "screen"),
     # end T340
+    # T342
+    ("offline-maps-off", scr_offline_maps_off, end_offline_maps_off, "screen"),
+    # end T342
 ]
 
 

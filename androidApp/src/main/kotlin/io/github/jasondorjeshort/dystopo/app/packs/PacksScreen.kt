@@ -332,8 +332,9 @@ private fun OfflineMapsScreen(manager: PackManager, close: () -> Unit) {
                 }
             }
             if (empty) item(key = "empty") { BasicText(PacksUi.EMPTY, style = TextStyle(color = Ink, fontSize = 14.sp)) }
+            val helpRow = rows.firstOrNull { it.off != null }?.id // T342: the switch's help icon on the first row that has one
             items(rows, key = { it.id }) { row ->
-                MapRow(row, row.detailKey in Areas.detailOpen) { action ->
+                MapRow(row, row.detailKey in Areas.detailOpen, help = row.id == helpRow) { action ->
                     rowAction(row, action, base, { id, on -> removing = if (on) removing + id else removing - id }) { refresh++ }
                 }
             }

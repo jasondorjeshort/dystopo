@@ -171,6 +171,28 @@ assert got == sorted(["T352:horizon-peaks", "T352:panorama-peaks", "T352:horizon
 assert [f["what"] for f in part.assertions({"rows": [], "t352": {"rows": good_extra["rows"][:2]}})] == ["T352:rows"]
 # end T352
 
+# T342's block: with the fine map off every reader is on the wide one, on again (no restart) it is read again, both off the
+# outside message with its action; the rows' switches and Storage's bytes in every case.
+W, F = fx.MAPS[0]["name"], fx.MAPS[1]["name"]
+def t342_row(case, in_use, hm, pm, off, pid=4242, message="none", action=False):
+    return {"case": case, "ok": True, "pid": pid, "horizonMaps": hm, "panoramaMaps": pm, "off": off, "storageBytes": {W: 10, F: 5},
+            "summary": {"maps": {"inUse": in_use}, "map": {"mapMessage": message, "actionShown": action, "noPack": False, "cardVisible": False}}}
+t342_good = {"switches": [{"name": F, "off": True}], "rows": [
+    t342_row("fine-off", [W], [W], [W], {W: False, F: True}),
+    t342_row("fine-on-again", [W, F], [F, W], [F, W], {W: False, F: False}),
+    t342_row("both-off", [], None, None, {W: True, F: True}, pid=4343, message="outside", action=True)]}
+assert part.t342_assertions({"t342": t342_good}) == [], part.t342_assertions({"t342": t342_good})
+assert part.t342_assertions({}) == [], "a table without the block's rows asserts nothing"
+t342_bad = {"switches": [{"name": F, "off": True, "error": "HTTP 500"}], "rows": [
+    t342_row("fine-off", [W, F], [F, W], [W], {W: False, F: False}),
+    t342_row("fine-on-again", [W], [W], [W], {W: False, F: False}, pid=1),
+    t342_row("both-off", [], None, None, {W: True, F: True}, message="nothingHeld")]}
+t342_bad["rows"][0]["storageBytes"] = {W: 10, F: None}
+assert sorted(f["what"] for f in part.t342_assertions({"t342": t342_bad})) == sorted([
+    "T342:switch", "T342:rows-off", "T342:storage", "T342:fine-off-inUse", "T342:fine-off-horizon", "T342:on-again-inUse",
+    "T342:on-again-horizon", "T342:on-again-panorama", "T342:restarted", "T342:both-off-message"]), part.t342_assertions({"t342": t342_bad})
+# end T342
+
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:
     sweep = fh.read()
