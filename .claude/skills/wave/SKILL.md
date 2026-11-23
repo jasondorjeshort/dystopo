@@ -137,10 +137,11 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    `origin/task/Tnn`; then `git push origin --delete task/Tnn`, the worktree removal,
    `git branch -d task/Tnn` and the task's AVD and its verifier's (`avdmanager delete avd -n
    dystopo35-Tnn`, after `adb devices` shows neither running; waves 22 and 23 left 27 AVDs, about
-   127 GB, and C: reached under 1 GB free during the sweep of 2026-10-31; never `-D` for a merged task. When a verifier rebased the branch, the implementer's local ref still holds the old commits and `-d` refuses (T227): the coordinator compares patch-ids (`git log -p --reverse origin/main..task/Tnn | git patch-id --stable` against the merged commits), and the brief then runs `git branch -f task/Tnn <merged head>` and `-d`; worktree removal on Windows:
-   `docs/reference/windows-and-shells.md`: give the chore the `\\?\` delete and one git command per
-   call, and launch it only after the verifier has reported its last check, or its emulator and Gradle
-   daemon hold files in the folder).
+   127 GB, and C: reached under 1 GB free during the sweep of 2026-10-31; never `-D` for a merged task. When a verifier rebased the branch, the implementer's local ref still holds the old commits and `-d` refuses (T227): the coordinator compares patch-ids (`git log -p --reverse origin/main..task/Tnn | git patch-id --stable` against the merged commits), and the brief then runs `git branch -f task/Tnn <merged head>` and `-d`; the worktree removal is
+   `tools\worktree-remove.ps1 -Path <worktrees>\Tnn -WorktreeRoot <worktrees>` (long paths, the unlock and
+   the prune built in; exit 4 names a process that holds a file; `docs/reference/windows-and-shells.md`,
+   Worktrees); launch the chore only after the verifier has reported its last check, or its emulator and
+   Gradle daemon hold files in the folder).
 5. Write the dated log entry and the **Status:** line to two files and run
    `python -I tools/merge-log.py Tnn <entry> <status>` (it updates `docs/PLANNING.md`, `docs/TASKS.md`
    and `CHANGELOG.md` together, or none of them when it refuses a task already logged or with a Status line;
