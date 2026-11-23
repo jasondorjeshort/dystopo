@@ -115,6 +115,7 @@ No Gradle, no emulator; from the start. Two fixes, each its own commit.
 **Interacts with:** T345, through the tools' test runner.
 **Done when:** the Checks pass; in a scratch clone pair a commit pushed from one is listed by the other with its trailer and tag, and `push-verified.sh` on `main` stops with exit 3 while on a task branch it is unchanged; the script removes a scratch worktree holding a path over 260 characters and refuses one a process holds; the longest build path measured; in the scratch pair a push of `main` refused while `hold/main` exists on the remote and allowed after it is deleted; all shown in the report.
 **Checks:** `{"checks": [{"name": "main-news-tests", "run": ["python", "-I", "tools/test_main_news.py"], "exit": 0}, {"name": "worktree-remove-tests", "run": ["python", "-I", "tools/test_worktree_remove.py"], "exit": 0}]}`
+**Status: merged.** Verifier MERGE WITH NOTES on 554db8a3 (merged as 4999a190), no fix round, no Gradle (tools and docs only). Follow-ups: `core.longpaths` in `docs/reference/machines.md` and `.claude/skills/brief/implementer.md` (the coordinator's); a held file on a path of 260 characters or more is refused without naming its holder (`Find-Holders` keeps the `\?\` prefix); a hold refuses its setter's pushes too; `-Main` defaults to the checkout that owns the script.
 
 ### T350. A proposal: one "what does the phone hold here?" lookup for every reader
 No Gradle; launched after T340 is merged (the owner's Answer: "once T332's report and the Panorama's terrain fix have landed").
