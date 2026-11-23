@@ -18,3 +18,5 @@ touch them? Recommended: a proposal, since the readers disagree today because ea
 them disagreeing for many waves.
 
 Answer: a proposal with a critic, once T332's report and the Panorama's terrain fix have landed (the owner, 2026-11-22, by multiple choice at triage).
+
+2026-11-23 (T350): proposal `docs/design/proposals/0066-one-lookup-for-what-the-phone-holds-here.md` is under review; it lists 32 readers from the code and recommends one pure lookup in `shared` (`Holdings`) that rows 1 to 28 ask, with depth before the map chosen last, in six build tasks for a later wave.

@@ -19,3 +19,5 @@ Recommended: yes; it is the cheapest way for the owner and testers to see which 
 the function rather than a third reader of pack state.
 
 Answer: yes, built as the first visible use of the "what does the phone hold here?" function once it exists (the owner, 2026-11-22, by multiple choice at triage).
+
+2026-11-23 (T350): proposal `docs/design/proposals/0066-one-lookup-for-what-the-phone-holds-here.md` is under review; the panel is its sixth build task, after the coverage readers move to the lookup; its lines come from the lookup alone.
