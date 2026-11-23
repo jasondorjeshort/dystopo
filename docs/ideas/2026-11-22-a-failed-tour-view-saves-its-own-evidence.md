@@ -16,3 +16,15 @@ What it would take: when a view or a cards check of `tools/android-check.py` fai
 
 - The same for the release parts of `tools/android-ui.py`, which cannot ask debug routes: logcat and `dumpsys` only.
 - A flake ledger: one line per unexplained failure with its evidence folder, so a second sight is recognised (the handoff carried these two by hand).
+
+Plan: Owns `tools/android-check.py`, `tools/test_android_check.py`, `tools/verify-task.ps1`, `tools/sweep.ps1`,
+`tools/test_verify_task.py`, `docs/reference/android-debug-routes.md` (or the tour's section where the tour is
+documented). Today the summary keeps `logcat_since` lines and a view's `notIdleBecause`, nothing else. Add an
+`evidence(server, exe, serial, label, kind)` helper called the moment a view, a cards check or the direct step fails:
+`GET /debug/cpu` twice 10 s apart, `/health` (pending tiles and `notIdleBecause`), `/stats/requests`, the package's
+last 200 logcat lines, and for a cards check the accessibility dump it judged, into `<stem>-evidence/<label>/`; the
+view's report gains `evidence: <folder>`; each read is guarded so a dead app still leaves what it could. In
+`verify-task.ps1` and `sweep.ps1` a re-run of the tour writes to a new numbered stem instead of over the failed one.
+Verify: a fixture test in `test_android_check.py` (a fake server that fails one view: the folder and its files exist);
+one emulator tour with a view forced to fail (`--wait-ms 1`), the folder read by hand. Out of scope: `android-ui.py`'s
+release parts and the flake ledger (both under Open).
