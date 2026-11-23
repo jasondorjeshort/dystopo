@@ -15,3 +15,14 @@ What it would take: one Gradle task (or a step of `tools/verify-task.ps1`, which
 
 - `check` must stay runnable without Python on a fresh machine, or say plainly what is missing; the nightly workflow (`.github/workflows/nightly.yml`) is the other place it must run.
 - The coordinator's recommendation at recording: put this on the next wave without waiting for triage.
+
+Plan: [no-check: the runner is this pass's to create] Owns new `tools/run-tool-tests.py`, root `build.gradle.kts`, `.github/workflows/nightly.yml` (only if its
+check job lacks Node), `docs/reference/devtool-commands.md` (the check line). `check` already needs Python
+(`userTextCheck`), so the Open point on Python is settled. The runner runs each `tools/test_*.py` in its own
+`python -I` process (one file's failure hides no other file), then `node .claude/hooks/test-hooks.js`; it skips with
+a named reason where a tool is missing (`test_verify_task.py` without `powershell`, the hooks without `node`) and
+prints one JSON object (per file: ok, seconds, the failure's tail) and exits 1 on any failure. Wire it as an `Exec`
+task `toolsTest` in `check` beside `userTextCheck`, inputs `tools/**/*.py`, `tools/*.ps1` and `.claude/hooks/**` so an
+unchanged tree is up to date (the hook tests alone take over two minutes). Verify: all files green on `main`; a
+deliberately broken assertion in one file fails `check` while the others still report; nightly green. Out of scope:
+converting the eight plain-assert files to `unittest` (a follow-up pass), `verify-task.ps1` changes.
