@@ -55,20 +55,7 @@ class PanoramaCorrectionTest {
         assertNull(run(12.0, Set(null)))
     }
 
-    @Test
-    fun thePlateStandsAtTheLowerLeftClearOfTheButtonsAndTheCredit() {
-        val dp = 2.625
-        val (w, h) = 1080.0 to 810.0
-        val size = PlateSize(0.75 * w, 70 * dp, 0.0, 0.0)
-        val zoom = io.github.jasondorjeshort.dystopo.horizon.PanoramaScene.zoomCorner(w, h, dp)
-        val follow = followButtonBox(w, h, dp, 140 * dp)
-        for (credit in listOf(0.0, CREDIT_ROOM_DP)) {
-            val b = correctionBoxAt(h, dp, size, credit)
-            assertEquals(6 * dp, b.left, 1e-9)
-            assertEquals(h - (6 + credit) * dp, b.bottom, 1e-9)
-            for (o in listOf(zoom, follow)) assertFalse(b.left < o.right && b.right > o.left && b.top < o.bottom && b.bottom > o.top, "$b over $o")
-        }
-    }
+    // T351: where the plate stands is the overlays' rule's now (PanoramaOverlaysTest in shared).
 
     @Test
     fun theWeakCompassLineShowsAfterTwoSecondsLowWhileFollowing() {

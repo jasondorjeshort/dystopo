@@ -20,14 +20,5 @@ class PanoramaFollowTextTest {
         assertEquals("Facing NNW 347°, 60° across", PanoramaStrings.facing(347.2, 60.0))
     }
 
-    @Test
-    fun theFollowButtonStandsAboveTheZoomButtons() {
-        val dp = 2.0
-        val b = followButtonBox(800.0, 600.0, dp, 200.0)
-        val zin = io.github.jasondorjeshort.dystopo.horizon.PanoramaScene.zoomButtons(800.0, 600.0, dp)[0]
-        assertEquals(zin.right, b.right)
-        assertEquals(48 * dp, b.bottom - b.top)
-        assertEquals(zin.top - 8 * dp, b.bottom)
-        assertEquals(200.0, b.right - b.left)
-    }
+    // T351: where Follow phone stands is the overlays' rule's now (PanoramaOverlaysTest in shared).
 }

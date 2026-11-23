@@ -153,6 +153,32 @@ class PanoramaOverlaysTest {
     }
 
     @Test
+    fun followPhoneStandsAboveTheZoomButtonsRightAligned() {
+        for ((wDp, hDp) in windows) {
+            val l = PanoramaOverlays.place(input(wDp, hDp, 1.0, null, Case.NOTHING))
+            val f = l[Item.FOLLOW]!!
+            val zin = l[Item.ZOOM_IN]!!
+            assertEquals(zin.right, f.right, 0.01)
+            assertEquals(48 * dp, f.bottom - f.top, 0.01)
+            assertEquals(zin.top - 8 * dp, f.bottom, 0.01)
+            assertEquals(l[Item.ZOOM_OUT]!!.top - 8 * dp, zin.bottom, 0.01)
+        }
+    }
+
+    @Test
+    fun theCorrectionStandsAtTheLowerLeftBesideOrAboveTheSwitchAndTheCreditBelowIt() {
+        for ((wDp, hDp) in windows) for (font in listOf(1.0, 2.0)) {
+            val l = PanoramaOverlays.place(input(wDp, hDp, font, null, Case.FOLLOW_AT_FIX))
+            val c = l[Item.CORRECTION]!!
+            val sw = l[Item.SWITCH]!!
+            val beside = c.left >= sw.right
+            assertTrue(beside || c.bottom <= sw.top, "window $wDp x $hDp font $font: $c not beside or above $sw")
+            if (!beside) assertEquals(6 * dp, c.left, 0.01)
+            assertTrue(c.right <= l[Item.ZOOM_IN]!!.left || c.bottom <= l[Item.FOLLOW]!!.top)
+        }
+    }
+
+    @Test
     fun aNarrowWindowLiftsTheLowerRightColumnAboveTheSwitch() {
         // At font 2.0 the switch is 335.6 dp wide: on a 360 dp window it reaches under the zoom buttons' column.
         val l = PanoramaOverlays.place(input(360.0, 692.0, 2.0, null))

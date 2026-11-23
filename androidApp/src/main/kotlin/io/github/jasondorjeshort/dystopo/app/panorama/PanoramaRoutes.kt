@@ -12,7 +12,7 @@ import io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi
 import io.github.jasondorjeshort.dystopo.dem.PeakView
 import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
 import io.github.jasondorjeshort.dystopo.horizon.PanoramaAim
-import io.github.jasondorjeshort.dystopo.horizon.PanoramaScene
+import io.github.jasondorjeshort.dystopo.horizon.PanoramaOverlays
 import io.github.jasondorjeshort.dystopo.horizon.SkyView
 
 /**
@@ -22,7 +22,7 @@ import io.github.jasondorjeshort.dystopo.horizon.SkyView
  * - `GET /panorama`: `open` (the Panorama showing), `showing` (`map`, `horizon` or `panorama`), `aim` (`bearingDeg`,
  *   `tiltDeg`, `fovDeg`, `opening`: where the opening's bearing came from, `peak`, `heading`, `heading-late` or `north`),
  *   `plot` (`rectPx` in the Compose root, `widthPx`, `heightPx`, `dp`, `widthDp`, `heightDp`, `levelY` (px from the plot's
- *   top, null off the view), `zoomButtonsPx` (in the Compose root, as `rectPx`)), `listPx` (the pane's scrolling list), `headingScrolls`, `drawn` (the
+ *   top, null off the view), `zoomButtonsPx` (in the Compose root, as `rectPx`)), `drawn` (the
  *   layout, the place line, the layers, the steps wanted), `place` (`point`, `placeLine`), `range` (`viewRangeKm`),
  *   `names` (each placed: `name`, `x`, `y`, `markX`, `markY`, `dominant`, `distanceKm`, `bearingDeg`, `angleDeg`, `leader`),
  *   `leftOut` (`name`, `reason`: `behind the viewer`, `off the view`, `no room`), `dominant` and `closest` (the candidates'),
@@ -59,6 +59,12 @@ import io.github.jasondorjeshort.dystopo.horizon.SkyView
  *   a sign). `POST` adds `correction=<deg>|none` (sets it while following, 409 in Drag; `none` is Reset),
  *   `compassStatus=<0..3>|none` (a simulated accuracy status for the weak-compass rule; `none` reads the sensor's again);
  *   in Follow `drag=` is the heading correction along the level line as a finger's, and `arrow=1` answers 409 (no tap).
+ * - T351 (the lens fills the window): `GET` adds `overlays` (`boxes`: each overlay's box as `PanoramaOverlays` placed it,
+ *   in the Compose root, px, by key: `tape`, `switch`, `layers`, `list`, `place`, `picked`, `hint`, `zoomIn`, `zoomOut`,
+ *   `follow`, `credit`, `correction`, `arrow`, those shown; `overlap`: the first two that overlap, or null; `free`: the band
+ *   between the upper and the lower overlays; `plotIsWindow`: the plot's size in dp equals the window's), `layersOpen` and
+ *   `layersPx` (the layers' panel); `drawn.plotDp` equals `drawn.windowDp`. `listPx` and `headingScrolls` are gone with
+ *   the pane. `POST` adds `layers=1|0` (the Layers button: the panel open or closed).
  */
 object PanoramaRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -169,6 +175,12 @@ object PanoramaRoutes {
             if (!ok) return Response.json(mapOf("error" to "a correction stands only while the view follows the phone (steering=follow)"), 409)
         }
         // end T331
+        // T351: the Layers button's tap (open or close the layers' panel).
+        q["layers"]?.let { v ->
+            val open = when (v) { "1", "true" -> true; "0", "false" -> false; else -> return bad("layers must be 1 or 0") }
+            if (!waitAim(app)) return Response.json(mapOf("error" to "the Panorama is not open (or its plot has no size yet)"), 409)
+            app.map.onMain { PanoramaUi.layersOpen = open }
+        }
         if (q["back"] == "1") app.map.onMain { (app.map.activity as? androidx.activity.ComponentActivity)?.onBackPressedDispatcher?.onBackPressed() }
         q["select"]?.let { name ->
             app.map.onMain {
@@ -308,12 +320,26 @@ object PanoramaRoutes {
                     "widthDp" to Math.round(w / dp), "heightDp" to Math.round(h / dp),
                     "levelY" to scene?.level?.let { r1(it[1]) },
                     // In the Compose root, as rectPx and the other rectangles.
+                    // T351: the overlays' rule's zoom buttons (lifted above the switch when it reaches under them).
                     "zoomButtonsPx" to PanoramaUi.plotPx?.let { r ->
-                        PanoramaScene.zoomButtons(w, h, dp).map { b -> listOf(b.left + r[0], b.top + r[1], b.right + r[0], b.bottom + r[1]).map { Math.round(it) } }
+                        listOfNotNull(PanoramaUi.overlays?.get(PanoramaOverlays.Item.ZOOM_IN), PanoramaUi.overlays?.get(PanoramaOverlays.Item.ZOOM_OUT))
+                            .map { b -> listOf(b.left + r[0], b.top + r[1], b.right + r[0], b.bottom + r[1]).map { Math.round(it) } }
                     },
                 )
             },
-            "listPx" to PanoramaUi.listPx, "switchPx" to PanoramaUi.switchPx, "headingScrolls" to PanoramaUi.headingScrolls,
+            "switchPx" to PanoramaUi.switchPx,
+            // T351: each overlay's box as the rule placed it (in the Compose root, px), the free band, the layers' panel.
+            "overlays" to PanoramaUi.overlays?.let { o ->
+                val r = PanoramaUi.plotPx ?: listOf(0, 0, 0, 0)
+                fun px(b: io.github.jasondorjeshort.dystopo.horizon.RimBox) = listOf(b.left + r[0], b.top + r[1], b.right + r[0], b.bottom + r[1]).map { Math.round(it) }
+                linkedMapOf(
+                    "boxes" to o.boxes.entries.associate { (k, b) -> k.key to px(b) },
+                    "overlap" to o.overlap()?.let { (a, b) -> listOf(a.key, b.key) },
+                    "free" to px(o.free),
+                    "plotIsWindow" to (PanoramaUi.drawn?.let { it["plotDp"] == it["windowDp"] }),
+                )
+            },
+            "layersOpen" to PanoramaUi.layersOpen, "layersPx" to PanoramaUi.layersPx,
             "drawn" to PanoramaUi.drawn,
             "place" to linkedMapOf(
                 "point" to point?.let { p -> linkedMapOf("lat" to p.lat, "lon" to p.lon, "name" to p.name) },
