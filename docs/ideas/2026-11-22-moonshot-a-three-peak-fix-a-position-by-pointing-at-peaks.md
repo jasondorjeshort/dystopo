@@ -18,3 +18,13 @@ Differs from the two camera ideas (`related:`): no camera and no image matching,
 - Pointing needs a sight: the phone's edge, or the Panorama's centre mark in Follow with the drawing dragged onto the real peak (T331's heading correction is half of this gesture already).
 - What the app does with the answer: show it beside the GPS fix with its error ellipse, never replace the fix silently.
 - Two peaks and the barometer's height might do where three are not in view.
+
+Question: start with a simulation pass only (a pure resection in `shared/.../horizon/` from the angles between named peaks plus their elevation angles, and a devtool command that places synthetic sights at public areas such as Rainier and Mont Blanc with 1 to 3 degrees of pointing error and reports the position error per geometry), before any sighting flow on the phone?
+Recommendation: yes; the arithmetic is pure and testable on synthetic peaks, and its numbers decide whether the phone flow (a sight mark in Follow, an error ellipse beside the GPS fix, never replacing it) is worth a proposal. The phone flow is a new sensor flow and stays the owner's.
+Options:
+a) The simulation pass first, the phone flow on its numbers (recommended).
+b) The simulation and the phone flow together as a proposal now.
+c) Fold into the camera fix idea (`2026-11-22-fix-the-compass-and-position-from-the-camera-on-the-panorama.md`).
+d) Not worth building.
+
+Answer:
