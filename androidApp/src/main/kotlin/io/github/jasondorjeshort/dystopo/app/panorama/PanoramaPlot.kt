@@ -354,11 +354,13 @@ fun PanoramaPlot(
                 BasicText(if (inward) "+" else "−", style = TextStyle(color = pal.ink, fontSize = with(density) { 24.dp.toSp() }, fontWeight = FontWeight.Medium))
             }
         }
-        // While nothing is ready: the reason, or that it is being worked out.
+        // While nothing is ready: the reason, or that the terrain is being read or the skyline worked out (T340).
         if (scene == null) {
             BasicText(
-                work?.reason ?: if (work == null) io.github.jasondorjeshort.dystopo.app.gnss.GnssText.NO_POSITION else PanoramaStrings.WORKING,
-                Modifier.align(Alignment.Center).padding(16.dp).testTag("panoramaWaiting"),
+                PanoramaData.waiting(work),
+                // T340: clear of the buttons' column at the right, where the sentence ran under "Follow phone".
+                Modifier.align(Alignment.CenterStart).padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = with(density) { (wPx - corner.left).toFloat().toDp() } + 8.dp)
+                    .testTag("panoramaWaiting"),
                 style = TextStyle(color = pal.muted, fontSize = 15.sp),
             )
         }

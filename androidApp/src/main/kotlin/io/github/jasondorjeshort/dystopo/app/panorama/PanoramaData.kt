@@ -6,34 +6,30 @@ import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import io.github.jasondorjeshort.dystopo.app.Pack
-import io.github.jasondorjeshort.dystopo.app.TileService
 import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.app.horizon.HorizonData
-import io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedText
-import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
+import io.github.jasondorjeshort.dystopo.app.gnss.GnssText
+import io.github.jasondorjeshort.dystopo.app.terrain.TerrainRead
 import io.github.jasondorjeshort.dystopo.dem.Peak
 import io.github.jasondorjeshort.dystopo.dem.Terrain
 import io.github.jasondorjeshort.dystopo.dem.Viewshed
-import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
-import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.horizon.LayeredSkyline
-import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * T326: what the Panorama draws from, worked out off the main thread (wave 45's choice (f)): the terrain read to the
- * `viewRange` setting as `viewshed/ViewshedSession.kt` reads it ([Viewshed.plan], [Viewshed.terrain] over the offline
- * maps' elevation; the Horizon view's own terrain stops at 30 km), the skylines swept round the whole circle at the steps
+ * `viewRange` setting on the viewshed's plan ([Viewshed.plan], [Viewshed.terrain]; the Horizon view's own terrain stops at
+ * 30 km) through T340's merged read ([TerrainRead]: the open maps cell by cell, the deepest first, then the online source,
+ * as the Horizon view reads it), the skylines swept round the whole circle at the steps
  * the zoom asks for ([LayeredSkyline.sweep], coarse first so a drag round the circle never waits on a sweep, then the
  * step fine enough for the zoom), and the named peaks within the range tested on the farthest skyline.
  *
  * The scenes of two places are kept ([Place]: the fix's and one other), each keyed by the place within [SAME_PLACE_M],
  * the range and the step; a changed `viewRange` makes a new place and sweeps again. [revision] is Compose state bumped on
- * the main thread when a sweep or the peaks land, so the view reads again.
+ * the main thread when a sweep or the peaks land, so the view reads again. T340: a place read before a map opened or
+ * closed, or lacking cells (or none) before the network came back, is dropped and read again ([TerrainRead.Epoch]).
  */
 object PanoramaData {
     /** Two requests within this of each other (metres) are the same place. */
@@ -60,7 +56,7 @@ object PanoramaData {
 
     /**
      * One place's work: the terrain (or why there is none), the tiles and bytes read for it and whether any came from the
-     * network (never: offline maps only, as the viewshed reads them), the skylines by step, the peaks.
+     * network (T340: the merged read's [answered]), the skylines by step, the peaks.
      */
     class Place(val lat: Double, val lon: Double, val rangeM: Double, val isFix: Boolean) {
         val createdMs = SystemClock.elapsedRealtime()
@@ -71,6 +67,10 @@ object PanoramaData {
         @Volatile var tilesRead = 0
         @Volatile var bytesRead = 0L
         @Volatile var demPacks: List<String> = emptyList()
+        /** T340: the maps open and the network's generation when the place was made, and what its read took cells from. */
+        val epoch: TerrainRead.Epoch = TerrainRead.epoch()
+        @Volatile var answered: TerrainRead.Answered? = null
+        internal val watched = java.util.concurrent.atomic.AtomicBoolean(false)
         val skylines = java.util.concurrent.ConcurrentHashMap<Double, LayeredSkyline>()
         val sweeps = java.util.concurrent.CopyOnWriteArrayList<Sweep>()
         internal val pending = java.util.concurrent.ConcurrentHashMap.newKeySet<Double>()
@@ -80,6 +80,10 @@ object PanoramaData {
         @Volatile var peaksStep: Double? = null
         @Volatile var state: Gnss.HorizonState? = null
 
+        /** T340: read again now: a map opened or closed since, or the network came back and this read lacked cells or found none. */
+        fun stale(now: TerrainRead.Epoch): Boolean =
+            pending.isEmpty() && (terrain != null || reason != null) && epoch.stale(now, terrain != null && answered?.complete != false)
+
         /** The finest skyline swept so far, or null. */
         val finest: LayeredSkyline? get() = skylines.keys.minOrNull()?.let { skylines[it] }
 
@@ -88,8 +92,8 @@ object PanoramaData {
 
         fun json(): Map<String, Any?> = linkedMapOf(
             "lat" to lat, "lon" to lon, "rangeKm" to rangeM / 1000, "fix" to isFix, "reason" to reason,
-            "terrain" to linkedMapOf("ms" to terrainMs, "tiles" to tilesRead, "bytes" to bytesRead, "network" to false, "demPacks" to demPacks,
-                "layers" to terrain?.layers?.map { l -> linkedMapOf("zoom" to l.window.zoom, "width" to l.window.width, "height" to l.window.height) }),
+            "terrain" to (linkedMapOf<String, Any?>("ms" to terrainMs, "tiles" to tilesRead, "bytes" to bytesRead, "network" to (answered?.online == true), "demPacks" to demPacks,
+                "layers" to terrain?.layers?.map { l -> linkedMapOf("zoom" to l.window.zoom, "width" to l.window.width, "height" to l.window.height) }) + (answered?.json() ?: emptyMap()) + (if (terrain == null) mapOf("text" to null) else emptyMap())), // T340: no terrain horizon, no source named
             "sweeps" to sweeps.map { s -> linkedMapOf("stepDeg" to s.stepDeg, "samples" to s.samples, "ms" to s.ms, "atMs" to s.atMs) },
             "pending" to pending.sorted(),
             "peaks" to linkedMapOf("tiles" to peakTiles, "read" to found?.size, "candidates" to peaks?.candidates?.size, "testedOnStepDeg" to peaksStep, "ms" to peaks?.ms),
@@ -107,6 +111,8 @@ object PanoramaData {
      */
     fun request(lat: Double, lon: Double, rangeM: Double, steps: List<Double>, isFix: Boolean): Place {
         places.removeAll { it.rangeM != rangeM }
+        val now = TerrainRead.epoch()
+        places.removeAll { it.stale(now) } // T340
         val p = places.firstOrNull { it.same(lat, lon, rangeM) } ?: Place(lat, lon, rangeM, isFix).also { n ->
             places += n
             while (places.size > KEEP) {
@@ -130,7 +136,7 @@ object PanoramaData {
             p.skylines[step] = sky
             p.sweeps += Sweep(step, sky.profiles.sumOf { it.samples }, SystemClock.elapsedRealtime() - t0, SystemClock.elapsedRealtime() - p.createdMs)
             val finestStep = p.skylines.keys.min()
-            p.state = Gnss.HorizonState(p.lat, p.lon, p.finest!!.outer, null, "offline map", null, p.terrainMs + (SystemClock.elapsedRealtime() - t0), terrain)
+            p.state = Gnss.HorizonState(p.lat, p.lon, p.finest!!.outer, null, p.answered?.text, null, p.terrainMs + (SystemClock.elapsedRealtime() - t0), terrain, p.epoch, p.answered)
             // The peaks: read once per place and range, tested again on each finer skyline.
             if (p.found == null) {
                 val (found, tiles) = HorizonData.readPeaksAt(p.lat, p.lon, p.rangeM, Viewshed.peakZoom(p.lat, p.rangeM))
@@ -143,51 +149,64 @@ object PanoramaData {
             }
         } catch (e: Exception) {
             android.util.Log.w("Dystopo", "panorama sweep failed", e)
-            if (p.terrain == null) p.reason = "${ViewshedText.NO_DEM} (${e.javaClass.simpleName})"
+            if (p.terrain == null) p.reason = "${GnssText.NO_TERRAIN_ERROR} (${e.javaClass.simpleName})" // T340: the Horizon view's sentences
         } finally {
             p.pending.remove(step)
             main.post { revision++ }
+            if (p.pending.isEmpty() && !(p.epoch.network && p.epoch.reachable) && (p.terrain == null || p.answered?.complete == false)) watch(p)
         }
     }
 
+    /**
+     * T340: a place read with no network that lacked cells (or found none) is looked at every [WATCH_MS] while kept, and the
+     * view read again once the network is back ([Place.stale]): nothing else asks while the view stands still.
+     */
+    private fun watch(p: Place) {
+        if (!p.watched.compareAndSet(false, true)) return
+        val check = object : Runnable {
+            override fun run() {
+                if (!places.contains(p)) return
+                if (p.stale(TerrainRead.epoch())) revision++ else main.postDelayed(this, WATCH_MS)
+            }
+        }
+        main.postDelayed(check, WATCH_MS)
+    }
+
+    /** T340: how often a place read with no network looks for it, ms. */
+    const val WATCH_MS = 2_000L
+
+    /**
+     * T340: [p]'s terrain by the merged read ([TerrainRead]), the Horizon view's; where there is none, the Horizon view's own
+     * sentences ([GnssText.NO_TERRAIN]: no map and no online source; [GnssText.NO_TERRAIN_HERE]: none at the point). Before
+     * T340 it read the offline maps alone and said the viewshed's "No elevation data here: download an offline map...".
+     */
     private fun readTerrain(p: Place) {
         val t0 = SystemClock.elapsedRealtime()
         terrainReads.incrementAndGet()
-        val app = DystopoApp.instance
-        val plan = Viewshed.plan(p.lat, p.lon, p.rangeM)
-        val packs = app.tiles.packs.demPacks
-        val pyramids = HashMap<Pack, DemPyramid>()
-        val used = LinkedHashSet<String>()
-        val terrain = Viewshed.terrain(plan) { w -> readMerged(w, packs, pyramids, used, p) }
-        p.terrainMs = SystemClock.elapsedRealtime() - t0
-        p.demPacks = used.toList()
-        if (terrain.elevationAt(p.lat, p.lon).isNaN()) p.reason = ViewshedText.NO_DEM else p.terrain = terrain
+        try {
+            TerrainRead.open().use { r ->
+                if (r.sources.isEmpty()) {
+                    p.reason = GnssText.NO_TERRAIN
+                    return
+                }
+                val terrain = Viewshed.terrain(Viewshed.plan(p.lat, p.lon, p.rangeM)) { w -> r.read(w) }
+                val a = r.answered()
+                p.answered = a
+                p.tilesRead = r.tilesRead
+                p.bytesRead = r.bytesRead
+                p.demPacks = a.maps
+                if (terrain.elevationAt(p.lat, p.lon).isNaN()) p.reason = GnssText.NO_TERRAIN_HERE else p.terrain = terrain
+            }
+        } finally {
+            p.terrainMs = SystemClock.elapsedRealtime() - t0
+        }
     }
 
-    /** [w] from every elevation pack overlapping it, the first with data winning per cell (as `ViewshedSession` reads it), counting tiles and bytes. */
-    private fun readMerged(w: MercatorWindow, packs: List<Pack>, pyramids: HashMap<Pack, DemPyramid>, used: MutableSet<String>, place: Place): ElevationGrid {
-        val west = WebMercator.xToLon(w.x0.toDouble() / w.tileSize, w.zoom)
-        val east = WebMercator.xToLon((w.x0 + w.width).toDouble() / w.tileSize, w.zoom)
-        val north = WebMercator.yToLat(w.y0.toDouble() / w.tileSize, w.zoom)
-        val south = WebMercator.yToLat((w.y0 + w.height).toDouble() / w.tileSize, w.zoom)
-        val values = FloatArray(w.width * w.height) { Float.NaN }
-        var missing = values.size
-        for (pk in packs) {
-            if (missing == 0) break
-            val h = pk.header
-            if (h.maxLon < west || h.minLon > east || h.maxLat < south || h.minLat > north) continue
-            val pyr = pyramids.getOrPut(pk) {
-                DemPyramid(h.minZoom, h.maxZoom, TileService.demDecoder(), cacheTiles = 48) { z, x, y ->
-                    pk.tile(z, x, y)?.also { b -> place.tilesRead++; place.bytesRead += b.size }
-                }
-            }
-            val g = pyr.window(w.zoom, w.x0, w.y0, w.width, w.height)
-            var took = false
-            for (k in values.indices) {
-                if (values[k].isNaN() && !g.values[k].isNaN()) { values[k] = g.values[k]; missing--; took = true }
-            }
-            if (took) used += DystopoApp.instance.tiles.packs.packOf(pk) ?: pk.name
-        }
-        return ElevationGrid(w.width, w.height, w.cellSizeMeters, values)
+    /** T340: the plot's line while it has no skyline: the place's sentence, "Reading the terrain..." or "Working out the skyline...". */
+    fun waiting(p: Place?): String = when {
+        p == null -> GnssText.NO_POSITION
+        p.reason != null -> p.reason!!
+        p.terrain == null -> PanoramaStrings.READING
+        else -> PanoramaStrings.WORKING
     }
 }

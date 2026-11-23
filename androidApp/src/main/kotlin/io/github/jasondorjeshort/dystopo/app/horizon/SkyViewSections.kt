@@ -54,6 +54,16 @@ private fun SectionHead(title: String, pal: GnssPalette, extra: String? = null, 
     }
 }
 
+/** The Peaks section's first line (T340: one function, so `GET /panorama` `peaksLine` reads what the section says). */
+fun peaksLine(h: Gnss.HorizonState?, peaks: HorizonData.Peaks?, units: ContourUnits, rangeM: Double): String = when {
+    h == null -> HorizonText.PEAKS_WORKING
+    h.profile == null -> HorizonText.PEAKS_NO_TERRAIN
+    peaks == null -> HorizonText.PEAKS_WORKING
+    peaks.reason == HorizonText.PEAKS_NONE -> HorizonText.peaksNone(units, rangeM)
+    peaks.reason != null -> peaks.reason
+    else -> HorizonText.peaksCount(peaks.candidates.size, units, rangeM)
+}
+
 /**
  * T309: the peaks in view or just out of sight: how many, then each (name, height, distance, bearing) closest first; a tap
  * picks one ([HorizonUi.selected], the key [HorizonUi.keyOf]), bold while the plot names it ([HorizonUi.namedKeys]).
@@ -67,15 +77,7 @@ fun PeaksSection(
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         SectionHead(HorizonText.PEAKS, pal) { HelpIcon(help) }
-        val line = when {
-            h == null -> HorizonText.PEAKS_WORKING
-            h.profile == null -> HorizonText.PEAKS_NO_TERRAIN
-            peaks == null -> HorizonText.PEAKS_WORKING
-            peaks.reason == HorizonText.PEAKS_NONE -> HorizonText.peaksNone(units, rangeM)
-            peaks.reason != null -> peaks.reason
-            else -> HorizonText.peaksCount(peaks.candidates.size, units, rangeM)
-        }
-        BasicText(line, style = TextStyle(color = pal.ink, fontSize = 14.sp))
+        BasicText(peaksLine(h, peaks, units, rangeM), style = TextStyle(color = pal.ink, fontSize = 14.sp))
         val named = HorizonUi.namedKeys
         for (p in peaks?.candidates.orEmpty()) {
             val key = HorizonUi.keyOf(p)

@@ -8,16 +8,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import io.github.jasondorjeshort.dystopo.app.Pack
-import io.github.jasondorjeshort.dystopo.app.TileService
-import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
+import io.github.jasondorjeshort.dystopo.app.terrain.TerrainRead
 import io.github.jasondorjeshort.dystopo.dem.PeakSort
 import io.github.jasondorjeshort.dystopo.dem.PeakView
 import io.github.jasondorjeshort.dystopo.dem.Viewshed
 import io.github.jasondorjeshort.dystopo.dem.ViewshedResult
-import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
-import io.github.jasondorjeshort.dystopo.geo.WebMercator
-import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import java.util.concurrent.Executors
@@ -28,9 +23,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * the sweep ([Viewshed.compute]) and the peaks ([Viewshed.readPeaks], [Viewshed.peaks]) on one background thread at
  * background priority, never the UI thread; the result drawn by [overlay] and listed by the sheet ([ViewshedSheet]).
  *
- * The DEM comes from the offline packs only: each window is read from every DEM pack that overlaps it, the first with
- * data winning per cell (the packs' precedence order), each through its own small [DemPyramid] made for the sweep and
- * dropped after it. Past the packs' edge the overlay hatches the ground (no data, nothing known beyond). The peaks come
+ * The DEM comes from the offline packs only: T340's merged read ([TerrainRead] with the online source left out), per cell
+ * the deepest map whose box holds it first and a coarser one where it ends, each map through its own small pyramid made
+ * for the sweep and dropped after it. (Whether it should also read the online source, as the Horizon view and the
+ * Panorama do, is T340's report's question, not built.) Past the packs' edge the overlay hatches the ground (no data, nothing known beyond). The peaks come
  * from the vector packs' `mountain_peak` layer at [Viewshed.peakZoom]. The range is [AppSettings.viewRangeKm].
  *
  * Compose state is written on the main thread; a newer [start] supersedes a running one (its result is dropped).
@@ -182,11 +178,7 @@ object ViewshedSession {
         fun lap(name: String) { val n = System.nanoTime(); t[name] = Math.round((n - t0) / 1e5) / 10.0; t0 = n }
         val rangeM = km * 1000.0
         val plan = Viewshed.plan(lat, lon, rangeM)
-        val packs = app.tiles.packs.demPacks
-        val pyramids = HashMap<Pack, DemPyramid>()
-        val used = LinkedHashSet<String>()
-        val read: (MercatorWindow) -> ElevationGrid = { w -> readMerged(w, packs, pyramids, used) }
-        val terrain = Viewshed.terrain(plan, read)
+        val (terrain, used) = TerrainRead.open(online = false).use { r -> Viewshed.terrain(plan) { w -> r.read(w) } to r.answered().maps } // T340
         lap("demMs")
         if (terrain.elevationAt(lat, lon).isNaN()) throw IllegalStateException(ViewshedText.NO_DEM)
         val result = Viewshed.compute(terrain, plan)
@@ -199,31 +191,7 @@ object ViewshedSession {
         lap("peakReadMs")
         val peaks = Viewshed.peaks(terrain, result, found)
         lap("peakTestMs")
-        pyramids.clear()
-        return Done(lat, lon, km, source, result, peaks, peakZoom, tiles, t, used.toList())
-    }
-
-    /** [w] from every DEM pack overlapping it, the first with data winning per cell; NaN where none has data. */
-    private fun readMerged(w: MercatorWindow, packs: List<Pack>, pyramids: HashMap<Pack, DemPyramid>, used: MutableSet<String>): ElevationGrid {
-        val west = WebMercator.xToLon(w.x0.toDouble() / w.tileSize, w.zoom)
-        val east = WebMercator.xToLon((w.x0 + w.width).toDouble() / w.tileSize, w.zoom)
-        val north = WebMercator.yToLat(w.y0.toDouble() / w.tileSize, w.zoom)
-        val south = WebMercator.yToLat((w.y0 + w.height).toDouble() / w.tileSize, w.zoom)
-        val values = FloatArray(w.width * w.height) { Float.NaN }
-        var missing = values.size
-        for (p in packs) {
-            if (missing == 0) break
-            val h = p.header
-            if (h.maxLon < west || h.minLon > east || h.maxLat < south || h.minLat > north) continue
-            val pyr = pyramids.getOrPut(p) { DemPyramid(h.minZoom, h.maxZoom, TileService.demDecoder(), cacheTiles = 48) { z, x, y -> p.tile(z, x, y) } }
-            val g = pyr.window(w.zoom, w.x0, w.y0, w.width, w.height)
-            var took = false
-            for (k in values.indices) {
-                if (values[k].isNaN() && !g.values[k].isNaN()) { values[k] = g.values[k]; missing--; took = true }
-            }
-            if (took) used += DystopoApp.instance.tiles.packs.packOf(p) ?: p.name
-        }
-        return ElevationGrid(w.width, w.height, w.cellSizeMeters, values)
+        return Done(lat, lon, km, source, result, peaks, peakZoom, tiles, t, used)
     }
 
     private fun ui(block: () -> Unit) {

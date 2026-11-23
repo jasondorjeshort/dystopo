@@ -51,7 +51,8 @@ Debug routes: `android-debug-routes.md` (Panorama view). The choices it is built
   lens (the plot writes `HorizonUi.namedKeys`, so the list's rows bold the names drawn), each on a plate of the card's
   colour with a thin edge (a pale plate with no edge read as a blob lying over a ridge), a hollow triangle an outline
   only. A tap on a name picks its peak.
-  While nothing is ready a line stands in the plot (the reason, or "Working out the skyline...").
+  While nothing is ready a line stands in the plot (the reason, "Reading the terrain..." while the terrain is read, then
+  "Working out the skyline...": T340).
 - **Steering** (choice d): a horizontal drag turns without end, a vertical drag tilts (45 degrees below the level to
   straight up), a pinch and the "Zoom in" and "Zoom out" buttons (48 dp, `PanoramaScene.zoomButtons`) zoom from 100 to 10
   degrees, all through `PanoramaAim`; during a drag or a pinch each name keeps its offset from its mark and the names are
@@ -143,8 +144,17 @@ Debug routes: `android-debug-routes.md` (Panorama view). The choices it is built
 
 ## The terrain, the sweeps and what is kept (choice f)
 
-The terrain is read to the `viewRange` setting as the viewshed reads it (`Viewshed.plan` and `Viewshed.terrain` over the
-offline maps' elevation packs; never the network), off the main thread (`PanoramaData`), then the skylines are swept
+The terrain is read to the `viewRange` setting on the viewshed's plan (`Viewshed.plan` and `Viewshed.terrain`) through
+T340's merged read, the Horizon view's (`android-horizon-view.md`, The screen: the open maps cell by cell, the deepest
+first, a coarser one where it ends, then the online elevation source under the same Mobile data and limit rules, then a
+map's whole tiles past its box), off the main thread (`PanoramaData`). Before T340 it read the offline maps alone, so a
+place outside every map said "No elevation data here" while the Horizon view drew the online skyline. While the terrain is
+read the plot says "Reading the terrain..." and then "Working out the skyline..."; where there is none it says the Horizon
+view's own sentence (no maps and no online source: "No elevation data here (no offline map, no online source), ..."; none
+at the point: "No elevation data at this point, ..."), the terrain line says the same and the Peaks section says "No
+terrain horizon here, so no peaks on it." instead of waiting. A place kept from before a map opened or closed is read
+again, and so is one lacking cells (or none) once the network comes back. `GET /panorama` `work.terrain`: `text`,
+`maps`, `online`, `complete`, `cells`, `missing`, `tiles`, `bytes`, and `network` (the online source gave cells). Then the skylines are swept
 round the whole circle at `PanoramaSweep.steps` for the zoom: 1 degree first, then the step fine enough (0.5 at 60
 degrees on a 1080 px plot, 0.1 at 10). The scenes of two places are kept (the fix's and one other), each by place within
 100 m, range and step; a changed `viewRange` drops the other ranges and sweeps again. The peaks are read once per place
