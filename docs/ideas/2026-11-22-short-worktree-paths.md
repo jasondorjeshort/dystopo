@@ -29,4 +29,4 @@ B. All at once: a short root on the same drive (the owner names it), `core.longp
 C. Only the script; leave paths and config as they are.
 D. Not worth building: briefs keep spelling out the prefix.
 
-Answer:
+Answer: A, set core.longpaths and add one cleanup script now; a shorter root only if removes still fail (the owner, 2026-11-22, multiple choice).

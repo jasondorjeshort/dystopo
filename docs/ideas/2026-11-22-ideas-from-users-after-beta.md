@@ -21,4 +21,4 @@ A. Record at rest until the beta's planning, then a proposal (privacy, channel, 
 B. A proposal now, so the beta ships with it.
 C. Not worth building: users report through the release page and Send diagnostics.
 
-Answer:
+Answer: A, at rest until beta planning, then a proposal (the owner, 2026-11-22, multiple choice).

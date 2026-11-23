@@ -25,4 +25,4 @@ B. As A, plus the last real sweeps' per-layer times in Send diagnostics (copied,
 C. As B, plus a bench run at startup into the startup history (costs launch time; not recommended).
 D. Not worth building: time it by hand when an idea needs it.
 
-Answer:
+Answer: all of it (the bench route and sweep part, the times in diagnostics, a bench at startup), but measured at a release at most once a week: "We should do everything, but probably not EVERY release. I do like one release a day. Every release but at most once a week?" (the owner, 2026-11-22, multiple choice).

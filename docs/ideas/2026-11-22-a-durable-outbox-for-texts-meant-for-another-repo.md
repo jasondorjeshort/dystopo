@@ -20,4 +20,4 @@ A. `docs/outbox/`, one file per text, a README and a line in `docs/ARCHITECTURE.
 B. A one-line pointer per text in the handoff's Waiting on user, the text itself in a dated finding.
 C. Nothing new: file each text in its target the same session.
 
-Answer:
+Answer: A, a docs/outbox/ folder, one file per text, read by the handoff skill at resume (the owner, 2026-11-22, multiple choice).

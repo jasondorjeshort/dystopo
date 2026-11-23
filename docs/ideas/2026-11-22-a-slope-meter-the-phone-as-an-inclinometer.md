@@ -25,4 +25,4 @@ b) Build it now as a small tool beside Check my GPS, the wording reviewed after.
 c) Rest it.
 d) Not worth building.
 
-Answer:
+Answer: A, an ADR 0039 survey of avalanche tools first, then a pass (the owner, 2026-11-22, multiple choice).

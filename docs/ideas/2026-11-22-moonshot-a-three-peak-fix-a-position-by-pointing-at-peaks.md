@@ -27,4 +27,4 @@ b) The simulation and the phone flow together as a proposal now.
 c) Fold into the camera fix idea (`2026-11-22-fix-the-compass-and-position-from-the-camera-on-the-panorama.md`).
 d) Not worth building.
 
-Answer:
+Answer: A, a simulation pass first; the phone flow decided on its numbers (the owner, 2026-11-22, multiple choice).

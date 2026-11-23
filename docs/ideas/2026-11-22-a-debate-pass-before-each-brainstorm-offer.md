@@ -21,4 +21,4 @@ B. The critic on moonshots only (where the coordinator's framing is least checke
 C. Not now: keep ADR 0065's grep check alone; revisit when the stats idea can show what the owner keeps.
 D. Not worth building.
 
-Answer:
+Answer: A, a Sonnet-class critic on every offer (the owner, 2026-11-22, multiple choice).

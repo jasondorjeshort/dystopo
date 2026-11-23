@@ -21,4 +21,4 @@ A. Not now; keep it at rest until the star layer ships and has users (recommende
 B. A proposal for the data flow and the server now
 C. Not worth building; drop it
 
-Answer:
+Answer: A, at rest until the star layer has users (the owner, 2026-11-22, multiple choice).

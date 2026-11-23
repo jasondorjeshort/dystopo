@@ -27,4 +27,4 @@ b) Its own small finder from the selected place, without the drawing.
 c) Both, with tilt as a second kind of tick.
 d) Not worth building.
 
-Answer:
+Answer: A, a Follow mode, bearing only, a setting off by default (the owner, 2026-11-22, multiple choice).

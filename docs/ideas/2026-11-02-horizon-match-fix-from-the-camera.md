@@ -40,6 +40,8 @@ two thousand particles are too many skyline sweeps: candidates would be clustere
 detection, no scoring and no pitch reading exist. The viewshed idea's stage 3 is the same matching with a
 different output (peak names), and waits on its own proposal on your word.
 
+Came up again: 2026-11-22, coordinator brainstorm (Opus 5.5), offered after the 2026-11-22 triage as "find where a photo was taken from its skyline alone" and folded here by the owner at the triage of the same day. New: candidates narrowed by the user ("somewhere around here"), searched with the best-view ranking's skyline-per-candidate machinery run backwards; gives place and heading.
+
 Question: do you want a measurement pass first, before any camera flow: a devtool command that scores
 synthetic skyline frames and a handful of photos you take at a known public summit against the DEM's
 skyline, reporting the position error and the failure cases (canopy, fog, a flat horizon)? Recommendation:

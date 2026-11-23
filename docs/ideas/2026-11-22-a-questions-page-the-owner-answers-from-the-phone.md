@@ -21,4 +21,4 @@ B. A read-only page (generated after each triage) listing the Questions; you sti
 C. Keep answering in chat and in the files.
 D. Not worth building.
 
-Answer:
+Answer: A, an artifact page with a database plus the write-back chore, tried once at the next triage (the owner, 2026-11-22, multiple choice).

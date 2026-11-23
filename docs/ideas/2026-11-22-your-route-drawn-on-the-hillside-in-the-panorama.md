@@ -26,4 +26,4 @@ b) A first pass now over the skylines, with a frame each of a route in view and 
 c) Wait for the camera behind the drawing.
 d) Not worth building.
 
-Answer:
+Answer: A, wait for the drawn ground and the line-of-sight function, then a pass (the owner, 2026-11-22, multiple choice).

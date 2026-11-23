@@ -29,4 +29,4 @@ b) Research, then a proposal covering walking and driving together.
 c) Rest it until routing's next work.
 d) Not worth building.
 
-Answer:
+Answer: A, research and a proposal, driving first (the owner, 2026-11-22, multiple choice).

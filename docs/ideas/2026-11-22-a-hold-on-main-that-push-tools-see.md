@@ -25,4 +25,4 @@ B. As A, plus a policy change letting agents push `hold/*`, so the sweep agent s
 C. A local lock file only (no origin ref): cheaper, but a second clone does not see it.
 D. Not worth building: keep the handoff's sentence.
 
-Answer:
+Answer: A, origin/hold/main set and cleared by the coordinator; push-verified.sh refuses while it exists (the owner, 2026-11-22, multiple choice).

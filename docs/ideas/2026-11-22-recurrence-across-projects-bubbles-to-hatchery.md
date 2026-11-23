@@ -20,4 +20,4 @@ A. File it as an idea in Hatchery (in the same sitting as the ADR 0065 idea), th
 B. Keep it here at rest until a second Hatchery project is in active build.
 C. Not worth building.
 
-Answer:
+Answer: A, file it in Hatchery with the ADR 0065 idea, then delete it here as moved (the owner, 2026-11-22, multiple choice).

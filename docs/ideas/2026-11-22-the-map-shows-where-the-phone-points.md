@@ -26,4 +26,4 @@ b) The tilt's ray, with the attitude source running on the map.
 c) Both, the tilt used when the phone points below the horizon.
 d) Not worth building.
 
-Answer:
+Answer: A, along the heading to the skyline's ground, behind a toggle on the compass control, after the line-of-sight function (the owner, 2026-11-22, multiple choice).

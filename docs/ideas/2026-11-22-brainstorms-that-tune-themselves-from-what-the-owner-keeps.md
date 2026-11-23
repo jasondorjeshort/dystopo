@@ -21,4 +21,4 @@ A. Record at rest until the stats tool is built and ADR 0065's 2027-01-31 predic
 B. Build a first read-only report (kept rate per trigger, per model, per tier) as soon as the stats tool lands, no change to the bar yet.
 C. Not worth building: the owner's own judgement sets the mix.
 
-Answer:
+Answer: A, at rest until the stats tool exists and ADR 0065's 2027-01-31 prediction is checked, then a proposal (the owner, 2026-11-22, multiple choice).

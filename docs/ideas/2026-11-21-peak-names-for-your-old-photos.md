@@ -22,4 +22,6 @@ The owner, 2026-11-21: "Definitely, eventually."
 - 2026-11-21: a photo with no place in it (stripped EXIF) is the horizon-match idea's search run on a still image;
   recorded there (`2026-11-02-horizon-match-fix-from-the-camera.md`).
 
+Use: 2026-11-22, coordinator brainstorm (Opus 5.5): retake an old photo from the same spot at the same light: guide the user to where it was taken, show when the sun stands where it stood (the one clock), and lay the old photo over the full-screen lens for a then-and-now picture (accepted by the owner; folded here at the 2026-11-22 triage).
+
 Waits: the one clock built; then the small pass described in the question, at a higher priority than the other ideas waiting on the clock (the owner, 2026-11-22, by multiple choice at triage).

@@ -23,4 +23,4 @@ B. Now, at the current time only, without the clock
 C. Fold it into the sun-or-moon idea as a `Use:` line on the primitive's file and close this one
 D. Not wanted
 
-Answer:
+Answer: A, after the one clock and the line-of-sight function, sun first (the owner, 2026-11-22, multiple choice).

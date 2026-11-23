@@ -20,4 +20,4 @@ b) Straight to a proposal for a skyline layer in packs.
 c) Prefer the route pre-sweep and rest this.
 d) Not worth building.
 
-Answer:
+Answer: A, measure first, then a proposal on the numbers (the owner, 2026-11-22, multiple choice).

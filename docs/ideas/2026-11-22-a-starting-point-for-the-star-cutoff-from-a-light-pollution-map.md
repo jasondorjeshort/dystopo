@@ -23,4 +23,4 @@ A. With the star layer: the research pass then, a fixed default meanwhile (recom
 B. The research pass now, ahead of the star layer
 C. Not wanted: the buttons are enough
 
-Answer:
+Answer: A, researched with the star layer (the owner, 2026-11-22, multiple choice).

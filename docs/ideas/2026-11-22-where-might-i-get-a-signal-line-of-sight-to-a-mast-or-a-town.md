@@ -27,4 +27,4 @@ B. Build the stand-in now: the nearest point on the route in view of a town or m
 C. Masts from OSM only: a mast layer in the tile profile, then the route line
 D. Not worth building; drop it
 
-Answer:
+Answer: A, a research pass on mast data and licences, then a proposal (the owner, 2026-11-22, multiple choice).
