@@ -34,8 +34,10 @@ class RunToolTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_runner(self, *args, path=None):
+    def run_runner(self, *args, path=None, extra=None):
         env = dict(os.environ)
+        env.pop("RUN_TOOL_TESTS_HOOKS_ANYWHERE", None)
+        env.update(extra or {})
         if path is not None:
             env["PATH"] = path
         p = subprocess.run([sys.executable, "-I", RUNNER, "--root", self.root, *args], capture_output=True, text=True,
@@ -83,12 +85,20 @@ class RunToolTests(unittest.TestCase):
         import shutil
         if not shutil.which("node"):
             self.skipTest("no node")
-        write(os.path.join(self.root, ".claude", "hooks", "test-hooks.js"), "console.log('1 passed, 1 failed'); process.exit(1)\n")
+        write(os.path.join(self.root, ".claude", "hooks", "test-hooks.js"),
+              "console.log('FAIL X01 a case'); console.log('1 passed, 1 failed'); process.exit(1)\n")
         for name in ("test_b.py", "test_verify_task.py"):
             os.remove(os.path.join(self.root, "tools", name))
+        # Off Windows the hook tests are skipped by name; the override runs them anywhere.
         code, rep, _ = self.run_runner()
         hooks = [r for r in rep["files"] if r["file"] == ".claude/hooks/test-hooks.js"][0]
-        self.assertEqual((hooks["ok"], hooks["exit"], hooks["tail"]), (False, 1, ["1 passed, 1 failed"]))
+        if os.name != "nt":
+            self.assertIn("assume Windows", hooks["skipped"])
+            self.assertEqual(code, 0)
+            code, rep, _ = self.run_runner(extra={"RUN_TOOL_TESTS_HOOKS_ANYWHERE": "1"})
+            hooks = [r for r in rep["files"] if r["file"] == ".claude/hooks/test-hooks.js"][0]
+        self.assertEqual((hooks["ok"], hooks["exit"], hooks["tail"], hooks["failLines"]),
+                         (False, 1, ["FAIL X01 a case", "1 passed, 1 failed"], ["FAIL X01 a case"]))
         self.assertEqual((code, rep["failed"]), (1, [".claude/hooks/test-hooks.js"]))
 
 

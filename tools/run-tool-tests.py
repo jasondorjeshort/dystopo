@@ -3,9 +3,10 @@
 Every `tools/test_*.py` runs as `python -I <file>` from the repo root (one file's failure hides no other file), then
 `node .claude/hooks/test-hooks.js`. The hook tests run beside the Python files (two lanes) because they alone take
 over two minutes. A file that needs a program this machine lacks is skipped with a named reason (`SKIP_WITHOUT`; the
-hooks without `node` or `bash`), never failed. The hook tests get Git Bash ahead on their PATH on Windows, where a
-PowerShell session lacks it. The report: per file `ok`, `seconds` and, on a failure, the last lines of its
-output (`tail`); a skipped file carries `skipped` with the reason. Exit 0 when nothing failed, 1 otherwise.
+hooks without `node` or `bash`, and off Windows, `HOOKS_OFF_WINDOWS`, unless RUN_TOOL_TESTS_HOOKS_ANYWHERE is set),
+never failed. The hook tests get Git Bash ahead on their PATH on Windows, where a PowerShell session lacks it. The
+report: per file `ok`, `seconds` and, on a failure, the last lines of its output (`tail`) and its FAIL/ERROR lines
+(`failLines`); a skipped file carries `skipped` with the reason. Exit 0 when nothing failed, 1 otherwise.
 
 Usage: python -I tools/run-tool-tests.py [--out report.json] [--root <repo>] [--no-hooks] [--jobs 2]
 `./gradlew check` runs it as `toolsTest` (root build.gradle.kts), up to date while its inputs are unchanged.
@@ -24,13 +25,21 @@ import time
 SKIP_WITHOUT = {
     "test_verify_task.py": ("powershell", "needs Windows PowerShell (powershell) to run tools/verify-task.ps1"),
     "test_privacy_check.py": ("java", "needs java (JAVA_HOME or on PATH) to run tools/PrivacyCheck.java"),
+    "test_sweep_diff.py": ("python:playwright", "needs the Python module playwright (tools/sweep-diff.py draws with it)"),
 }
 HOOKS = os.path.join(".claude", "hooks", "test-hooks.js")
+# The hook tests assume Windows: on Linux (CI, 2026-11-23) seven cases failed, the emulator-stop group's fake
+# emulators among them, and the Gradle run after them hung until the job's timeout.
+HOOKS_OFF_WINDOWS = "the hook tests assume Windows (on Linux seven cases fail and the build after them hangs)"
 TAIL_LINES = 25
+FAIL_LINES = 30
 TIMEOUT_S = 900
 
 
 def have(program):
+    if program.startswith("python:"):
+        import importlib.util
+        return importlib.util.find_spec(program[len("python:"):]) is not None
     if program == "java":
         home = os.environ.get("JAVA_HOME")
         if home and any(os.path.isfile(os.path.join(home, "bin", n)) for n in ("java", "java.exe")):
@@ -69,7 +78,12 @@ def run_one(name, cmd, root, env=None):
     r = {"file": name, "ok": code == 0, "seconds": round(time.monotonic() - t0, 1)}
     if code != 0:
         r["exit"] = code
-        r["tail"] = out.replace("\r\n", "\n").rstrip("\n").split("\n")[-TAIL_LINES:]
+        lines = out.replace("\r\n", "\n").rstrip("\n").split("\n")
+        r["tail"] = lines[-TAIL_LINES:]
+        # The failed cases by name, wherever they are in the output: unittest's FAIL:/ERROR: headers, the hook tests' FAIL lines.
+        fails = [x for x in lines if x.startswith(("FAIL", "ERROR:"))]
+        if fails:
+            r["failLines"] = fails[:FAIL_LINES]
     return r
 
 
@@ -89,6 +103,8 @@ def plan(root, hooks=True):
             runs.append((name, None, "no " + name + " in this tree", None))
         elif not have("node"):
             runs.append((name, None, "needs node to run the hook tests", None))
+        elif os.name != "nt" and not os.environ.get("RUN_TOOL_TESTS_HOOKS_ANYWHERE"):
+            runs.append((name, None, HOOKS_OFF_WINDOWS, None))
         else:
             # The hook tests spawn `bash`; a PowerShell session (tools/verify-task.ps1) has Git Bash off its PATH.
             b = bash_dir()

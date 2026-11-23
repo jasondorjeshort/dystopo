@@ -39,8 +39,8 @@ jobs:
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
-      # T345: check runs the tools' tests (toolsTest: Python files, then the hook tests under node), so both are
-      # set up before it.
+      # T345: check runs the tools' tests (toolsTest: the Python files; the hook tests are skipped off Windows by
+      # tools/run-tool-tests.py), so Python and Node are set up before it.
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -48,6 +48,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      # Before check too: tools/test_sweep_diff.py runs tools/sweep-diff.py, which draws with Playwright.
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
 
       # T87: the APK bundles every glyph range of the three fonts (bundleMapAssets in androidApp/build.gradle.kts),
       # fetched from protomaps.github.io into cache/glyphs. Cached between runs, keyed by the font and range
@@ -91,11 +97,6 @@ jobs:
           STATUS=$?
           python3 -c 'import json; d = json.load(open("out/tour/summary.json")); print({k: d[k] for k in ("renders", "passed", "failed", "skipped", "totalMs")})' || cat out/tour/stdout.json
           exit $STATUS
-
-      - name: Install Playwright
-        run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
 
       - name: Browser demo check (pack mode, two views)
         run: |
