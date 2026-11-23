@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-23
 
+- T343: The Download card says what the phone already holds there, and the chip and the button follow one rule
 - T348: A recording left for days no longer reads as active with a turn-back warning
 - T347: The launch's `map.attach` gives back what each wave added
 - T342: Turn an offline map off without deleting it
