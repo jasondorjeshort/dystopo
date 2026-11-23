@@ -16,3 +16,13 @@ Why: people in avalanche terrain carry a separate tool for exactly this, and the
 - A safety matter, not a preference: the wording must not suggest the app judges a slope safe; a research pass (ADR 0039) on how avalanche tools word and bound this comes first.
 - The sensor's accuracy when the phone is in a case or the edge is not flat; a zeroing step on a level surface.
 - Where it lives: a card of the readout, or a small tool beside "Check my GPS" (`docs/ideas/2026-11-19-check-my-compass-beside-check-my-gps.md` asks for a similar home).
+
+Question: do you want a slope meter at all, given that it reads angles in avalanche terrain, and if so should a benchmark survey (ADR 0039: how avalanche inclinometer tools word, bound and zero their reading) come before any build?
+Recommendation: yes, the survey first; the reading itself is small (tilt or roll from `PhoneAttitude`, the mapped slope at the fix beside it), but its wording and limits are a safety matter that one practice should settle, and its home may be the same as "Check my compass" (`2026-11-19-check-my-compass-beside-check-my-gps.md`).
+Options:
+a) The survey first, then a pass on its findings (recommended).
+b) Build it now as a small tool beside Check my GPS, the wording reviewed after.
+c) Rest it.
+d) Not worth building.
+
+Answer:
