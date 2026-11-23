@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-23
 
+- T346: A zoom label by the scale bar, as an option
 - T345: The tools' tests run with check
 - T339: One fixture of two overlapping maps for the emulator, and a sweep part that reads what the phone says on it
 - T349: The coordinator's tools: news from `main` before a push, and a worktree removed by one script
