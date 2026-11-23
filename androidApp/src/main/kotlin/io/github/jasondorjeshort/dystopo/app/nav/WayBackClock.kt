@@ -24,6 +24,7 @@ import io.github.jasondorjeshort.dystopo.nav.WayPoint
 import io.github.jasondorjeshort.dystopo.routing.CostModel
 import io.github.jasondorjeshort.dystopo.routing.TravelMode
 import io.github.jasondorjeshort.dystopo.store.LocationFix
+import io.github.jasondorjeshort.dystopo.store.RecordingAge
 
 /**
  * T180, the way back on a recording: T163's turn-around clock in free tracking, on screen while a track records and no
@@ -41,7 +42,9 @@ import io.github.jasondorjeshort.dystopo.store.LocationFix
  *   fitted pace when the user has one); for any other activity (driving, a train, a boat, flying) no clock, the card
  *   saying why ([TurnActivity.noClockText]), and no clock either when the way back is longer than a day
  *   ([TurnActivity.MAX_WAY_BACK_S]): the card says nothing it cannot stand behind. A tap on the card shows the basis
- *   ([TurnActivity.basis]).
+ *   ([TurnActivity.basis]). T348: no clock either when the recording's last fix is more than two hours old
+ *   ([RecordingAge.wayBackStale]; the card says how old, `noClock` `stale`): a recording left for days timed a walk from
+ *   a place and a day long gone.
  * - **The date** (T252): the deadline is the recording's day's ([Deadline.dayFor]), never the reading's midnight, and
  *   every time the card shows off today carries its day ("21:10 yesterday", [DatedClock]). The 348 hours the owner saw
  *   after a flight were a walk home at the hiking pace: the deadline was the day's sunset, the turn-back time (the
@@ -351,11 +354,24 @@ object WayBackClock {
         if (u?.clock == true && c != null) alert(c)
     }
 
+    /**
+     * T348: when the recording last heard of its position ([io.github.jasondorjeshort.dystopo.app.tracking.Tracking.lastFixAt],
+     * with its debug age), else the way back's last point; null before one.
+     */
+    private fun lastFixAt(wb: WayBack): Long? =
+        runCatching { io.github.jasondorjeshort.dystopo.app.tracking.Tracking.readyOrNull?.lastFixAt() }.getOrNull() ?: wb.points.lastOrNull()?.timeMs
+
     /** The card for [a] at [now] (under the lock); null before a point. */
     private fun ui(now: Long, a: Activity): Ui? {
         val wb = wayBack ?: return null
         val src = wb.anchorSource
         val name = targetName(src)
+        // T348: no verdict from a last fix more than two hours old (RecordingAge); the card says how old it is.
+        val lastAt = lastFixAt(wb)
+        if (wb.anchor != null && lastAt != null && RecordingAge.wayBackStale(lastAt, now)) {
+            lastClock = null
+            return Ui(TurnActivity.NO_CLOCK, RecordingAge.wayBackLine(now - lastAt), NORMAL, false, src.key, sourceLine(src, name), clock = false)
+        }
         val mode = TurnActivity.mode(a)
         if (mode == null) {
             lastClock = null
@@ -433,7 +449,9 @@ object WayBackClock {
         val now = System.currentTimeMillis()
         val a = activity()
         val mode = TurnActivity.mode(a)
-        val c = if (on && mode != null && wb.pace.mode == mode) reading(now) else null
+        val lastAt = lastFixAt(wb) // T348
+        val stale = lastAt != null && RecordingAge.wayBackStale(lastAt, now)
+        val c = if (on && !stale && mode != null && wb.pace.mode == mode) reading(now) else null
         val tooFar = c != null && c.retraceS > TurnActivity.MAX_WAY_BACK_S
         val shown = c?.takeIf { !tooFar }
         val clock = dated(now)
@@ -441,7 +459,8 @@ object WayBackClock {
         linkedMapOf(
             "source" to "recording", "id" to id, "on" to on, "points" to wb.points.size,
             "activity" to a.code, "activitySource" to activitySource, "paceMode" to mode?.label,
-            "noClock" to when { !on -> "off"; mode == null -> "activity"; tooFar -> "tooFar"; else -> null },
+            "noClock" to when { !on -> "off"; stale -> "stale"; mode == null -> "activity"; tooFar -> "tooFar"; else -> null },
+            "lastFixAt" to lastAt, "lastFixAgeS" to lastAt?.let { (now - it) / 1000 }, // T348
             "anchor" to (wb.json()["anchor"] as Map<*, *>) + mapOf(
                 "line" to sourceLine(wb.anchorSource, targetName(wb.anchorSource)),
                 "override" to override?.let { linkedMapOf("pointTimeMs" to it.pointTimeMs, "setAtMs" to it.setAtMs) },

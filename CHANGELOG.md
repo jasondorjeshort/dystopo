@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-23
 
+- T348: A recording left for days no longer reads as active with a turn-back warning
 - T347: The launch's `map.attach` gives back what each wave added
 - T342: Turn an offline map off without deleting it
 - T352: The Horizon view's peaks step past a map with none, and a map that does not open says so

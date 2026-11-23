@@ -18,6 +18,7 @@ import io.github.jasondorjeshort.dystopo.model.TrackSegment
 import io.github.jasondorjeshort.dystopo.store.LocationFix
 import io.github.jasondorjeshort.dystopo.model.Activity
 import io.github.jasondorjeshort.dystopo.model.ActivityProfile
+import io.github.jasondorjeshort.dystopo.store.RecordingAge
 import io.github.jasondorjeshort.dystopo.store.ShownKind
 import io.github.jasondorjeshort.dystopo.store.SqlTrackStore
 import io.github.jasondorjeshort.dystopo.store.StoredWaypoint
@@ -94,6 +95,11 @@ import kotlinx.coroutines.launch
  * T333, **the weak-signal watch** ([weak], [weakTick]): while a track records, the GNSS status is held status-only
  * ([WEAK_HOLDER]) and read at each tick; at least 8 satellites above the terrain rim, every one under 25 dB-Hz for five
  * minutes, shows one line on the recording panel ([WEAK_SIGNAL_LINE]), once a recording; no sound, no notification.
+ *
+ * T348, **a recording left for days** ([lastFixAt], [RecordingAge]): a recovered recording is still adopted at any age
+ * (T158), but past a day without a location update [UiState.staleQuestion] asks at the next open, "Finish it"
+ * ([answerStale]: [stop] at the last fix) or "Keep recording" (not asked again for that fix); the way-back clock reads the
+ * same [lastFixAt] for its two-hour cut-off.
  */
 class Tracking private constructor(private val app: DystopoApp) {
     enum class Mode(val gps: Boolean, val injected: Boolean) { ALL(true, true), GPS(true, false), INJECTED(false, true) }
@@ -129,6 +135,8 @@ class Tracking private constructor(private val app: DystopoApp) {
         val gapText: String? = null,
         /** T333: the weak-signal watch fired for this recording: the panel shows its one line until the recording ends. */
         val weakSignal: Boolean = false,
+        /** T348: the stale recording's question ([RecordingAge.question]) while it is asked, else null. */
+        val staleQuestion: String? = null,
     )
 
     private val worker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-tracks").apply { isDaemon = true } }
@@ -562,9 +570,11 @@ class Tracking private constructor(private val app: DystopoApp) {
         return s
     }
 
-    fun stop(): TrackSummary? {
+    /** Finishes the recording; T348: with [atLastFix] (the stale question's "Finish it") it ends at its last fix, no gap to now. */
+    fun stop(atLastFix: Boolean = false): TrackSummary? {
         val s = call {
-            recorder.stop().also {
+            recorder.stop(atLastFix).also {
+                prefs.edit().remove(KEY_STALE_KEPT).remove(KEY_DEBUG_LAST_FIX).apply() // T348
                 prefs.edit().remove(KEY_REC_MODE).apply()
                 stopTicker()
                 fallback.stop()
@@ -865,6 +875,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             activeActivity = active?.activity,
             gapText = recorder.activeId?.let { trackFor(it) }?.let { io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gapText(io.github.jasondorjeshort.dystopo.gpx.TrackDrawing.gaps(it)) }, // T260
             weakSignal = recorder.recording && weak.fired, // T333
+            staleQuestion = staleQuestionNow(), // T348
         )
         val status = if (recorder.recording) statusNow() else null
         val withState = state.copy(state = status?.state ?: RecState.IDLE, stateLine = status?.controlsLine)
@@ -984,6 +995,85 @@ class Tracking private constructor(private val app: DystopoApp) {
     fun setWeakHold(seconds: Long?): Unit = call { weak.holdMs = seconds?.let { it * 1000 } ?: io.github.jasondorjeshort.dystopo.gnss.WeakSignalWatch.HOLD_MS }
     // end T333
 
+    // ---- T348: a recording left for days ----
+
+    /**
+     * T348: when the recording last heard of its position ([TrackRecorder.lastFixAt]), or the debug age set by
+     * `POST /tracks/stale?lastFixAgeH=` (kept in the preferences for the recording, so a cold start sees it, until a newer
+     * fix than the moment it was set or the recording's end). Null when nothing records. Any thread: the recorder's field
+     * is read without the tracking thread (a reference, at worst a fix late).
+     */
+    fun lastFixAt(): Long? {
+        val id = recorder.activeId ?: return null
+        val real = recorder.lastFixAt
+        val o = debugLastFix()?.takeIf { it.first == id } ?: return real
+        return if (real != null && real > o.third) real else o.second
+    }
+
+    /** T348: the debug override as (track id, the last fix's time it stands for, when it was set). */
+    private fun debugLastFix(): Triple<String, Long, Long>? = prefs.getString(KEY_DEBUG_LAST_FIX, null)?.split('@')
+        ?.takeIf { it.size == 3 }?.let { p -> p[1].toLongOrNull()?.let { at -> p[2].toLongOrNull()?.let { set -> Triple(p[0], at, set) } } }
+
+    /** T348: the last fix "Keep recording" was answered at, for the recording, or null. */
+    private fun keptFor(id: String): Long? = prefs.getString(KEY_STALE_KEPT, null)?.split('@')
+        ?.takeIf { it.size == 2 && it[0] == id }?.get(1)?.toLongOrNull()
+
+    /** T348: the question while it is asked ([RecordingAge.asks]), else null. */
+    private fun staleQuestionNow(now: Long = System.currentTimeMillis()): String? {
+        val id = recorder.activeId ?: return null
+        val at = lastFixAt() ?: return null
+        return if (RecordingAge.asks(at, now, keptFor(id))) RecordingAge.question(now - at) else null
+    }
+
+    /**
+     * T348: the question's answer: [finish] ends the recording at its last fix ([stop] with `atLastFix`); otherwise "Keep
+     * recording" leaves it running and is not asked again for this last fix. False when the question is not asked.
+     */
+    fun answerStale(finish: Boolean): Boolean {
+        val asked = call { staleQuestionNow() != null }
+        if (!asked) return false
+        if (finish) {
+            stop(atLastFix = true)
+        } else {
+            call { recorder.activeId?.let { id -> lastFixAt()?.let { at -> prefs.edit().putString(KEY_STALE_KEPT, "$id@$at").apply() } } }
+            refreshUi()
+        }
+        return true
+    }
+
+    /**
+     * T348 (debug, `POST /tracks/stale?lastFixAgeH=`): the recording's last fix reads [ageMs] old from now, until a newer
+     * fix (or, with [hold], whatever fixes come: a screen that injects fixes for the readout); null forgets it. False when
+     * nothing records.
+     */
+    fun setDebugLastFixAge(ageMs: Long?, hold: Boolean = false): Boolean {
+        val ok = call {
+            val id = recorder.activeId ?: return@call false
+            val now = System.currentTimeMillis()
+            if (ageMs == null) prefs.edit().remove(KEY_DEBUG_LAST_FIX).apply()
+            else prefs.edit().putString(KEY_DEBUG_LAST_FIX, "$id@${now - ageMs}@${if (hold) Long.MAX_VALUE else now}").apply()
+            true
+        }
+        refreshUi()
+        return ok
+    }
+
+    /** T348: `GET /tracks` `stale`. */
+    fun staleJson(): Map<String, Any?> = call {
+        val now = System.currentTimeMillis()
+        val id = recorder.activeId
+        val at = lastFixAt()
+        val q = staleQuestionNow(now)
+        linkedMapOf(
+            "recording" to (id != null), "lastFixAt" to at, "lastFixAgeS" to at?.let { (now - it) / 1000 },
+            "recorderLastFixAt" to recorder.lastFixAt, "debugLastFixAt" to debugLastFix()?.takeIf { it.first == id }?.second,
+            "wayBackStale" to RecordingAge.wayBackStale(at, now), "asked" to (q != null), "question" to q,
+            "keptFor" to id?.let { keptFor(it) }, "shown" to (ui.staleQuestion != null),
+            "wayBackMaxAgeS" to RecordingAge.WAY_BACK_MAX_FIX_AGE_MS / 1000, "askAfterS" to RecordingAge.ASK_AFTER_MS / 1000,
+        )
+    }
+    // end T348
+
     companion object {
         /** T333: the recording's hold on the GNSS status ([io.github.jasondorjeshort.dystopo.app.gnss.Gnss.hold], status only). */
         const val WEAK_HOLDER = "recording"
@@ -998,6 +1088,9 @@ class Tracking private constructor(private val app: DystopoApp) {
         const val TICK_MS = 5_000L
         /** T159: the recording's fix source ([Mode]), written at start and removed at stop: the persisted flag beside the store's. */
         private const val KEY_REC_MODE = "recordingMode"
+        /** T348: "Keep recording" answered for a recording (`<track id>@<last fix ms>`); and the debug last fix's age (`<id>@<at>@<set at>`). */
+        private const val KEY_STALE_KEPT = "staleKept"
+        private const val KEY_DEBUG_LAST_FIX = "debugLastFix"
 
         private fun gapMsOf(seconds: Long): Long? = if (seconds <= 0) null else seconds * 1000
 

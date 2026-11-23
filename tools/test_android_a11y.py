@@ -663,6 +663,41 @@ finally:
     a11y.time.sleep = _sleep
 # end T342
 
+# T348: the screen recording-stale records, makes the last fix read three days old, turns the card on, unfolds the bar
+# and waits for the question card; its end stops and deletes the recording.
+rs = [s for s in a11y.SCREENS if s[0] == "recording-stale"]
+assert len(rs) == 1 and rs[0][3] == "map" and rs[0][2] is a11y.end_recording_stale, rs
+
+
+class StaleSrv(WeakSrv):
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path.startswith("/tracks/record"):
+            return {"started": {"id": "t-2"}}
+        if path == "/tracks/stale":
+            self.polls += 1
+            return {"shown": self.polls >= 2}
+        return {}
+
+
+_sleep = a11y.time.sleep
+a11y.time.sleep = lambda s: None
+try:
+    ssrv = StaleSrv()
+    ctx = type("C", (), {"srv": ssrv, "recorded": None})()
+    rs[0][1](ctx)
+    paths = [p for _m, p in ssrv.calls]
+    assert paths[1] == "/tracks/record?source=injected&activity=foot" and ctx.recorded == "t-2", paths
+    assert paths[3:6] == [f"/tracks/stale?lastFixAgeH={a11y.STALE_AGE_H}&hold=1", "/tracks/wayback?on=1", "/tracks/ui?bar=1"], paths
+    assert paths[-1] == "/tracks/stale" and ssrv.polls == 2, paths
+    ssrv.calls.clear()
+    rs[0][2](ctx)
+    assert [p for _m, p in ssrv.calls] == ["/tracks/stop", "/tracks/t-2"], ssrv.calls
+    assert ctx.recorded is None
+finally:
+    a11y.time.sleep = _sleep
+# end T348
+
 # T343: the Download card at Mount Rainier's summit (z13), opened as the map's button does; its end closes it and puts the
 # camera back on the view the screens start from.
 dc = [s for s in a11y.SCREENS if s[0] == "download-card"]

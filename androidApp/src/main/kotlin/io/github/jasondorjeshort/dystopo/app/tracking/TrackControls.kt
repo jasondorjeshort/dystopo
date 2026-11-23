@@ -205,6 +205,7 @@ private fun BoxScope.Controls() {
         },
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        ui.staleQuestion?.let { StaleRecordingCard(it) } // T348: a recording left for days, asked at the next open
         BatteryExemptionCard() // T172: once, on the first Record
         LongPressCard() // T91
         io.github.jasondorjeshort.dystopo.app.viewshed.ViewshedSheet() // T182: what can I see from here
@@ -363,9 +364,11 @@ internal const val TURN_BACK_OFF = "Hide the turn-back time"
 /** T252: the chip's help text (ADR 0031: the owner's to adjust). */
 internal val TURN_BACK_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
     io.github.jasondorjeshort.dystopo.app.help.HelpText("tracks.turnBack", "Turn-back time", "The map, top right: Tracks, then the recording panel", needs = "recording", show = { TrackBar.open = true }) {
-        "Off until you turn it on for a recording. It times the walk or ride back to the recording's start, or to a " +
-            "waypoint (Turn back to here on its card), at its activity's pace, and says when to turn back to be out " +
-            "before sunset or your deadline. No time while driving, on a train or boat, or flying. Tap the card to see how."
+        // T348: shortened to take the cut-off within the paragraph's 330 characters.
+        "Off until you turn it on for a recording. It times the walk or ride back to the start, or to a waypoint " +
+            "(Turn back to here on its card), at the activity's pace, to be out before sunset or your deadline. No " +
+            "time while driving, on a train or boat, flying, or after two hours without a location update. Tap the " +
+            "card to see how."
     },
 )
 
@@ -429,6 +432,45 @@ internal val WEAK_SIGNAL_HELP: List<io.github.jasondorjeshort.dystopo.app.help.H
     },
 )
 // end T333
+
+/**
+ * T348: the stale recording's question ([io.github.jasondorjeshort.dystopo.store.RecordingAge.question]) as a card at the
+ * bottom of the map, shown at the next open while the recording's last fix is more than a day old: "Finish it" ends the
+ * recording at its last fix; "Keep recording" leaves it running and is not asked again for that fix. A discard stays Pause,
+ * then Discard on the panel. Each answer runs on a thread of its own ([Tracking.answerStale]).
+ */
+@Composable
+private fun StaleRecordingCard(question: String) {
+    val age = io.github.jasondorjeshort.dystopo.store.RecordingAge
+    // The map chips' capped font scale (T91): at 2.0 the card took half the map and squeezed the panels above it.
+    io.github.jasondorjeshort.dystopo.app.MapChrome {
+        // One flowing row: on a wide screen (landscape) the answers follow the question on its line, so the card is one
+        // button high and the recording panel above it keeps its room; upright they wrap under it.
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicText(question, Modifier.padding(vertical = 4.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+            StaleAction(age.FINISH) { Thread { tracker().answerStale(finish = true) }.start() }
+            StaleAction(age.KEEP) { Thread { tracker().answerStale(finish = false) }.start() }
+        }
+    }
+}
+
+@Composable
+private fun StaleAction(text: String, onClick: () -> Unit) {
+    BasicText(
+        text,
+        Modifier.clickable(onClick = onClick).heightIn(min = 48.dp).wrapContentHeight(Alignment.CenterVertically),
+        style = TextStyle(color = StaleLink, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+    )
+}
+
+/** T348: the answers' blue, darker than [Link] (4.3:1 on the card), so the two buttons pass 4.5:1. */
+private val StaleLink = Color(0xFF1B5E91)
+// end T348
 
 /** T272: the toast after "Turn back to here" on a waypoint (ADR 0031). Pure. */
 internal fun wayBackToWaypoint(name: String): String = "The way back now goes to ${name.ifBlank { "the waypoint" }}"
