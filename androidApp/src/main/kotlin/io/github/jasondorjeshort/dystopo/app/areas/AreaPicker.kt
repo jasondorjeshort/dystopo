@@ -52,6 +52,7 @@ import io.github.jasondorjeshort.dystopo.areas.AreaPoint
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
 import io.github.jasondorjeshort.dystopo.areas.PolygonRings
 import io.github.jasondorjeshort.dystopo.boundaries.Countries
+import io.github.jasondorjeshort.dystopo.packs.HeldHere
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import java.util.concurrent.Executors
@@ -85,6 +86,11 @@ import kotlin.concurrent.thread
  * less; the card shows the two not shown as choices with their sizes ([alternativeLines]) and, at medium detail,
  * [MEDIUM_DETAIL_HINT] under the size line. A country opens at the deepest detail that fits the budget; a region's medium
  * detail takes the area path (a pack holds one zoom range).
+ *
+ * T343: a region's card opens with what the phone already holds over the box ([heldLineOf], from [HeldHere] over every map and
+ * finished area on the phone, the rule the status chip and the map's button follow): "On this phone at medium detail, map
+ * only", or "Part of this area is ..."; where everything a detail would take is held at that detail or finer it offers no
+ * Download of it and says so ([nothingNewOf]), so no row is made for nothing; the other details stay offered.
  *
  * Plans are made on one worker thread, newest request first (a stale one is skipped), and published to the UI thread.
  */
@@ -135,6 +141,8 @@ object AreaPicker {
     class Summary(
         val revision: Long, val full: AreaDownload.Plan?, val less: AreaDownload.Plan?, val fullPending: Boolean, val error: String?, val pack: Boolean = false,
         val medium: AreaDownload.Plan? = null,
+        /** T343: a region's [HeldHere] answer per detail (`full`, `medium`, `less`); null for the other flows. */
+        val held: Map<String, HeldHere.Held>? = null,
     ) {
         /** T157: the plan of [detail] (`full`, `medium`, `less`). */
         fun plan(detail: String): AreaDownload.Plan? = when (detail) {
@@ -301,6 +309,9 @@ object AreaPicker {
                         publish(Summary(rev, full, less, false, null, medium = medium))
                     }
                     is Mode.Region -> {
+                        // T343: what the phone holds over the box, per detail, worked out before the plans so the card says it first.
+                        val holdings = runCatching { Areas.holdings() }.onFailure { Log.w(TAG, "holdings", it) }.getOrNull()
+                        val held = holdings?.let { h -> DETAILS.associateWith { d -> HeldHere.held(m.box, regionWant(m.box, d), h) } }
                         // T153: within the server's build limits, full detail is the pack (sized at its z8 to z14); else the area path's z8 to z15.
                         if (RegionDownload.packFits(m.box)) {
                             val less = AreaDownload.plan(regionArea(m.box, AreaDetail.LESS, label), withLessDetail = false)
@@ -308,9 +319,9 @@ object AreaPicker {
                             val medium = AreaDownload.plan(regionArea(m.box, AreaDetail.MEDIUM, label), withLessDetail = false) // T157: tiles, the area path
                             if (rev != revision) return@execute
                             val pack = AreaDownload.plan(regionArea(m.box, RegionDownload.DEFAULT_MAX_ZOOM, label), withLessDetail = false)
-                            publish(Summary(rev, pack, less, false, null, pack = true, medium = medium))
+                            publish(Summary(rev, pack, less, false, null, pack = true, medium = medium, held = held))
                         } else {
-                            AreaDownload.plan(regionArea(m.box, FULL_MAX_ZOOM, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null, medium = p.mediumDetail)) }
+                            AreaDownload.plan(regionArea(m.box, FULL_MAX_ZOOM, label)).let { p -> publish(Summary(rev, p, p.lessDetail, false, null, medium = p.mediumDetail, held = held)) }
                         }
                     }
                     Mode.Countries -> Unit
@@ -338,8 +349,20 @@ object AreaPicker {
     /** T153: true when the plan shown is a region's pack path (full detail within the server's build limits). */
     fun packPath(s: Summary?): Boolean = mode is Mode.Region && s?.pack == true && detailOf(s) == DETAIL_FULL
 
-    /** T153: the refusal of the plan shown: the pinned budget's, except on the pack path (a pack is not pinned tiles). */
-    fun refusalOf(s: Summary?): String? = if (packPath(s)) null else planOf(s)?.refusal
+    /**
+     * T153: the refusal of the plan shown: the pinned budget's, except on the pack path (a pack is not pinned tiles). T343: and
+     * [nothingNewOf], so Download is not offered (and `POST /areas/picker/download` makes no row) where nothing would be new.
+     */
+    fun refusalOf(s: Summary?): String? = nothingNewOf(s) ?: if (packPath(s)) null else planOf(s)?.refusal
+
+    /** T343: [HeldHere]'s answer for the detail shown; null outside a region's card or before it is worked out. */
+    fun heldOf(s: Summary?): HeldHere.Held? = s?.held?.get(detailOf(s))
+
+    /** T343: the card's first line, what the phone holds here ([heldLine]). */
+    fun heldLineOf(s: Summary?): String? = heldLine(heldOf(s))
+
+    /** T343: the line in place of Download where the detail shown would bring nothing new ([nothingNewLine]). */
+    fun nothingNewOf(s: Summary?): String? = nothingNewLine(heldOf(s))
 
     /**
      * T153: the size line of the plan shown; the pack path's z8 to z14 is this card's full detail. T192: the pack path
@@ -401,6 +424,8 @@ object AreaPicker {
             // T157: every detail not shown, as the card lists them (`detail`, `line`), and the medium detail's hint.
             "alternatives" to s?.let { alternativeLines(detailOf(it), it).map { (d, l) -> linkedMapOf("detail" to d, "line" to l) } }, "hint" to hintOf(s),
             "refusal" to refusalOf(s), "refused" to (refusalOf(s) != null), "canDownload" to (p != null && refusalOf(s) == null),
+            // T343: what the phone holds here (the card's first line), the line in place of Download, and the rule's answer per detail.
+            "heldLine" to heldLineOf(s), "nothingNew" to nothingNewOf(s), "held" to s?.held?.mapValues { it.value.json() },
             "pastHeapLimit" to p?.pastHeapLimit, "heapTiles" to p?.heapTiles, // T152: said, never a refusal
             "bytes" to p?.bytes, "tiles" to p?.tiles, "zooms" to p?.let { listOf(it.area.minZoom, it.area.maxZoom) }, "demMaxZoom" to p?.area?.demMaxZoom,
             "id" to p?.area?.id, // T157: the id of the area Download would record (each detail's differs)
@@ -471,6 +496,50 @@ internal fun regionPathLine(packFits: Boolean, detail: String): String = when {
     packFits -> REGION_PACK_LINE
     else -> REGION_TILES_LINE
 }
+
+/**
+ * T343: what "Download this area" over [box] at [detail] would take, for [HeldHere]: the detail, and routing and place search
+ * where it takes the pack path (full detail within the server's build limits, [regionPathLine]). Pure, tested.
+ */
+internal fun regionWant(box: PackBounds, detail: String): HeldHere.Want =
+    HeldHere.Want(detail, routing = detail == DETAIL_FULL && RegionDownload.packFits(box))
+
+/** T343: "full detail", "medium detail", "less detail", "low detail" ([HeldHere.LOW]). */
+internal fun detailWords(detail: String): String = "$detail detail"
+
+/** T343: what a holding brings beside its tiles: [REGION_PACK_LINE]'s words, or [HELD_MAP_ONLY]. */
+internal fun holdsWords(h: HeldHere.Holder): String = if (h.routing) HELD_WITH_ROUTING else HELD_MAP_ONLY
+
+/**
+ * T343 (ADR 0031: the coordinator's words, listed for the owner): the card's first line, what the phone holds over the box. The
+ * finest holding that holds the whole box: "On this phone at medium detail, map only"; else the finest that holds part of it:
+ * "Part of this area is on this phone at full detail, with routing and place search"; null when nothing is held. Pure, tested.
+ */
+internal fun heldLine(h: HeldHere.Held?): String? {
+    if (h == null || h.verdict == HeldHere.Verdict.NOTHING) return null
+    val whole = h.holders.firstOrNull { it.share >= HeldHere.WHOLE }
+    if (whole != null) return "$HELD_WHOLE ${detailWords(whole.detail)}, ${holdsWords(whole)}"
+    val part = h.finest ?: return null
+    return "$HELD_PART ${detailWords(part.detail)}, ${holdsWords(part)}"
+}
+
+/**
+ * T343: where everything the detail shown would take is held at that detail or finer ([HeldHere.Verdict.ALL]): "Already on this
+ * phone in rainier-fine: nothing new at this detail", shown in place of Download; null otherwise. Pure, tested.
+ */
+internal fun nothingNewLine(h: HeldHere.Held?): String? {
+    if (h == null || h.verdict != HeldHere.Verdict.ALL) return null
+    val names = h.holders.filter { it.atDetail }.map { it.name }
+    return "$NOTHING_NEW_PREFIX ${names.joinToString(", ")}$NOTHING_NEW_SUFFIX"
+}
+
+/** T343: the card's held lines (ADR 0031). */
+internal const val HELD_WHOLE = "On this phone at"
+internal const val HELD_PART = "Part of this area is on this phone at"
+internal const val HELD_MAP_ONLY = "map only"
+internal const val HELD_WITH_ROUTING = "with routing and place search"
+internal const val NOTHING_NEW_PREFIX = "Already on this phone in"
+internal const val NOTHING_NEW_SUFFIX = ": nothing new at this detail"
 
 /** T153: the rectangle of [box] as an area (a polygon, counter-clockwise) at z8 to [maxZoom]. */
 internal fun regionArea(box: PackBounds, maxZoom: Int, name: String?): AreaOfInterest =
@@ -687,6 +756,7 @@ private fun SummaryLines() {
     s.error?.let { BasicText(it, style = TextStyle(color = Red, fontSize = 13.sp)); return }
     val shown = AreaPicker.detailOf(s)
     val p = AreaPicker.planOf(s)
+    AreaPicker.heldLineOf(s)?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp)) } // T343: what the phone holds here, first
     if (p == null) BasicText(MEASURING, style = TextStyle(color = Muted, fontSize = 13.sp))
     else BasicText(AreaPicker.sizeLineOf(s) ?: "", style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
     AreaPicker.hintOf(s)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) } // T157: what medium detail drops
@@ -695,7 +765,8 @@ private fun SummaryLines() {
     if (p == null) return
     timeLine(p.bytes, p.bytesPerMs)?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
     val refusal = AreaPicker.refusalOf(s)
-    refusal?.let { BasicText(it, style = TextStyle(color = Red, fontSize = 12.sp)) }
+    // T343: nothing new is no error: said in the muted ink, where Download would be
+    refusal?.let { BasicText(it, style = TextStyle(color = if (it == AreaPicker.nothingNewOf(s)) Muted else Red, fontSize = if (it == AreaPicker.nothingNewOf(s)) 13.sp else 12.sp)) }
     if (refusal == null) {
         BasicText(
             "Download",
