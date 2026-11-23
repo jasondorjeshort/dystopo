@@ -39,8 +39,28 @@ val userTextCheck = tasks.register<Exec>("userTextCheck") {
     commandLine(python, "-I", "tools/user-text-check.py", "--out", report.get().asFile.path)
 }
 
+// T345: the tools' own tests (every tools/test_*.py in its own `python -I` process, then the hook tests under node),
+// through tools/run-tool-tests.py: one JSON report, exit 1 on any failure, a named skip where a program is missing
+// (Windows PowerShell, java, node). Up to date while the tools and hooks are unchanged (the hook tests alone take
+// minutes). The inputs name file types, not all of tools/, so a local secret there is never read.
+val toolsTest = tasks.register<Exec>("toolsTest") {
+    group = "verification"
+    description = "Runs every tools/test_*.py and .claude/hooks/test-hooks.js (tools/run-tool-tests.py)."
+    val report = layout.buildDirectory.file("reports/tools-test.json")
+    inputs.files(fileTree("tools") {
+        include("**/*.py", "**/*.ps1", "**/*.sh", "**/*.json", "**/*.java", "**/*.txt", "**/*.js", "**/*.html")
+        exclude("**/__pycache__/**")
+    })
+    inputs.files(fileTree(".claude/hooks") { exclude("**/__pycache__/**") })
+    inputs.files(".claude/settings.json")
+    outputs.file(report)
+    val python = if (System.getProperty("os.name").lowercase().contains("windows")) "python" else "python3"
+    commandLine(python, "-I", "tools/run-tool-tests.py", "--out", report.get().asFile.path)
+}
+
 tasks.named("check") {
     dependsOn(userTextCheck)
+    dependsOn(toolsTest)
 }
 
 tasks.register("licenseCheck") {

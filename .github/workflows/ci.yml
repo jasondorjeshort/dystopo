@@ -39,6 +39,16 @@ jobs:
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
+      # T345: check runs the tools' tests (toolsTest: Python files, then the hook tests under node), so both are
+      # set up before it.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       # T87: the APK bundles every glyph range of the three fonts (bundleMapAssets in androidApp/build.gradle.kts),
       # fetched from protomaps.github.io into cache/glyphs. Cached between runs, keyed by the font and range
       # lists, so a remote outage cannot fail a commit that changed nothing there (2026-10-13: a 503 failed a
@@ -81,10 +91,6 @@ jobs:
           STATUS=$?
           python3 -c 'import json; d = json.load(open("out/tour/summary.json")); print({k: d[k] for k in ("renders", "passed", "failed", "skipped", "totalMs")})' || cat out/tour/stdout.json
           exit $STATUS
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
 
       - name: Install Playwright
         run: |
