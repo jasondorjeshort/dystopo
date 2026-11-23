@@ -18,7 +18,8 @@ Beta (decided 2026-10-11): Google Play, starting with closed testing, under one 
 the owner makes once (a Play Console account; its identity check also covers Google's developer
 verification for sideloaded installs), with our own key kept under Play App Signing; sideloading is a
 short-lived alpha arrangement. The coordinator publishes at the end of every wave once the sweep on
-main is green, without asking again.
+main is green, without asking again. Leaving beta (the first post-beta release): set the scale bar's
+zoom label off by default (`ScaleBarSettings.ZOOM_LABEL_DEFAULT = false`, T346; the owner, 2026-11-22).
 
 ## Steps
 

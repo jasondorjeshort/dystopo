@@ -664,8 +664,8 @@ class MapLayoutTest {
         const val LONGEST_RULER = 102f
         const val PLATE_PAD = 12f // 6 dp each side
         const val LABEL_GAP = 8f
-        const val LABEL_W_1 = 32f // "z00.0" at 12 sp
-        const val LABEL_W_2 = 56f
+        const val LABEL_W_1 = 28.2f // "z00.0" at 12 sp (measured: `zoomLabel.boundsPx`)
+        const val LABEL_W_2 = 58.3f
         const val PLATE_H_1 = 28f
         const val PLATE_H_2 = 41.9f
         val CARD_IDS = setOf(OverlayIds.NAV_CARD, OverlayIds.WARNING_CARD, OverlayIds.PLANNING_CARD, OverlayIds.TRIP_CARD, OverlayIds.UPDATE_CARD)
