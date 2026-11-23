@@ -698,6 +698,7 @@ private fun SourcesSection() {
         testLine?.let { BasicText(it, style = TextStyle(color = if (it.startsWith("Test failed")) Color(0xFFB0302A) else Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)) }
         FirstRun.message?.let { BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp)) }
         if (saved.isEmpty()) io.github.jasondorjeshort.dystopo.app.firstrun.DirectSourcesRows() // T80: mobile data, limit per session
+        else io.github.jasondorjeshort.dystopo.app.firstrun.OnlineDetailRow() // T341: with a server, More detail from online alone
     }
 }
 

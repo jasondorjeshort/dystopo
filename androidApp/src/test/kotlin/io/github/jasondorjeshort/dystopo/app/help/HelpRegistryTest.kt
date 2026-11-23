@@ -214,6 +214,9 @@ class HelpRegistryTest {
             // T344: the List view.
             "list.view",
             // end T344
+            // T341: More detail from online.
+            "direct.onlineDetail",
+            // end T341
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
@@ -390,4 +393,15 @@ class HelpRegistryTest {
         assertTrue(HelpRegistry.byKey("panorama.peaks")!!.placed.contains("the switch's List"))
     }
     // end T344
+
+    // T341: More detail from online sits beside Mobile data, with ADR 0066's words.
+    @Test
+    fun theMoreDetailFromOnlineHelpSaysWhatOffDoes() {
+        val h = HelpRegistry.byKey("direct.onlineDetail")!!
+        assertEquals("More detail from online", h.title)
+        assertEquals(io.github.jasondorjeshort.dystopo.app.firstrun.ONLINE_DETAIL_HELP, h.text(ContourUnits.METERS))
+        assertTrue(h.text(ContourUnits.METERS).contains("Off: the phone shows what it holds"))
+        assertEquals(setOf("DirectSourcesRows.kt"), references["direct.onlineDetail"])
+    }
+    // end T341
 }

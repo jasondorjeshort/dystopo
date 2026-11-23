@@ -32,7 +32,14 @@ object DirectPrefs {
     val SESSION_MB_RANGE = 1L..100_000L
 
     /** The two user settings, as `GET /settings` shows them. */
-    fun json(c: Context): Map<String, Any?> = linkedMapOf("directSessionMb" to sessionMb(c), "directOnMobileData" to onMobileData(c))
+    fun json(c: Context): Map<String, Any?> = linkedMapOf("directSessionMb" to sessionMb(c), "directOnMobileData" to onMobileData(c), "onlineDetail" to onlineDetail(c)) // T341: onlineDetail
+
+    /** T341: "More detail from online" ([OnlineDetail]), per device, default on (ADR 0066). */
+    fun onlineDetail(c: Context): Boolean = prefs(c).getBoolean("onlineDetail", OnlineDetail.DEFAULT)
+
+    fun setOnlineDetail(c: Context, on: Boolean) {
+        prefs(c).edit().putBoolean("onlineDetail", on).apply()
+    }
 
     fun maxZoom(c: Context): Int = prefs(c).getInt("maxZoom", DirectSources.DEFAULT_MAX_ZOOM)
 

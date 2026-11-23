@@ -23,6 +23,8 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   (hillshade and slope switch to generated `/shade` tiles, cached per option set).
  *   T80 `directSessionMb` (1..100000, default 300: what the phone may download from the public sources per session
  *   when no server is set) and `directOnMobileData` (1/0, default 1 since T83: no Wi-Fi gates); also in Settings › Sources.
+ *   T341 `onlineDetail` (1/0, default 1, per device, ADR 0066): "More detail from online", the network where it stores more than the
+ *   phone holds (the world overview's zooms for now); also in Settings › Sources.
  *   `onlineCacheMb` and `contourCacheMb` (T41) cap the online tile cache and the contour cache (all packs),
  *   16 to 8192 MB; lowering one evicts the least recently used tiles at once.
  *   T126 `navSpeech` (1/0, default 0): spoken turn directions while navigating ([io.github.jasondorjeshort.dystopo.app.nav.NavSpeech]),
@@ -143,7 +145,10 @@ class SettingsRoutes(private val app: DystopoApp) {
         // T80: the phone's own source reading (no server): per-session download limit and mobile data.
         val directMb = params["directSessionMb"]?.let { it.toString().toDoubleOrNull()?.toLong() ?: return Response.json(mapOf("error" to "directSessionMb must be a number of MB (got $it)"), 400) }
         val directMobile = params["directOnMobileData"]?.let { raw -> when (raw.toString()) { "1", "true", "on" -> true; "0", "false", "off" -> false; else -> return Response.json(mapOf("error" to "directOnMobileData must be 1 or 0 (got $raw)"), 400) } }
+        // T341: "More detail from online" (per device, not synced).
+        val onlineDetail = params["onlineDetail"]?.let { raw -> when (raw.toString()) { "1", "true", "on" -> true; "0", "false", "off" -> false; else -> return Response.json(mapOf("error" to "onlineDetail must be 1 or 0 (got $raw)"), 400) } }
         io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).setDirect(directMb, directMobile)?.let { return Response.json(mapOf("error" to it), 400) }
+        onlineDetail?.let { io.github.jasondorjeshort.dystopo.app.online.OnlineDetail.set(app, it) }
         apply(parsed)
         return Response.json(AppSettings.json() + io.github.jasondorjeshort.dystopo.app.online.DirectPrefs.json(app))
     }
@@ -290,7 +295,7 @@ class SettingsRoutes(private val app: DystopoApp) {
          * the map options (T47), the cache caps (T41, T91), the turn-around deadline (T163: two stored keys), the recording
          * profiles and their rows' keys (T172) and the readout's entries and their rows' keys (T161).
          */
-        val COMPOSITE_KEYS: Set<String> = setOf("textScale", "units", "warmup", "server", "decoder", "directSessionMb", "directOnMobileData") + MapOptions.KEYS + CACHE_KEYS +
+        val COMPOSITE_KEYS: Set<String> = setOf("textScale", "units", "warmup", "server", "decoder", "directSessionMb", "directOnMobileData", "onlineDetail") + MapOptions.KEYS + CACHE_KEYS +
             setOf("turnDeadline") +
             setOf("trackAccuracyM", "trackAutoPause", "trackNetworkFallback", "trackIntervalS") + io.github.jasondorjeshort.dystopo.app.tracking.RecordingProfiles.KEYS +
             io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.KEYS + io.github.jasondorjeshort.dystopo.app.readout.ReadoutSettings.EDIT_KEYS

@@ -8,6 +8,7 @@ import io.github.jasondorjeshort.dystopo.mvt.MvtDecoder
 import io.github.jasondorjeshort.dystopo.mvt.MvtEncoder
 import io.github.jasondorjeshort.dystopo.mvt.MvtOverzoom
 import io.github.jasondorjeshort.dystopo.mvt.VectorTile
+import io.github.jasondorjeshort.dystopo.packs.Holdings
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.tiles.ContourTileOptions
 import io.github.jasondorjeshort.dystopo.tiles.ContourTiles
@@ -80,6 +81,135 @@ class OnlineTiles(
 
     fun packCoversOsm(z: Int, x: Int, y: Int): Boolean = packs.osmFor(z, x, y) != null // T41: any pack
 
+    // ---- T341: the world overview's zooms, by Holdings' rule ----
+
+    /**
+     * T341 (ADR 0066): the online member as [Holdings.vectorTile] takes it: the vector source's stored maximum (OpenFreeMap's
+     * z14 with the phone's own sources, else the server's declared `osmMaxZoom`), whether a fetch may run now (not offline,
+     * not paused by Mobile data or the session limit) and the setting `onlineDetail` ([OnlineDetail]).
+     */
+    fun onlineMember(): Holdings.Online {
+        val direct = fetcher.server == DirectSources.SERVER
+        val stored = if (direct) OSM_MAX_ZOOM else (service.info?.get("osmMaxZoom") as? Number)?.toInt() ?: OSM_MAX_ZOOM
+        val reason = when {
+            fetcher.state == "offline" || !hasNetwork() -> "offline"
+            direct -> service.direct.notice()
+            else -> null
+        }
+        return Holdings.Online(stored, reason == null, OnlineDetail.on, reason)
+    }
+
+    @Volatile private var networkAt = Long.MIN_VALUE / 2
+    @Volatile private var network = true
+
+    /**
+     * T341: the phone has an active network (read at most once a second). The fetcher's state reads `unknown` for a while after
+     * a start in airplane mode, and nothing is fetched behind the overview then. Not `OnlineUi.hasNetwork`, which reads true in
+     * airplane mode on the API 35 emulator (`terrain/TerrainRead.kt` reads it the same way).
+     */
+    private fun hasNetwork(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - networkAt < 1_000) return network
+        network = try {
+            val cm = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
+        } catch (e: RuntimeException) {
+            true // no app (a test): let the fetcher decide
+        }
+        networkAt = now
+        return network
+    }
+
+    /** T341: the world overview's stored zooms, or null when the phone has none. */
+    val overview: Holdings.Overview? get() = packs.world?.header?.let { Holdings.Overview(it.minZoom, it.maxZoom) }
+
+    /**
+     * T341: who answers vector tile z/x/y ([Holdings.vectorTile]): a map at its own zooms, the world overview, the online tile
+     * kept on the phone, or the network. The cache is looked at only where the rule asks (the overview's zooms, the setting on).
+     */
+    fun vectorAnswer(z: Int, x: Int, y: Int, member: Holdings.Online = onlineMember()): Holdings.Answer {
+        val answering = packs.osmFor(z, x, y)
+        val ov = overview
+        val overviewZoom = ov != null && z in ov.minZoom..ov.maxZoom && member.detail && member.storedMaxZoom > ov.maxZoom
+        val cached = overviewZoom && answering === packs.world && fetcher.hasCached("osm", "$z/$x/$y.pbf")
+        return Holdings.vectorTile(z, answering != null && answering !== packs.world, ov, member, cached)
+    }
+
+    /** T341: the online vector tile kept on the phone (the cache only, nothing fetched), or null. */
+    fun keptOsm(z: Int, x: Int, y: Int): TileResult? {
+        val bytes = fetcher.cachedOnly("osm", "$z/$x/$y.pbf")?.let(OnlineFetcher::gunzipIfNeeded) ?: return null
+        overviewKept.incrementAndGet()
+        servedKept.add("$z/$x/$y.pbf")
+        return TileResult(200, "application/x-protobuf", bytes)
+    }
+
+    private val behind: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** T341: the overview's tiles the kept online tile answered for this session (the map draws it: the chip may say so). */
+    private val servedKept: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** T341: the overview's tiles fetched behind it this session (the chip's "from public sources" rather than "viewed earlier"). */
+    private val fetchedBehind: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** T341 counters (`GET /why` `overviewOnline`): fetches started behind the overview, landed, failed, bytes landed; kept tiles served. */
+    val behindStarted = java.util.concurrent.atomic.AtomicLong()
+    val behindLanded = java.util.concurrent.atomic.AtomicLong()
+    val behindFailed = java.util.concurrent.atomic.AtomicLong()
+    val behindBytes = java.util.concurrent.atomic.AtomicLong()
+    val overviewKept = java.util.concurrent.atomic.AtomicLong()
+
+    /**
+     * T341: fetches vector tile z/x/y behind the overview tile answered for it now, on the prefetch pool, once per tile while
+     * it is in flight or landed. A landed tile asks for one refresh of the map's vector source (coalesced with the stall
+     * recovery's, [OnlineService.osmRefresh]), after which MapLibre asks again and the kept tile answers. A failed fetch may be
+     * tried again on the next ask; a tile the source does not have is not.
+     */
+    fun fetchBehind(z: Int, x: Int, y: Int) {
+        val path = "$z/$x/$y.pbf"
+        if (!behind.add(path)) return
+        behindStarted.incrementAndGet()
+        service.prefetch {
+            fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded).also { f ->
+                service.served("osm", f)
+                when (f) {
+                    is Fetch.Hit -> {
+                        fetchedBehind.add(path)
+                        behindLanded.incrementAndGet()
+                        behindBytes.addAndGet(f.bytes.size.toLong())
+                        service.osmRefresh.recovered(System.currentTimeMillis(), 1)
+                    }
+                    is Fetch.Unavailable -> {
+                        behindFailed.incrementAndGet()
+                        behind.remove(path)
+                    }
+                    Fetch.Missing -> behindFailed.incrementAndGet()
+                }
+            }
+        }
+    }
+
+    /** T341: the source (`online`, `cached`, `wider:<zoom>`) of the last vector tiles the network path answered, newest kept ([VECTOR_KEEP]). */
+    private val vectorSources = object : LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > VECTOR_KEEP
+    }
+
+    private fun noteVector(path: String, source: String) = synchronized(vectorSources) { vectorSources[path] = source }
+
+    /** T341: how the network path answered vector tile [path] (`z/x/y.pbf`) last, or null. */
+    fun vectorSource(path: String): String? = synchronized(vectorSources) { vectorSources[path] }?.substringBefore(':')
+
+    /** T341: the zoom vector tile [path] was last cut from ([WiderZoom]), or null. */
+    fun vectorWiderFrom(path: String): Int? = synchronized(vectorSources) { vectorSources[path] }?.substringAfter(':', "")?.toIntOrNull()
+
+    /** T341: `GET /why`'s `overviewOnline`: the setting, the member and the counters. */
+    fun overviewJson(): Map<String, Any?> {
+        val m = onlineMember()
+        return linkedMapOf(
+            "onlineDetail" to m.detail, "storedMaxZoom" to m.storedMaxZoom, "allowed" to m.allowed, "notAllowedBecause" to m.reason,
+            "overviewZooms" to overview?.let { listOf(it.minZoom, it.maxZoom) },
+            "fetchesBehind" to behindStarted.get(), "landed" to behindLanded.get(), "failed" to behindFailed.get(), "bytesLanded" to behindBytes.get(),
+            "keptServed" to overviewKept.get(),
+        )
+    }
+    // end T341
+
     /** True when the contour tile lies wholly inside the DEM pack: the pack path (and its cache) makes it, as without a server. */
     fun packCoversContour(z: Int, x: Int, y: Int): Boolean = packs.demContains(z, x, y) // T41: wholly inside any pack
 
@@ -148,10 +278,14 @@ class OnlineTiles(
         val f = fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded)
         service.served("osm", f)
         if (f is Fetch.Unavailable) service.osmFailed(path)
-        if (f is Fetch.Hit) return TileResult(200, "application/x-protobuf", f.bytes)
+        if (f is Fetch.Hit) {
+            noteVector(path, if (f.cached) OnlineService.CACHED else OnlineService.ONLINE) // T341: the chip's source where no DEM answers
+            return TileResult(200, "application/x-protobuf", f.bytes)
+        }
         // T254: not on the phone and not fetched: cut from the nearest ancestor the phone holds; 404 only when none is.
         return widerOsm.vector(z, x, y)?.let { c ->
             service.widerServed("osm", c.fromZoom)
+            noteVector(path, "$WIDER:${c.fromZoom}") // T341: and the zoom it was cut from
             TileResult(200, "application/x-protobuf", c.bytes, widerZoom = c.fromZoom)
         } ?: TileResult.notFound()
     }
@@ -405,7 +539,31 @@ class OnlineTiles(
             // T254: a tile cut from a wider zoom names its ancestor (the tile the phone holds, which an offline map may record).
             service.demSource(t.first, t.second, t.third)?.let { return it to (if (it == WIDER) service.widerAncestor(t.first, t.second, t.third) ?: t else t) }
         }
+        // T341: where the overview holds the view's vector tile, the online tile kept on the phone may answer it instead.
+        overviewOnline(lat, lon, zoom)?.let { return it to null }
+        // T341: no terrain recorded here (below the phone's own sources' DEM, z8), but the network drew the view's vector tile.
+        viewTile(lat, lon, zoom).let { (z, x, y) -> vectorSource("$z/$x/$y.pbf") }?.let { return it to null }
         return (if (worldDraws(lat, lon, zoom)) WORLD else NONE) to null
+    }
+
+    /** T341: the view's vector tile at the map's zoom (512-px tiles), clamped to the world. */
+    private fun viewTile(lat: Double, lon: Double, zoom: Double): Triple<Int, Int, Int> {
+        val z = floor(zoom).toInt().coerceAtLeast(0)
+        val n = 1 shl z
+        return Triple(z, WebMercator.lonToX(lon, z).toInt().coerceIn(0, n - 1), WebMercator.latToY(lat, z).toInt().coerceIn(0, n - 1))
+    }
+
+    /**
+     * T341: `online` (fetched behind the overview this session) or `cached` (kept from before) where the online tile kept on the
+     * phone answers the view's vector tile at the overview's zooms ([vectorAnswer] [Holdings.Source.CACHE]) and the map was given
+     * it ([keptOsm]); else null.
+     */
+    fun overviewOnline(lat: Double, lon: Double, zoom: Double): String? {
+        val (z, x, y) = viewTile(lat, lon, zoom)
+        val path = "$z/$x/$y.pbf"
+        // Only once the map was given the kept tile: until the vector source's refresh it still draws the overview.
+        if (path !in servedKept || !packs.worldAnswers(z, x, y) || vectorAnswer(z, x, y).serves != Holdings.Source.CACHE) return null
+        return if (path in fetchedBehind) OnlineService.ONLINE else OnlineService.CACHED
     }
 
     /**
@@ -414,9 +572,9 @@ class OnlineTiles(
      * the phone, so a stale record of terrain fetched earlier does not hide the overview the map draws.
      */
     fun worldDraws(lat: Double, lon: Double, zoom: Double): Boolean {
-        val z = floor(zoom).toInt().coerceAtLeast(0)
-        val n = 1 shl z
-        return packs.worldAnswers(z, WebMercator.lonToX(lon, z).toInt().coerceIn(0, n - 1), WebMercator.latToY(lat, z).toInt().coerceIn(0, n - 1))
+        val (z, x, y) = viewTile(lat, lon, zoom)
+        // T341: not where the online tile kept on the phone answers in its place.
+        return packs.worldAnswers(z, x, y) && overviewOnline(lat, lon, zoom) == null
     }
 
     companion object {
@@ -507,6 +665,8 @@ class OnlineTiles(
         const val WIDER = OnlineService.WIDER
         /** T264: the view draws from the built-in world overview ([io.github.jasondorjeshort.dystopo.app.PackSet.world]); the chip says "from the world overview". */
         const val WORLD = "world"
+        /** T341: the vector tiles whose source [vectorSource] keeps. */
+        const val VECTOR_KEEP = 256
 
         /**
          * The DEM tiles (z, x, y) a window of [size] global pixels at ([px], [py]) of zoom [z] samples,
@@ -532,6 +692,30 @@ class OnlineTiles(
         }
     }
 }
+
+/**
+ * T341 (ADR 0066): the per-device setting `onlineDetail`, "More detail from online" (Settings › Sources, `POST /settings
+ * onlineDetail=1|0`), default on: where the network stores more detail than what the phone holds, it is fetched. Its reach
+ * here is the world overview's zooms ([OnlineTiles.vectorAnswer]); over the maps it is ADR 0066's build task 2. Stored in
+ * [DirectPrefs] (not synced: what one phone downloads is that phone's business); read once and kept.
+ */
+object OnlineDetail {
+    const val DEFAULT = true
+
+    @Volatile private var value: Boolean? = null
+
+    val on: Boolean get() = value ?: runCatching { DirectPrefs.onlineDetail(io.github.jasondorjeshort.dystopo.app.DystopoApp.instance) }.getOrDefault(DEFAULT).also { value = it }
+
+    /** Stores [on] and redraws the map's vector tiles (the source's URL changes, so MapLibre asks for every tile again). Off the UI thread. */
+    fun set(app: io.github.jasondorjeshort.dystopo.app.DystopoApp, on: Boolean) {
+        DirectPrefs.setOnlineDetail(app, on)
+        if (value == on) return
+        value = on
+        OnlineService.get(app).osmSourceRefreshes.incrementAndGet()
+        app.showStyle(app.tiles)
+    }
+}
+// end T341
 
 /**
  * T254: a vector tile the phone lacks, cut from the nearest ancestor it holds. MapLibre Native paints a 404 as an empty

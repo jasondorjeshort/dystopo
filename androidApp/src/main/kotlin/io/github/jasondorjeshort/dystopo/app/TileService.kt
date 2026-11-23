@@ -593,7 +593,18 @@ class TileService(
     fun shadeTile(z: Int, x: Int, y: Int): TileResult = shade.tile(z, x, y, packCovers = online?.packCoversDem(z, x, y) ?: true)
 
     fun osmTile(z: Int, x: Int, y: Int): TileResult {
-        online?.takeUnless { it.packCoversOsm(z, x, y) }?.let { return it.osmTile(z, x, y) } // T38: online fallback
+        // T38: the online fallback where no map answers. T341 (ADR 0066): at the world overview's zooms the online tile kept on
+        // the phone answers in its place, or the overview answers at once and the network's tile is fetched behind it, under the
+        // setting "More detail from online" (Holdings.vectorTile).
+        online?.let { o ->
+            val a = o.vectorAnswer(z, x, y)
+            when (a.serves) {
+                io.github.jasondorjeshort.dystopo.packs.Holdings.Source.NETWORK -> return o.osmTile(z, x, y)
+                io.github.jasondorjeshort.dystopo.packs.Holdings.Source.CACHE -> o.keptOsm(z, x, y)?.let { return it }
+                else -> Unit
+            }
+            if (a.fetchBehind) o.fetchBehind(z, x, y)
+        }
         // T41: the best vector archive holding the tile (outdoors profile first, see PackPrecedence).
         for (pack in packs.osmCandidates(z, x, y)) {
             val bytes = pack.tile(z, x, y) ?: continue

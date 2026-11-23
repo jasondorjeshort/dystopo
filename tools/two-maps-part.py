@@ -270,6 +270,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
         table["t352"] = t352_rows(dev, wait_ms, raw_dir)
         table["t342"] = t342_collect(dev, wait_ms, raw_dir)  # T342: the rows with a map switched off (its block, below)
         table["t343"] = t343_collect(dev, raw_dir)  # T343: the Download card at three places (its block, below)
+        table["t341"] = t341_collect(dev, raw_dir)  # T341: GET /why and the chip at the overview's zooms (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
     finally:
@@ -369,6 +370,9 @@ def assertions(table):
     # T343
     out += t343_assertions(table)
     # end T343
+    # T341
+    out += t341_assertions(table)
+    # end T341
     return out
 
 
@@ -567,6 +571,73 @@ def t343_assertions(table):
             out.append({"what": "T343:nothing", "card": c})
     return out
 # end T343
+
+
+# T341
+# Why a view is sparse (`GET /why`) and More detail from online at the world overview's zooms. Inside both maps, with the
+# network off and then on (the online tile cache and the direct sources' block cache emptied first, with the app stopped, so
+# nothing kept answers offline), the camera at z5.5 (the overview's own zooms), z6.5 (above the overview, below the maps'
+# first zoom) and z12 (inside the maps), `GET /why` and `GET /online` are read after a settle (20 s online: the vector
+# source's refresh after the fetches behind the overview settles over 10 s). Asserted: every read has a `cause`; offline the
+# overview answers z5.5 at once (`vector.serves` overview, the chip "from the world overview") and z6.5 is cut from it; online
+# z5.5 is the online tile (kept, or fetching behind the overview) and the chip is not "no data here" at z6.5; at z12 a map
+# answers (`cause` none). Saves the reads under `<raw>/t341-<net>-z<zoom>.json`.
+T341_ZOOMS = [5.5, 6.5, 12]
+
+
+def t341_collect(dev, raw_dir):
+    out = {"reads": []}
+    place = next(p for p in fx.PLACES if p["id"] == "inside-both")
+    try:
+        for net in ("off", "on"):
+            out.setdefault("network", []).append(fx.network(dev, net == "on"))
+            dev.call("/online/cache/clear", "POST", timeout=120)
+            dev.adb("shell", "am", "force-stop", fx.PACKAGE, timeout=30)
+            dev.runas("rm -rf cache/sources; true")
+            dev.restart()
+            for z in T341_ZOOMS:
+                dev.call(f"/camera?lat={place['lat']}&lon={place['lon']}&zoom={z}&bearing=0", "POST")
+                time.sleep(20.0 if net == "on" else 5.0)
+                _, why, e1 = dev.call("/why")
+                _, on, e2 = dev.call("/online")
+                r = {"network": net, "zoom": z, "errors": [e for e in (e1, e2) if e], "cause": get(why, "cause"),
+                     "vector": get(why, "online", "vector"), "lastVector": get(why, "online", "lastVector"),
+                     "chip": get(on, "chip", "text"), "column": get(on, "chip", "column"),
+                     "bytesLanded": get(why, "online", "bytesLanded")}
+                if raw_dir:
+                    with open(os.path.join(raw_dir, f"t341-{net}-z{z}.json"), "w", encoding="utf-8", newline="\n") as fh:
+                        json.dump({"why": why, "online": on}, fh, indent=1)
+                out["reads"].append(r)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    return out
+
+
+def t341_assertions(table):
+    out = []
+    t = table.get("t341")
+    if not t:
+        return out  # not run: the phases failed before it, or a table from before T341
+    if t.get("error"):
+        out.append({"what": "T341:error", "error": t["error"]})
+    for r in t.get("reads") or []:
+        row = f"{r['network']}/z{r['zoom']}"
+        serves = (r.get("vector") or {}).get("serves")
+        if r.get("errors") or not r.get("cause"):
+            out.append({"what": "T341:unread", "row": row, "errors": r.get("errors")})
+            continue
+        if r["network"] == "off" and r["zoom"] < 6 and (serves != "overview" or r.get("column") != "world"):
+            out.append({"what": "T341:overview-offline", "row": row, "serves": serves, "chip": r.get("chip")})
+        if r["network"] == "off" and 6 <= r["zoom"] < 8 and r.get("cause") != "above-overview-top":
+            out.append({"what": "T341:cut-from-overview", "row": row, "cause": r.get("cause")})
+        if r["network"] == "on" and r["zoom"] < 6 and not (serves == "cache" or (r.get("vector") or {}).get("fetchBehind")):
+            out.append({"what": "T341:overview-online", "row": row, "vector": r.get("vector")})
+        if r["network"] == "on" and 6 <= r["zoom"] < 8 and r.get("column") == "no_data":
+            out.append({"what": "T341:chip-no-data", "row": row, "chip": r.get("chip"), "lastVector": r.get("lastVector")})
+        if r["zoom"] >= 8 and r.get("cause") not in ("none", "relief-off"):
+            out.append({"what": "T341:map-cause", "row": row, "cause": r.get("cause")})
+    return out
+# end T341
 
 
 def main(argv=None):
