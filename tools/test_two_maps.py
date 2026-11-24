@@ -232,6 +232,28 @@ whats = sorted(f["what"] for f in part.t341_assertions({"t341": t341_bad}))
 assert whats == ["T341:chip-no-data", "T341:cut-from-overview", "T341:map-cause", "T341:overview-offline", "T341:overview-online", "T341:unread"], whats
 # end T341
 
+# T354's block: GET /holdings against /why and the sky views, each map chosen in turn at the four places.
+def t354_row(chosen, place, vec, dem, members, hm, inside=True, read_zoom=14, horizon_zoom=14, why_vec=None, why_dem=None):
+    role = lambda s, ms: {"serves": s, "tilePathServes": s, "members": ms, "chosen": [m for m in ms if m == chosen]}
+    return {"chosen": chosen, "activate": True, "place": place, "inside": [W] if inside else [], "errors": [],
+            "vector": role(vec, [vec] if vec else []), "dem": role(dem, members), "readZoom": read_zoom, "horizonZoom": horizon_zoom,
+            "whyVector": why_vec if why_vec is not None else [m for m in [vec] if m], "whyDem": why_dem if why_dem is not None else [m for m in [dem] if m],
+            "whyPrimary": [chosen], "horizonMaps": hm, "panoramaMaps": hm}
+t354_good = {"rows": [t354_row(c, p, v, d, ms, hm, inside=ins, read_zoom=rz, horizon_zoom=rz) for c in (W, F) for (p, v, d, ms, hm, ins, rz) in (
+    ("inside-both", F, F, [F, W], [F, W], True, 14), ("wide-only", W, W, [W], [F, W], True, 11),
+    ("outside", None, None, [], [], False, None), ("fine-edge", W, W, [F, W], [F, W], True, 14))]}
+assert part.t354_assertions({"t354": t354_good}) == [], part.t354_assertions({"t354": t354_good})
+assert part.t354_assertions({}) == [], "a table without the block's rows asserts nothing"
+t354_bad = {"rows": [t354_row(W, "inside-both", W, W, [W, F], [F, W], why_dem=[F]),  # the chosen map ahead of the deeper one
+                     t354_row(F, "inside-both", F, F, [F, W], [F, W], read_zoom=11),
+                     t354_row(W, "wide-only", W, W, [W], [W]), t354_row(F, "wide-only", W, W, [W], [W])]}
+t354_bad["rows"][2]["errors"] = [{"read": "holdings", "status": 404}]
+t354_bad["rows"][3]["dem"]["tilePathServes"] = F
+whats = sorted(f["what"] for f in part.t354_assertions({"t354": t354_bad}))
+assert whats == sorted(["T354:rows", "T354:why-dem", "T354:horizon-order", "T354:panorama-order", "T354:fine-inside", "T354:read-zoom",
+                        "T354:unread", "T354:dem-serves-tile-path", "T354:why-dem", "T354:chosen-matters"]), whats
+# end T354
+
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:
     sweep = fh.read()

@@ -324,6 +324,18 @@ Off, or with no source, the overview answers as before. The rule is `shared/.../
 the chip reads "from public sources" (or "viewed earlier") once the map was given the online tile, and at z6 and z7, where
 the network draws the vector map below the phone's own elevation (z8), it names that tile's source instead of "no data
 here". `GET /why` explains a view (`android-debug-routes.md`).
+T354 (ADR 0066 decisions 1 and 5): **which map serves, depth first.** Where two maps hold a tile, the one storing deeper
+serves it, whichever was chosen last; the map chosen last (`POST /packs/activate`, the list's "Show first") is the tie
+between two of equal depth, and still sets where the app opens, the units seeding, the contour warm-up and the routing
+graphs' build order; for vector tiles the outdoors profile stays ahead whatever the depth, the world overview last. Before,
+the chosen map went ahead of a deeper one (T49), so a coarse map chosen last drew over a fine one inside it. One rule,
+`shared/.../packs/Holdings.kt` (`depthFirst`), orders `PackPrecedence` (the tile paths, and every reader of
+`PackSet.demPacks` / `osmPacks` in order: the pressure card's and the route exposure's first map holding the point, the
+credits' order) and `MergedTerrain` (the sky views' terrain read, whose online source stays last until T368). The same
+file is the lookup for what the phone holds at a point or a tile (`Holdings.tile` / `point`: the maps, the downloaded
+areas' held cells, the tile cache, the overview, a map that is off listed as holding nothing, and the deeper zoom the
+network would add); `GET /holdings` reports it and `GET /why` reads its maps and its vector answer from it. No tile path
+reads the areas, the cache or the network member through it yet (T356, T368).
 T265: the map zooms out to z1 (`MapController.MIN_ZOOM`; z3 before), the whole world on one screen. The terrain layers
 start where their sources do (`MapLibreStyle`'s layer `minzoom`): the hillshade and the shade one map zoom below the DEM's
 lowest tile zoom (256-px tiles; online z6, so map z5; direct mode z8, so z7), the contours at theirs (online z8), so
