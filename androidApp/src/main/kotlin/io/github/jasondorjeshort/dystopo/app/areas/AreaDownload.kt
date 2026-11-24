@@ -642,12 +642,15 @@ object AreaDownload {
     /** One tile of [item] at [z]/[x]/[y]: false when it could not be fetched now (network or server). */
     private fun fetchTile(j: Job, fetcher: OnlineFetcher, item: TilesItem, z: Int, x: Int, y: Int, counted: Boolean): Boolean {
         if (j.cancelled) return true
-        val packs = runCatching { app.tiles.packs }.getOrNull()
+        // T356 (ADR 0066): skipped only where a map stores the tile at its own depth; a map answers deeper elevation by
+        // overzoom, so a z15 area inside a map to z11 skipped its elevation before.
+        val held = runCatching { app.tiles.held }.getOrNull()
         val inPack = when (item.route) {
-            AreaManifest.ROUTE_DEM -> packs?.demFor(z, x, y) != null
-            AreaManifest.ROUTE_OSM -> packs?.osmFor(z, x, y) != null
+            AreaManifest.ROUTE_DEM -> held?.mapStores(io.github.jasondorjeshort.dystopo.packs.Holdings.Role.DEM, z, x, y) == true
+            AreaManifest.ROUTE_OSM -> runCatching { app.tiles.packs }.getOrNull()?.osmFor(z, x, y) != null
             else -> false
         }
+        // end T356
         if (inPack) {
             j.inPacks.incrementAndGet()
             if (!counted) j.done.incrementAndGet()

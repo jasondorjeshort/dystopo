@@ -15,6 +15,7 @@ import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreSources
 import io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle
 import io.github.jasondorjeshort.dystopo.maplibre.MapOptions
+import io.github.jasondorjeshort.dystopo.packs.Holdings
 import io.github.jasondorjeshort.dystopo.packs.PackRoleZooms
 import io.github.jasondorjeshort.dystopo.png.Inflate
 import io.github.jasondorjeshort.dystopo.png.TerrariumPngDecoder
@@ -86,6 +87,84 @@ class TileCounters {
  */
 internal fun noDemWherePackHasData(grid: FloatArray, packWindows: Sequence<FloatArray>): Boolean =
     grid.all { it.isNaN() } && packWindows.any { w -> w.any { !it.isNaN() } }
+
+/**
+ * T356 (ADR 0066 decision 1, build task 2's first half): what the phone holds at a tile, ranked by stored depth whatever any
+ * setting says, for the tile paths and the downloads' skip. [maps] the opened maps and the world overview
+ * (`PackSet.holdings`), [areas] the finished tile areas' held cells, [cache] the online tile cache (null with no source
+ * set), [read] a held tile's bytes (`dem` or `osm`, `z/x/y.png|pbf`; the cache and the areas' own keys, never the network),
+ * [sourceSet] a server is set or the phone reads the sources itself.
+ *
+ * [deeper] is the holding that answers in place of the maps: an area's cell or a cached tile ranked ahead of every map that
+ * answers the tile ([Holdings.tile]: a z15 area inside a map that stores z11), and, with no source set, an area's cell wherever
+ * it serves. Outside the maps with a source set it is null: the online path reads the cache first as before, and the network
+ * only where the phone holds nothing (the network where it is finer is T368's). [mapStores] is the downloads' skip: a map
+ * stores the tile at its own depth (not by overzoom, not at its edge). Pure, tested (`HeldTilesTest`).
+ */
+class HeldTiles(
+    private val maps: List<Holdings.Holding>,
+    private val areas: () -> List<Holdings.Holding>,
+    private val cache: () -> Holdings.Holding?,
+    private val read: (route: String, path: String) -> ByteArray?,
+    val sourceSet: Boolean,
+) {
+    private val onlyMaps = maps.filter { it.kind == Holdings.Kind.MAP }
+
+    /** A map stores tile z/x/y of [role] whole at a zoom it stores (the downloads skip only that). */
+    fun mapStores(role: Holdings.Role, z: Int, x: Int, y: Int): Boolean =
+        Holdings.tile(role, z, x, y, onlyMaps, null).members.any { it.how == Holdings.How.STORES }
+
+    /** The area or the cache that answers tile z/x/y of [role] ahead of the maps (see the class), or null. */
+    fun deeper(role: Holdings.Role, z: Int, x: Int, y: Int): Holdings.Member? {
+        val a = areas.invoke()
+        val c = cache.invoke()
+        if (a.isEmpty() && c == null) return null
+        val mapServing = Holdings.tile(role, z, x, y, maps, null).serving
+        val mapAnswers = mapServing?.holding?.kind == Holdings.Kind.MAP
+        if (!mapAnswers && sourceSet) return null
+        // The cache is asked only where it could rank ahead (a lookup in its index per tile otherwise).
+        val cacheIn = c?.takeIf { mapServing == null || !mapAnswers || mapServing.how == Holdings.How.EDGE || (it.stored(role)?.maxZoom ?: -1) > mapServing.depth }
+        val s = Holdings.tile(role, z, x, y, maps + a + listOfNotNull(cacheIn), null).serving ?: return null
+        return s.takeIf { it.holding.kind == Holdings.Kind.AREA || it.holding.kind == Holdings.Kind.CACHE }
+    }
+
+    /** The bytes of tile z/x/y of [role] from the holding [deeper] names (vector tiles as stored, maybe gzipped); null when none or not found. */
+    fun tile(role: Holdings.Role, z: Int, x: Int, y: Int): ByteArray? {
+        deeper(role, z, x, y) ?: return null
+        return read(route(role), "$z/$x/$y.${if (role == Holdings.Role.DEM) "png" else "pbf"}")?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * The holding [deeper] names for a contour or shade tile z/x/y (512 px, reading elevation about one zoom deeper): the
+     * elevation tile of its own extent, else one of its four children; null when the maps make it.
+     */
+    fun deeperOver(z: Int, x: Int, y: Int): Holdings.Member? {
+        val dem = Holdings.Role.DEM
+        if (z > MAX_DEM) return deeper(dem, MAX_DEM, x shr (z - MAX_DEM), y shr (z - MAX_DEM))
+        deeper(dem, z, x, y)?.let { return it }
+        if (z + 1 > MAX_DEM) return null
+        for (dy in 0..1) for (dx in 0..1) deeper(dem, z + 1, 2 * x + dx, 2 * y + dy)?.let { return it }
+        return null
+    }
+
+    /** `area:<name>` or `cache` for the request log, when [deeper] answers the tile ([kind] `dem`, `shade`, `contours`, `osm`). */
+    fun logName(kind: String, z: Int, x: Int, y: Int): String? {
+        val m = when (kind) {
+            "osm" -> deeper(Holdings.Role.VECTOR, z, x, y)
+            "contours", "shade" -> deeperOver(z, x, y)
+            else -> deeper(Holdings.Role.DEM, z, x, y)
+        } ?: return null
+        return if (m.holding.kind == Holdings.Kind.AREA) "area:${m.holding.name}" else "cache"
+    }
+
+    companion object {
+        /** The deepest elevation zoom any holding stores (`OnlineTiles.DEM_MAX_ZOOM`). */
+        const val MAX_DEM = 15
+
+        fun route(role: Holdings.Role): String = if (role == Holdings.Role.DEM) "dem" else "osm"
+    }
+}
+// end T356
 
 /** T98: how often something that should not happen happened, and the last few tiles it happened to (`/stats`). */
 class TileTally(private val keep: Int = 8) {
@@ -322,6 +401,70 @@ class TileService(
         service.tilesFor(packs, "${ContourCache.VERSION}-${contourOptions.units.symbol}-${contourOptions.tileSize}$intervalTag").also { StartupTrace.mark("TileService's rest") }
     }
 
+    // ---- T356: what the phone holds, ranked by depth (ADR 0066 decision 1) ----
+
+    /** T356: the finished tile areas' holdings and the cache key prefixes their tiles sit under, read again every [AREAS_MS]. */
+    private class AreasNow(val at: Long, val holdings: List<Holdings.Holding>, val prefixes: Map<String, List<String>>)
+
+    @Volatile private var areasNow: AreasNow? = null
+
+    private fun areasNow(): AreasNow {
+        val now = System.currentTimeMillis()
+        areasNow?.takeIf { now - it.at < AREAS_MS }?.let { return it }
+        val holdings = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.lookupHoldings().filter { it.kind == Holdings.Kind.AREA } }.getOrDefault(emptyList())
+        // Each area's own source key, at the versions it records and unversioned: read with no source set, or another one.
+        val records = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.list }.getOrDefault(emptyList())
+            .filter { it.pack == null && it.opaque == null && it.state == "done" && it.source != null }
+        val prefixes = listOf("dem", "osm").associateWith { route ->
+            records.flatMap { r ->
+                val key = io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher.keyFor(r.source!!)
+                listOfNotNull(r.versions[key]?.get(route)?.takeIf { it.isNotEmpty() }?.let { "$key/$route@$it" }, "$key/$route")
+            }.distinct()
+        }
+        return AreasNow(now, holdings, prefixes).also { areasNow = it }
+    }
+
+    /** T356: a held tile's bytes: the online cache as the fetcher reads it (with a source set), else under the areas' own keys. Never the network. */
+    private fun heldRead(route: String, path: String): ByteArray? {
+        online?.fetcher?.cachedOnly(route, path)?.let { return it }
+        val cache = OnlineService.get().cache
+        for (p in areasNow().prefixes[route].orEmpty()) cache.get("$p/$path")?.takeIf { it.isNotEmpty() }?.let { return it }
+        return null
+    }
+
+    /** T356: what the phone holds, ranked by depth, for the tile paths and the downloads' skip ([HeldTiles]). */
+    val held: HeldTiles = HeldTiles(packs.holdings(), { areasNow().holdings }, { online?.cacheHolding() }, ::heldRead, sourceSet = online != null)
+        .also { h -> online?.held = h }
+
+    /**
+     * T356: with no source set, a pyramid over what the phone holds (the held cells where they are deeper, else the maps'
+     * stored tiles; deeper levels overzoom), for contour and shade tiles over an area's cells. With a source set the online
+     * pyramid reads the same order ([OnlineTiles.packDem]).
+     */
+    private val heldPyramid: DemPyramid by lazy {
+        val lows = packs.demPacks.map { it.header.minZoom } + areasNow().holdings.mapNotNull { it.dem?.minZoom }
+        DemPyramid((lows.minOrNull() ?: 8).coerceIn(0, HeldTiles.MAX_DEM), HeldTiles.MAX_DEM, demDecoder(), cacheTiles = 96) { z, x, y ->
+            held.tile(Holdings.Role.DEM, z, x, y) ?: packs.demFor(z, x, y)?.tile(z, x, y)
+        }
+    }
+
+    /**
+     * T356: the finished tile areas' elevation and vector zooms (min, max), for the style's zoom ranges; read from the areas'
+     * records alone (the style is asked on the UI thread, where [areasNow] may not wait for the maps' headers).
+     */
+    private fun areaZooms(): Pair<List<Holdings.Stored>, List<Holdings.Stored>> {
+        val records = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.list }.getOrDefault(emptyList())
+            .filter { it.pack == null && it.opaque == null && it.state == "done" }
+        return records.map { Holdings.Stored(it.area.minZoom, it.area.demMaxZoom ?: it.area.maxZoom) } to records.map { Holdings.Stored(it.area.minZoom, it.area.maxZoom) }
+    }
+
+    /** T356: shade tile z/x/y is made from the maps' own pyramids (not from deeper held cells, nor online). */
+    fun shadeFromMaps(z: Int, x: Int, y: Int): Boolean = (online?.packCoversDem(z, x, y) ?: true) && held.deeperOver(z, x, y) == null
+
+    /** T356: the request log's name of the holding that answered tile z/x/y of [kind] in place of the maps, or null. */
+    fun heldLogName(kind: String, z: Int, x: Int, y: Int): String? = held.logName(kind, z, x, y)
+    // end T356
+
     /** Tiles generating at once (T63: also the server's generation pool size, [GEN_THREADS]). */
     val contourPermits = GEN_THREADS
     private val contourSlots = Semaphore(contourPermits)
@@ -349,7 +492,7 @@ class TileService(
     private val pyramid: DemPyramid? get() = packs.dem?.let(::pyramid)
 
     /** T47: hillshade and slope raster tiles from the DEM for the map options ([ShadeService]). */
-    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let { pyramid(it) to (identities[it] ?: packIdentity(it.file)) } }, online, contourPermits, counters = counters.shade) // T41: the pack under each tile; T49: its identity; T65: cumulative counters
+    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let { pyramid(it) to (identities[it] ?: packIdentity(it.file)) } }, online, contourPermits, counters = counters.shade, heldPyramid = { heldPyramid }) // T41: the pack under each tile; T49: its identity; T65: cumulative counters; T356: the held cells with no source set
 
     /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
     private val foregroundContours = AtomicInteger()
@@ -530,10 +673,15 @@ class TileService(
         val attribution = (osmPacks + packs.demPacks).map { it.attribution }.filter { it.isNotEmpty() }.distinct().joinToString(" | ")
         // T38: with a server the sources also span the server's zooms (the pack's own range is kept inside it).
         val o = online
-        val demLo = if (o == null) demMinZoom else minOf(demMinZoom, o.demMinZoom) // T265: 8 in direct mode (DirectSources.DEM_MIN_ZOOM)
-        val demHi = if (o == null) demMaxZoom else if (packs.demPacks.isNotEmpty()) demMaxZoom else OnlineTiles.DEM_MAX_ZOOM
-        val osmLo = osmPacks.minOfOrNull { it.header.minZoom } ?: 0
-        val osmHi = osmPacks.maxOfOrNull { it.header.maxZoom }
+        // T356 (ADR 0066 build task 2): the top zooms from the real stored ranges of what the phone holds, the maps' and the
+        // areas' held cells' (an area to z15 inside a map to z11 is drawn at z15); with a source set and no map, the URL range.
+        val (areaDem, areaOsm) = areaZooms()
+        val heldDemLo = (packs.demPacks.map { it.header.minZoom } + areaDem.map { it.minZoom }).minOrNull() ?: 8
+        val heldDemHi = (packs.demPacks.map { it.header.maxZoom } + areaDem.map { it.maxZoom }).maxOrNull() ?: 14
+        val demLo = if (o == null) heldDemLo else minOf(heldDemLo, o.demMinZoom) // T265: 8 in direct mode (DirectSources.DEM_MIN_ZOOM)
+        val demHi = if (o == null || packs.demPacks.isNotEmpty()) heldDemHi.coerceAtMost(OnlineTiles.DEM_MAX_ZOOM) else OnlineTiles.DEM_MAX_ZOOM
+        val osmLo = (osmPacks.map { it.header.minZoom } + areaOsm.map { it.minZoom }).minOrNull() ?: 0
+        val osmHi = (osmPacks.map { it.header.maxZoom } + areaOsm.map { it.maxZoom }).maxOrNull()
         // The online generation in the URLs makes MapLibre ask again for tiles it got blank while offline.
         val v = demIdentity + (o?.let { "-${it.fetcher.serverKey}-${it.fetcher.generation}" + it.fetcher.contentTag.let { c -> if (c.isEmpty()) "" else "-$c" } + OnlineService.get().renderRefreshes.get().let { r -> if (r > 0) "-r$r" else "" } } ?: "") // T74: and its content versions; T85: and the reloads after rendering (MapLibre keeps a tile it got a 503 for when the style is the same)
         // T155: the elevation source refreshes for recovered DEM tiles (DemSourceRefresh), in the DEM, contour and shade URLs only.
@@ -547,10 +695,10 @@ class TileService(
                 contourTiles = token.url("$base/contours/{z}/{x}/{y}.pbf?v=$v$dv-${contourOptions.units.symbol}$intervalTag"), // T33: unit in the URL
                 // Contour tile z has the levels of DEM zoom z+1 (512-px vector tiles), and overzoomed DEM is fine
                 // two levels past the pack: 20 ft contours at z15 from a z14 pack are smooth bilinear lines.
-                contourMinZoom = (demMinZoom - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) },
+                contourMinZoom = (heldDemLo - 1).coerceAtLeast(0).let { if (o == null) it else minOf(it, OnlineTiles.CONTOUR_MIN_ZOOM) }, // T356: the held zooms
                 contourMaxZoom = demHi + 1,
                 // `c1`: cliff lines turned downhill-right (T41), so tiles cached before that are not reused.
-                osmTiles = if (osmPacks.isNotEmpty() || o != null) token.url("$base/osm/{z}/{x}/{y}.pbf?v=$v-c1" + (if (o != null) OnlineService.get().osmSourceRefreshes.get().let { n -> if (n > 0) "-o$n" else "" } else "")) else null, // T138: and the vector source refreshes (OsmSourceRefresh)
+                osmTiles = if (osmPacks.isNotEmpty() || o != null || areaOsm.isNotEmpty()) token.url("$base/osm/{z}/{x}/{y}.pbf?v=$v-c1" + (if (o != null) OnlineService.get().osmSourceRefreshes.get().let { n -> if (n > 0) "-o$n" else "" } else "")) else null, // T138: and the vector source refreshes (OsmSourceRefresh)
                 osmMinZoom = if (o == null) osmLo else 0,
                 osmMaxZoom = if (o == null) osmHi ?: 14 else maxOf(osmHi ?: 0, OnlineTiles.OSM_MAX_ZOOM),
                 glyphs = Glyphs.styleUrl(packs.glyphDir, base).let { if (o != null && it.startsWith("http")) "$it?v=$v" else it }.let { if (it.startsWith("http")) token.url(it) else it }, // T38: refetch after offline
@@ -567,6 +715,8 @@ class TileService(
     }
 
     fun demTile(z: Int, x: Int, y: Int): TileResult {
+        // T356 (ADR 0066): an area's cell or a cached tile deeper than the maps answers ahead of them, with no source set too.
+        held.tile(Holdings.Role.DEM, z, x, y)?.let { return ok(dem, "image/png", it) }
         online?.takeUnless { it.packCoversDem(z, x, y) }?.let { return it.demTile(z, x, y) } // T38: online fallback
         // T41: the packs that overlap the tile, best first; the first one storing it answers.
         val candidates = packs.demCandidates(z, x, y)
@@ -590,17 +740,19 @@ class TileService(
     }
 
     /** T47: a hillshade/slope tile; the pack's where its DEM covers the tile, else the online DEM's. */
-    fun shadeTile(z: Int, x: Int, y: Int): TileResult = shade.tile(z, x, y, packCovers = online?.packCoversDem(z, x, y) ?: true)
+    fun shadeTile(z: Int, x: Int, y: Int): TileResult = shade.tile(z, x, y, packCovers = shadeFromMaps(z, x, y)) // T356: not over deeper held cells
 
     fun osmTile(z: Int, x: Int, y: Int): TileResult {
         // T38: the online fallback where no map answers. T341 (ADR 0066): at the world overview's zooms the online tile kept on
         // the phone answers in its place, or the overview answers at once and the network's tile is fetched behind it, under the
         // setting "More detail from online" (Holdings.vectorTile).
+        // T356: an area's cell deeper than the maps (or, with no source set, wherever it serves) answers first.
+        held.tile(Holdings.Role.VECTOR, z, x, y)?.let { b -> return ok(osm, "application/x-protobuf", io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher.gunzipIfNeeded(b)) }
         online?.let { o ->
             val a = o.vectorAnswer(z, x, y)
             when (a.serves) {
-                io.github.jasondorjeshort.dystopo.packs.Holdings.Source.NETWORK -> return o.osmTile(z, x, y)
-                io.github.jasondorjeshort.dystopo.packs.Holdings.Source.CACHE -> o.keptOsm(z, x, y)?.let { return it }
+                Holdings.Source.NETWORK -> return o.osmTile(z, x, y)
+                Holdings.Source.CACHE -> o.keptOsm(z, x, y)?.let { return it }
                 else -> Unit
             }
             if (a.fetchBehind) o.fetchBehind(z, x, y)
@@ -662,6 +814,8 @@ class TileService(
                 if (o.fetcher.server == DirectSources.SERVER) DirectTrace.mark("c200 $z/$x/$y ${made.size}") // T88
                 return ok(contours, "application/x-protobuf", made)
             }
+            // T356: with no source set, over an area's cells deeper than the maps (or no map at all): made from what the phone holds, not kept.
+            if (online == null && held.deeperOver(z, x, y) != null) return ok(contours, "application/x-protobuf", generateContourTile(heldPyramid, z, x, y, null, contourGen))
             // T41: the DEM pack that holds the tile (else the best one overlapping it) makes it, into its own cache directory.
             val pack = packs.demFor(z, x, y, PackRoleZooms.CONTOUR) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
             val bytes = contourBytes(pack, z, x, y, contourGen)
@@ -969,5 +1123,8 @@ class TileService(
         const val WARMUP_POLL_MS = 50L
         /** DEM pyramids kept at once (T41): 96 decoded tiles, 24 MB, each. */
         const val MAX_PYRAMIDS = 2
+
+        /** T356: the areas' holdings are read again at most this often ([HeldTiles]). */
+        const val AREAS_MS = 2_000L
     }
 }

@@ -51,7 +51,7 @@ object ShadeRoutes {
             val (z, x, y) = zxy ?: return Response.text("$error\n", 400)
             val minute = r.query["m"]?.toLongOrNull() ?: return Response.text("m (epoch minute) required\n", 400)
             val t = app.tiles
-            val res = t.shade.sunTile(z, x, y, minute, packCovers = t.online?.packCoversDem(z, x, y) ?: true)
+            val res = t.shade.sunTile(z, x, y, minute, packCovers = t.shadeFromMaps(z, x, y)) // T356: not over deeper held cells
             return Response(res.status, res.contentType, res.body)
         }
         if (!BuildConfig.DEBUG_ENDPOINTS) return null
