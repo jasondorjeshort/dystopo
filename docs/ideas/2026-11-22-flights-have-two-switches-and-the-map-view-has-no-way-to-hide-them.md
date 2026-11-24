@@ -123,3 +123,11 @@ the finding's recorder and error report. (3) A later wave, from the measured tab
 look, the guess horizon apart from the interval, "Automatic" refresh. Left open, the owner's: the final home of
 per-view settings (with the views-as-tabs idea), a Layers sheet, the same switch for peaks on the map, a hiking
 or low-power mode.
+
+2026-11-24, T364 (pass 1 built): "Show flights" in Map options (`mapFlights`, synced, default on, shown while Flight
+tracking is on); the rule `shared/.../aircraft/FlightAsks.kt`; a hidden map stops asking and clears its marks once; a
+covered map pushes nothing; with nobody asking nothing is built or published; the ticker stops while tracking is off.
+Measured by replay, 10 min a state on an emulator: with flights shown on the map MapLibre's render thread is busy the
+whole time (about 595 s of CPU in 600 s, before and after); before, a sky view over the map kept it so (595 s), after
+it reads 0 s; hidden, 0 s, nothing built or pushed. The Flight tracking rows stay for T370; the help `settings.aircraft`
+still reads as before.

@@ -32,6 +32,7 @@ import io.github.jasondorjeshort.dystopo.aircraft.AircraftSource
 import io.github.jasondorjeshort.dystopo.aircraft.AircraftText
 import io.github.jasondorjeshort.dystopo.aircraft.AircraftTracker
 import io.github.jasondorjeshort.dystopo.aircraft.FeedState
+import io.github.jasondorjeshort.dystopo.aircraft.FlightAsks
 import io.github.jasondorjeshort.dystopo.aircraft.Observer
 import io.github.jasondorjeshort.dystopo.aircraft.ReplaySource
 import io.github.jasondorjeshort.dystopo.aircraft.RouteLines
@@ -98,6 +99,11 @@ import java.util.zip.GZIPInputStream
  * (`MapController.detach` calls [unbind]): before, a tick after a rotation or a font-scale change still pushed into the
  * destroyed view's style until the new view bound.
  *
+ * T364: "Show flights" (Settings › Map options, the synced `mapFlights`, on by default; the row shows while Flight tracking
+ * is on) is the map's own show key. Off, the map stops asking ([FlightAsks.mapReason] `hidden`), clears its marks once
+ * and pushes nothing more; covered by a sky view or in the background it keeps its marks and pushes nothing either
+ * ([pushesSkipped]); on again, it asks at once and draws within one poll. The sky views' own Flights toggle is theirs.
+ *
  * Feed data stays in memory (ODbL): nothing of it is written to disk, cached or exported; turning the layer off forgets
  * it. Stored on the phone: the day's request count ([AircraftQuota], a number and a day). No call sign leaves the phone:
  * routes come from the shipped table (`assets/aircraft/routes.gzip`).
@@ -145,11 +151,14 @@ object AircraftLayer {
 
     val on: Boolean get() = AircraftPoller.on
 
-    /** Whether the layer draws (for the credit line): on, and the feed has answered or aircraft are drawn. */
-    val drawing: Boolean get() = on && (drawnCount > 0 || AircraftPoller.state == FeedState.LIVE)
+    /** T364: "Show flights", the map's own show key (`mapFlights`). */
+    val shown: Boolean get() = AppSettings.MAP_FLIGHTS.value
 
-    /** The status line over the map, or null. */
-    val message: String? get() = AircraftPoller.message
+    /** Whether the layer draws (for the credit line): on and shown (T364), and the feed has answered or aircraft are drawn. */
+    val drawing: Boolean get() = on && shown && (drawnCount > 0 || AircraftPoller.state == FeedState.LIVE)
+
+    /** The status line over the map, or null (T364: none while the map hides flights). */
+    val message: String? get() = if (shown) AircraftPoller.message else null
 
     val replay: ReplaySource? get() = AircraftPoller.replay
 
@@ -161,7 +170,7 @@ object AircraftLayer {
         if (!started) {
             started = true
             AircraftPoller.onBeforeTick { askForTheView() }
-            AircraftPoller.addListener { v -> drawn = v.aircraft; push(v.aircraft) }
+            AircraftPoller.addListener { v -> onView(v) }
         }
         if (view === mapView) return
         unbind()
@@ -210,19 +219,49 @@ object AircraftLayer {
         return false
     }
 
-    /** Why the map does not ask now, or null when it does: off, in the background, no view yet, or the Horizon view over it. */
+    /**
+     * Why the map does not ask now, or null when it does ([FlightAsks.mapReason]): off, hidden (T364), in the background
+     * (the lifecycle's words), a sky view over it (`horizonViewOpen`), or no view yet.
+     */
     private fun pauseReason(): String? {
-        if (!on) return "off"
-        DystopoApp.instance.map.backgroundReason()?.let { return it }
-        if (io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi.open) return "horizonViewOpen"
-        if (MapViewport.current == null) return "noView"
-        return null
+        val background = DystopoApp.instance.map.backgroundReason()
+        val r = FlightAsks.mapReason(FlightAsks.Inputs(
+            tracking = on, mapShown = shown, foreground = background == null,
+            skyOpen = io.github.jasondorjeshort.dystopo.app.horizon.HorizonUi.open, mapHasView = MapViewport.current != null,
+        ))
+        return if (r == "background") background else r
     }
+
+    // T364: the hidden map's counters (GET /aircraft).
+    /** Times the map cleared its marks on stopping (off or hidden). */
+    @Volatile var clears = 0L
+        private set
+    /** Views the poller published that the map did not push (covered, in the background, hidden). */
+    @Volatile var pushesSkipped = 0L
+        private set
+
+    /** T364: the poller's view: pushed while the map asks; otherwise the marks are cleared once (off, hidden) or kept unpushed. */
+    private fun onView(v: AircraftView) {
+        val reason = foregroundReason
+        if (reason == null || v.aircraft.isEmpty() && drawnCount > 0) { drawn = v.aircraft; push(v.aircraft); return }
+        if (!FlightAsks.mapClears(reason) || !clearOnce()) pushesSkipped++
+    }
+
+    /** T364: drops the drawn marks (and with them a selection and its card) once, true when it did; nothing is pushed after that. */
+    private fun clearOnce(): Boolean {
+        if (drawn.isEmpty() && drawnCount == 0) return false
+        drawn = emptyList()
+        clears++
+        push(emptyList())
+        return true
+    }
+    // end T364
 
     /** The map's request: its view's centre and the radius to the view's corners (the poller rounds the centre). */
     private fun askForTheView() {
         foregroundReason = pauseReason()
         val v = MapViewport.current
+        if (FlightAsks.mapClears(foregroundReason)) clearOnce() // T364: hidden or off, the marks go now (nobody may publish again)
         if (foregroundReason != null || v == null) { AircraftPoller.release(AircraftPoller.MAP); return }
         val q = AircraftQuery.forView((v.minLat + v.maxLat) / 2, (v.minLon + v.maxLon) / 2, v.minLon, v.minLat, v.maxLon, v.maxLat)
         AircraftPoller.request(AircraftPoller.MAP, q.lat, q.lon, q.radiusNm)
@@ -433,7 +472,7 @@ object AircraftLayer {
         lastPlan = plan
         estimatedFrom = plan.estimatedFrom
         // T314: the faint lines' own source, rebuilt only on a poll, a selection or a setting change.
-        val key = "${AircraftPoller.polls}|$sel|${mode.key}|${list.isEmpty()}"
+        val key = "${AircraftPoller.answered}|$sel|${mode.key}|${list.isEmpty()}"
         if (key != faintKey) {
             faintKey = key
             faintData = FeatureCollection.fromFeatures(plan.faint.map { f -> line(f.points, "faint").apply { addStringProperty("hex", f.hex) } })
@@ -516,7 +555,7 @@ object AircraftLayer {
     /** A tap on an aircraft selects it (main thread); other taps fall through. */
     private fun onClick(latLng: LatLng): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) { offMainCalls++; return false }
-        if (!on) return false
+        if (!on || !shown) return false
         val m = clickMap ?: return false
         val p = m.projection.toScreenLocation(latLng)
         val r = TAP_RADIUS_DP * DystopoApp.instance.resources.displayMetrics.density
@@ -527,6 +566,20 @@ object AircraftLayer {
         } ?: return false
         select(hit.getStringProperty("hex"))
         return true
+    }
+
+    /**
+     * T364: "Show flights" on or off as its row sets it (stored, synced, acted on at once): off, the map stops asking and its
+     * marks go; on, it asks at once. Off the main thread, as the settings sheet applies a change.
+     */
+    fun setShown(show: Boolean, after: () -> Unit = {}) {
+        Thread({
+            try {
+                io.github.jasondorjeshort.dystopo.app.SettingsRoutes(DystopoApp.instance).apply(io.github.jasondorjeshort.dystopo.app.SettingsRoutes.Parsed.Ok.of(AppSettings.MAP_FLIGHTS, show))
+            } finally {
+                after()
+            }
+        }, "dystopo-settings-ui").start()
     }
 
     /** Selects [hex] (null: none) and redraws at once. Main thread. */
@@ -547,6 +600,7 @@ object AircraftLayer {
         val list = drawn
         return LinkedHashMap(AircraftPoller.json()).apply {
             put("mapAsksBecause", foregroundReason)
+            put("mapShown", shown); put("clears", clears); put("pushesSkipped", pushesSkipped) // T364
             put("count", list.size); put("stale", list.count { it.stale }); put("labelled", labelled)
             put("hiddenOnGround", hiddenOnGround); put("groundMinZoom", AircraftRules.GROUND_MIN_ZOOM)
             put("emergencies", list.count { it.report.emergency != null })

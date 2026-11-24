@@ -1321,6 +1321,25 @@ def scr_glance(c):
 # end T363
 
 
+# T364
+def scr_map_flights_hidden(c):
+    """T364: the map with Flight tracking on and "Show flights" off (POST /aircraft?map=0, as its row in Map options sets
+    it) on T311's replay fixture: no aircraft, no flights status line, and the map asks for none (checked)."""
+    c.srv.ok("POST", "/camera?lat=46.86&lon=-121.45&zoom=8.6&bearing=0")
+    with open(FLIGHTS_REPLAY, "rb") as f:
+        c.srv.ok("POST", "/aircraft/replay?name=a11y&undulationM=-18.4&wait=3500", body=f.read())
+    j = c.srv.ok("POST", "/aircraft?map=0&wait=2500") or {}
+    if j.get("mapAsksBecause") != "hidden" or j.get("count"):
+        raise RuntimeError(f"the map still shows flights: mapAsksBecause {j.get('mapAsksBecause')}, count {j.get('count')}")
+
+
+def end_map_flights_hidden(c):
+    c.srv.call("POST", "/aircraft?map=1&wait=0")
+    c.srv.call("POST", "/aircraft/replay?stop=1&undulationM=none&wait=0")
+    c.srv.call("POST", "/settings?aircraft=0")
+# end T364
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1383,6 +1402,9 @@ SCREENS = [
     ("readout-states", scr_readout_states, end_readout_states, "map"),
     ("glance", scr_glance, end_readout_states, "screen"),
     # end T363
+    # T364
+    ("map-flights-hidden", scr_map_flights_hidden, end_map_flights_hidden, "map"),
+    # end T364
 ]
 
 

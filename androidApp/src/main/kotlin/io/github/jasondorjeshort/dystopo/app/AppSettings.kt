@@ -707,6 +707,13 @@ object AppSettings {
         { "$KEY_PRESSURE_UNIT must be mbar, hpa, inhg or mmhg (got $it)" }))
     val pressureUnit: io.github.jasondorjeshort.dystopo.render.PressureUnit get() = PRESSURE_UNIT.value
     // end T337
+    // T364: "Show flights", the map's own show key for the Flights layer (the owner, 2026-11-23: Map options "can stay where it
+    // is for now and get 'Show flights'"; a setting by the owner's asking, ADR 0044). On by default; its row shows while
+    // Flight tracking is on. Off, the map stops asking for flights and draws none (`aircraft/AircraftLayer`); the sky views
+    // keep their own toggle (`horizonFlights`). Synced (ADR 0033: one key added). Row: Settings › Map options.
+    const val KEY_MAP_FLIGHTS = "mapFlights"
+    val MAP_FLIGHTS = flag(KEY_MAP_FLIGHTS, true, synced = true)
+    // end T364
 }
 
 /**
