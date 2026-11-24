@@ -893,9 +893,9 @@ internal val SETTINGS_HELP: List<HelpText> = run {
         },
         // T177: the readout bar's rows.
         HelpText("settings.readoutBar", "Readout bar", at(SettingsGroup.NAVIGATION, "Readout bar"), show = page(SettingsGroup.NAVIGATION)) {
-            "A bar beside the scale bar at the bottom of the map with your elevation and climb rate, and speed or course if " +
-                "you turn them on in the rows above. It is always there while on: a dash shows where a value is not known yet, " +
-                "so nothing jumps about. Off leaves the scale bar alone and stops reading the barometer."
+            "A bar beside the scale bar with your elevation and climb rate, and speed or course if you turn them on above. " +
+                "It is always there while on, so nothing jumps about. A small \"?\" marks a value that is missing or out of " +
+                "date; tap the bar to see why. Off leaves the scale bar alone and stops reading the barometer." // T363
         },
         HelpText("settings.climbWindow", "Climb window", at(SettingsGroup.NAVIGATION, "Readout: Climb window"), show = page(SettingsGroup.NAVIGATION)) {
             "The climb rate is your average climb over this window. 30 seconds follows each switchback; 5 or 10 minutes " +

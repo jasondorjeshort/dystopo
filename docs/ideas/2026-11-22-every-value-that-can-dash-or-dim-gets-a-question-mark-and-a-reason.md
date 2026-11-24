@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: feature
-related: [2026-11-22-the-elevation-readout-dashes-and-blinks-with-no-explanation.md, 2026-11-07-blue-dots-on-the-map-unexplained.md]
+related: [2026-11-07-blue-dots-on-the-map-unexplained.md, ../findings/2026-11-23-audit-of-values-that-dash-dim-or-hide.md]
 ---
 
 # A policy: a state the user can see changing has a "?" that says why
@@ -89,3 +89,11 @@ state words in the bar's accessibility text, and a11y screens for the bar's stat
 click-through can open them. Later passes: map controls (the position button's dead tap), the pressure card's way
 down, the GPS view, downloads and storage, lists; then the click-through on debug and release builds with the
 finding's table as the checklist.
+
+2026-11-24, T363 (wave 48): the first pass is built: the readout's reasons as a closed set in `shared` (`ReadoutReason`,
+`ReadoutReasons`), one sentence per (entry, reason) beside the help registry (`app/help/ReasonText.kt`, tested both ways),
+the bar's small "?" on a value missing or stale, the sentence under each value in the glance view with what the bar leaves
+out and what went wrong in the last minute, the bar's state words as its `stateDescription`, and the a11y screens
+`readout-states` and `glance`. Left for later passes, as the Plan says: map controls (the position button's dead tap), the
+pressure card's way down, the GPS view, downloads and storage, lists; then the click-through on debug and release builds.
+The idea stays open for those.

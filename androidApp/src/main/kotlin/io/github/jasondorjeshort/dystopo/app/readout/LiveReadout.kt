@@ -179,10 +179,10 @@ object LiveReadout {
         val e = ReadoutEntry.PRESSURE
         val hPa = rawHPa
         return when {
-            !o.pressure.shown -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.HIDDEN, reason = "off")
-            hPa == null -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.HIDDEN, reason = "no samples")
+            !o.pressure.shown -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.HIDDEN, reason = io.github.jasondorjeshort.dystopo.readout.ReadoutReason.OFF)
+            hPa == null -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.HIDDEN, reason = io.github.jasondorjeshort.dystopo.readout.ReadoutReason.NO_SAMPLES)
             SystemClock.elapsedRealtime() - rawAt > PRESSURE_FRESH_MS ->
-                io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.DASH, source = rawSource, reason = "silent")
+                io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.DASH, source = rawSource, reason = io.github.jasondorjeshort.dystopo.readout.ReadoutReason.SILENT) // T363: the closed set
             else -> io.github.jasondorjeshort.dystopo.readout.ReadoutValue(e, io.github.jasondorjeshort.dystopo.readout.ValueState.SHOWN, hPa, source = rawSource)
         }
     }
@@ -247,6 +247,7 @@ object LiveReadout {
         lastReplayPressureAt = 0L
         lastFix = null // T197
         lastPin = null
+        pinEnded = null // T363
         rawHPa = null // T257
         rawSource = null
         counts.clear()
@@ -268,7 +269,7 @@ object LiveReadout {
                 "window" to (s?.options?.climbWindowS ?: AppSettings.climbWindowS).let { w -> linkedMapOf("s" to w, "label" to ReadoutOptions.windowLabel(w)) },
                 "windowFilledS" to s?.readout?.climbFilledS?.let { Math.round(it * 10) / 10.0 },
                 "bothUnits" to (s?.both ?: false),
-                "fields" to s?.items?.map { linkedMapOf("entry" to it.entry.code, "state" to it.state, "text" to it.full, "other" to it.other, "caption" to it.caption, "dimmed" to it.dimmed, "compact" to it.compact) },
+                "fields" to s?.items?.map { linkedMapOf("entry" to it.entry.code, "state" to it.state, "text" to it.full, "other" to it.other, "caption" to it.caption, "dimmed" to it.dimmed, "compact" to it.compact, "reason" to it.reason?.code, "mark" to it.marked) }, // T363
                 // T257: the entries shown (in the bar's order), those the bar draws now and those it leaves out for room
                 // (`courseDegrees` first when the course is drawn as its point alone), the extended readout, the course's
                 // north and the pressure behind its entry.
@@ -419,6 +420,8 @@ object LiveReadout {
         val dimNow = items.firstOrNull { it.entry == ReadoutEntry.ELEVATION }?.dimmed
         val dimBefore = snapshot?.items?.firstOrNull { it.entry == ReadoutEntry.ELEVATION }?.dimmed
         if (dimNow != null && dimBefore != null && dimNow != dimBefore) bump("dimToggles")
+        // T363: when the known height's mark went, for the glance view's last minute.
+        if (snapshot?.readout?.barometer?.pinned == true && !withPressure.barometer.pinned) pinEnded = SystemClock.elapsedRealtime() to withPressure.barometer.pinEnd
         snapshot = Snapshot(withPressure, o, units, items, StripText.gap(r.gapS), wanted, both, decl, drawnP, pressureUnit)
     }
 
@@ -465,6 +468,10 @@ object LiveReadout {
 
     /** The last fix fed to the estimator (any thread reads it). */
     @Volatile var lastFix: LocationFix? = null
+        private set
+
+    /** T363: when the mark last went (elapsed realtime) and why (`pinEnd`), for the glance view's last minute; null before. */
+    @Volatile var pinEnded: Pair<Long, String?>? = null
         private set
 
     /** The last pin's result and words, for `GET /readout` › `pin` › `last`. */

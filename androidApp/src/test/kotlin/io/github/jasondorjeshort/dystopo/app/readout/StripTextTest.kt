@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.readout.Readout
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
 import io.github.jasondorjeshort.dystopo.readout.ReadoutHeights
 import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
+import io.github.jasondorjeshort.dystopo.readout.ReadoutReason
 import io.github.jasondorjeshort.dystopo.readout.ReadoutValue
 import io.github.jasondorjeshort.dystopo.readout.ValueState
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -22,7 +23,7 @@ import kotlin.test.assertTrue
  * the gap in the first caption, both-units mode.
  */
 class StripTextTest {
-    private fun v(e: ReadoutEntry, value: Double?, state: ValueState = ValueState.SHOWN, sigma: Double? = null, dimmed: Boolean = false, reason: String? = null) =
+    private fun v(e: ReadoutEntry, value: Double?, state: ValueState = ValueState.SHOWN, sigma: Double? = null, dimmed: Boolean = false, reason: ReadoutReason? = null) =
         ReadoutValue(e, state, value, sigma, "fix", dimmed, reason = reason)
 
     private fun readout(
@@ -52,17 +53,17 @@ class StripTextTest {
     fun theClimbsThreeStatesAndADashBeforeAnything() {
         // T250: standing still the climb reads 0 when the estimate can tell (the speed a dash), "?" when it cannot, and a
         // dash only while the sources contradict.
-        val still = walk.copy(speed = v(ReadoutEntry.SPEED, null, ValueState.DASH), climb = v(ReadoutEntry.CLIMB, 0.001, ValueState.ZERO, reason = "still"))
+        val still = walk.copy(speed = v(ReadoutEntry.SPEED, null, ValueState.DASH), climb = v(ReadoutEntry.CLIMB, 0.001, ValueState.ZERO, reason = ReadoutReason.STILL))
         val s = StripText.items(still, all, ContourUnits.METERS)
         assertEquals(listOf("1650 m", "0 m/h", "– km/h", "WSW 245°"), s.map { it.full })
         assertEquals(listOf("value", "zero", "dash", "value"), s.map { it.state })
-        val unsure = StripText.items(walk.copy(climb = v(ReadoutEntry.CLIMB, 0.01, ValueState.UNKNOWN, reason = "uncertain")), bar, ContourUnits.METERS)
+        val unsure = StripText.items(walk.copy(climb = v(ReadoutEntry.CLIMB, 0.01, ValueState.UNKNOWN, reason = ReadoutReason.UNCERTAIN)), bar, ContourUnits.METERS)
         assertEquals(listOf("1650 m", "? m/h"), unsure.map { it.full })
         assertEquals("unknown", unsure[1].state)
-        val contra = StripText.items(walk.copy(climb = v(ReadoutEntry.CLIMB, null, ValueState.DASH, reason = "contradiction")), bar, ContourUnits.FEET)
+        val contra = StripText.items(walk.copy(climb = v(ReadoutEntry.CLIMB, null, ValueState.DASH, reason = ReadoutReason.CONTRADICTION)), bar, ContourUnits.FEET)
         assertEquals(listOf("5414 ft", "– ft/h"), contra.map { it.full })
         assertEquals("dash", contra[1].state)
-        val flat = walk.copy(climb = v(ReadoutEntry.CLIMB, -0.004, ValueState.ZERO, reason = "near zero"))
+        val flat = walk.copy(climb = v(ReadoutEntry.CLIMB, -0.004, ValueState.ZERO, reason = ReadoutReason.NEAR_ZERO))
         val f = StripText.items(flat, bar, ContourUnits.METERS)
         assertEquals(listOf("1650 m", "0 m/h"), f.map { it.full })
         assertEquals("zero", f[1].state)
@@ -70,8 +71,8 @@ class StripTextTest {
         // left out; T250: the climb "?" (too little data); T362: the elevation's "no height yet" "?" too.
         val none = StripText.items(null, bar, ContourUnits.METERS)
         assertEquals(listOf("? m", "? m/h"), none.map { it.full })
-        fun h(e: ReadoutEntry, why: String) = v(e, null, ValueState.HIDDEN, reason = why)
-        val noFix = readout(Activity.FOOT, h(ReadoutEntry.SPEED, "no fix"), h(ReadoutEntry.CLIMB, "no height yet"), h(ReadoutEntry.COURSE, "no fix"), h(ReadoutEntry.ELEVATION, "no height yet"))
+        fun h(e: ReadoutEntry, why: ReadoutReason) = v(e, null, ValueState.HIDDEN, reason = why)
+        val noFix = readout(Activity.FOOT, h(ReadoutEntry.SPEED, ReadoutReason.NO_FIX), h(ReadoutEntry.CLIMB, ReadoutReason.NO_HEIGHT_YET), h(ReadoutEntry.COURSE, ReadoutReason.NO_FIX), h(ReadoutEntry.ELEVATION, ReadoutReason.NO_HEIGHT_YET))
         assertEquals(listOf("unknown", "unknown", "dash", "dash"), StripText.items(noFix, all, ContourUnits.METERS).map { it.state })
         assertEquals(listOf("? m", "? m/h", "– km/h", "–°"), StripText.items(noFix, all, ContourUnits.METERS).map { it.full }) // T204: no stray space in the course's dash
     }
@@ -237,5 +238,30 @@ class StripTextTest {
     fun everyEntryOffDrawsNothing() {
         val off = all.let { o -> ReadoutEntry.entries.fold(o) { acc, e -> acc.with(e, acc[e].copy(shown = false)) } }
         assertTrue(StripText.items(walk.copy(gapS = 30.0), off, ContourUnits.METERS).isEmpty(), "no gap item alone")
+    }
+
+    // T363: the bar's "?" mark and its state words: a value missing or stale is marked; one at rest, a plain figure and one
+    // that reads "?" already are not; the description keeps its words and the state words go apart.
+    @Test
+    fun theMarkAndTheStateWords() {
+        val gap = walk.copy(
+            elevation = v(ReadoutEntry.ELEVATION, 1650.2, dimmed = true, reason = ReadoutReason.NO_FIX),
+            climb = v(ReadoutEntry.CLIMB, null, ValueState.UNKNOWN, dimmed = true, reason = ReadoutReason.NO_FIX),
+            speed = v(ReadoutEntry.SPEED, null, ValueState.DASH, reason = ReadoutReason.STILL),
+            course = v(ReadoutEntry.COURSE, 245.4, dimmed = true), gapS = 8.0, dimReason = ReadoutReason.NO_FIX,
+        )
+        val items = StripText.items(gap, all, ContourUnits.METERS)
+        assertEquals(listOf(true, false, false, true), items.map { it.marked }, "elevation dimmed: marked; climb reads ?; speed at rest; course dimmed")
+        assertEquals(listOf(ReadoutReason.NO_FIX, ReadoutReason.NO_FIX, ReadoutReason.STILL, ReadoutReason.NO_FIX), items.map { it.reason })
+        assertEquals("No GPS fix: the last height, until a fix comes.", items[0].note)
+        assertEquals("Standing still: shown again once you move.", items[2].note)
+        assertEquals("elevation: no GPS fix; climb: no GPS fix; speed: standing still; course: no GPS fix", StripText.states(items))
+        assertEquals("no fix 8 s 1650 m · climb ? m/h · speed – km/h · course WSW 245°", StripText.line(items), "the description is as before")
+        val normal = StripText.items(walk, all, ContourUnits.METERS)
+        assertTrue(normal.none { it.marked || it.reason != null || it.note != null })
+        assertNull(StripText.states(normal))
+        // Before the first readout every entry reads no fix; the elevation and the climb read "?" and are not marked.
+        val none = StripText.items(null, all, ContourUnits.METERS)
+        assertEquals(listOf(false, false, true, true), none.map { it.marked })
     }
 }

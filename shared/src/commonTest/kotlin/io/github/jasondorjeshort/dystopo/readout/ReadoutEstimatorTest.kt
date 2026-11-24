@@ -300,7 +300,7 @@ class ReadoutEstimatorTest {
         assertEquals(0L, r.counters["demUpdates"])
         assertEquals("gnss", r.elevation.source)
         assertEquals(ValueState.HIDDEN, r.climb.state)
-        assertEquals("off", r.climb.reason)
+        assertEquals(ReadoutReason.OFF, r.climb.reason)
 
         // The barometer switch (T161's) off on foot.
         val off = ReadoutEstimator(ActivityProfile.of(Activity.FOOT), ReadoutOptions.defaults(Activity.FOOT).copy(barometer = BarometerMode.NEVER))

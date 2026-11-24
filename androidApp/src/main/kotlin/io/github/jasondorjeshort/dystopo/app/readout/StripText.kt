@@ -5,6 +5,9 @@ import io.github.jasondorjeshort.dystopo.readout.Readout
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
 import io.github.jasondorjeshort.dystopo.readout.ReadoutLabel
 import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
+import io.github.jasondorjeshort.dystopo.readout.ReadoutReason
+import io.github.jasondorjeshort.dystopo.readout.ReadoutReasons
+import io.github.jasondorjeshort.dystopo.app.help.ReasonText
 import io.github.jasondorjeshort.dystopo.readout.ReadoutText
 import io.github.jasondorjeshort.dystopo.readout.ReadoutValue
 import io.github.jasondorjeshort.dystopo.readout.ValueState
@@ -43,6 +46,14 @@ data class StripItem(
     val compact: String? = null,
     val compactTemplate: String? = null,
     val pinSlot: Boolean = false,
+    /**
+     * T363: why the value is not a plain figure ([ReadoutReasons.of]; null for a figure), [marked] whether the bar draws
+     * its small "?" (missing or stale data, not a value at rest nor one that reads "?" already), and [note] the sentence
+     * the glance view shows under it ([ReasonText.sentence]).
+     */
+    val reason: ReadoutReason? = null,
+    val marked: Boolean = false,
+    val note: String? = null,
 ) {
     /** "4 km/h", "↑320 m/h ± 40", "1650 m". */
     val full: String get() = (if (unit.isEmpty()) value else "$value $unit") + (plusMinus?.let { " $it" } ?: "")
@@ -54,6 +65,7 @@ data class StripItem(
         "entry" to entry.code, "caption" to caption, "state" to state, "value" to value, "unit" to unit, "plusMinus" to plusMinus,
         "full" to full, "other" to other, "dimmed" to dimmed, "trend" to trend, "trendLabel" to trendLabel, "trendSlot" to trendSlot,
         "compact" to compact, // T257
+        "reason" to reason?.code, "mark" to marked, "note" to note, // T363
     )
 
     companion object {
@@ -148,6 +160,8 @@ object StripText {
             val label = ReadoutText.of(drawn, o, units, declinationDeg, pressure) ?: continue
             val other = if (both) ReadoutText.other(drawn, o, units, pressure) else null
             val first = out.isEmpty()
+            // T363: the reason it shows, the bar's mark and the glance view's sentence.
+            val why = ReadoutReasons.of(v, r?.dimReason)
             out += StripItem(
                 entry = e,
                 caption = if (first && gap != null) "no fix $gap" else caption(e, o),
@@ -166,6 +180,9 @@ object StripText {
                 compact = label.compact, // T257
                 compactTemplate = if (e == ReadoutEntry.COURSE && o.course.degrees) courseTemplate(o, degrees = false) else null,
                 pinSlot = e == ReadoutEntry.ELEVATION && trendSlot, // T197's mark, on a phone with a barometer
+                reason = why,
+                marked = ReadoutReasons.marked(why, readsUnknown = state == StripItem.STATE_UNKNOWN),
+                note = ReasonText.sentence(e, v?.state, why),
             )
         }
         return out
@@ -220,6 +237,20 @@ object StripText {
     fun line(drawn: List<StripItem>, mark: String? = null, short: Boolean = false): String? = drawn.takeIf { it.isNotEmpty() }?.let { l ->
         l.joinToString(" · ") { "${it.caption} ${if (short) it.short else it.full}" + (it.trendLabel?.let { t -> ", pressure $t" } ?: "") } +
             (if (mark != null && l.any { it.entry == ReadoutEntry.ELEVATION }) " · $mark" else "")
+    }
+
+    /**
+     * T363: the bar's state words for a screen reader (its `stateDescription`, after the description's figures): each
+     * entry of [drawn] that is not a plain figure, "elevation: no GPS fix; climb: still measuring"; null when every one
+     * is. Kept apart from [line] so the description, which the accessibility baseline keys by, does not change with the
+     * state.
+     */
+    fun states(drawn: List<StripItem>): String? =
+        drawn.mapNotNull { i -> i.reason?.let { "${caption(i)}: ${ReasonText.words(it)}" } }.takeIf { it.isNotEmpty() }?.joinToString("; ")
+
+    private fun caption(i: StripItem): String = when (i.entry) {
+        ReadoutEntry.FIX_AGE -> "fix age"
+        else -> i.entry.code
     }
 
     /** How long the fixes have been missing, or null when they are not: "8 s", "3 min", "2 h". */

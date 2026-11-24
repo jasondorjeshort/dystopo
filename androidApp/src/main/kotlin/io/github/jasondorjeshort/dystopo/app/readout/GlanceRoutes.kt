@@ -14,7 +14,12 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   room under the hint line), `inside` (every line's bounds within that room), `clipped` (the texts that overflowed, as
  *   `<kind>.<part>`; empty when none), `legible` (open, laid out, fitted, inside and nothing clipped), `night`,
  *   `fontScale`, `keepScreenOn` (the view's flag while open), `opens`, `closes`, `lastOpenedBy` (`bar`, `route`, `help`)
- *   and `lastClosedBy` (`back`, `tap`, `route`), `help` (its help key). Closed, `lines` is empty.
+ *   and `lastClosedBy` (`back`, `tap`, `route`), `help` (its help key). Closed, `lines` is empty. T363: each line adds
+ *   `reason` (the sentence under the value, null for a plain figure) and `reasonCode`; `reasonPx` the type size each
+ *   reason is drawn at; `notes` has `leftOut` (what the bar leaves out for room, or the bar hidden for room),
+ *   `recentHeading` and `recent` (what went wrong in the last minute, newest first: a gap, a jump, the clock going back,
+ *   the activity changed, the barometer silent, late fixes, the known height's end; a gap still going is left out). A
+ *   reason's part that overflows is `<kind>.reason` in `clipped`.
  * - `POST /readout/glance?open=1|0`: opens or closes the view, as a tap on the bar and the back gesture do, and answers
  *   like `GET` once it has laid out its lines or left (at most 3 s). Anything else for `open` is a 400; opening while the
  *   activity is not on screen is a 503 with the `reason`.

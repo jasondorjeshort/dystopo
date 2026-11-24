@@ -169,7 +169,7 @@ class ReadoutDimTest {
         assertTrue(reads.first { it.first == 181.0 }.second.elevation.state == ValueState.SHOWN, "held through 60 s")
         val late = reads.first { it.first == 182.0 }.second.elevation
         assertEquals(ValueState.HIDDEN, late.state)
-        assertEquals("no height yet", late.reason)
+        assertEquals(ReadoutReason.NO_HEIGHT_YET, late.reason)
         // A fix with a height ends the hold at once.
         est.onFix(fix(201.0, ele = 1700.0, wallShiftMs = back), elapsedMs = el(201.0))
         val got = est.readout(t0 + 201_000 + back, el(201.0)).elevation
@@ -198,7 +198,7 @@ class ReadoutDimTest {
         est.setProfile(ActivityProfile.of(Activity.BIKE))
         val r = est.readout(t0 + 60_500, el(60.5))
         assertTrue(r.elevation.dimmed)
-        assertEquals(ReadoutFault.CAUSE_ACTIVITY, r.elevation.reason)
+        assertEquals(ReadoutReason.ACTIVITY, r.elevation.reason)
         assertEquals(ReadoutFault.CAUSE_ACTIVITY, r.lastRestart?.cause)
         est.onFix(fix(61.0), elapsedMs = el(61.0))
         val after = est.readout(t0 + 61_000, el(61.0))

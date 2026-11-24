@@ -24,6 +24,8 @@ import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
@@ -250,6 +252,8 @@ fun ReadoutStrip(night: Boolean) {
     val entries = items.map { it.entry.code }
     val degreesAt = items.indexOfFirst { it.compact != null } // T257: the course with degrees, which has a shorter form
     val description = StripText.line(items.take(drawn), markLabel, short) ?: "" // T210
+    val states = StripText.states(items.take(drawn)) // T363: the state words, apart from the description
+    val reasonMarkStyle = TextStyle(color = ink, fontSize = 10.sp, fontWeight = FontWeight.Bold) // T363
     Layout(
         modifier = Modifier
             .control("readoutStrip") // T238
@@ -267,6 +271,7 @@ fun ReadoutStrip(night: Boolean) {
             .pointerInput(Unit) { detectTapGestures(onTap = { Glance.show("bar") }) }
             .clearAndSetSemantics {
                 contentDescription = description
+                states?.let { stateDescription = it } // T363
                 onClick(label = GLANCE_OPEN_LABEL) { Glance.show("bar"); true }
             },
         measurePolicy = remember(entries, degreesAt) { DroppingFlow(entries, degreesAt, ITEM_GAP, ROW_GAP) { k, s -> if (drawn != k) drawn = k; if (short != s) short = s } },
@@ -275,24 +280,29 @@ fun ReadoutStrip(night: Boolean) {
             // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
             val markSlot = it.pinSlot // T257: its own flag (it rode on the trend's slot before the arrow could move to the pressure)
             val tapMark = markSlot && mark
-            Column(Modifier.alpha(if (it.dimmed) READOUT_DIM else 1f).then(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier)) {
+            // T363: the dim on each part, so the reason's "?" draws at full strength.
+            val dim = Modifier.alpha(if (it.dimmed) READOUT_DIM else 1f)
+            val at = remember { MarkPlace() }
+            MarkedEntry(it.marked, at, reasonMarkStyle) {
+            Column(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         BasicText(it.captionTemplate, Modifier.alpha(0f), style = captionStyle)
-                        BasicText(it.caption, style = captionStyle)
+                        BasicText(it.caption, dim.then(at.record { w, h -> at.captionW = w; at.captionH = h }), style = captionStyle)
                     }
-                    if (markSlot) PinMark(mark, markStyle)
+                    if (markSlot) Box(dim) { PinMark(mark, markStyle) }
                 }
-                Box {
+                Box(dim) {
                     ValueRow(it.template.text, it.template.unit, it.template.plusMinus, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle, trendTemplate = it.trendSlot)
-                    ValueRow(it.value, it.unit, it.plusMinus, it.trend, Modifier, valueStyle, unitStyle, pmStyle)
+                    ValueRow(it.value, it.unit, it.plusMinus, it.trend, at.record { w, _ -> at.valueW = w }, valueStyle, unitStyle, pmStyle)
                 }
                 it.otherTemplate?.let { t ->
-                    Box {
+                    Box(dim) {
                         BasicText(t, Modifier.alpha(0f), style = otherStyle)
                         BasicText(it.other.orEmpty(), style = otherStyle)
                     }
                 }
+            }
             }
         }
         // T257: the course's point alone, the last child: placed in the course's stead only when the bar is short of room.
@@ -432,6 +442,48 @@ private val ROW_GAP = 2.dp
 
 /** T224: the plate's padding above and below the entries ([StripLayout.elevationPlatePx] adds it to the measured entry). */
 private val PLATE_PADDING_Y = 3.dp
+
+/** T363: where an entry's caption and value texts end (px, measured in the same pass), for its "?" mark's place. */
+private class MarkPlace {
+    var captionW = 0
+    var captionH = 0
+    var valueW = 0
+
+    /** A modifier that records its node's measured size through [set]. */
+    fun record(set: (Int, Int) -> Unit): Modifier = Modifier.layout { m, c ->
+        val p = m.measure(c)
+        set(p.width, p.height)
+        layout(p.width, p.height) { p.place(0, 0) }
+    }
+}
+
+/**
+ * T363: an entry with the small "?" while its data is missing or stale ([StripItem.marked]; the owner's answer of
+ * 2026-11-23: the reason itself is in the glance view, which a tap on the bar opens). The mark takes no room: the entry
+ * keeps its own size, and the mark is drawn after the caption's text where the entry's width leaves room for it, else
+ * after the value's text where that does, else after the caption into the gap between entries; so it never widens an
+ * entry, leaves one out or moves anything.
+ */
+@Composable
+private fun MarkedEntry(marked: Boolean, at: MarkPlace, style: TextStyle, content: @Composable () -> Unit) {
+    Layout(content = {
+        content()
+        if (marked) BasicText("\u2009?", style = style, softWrap = false, maxLines = 1)
+    }) { ms, c ->
+        val entry = ms[0].measure(c)
+        val m = ms.getOrNull(1)?.measure(Constraints())
+        layout(entry.width, entry.height) {
+            entry.place(0, 0)
+            if (m != null) {
+                when {
+                    entry.width - at.captionW >= m.width -> m.place(at.captionW, 0)
+                    entry.width - at.valueW >= m.width -> m.place(at.valueW, at.captionH) // the value's row starts under the caption's
+                    else -> m.place(at.captionW, 0)
+                }
+            }
+        }
+    }
+}
 
 /**
  * T197: the known height's mark beside the elevation's caption: a survey point's triangle ([LiveReadout.PIN_GLYPH]),
