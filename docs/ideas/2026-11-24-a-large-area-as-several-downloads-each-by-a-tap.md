@@ -33,4 +33,4 @@ Question: build the parts offer, each part by its own tap, now that the terms na
 - (b) Ask the source's operator first, and build on a yes.
 - (c) No: the refusal with its three offers is enough.
 
-Answer:
+Answer: (a), yes, after wave 48's cap has merged (the owner, 2026-11-24, by multiple choice).

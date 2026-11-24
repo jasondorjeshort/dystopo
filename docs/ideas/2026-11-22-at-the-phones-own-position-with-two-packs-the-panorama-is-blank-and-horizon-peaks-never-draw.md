@@ -100,4 +100,4 @@ the phone. Which fits?
 - (b) It is already gone on v0.1.43-alpha: delete the file now.
 - (c) Keep it open without a check until a later release.
 
-Answer:
+Answer: still broken (the owner, 2026-11-24): "I'm still not seeing them on 43. But I have seen them before... back in 40 or 41 maybe... before it somehow stopped working.  USB debugging may be the answer here." So the next step is a capture with the phone on USB: on the release build, `adb logcat -s Dystopo DystopoAssets` (the `PackSet.open: map <name> not opened` line needs no debug build) while opening the Horizon view and the Panorama at the place; the debug routes need a debug build on the phone, which takes a Gradle slot (wave 48 holds both). Also bisect by install: v0.1.40 and v0.1.41 on the phone with the same maps.

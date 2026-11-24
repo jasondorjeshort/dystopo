@@ -40,4 +40,4 @@ and the triage skill give the owner, and your own word puts design of the projec
 - (b) A proposal, critic and ADR now, with a threshold from the start and the classes that never auto-accept.
 - (c) Rest it: the multiple-choice questions are quick enough as they are.
 
-Answer:
+Answer: (a), a confidence line only (the owner, 2026-11-24, by multiple choice).

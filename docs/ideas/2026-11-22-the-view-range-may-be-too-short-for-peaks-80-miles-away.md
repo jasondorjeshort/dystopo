@@ -50,4 +50,4 @@ the sky views, what does the map do?
 - (b) Two ranges: the map's own (10, 30, 100) and the sky views' (10, 30, 100, 200), a second synced key.
 - (c) The map goes to 200 km too (about four times the cells of 100 km; measured first).
 
-Answer:
+Answer: (a), the map's chips stay 10, 30 and 100 (the owner, 2026-11-24, by multiple choice).
