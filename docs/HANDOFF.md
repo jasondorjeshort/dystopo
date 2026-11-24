@@ -1,14 +1,14 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-24, at commit 191c801d, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
+Updated: 2026-11-24, at commit 32fa89ff, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the wave's
 paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 48 is launched** (the owner, 2026-11-24: "Go ahead with the wave when ready."), **coordinated by the side session in the second clone**, not by the main session: seventeen tasks, T354 to T366 and T368 to T371, in `docs/TASKS.md`, after two premise reads against the code wave 47 left and a critic (LAUNCH AFTER EDITS, answered in the wave paragraph). Merged: T362 (56fff2d0), T354 (81b70c86), T363 (d8c9e38a), T355 (a85a9f76), T361 (65ec5346). Running: T356's verifier in slot 1 (branch head 4edf995e, by the sweep through `two-maps`) and T364's implementer in slot 2 (consoles 5570 and 5574, hosts 8694 and 8696). **T371 is new and urgent** (the board): at font 2.0 the bar's measure can freeze the interface for good, found by T356's run in T363's merged code; it takes the first slot that frees, ahead of T368 or T370, and blocks the release.
+- **Wave 48 is launched** (the owner, 2026-11-24: "Go ahead with the wave when ready."), **coordinated by the side session in the second clone**, not by the main session: seventeen tasks, T354 to T366 and T368 to T371, in `docs/TASKS.md`, after two premise reads against the code wave 47 left and a critic (LAUNCH AFTER EDITS, answered in the wave paragraph). Merged: T362 (56fff2d0), T354 (81b70c86), T363 (d8c9e38a), T355 (a85a9f76), T361 (65ec5346), T356 (32fa89ff). Running: T364's verifier in slot 1 (branch head 3fc76a2b, by the sweep through `a11y`; on its MERGE, T368 launches there) and T371's implementer in slot 2 (consoles 5570 and 5574, hosts 8694 and 8696). **T371 is urgent and blocks the release** (the board): at font 2.0 the bar's measure can freeze the interface for good, intermittent, in T363's merged code. T364 left the controls manifest without its row (the Map page's orders are full): T370's brief takes that renumbering.
 - **Order** (the board's Order sentence is binding): slot 1 T354, T355, T356, T368, T357, T358, T365; slot 2 T362, T363, T361, T364, T370, T369, T366, T359, T360. Next ports: consoles 5578 and up by fours, hosts 8698 and up by twos; never 9012 or 9013.
 - **Where things run:** implementers make worktrees from the main checkout (`dystopo-wt/Tnn`) and use its cache; merges and pushes happen in the second clone (hooks on, the private terms copied in). The live viewer on 8765 is down; T368 and T358 need a server set, so a chore starts it from the main checkout before T356 merges (T356 is running: start it when its report arrives). A verifier's worktree often refuses removal right after its report (a process holds it for some minutes): the cleanup chore retries later.
 - **Cost:** the 7-day meter read 40 at launch (the side session's account), the 5-hour meter 6; 17.5 points figured, 57.5 against the hold of 97. Reset 2026-11-28 03:00 UTC.
