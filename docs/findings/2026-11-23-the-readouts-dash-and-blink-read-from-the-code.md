@@ -36,7 +36,7 @@ stands in when none is given, so 33 m or better), or on foot a DEM height (accur
 slower, a gentle slope), or a known height set by hand (`Readout.kt:429`, `:859-875`, `:994`). A network fix
 therefore keeps the dash up; a GPS fix with altitude ends it at once.
 
-**Why it blinks.** The map asks every provider for a fix each second (`MapController.kt:780`) and a network fix is
+**Why it blinks.** The map asks every provider for a fix each second (`MapController.kt`, `requestLocationUpdates`) and a network fix is
 dropped within 10 s of a GPS one, so under weak GPS the fixes arrive in bursts; each silence over 5 s dims every
 entry until the next single fix. A calibrated barometer stops the elevation dimming at all, so the owner's blink
 means the barometer was not fused then. The dim is drawn at two strengths: 0.45 on the bar

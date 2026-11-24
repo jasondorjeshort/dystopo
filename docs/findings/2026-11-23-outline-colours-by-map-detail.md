@@ -22,7 +22,8 @@ its own. Nothing was viewed on a device. Product names stay here; none goes into
 
 **The code today.** Every outline is one teal: `AreaOutlines.COLOR = "#00796b"` in
 `androidApp/.../app/areas/AreasScreen.kt`, width 2 with a dash of 2 and 1.5, the box fill at 0.10 and the corridor
-band at 0.18. The draft uses the same layer and colour as the saved maps, which is why the owner's draft and the
+band at 0.18. The draft uses the same colour as the saved maps (its own layer, `PickerLayer` in `areas/AreaDraw.kt`, with a
+fill of 0.16; corrected 2026-11-24, the first read had it on the same layer), which is why the owner's draft and the
 held map look alike. The night palette does not touch the outlines (2.7:1 on the night paper). Features carry
 `kind` and the record id, no detail and no label. The paper is #f6f1e4 by day and #2f2816 by night
 (`NightColors.of`); forest blends to #d2debf and #3f4429, water is #a5cbe9 and #23445d
