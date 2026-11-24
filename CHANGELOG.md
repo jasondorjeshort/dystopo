@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-24
+
+- T353: Wave 47's closing sweep fixes
+
 ### 2026-11-23
 
 - T341: Why a view is sparse, as a route; then the empty map between the world overview and the maps

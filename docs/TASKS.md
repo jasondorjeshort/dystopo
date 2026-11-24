@@ -99,6 +99,7 @@ Added 2026-11-23 from the closing sweep `out/sweep-20261123-w47` (on 40a64e0e), 
 **Owns:** the files the three fixes need, named in the report; no budget or baseline change but a line a fix strikes.
 **Done when:** `./gradlew check` green; `tools/sweep.ps1 -Only a11y,features,recenter` green on the branch; `recenter` three times running; the cause of each red part stated with evidence.
 **Checks:** none.
+**Status: merged.** Verifier MERGE WITH NOTES on afb6d870 (merged as 2f4a56aa), one round plus the owner's split ruling. Follow-ups: the route step's missed "Saved" line once (cause not looked into); the sweep emulator dropped once mid-part; the credit line's 48 dp touch target reaches 3 dp into the switch; the map's controls stay in the accessibility tree under the sky views. Edits outside Owns (on the owner's ruling): `tools/sweep.ps1`, `sweep-diff.py`, `sweep-summary.py`, the sweep skill, `release-realism.md`.
 
 ### T345. The tools' tests run with check
 First in its slot.
