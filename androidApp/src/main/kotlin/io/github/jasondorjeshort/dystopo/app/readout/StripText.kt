@@ -135,8 +135,9 @@ object StripText {
         val arrowOn = if (ReadoutEntry.PRESSURE in shown) ReadoutEntry.PRESSURE else ReadoutEntry.ELEVATION
         for (e in shown) {
             val v = r?.get(e)
-            // T250: the climb with no value yet is "?" (too little data), the other entries a dash as before.
-            val missing = if (e == ReadoutEntry.CLIMB) ValueState.UNKNOWN else ValueState.DASH
+            // T250: the climb with no value yet is "?" (too little data), the other entries a dash as before. T362: the
+            // elevation's "no height yet" too (and before the first readout), the climb's mark: not known, not "fine".
+            val missing = if (e == ReadoutEntry.CLIMB || e == ReadoutEntry.ELEVATION) ValueState.UNKNOWN else ValueState.DASH
             val drawn = if (v == null || v.state == ValueState.HIDDEN) ReadoutValue(e, missing) else v
             val state = when (drawn.state) {
                 ValueState.SHOWN -> StripItem.STATE_VALUE

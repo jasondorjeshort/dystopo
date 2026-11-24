@@ -273,7 +273,7 @@ private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, ni
     fun overflow(part: String) = { r: TextLayoutResult -> Glance.overflow["${l.kind}.$part"] = r.hasVisualOverflow }
     Column(
         modifier
-            .alpha(if (l.dimmed) DIM else 1f)
+            .alpha(if (l.dimmed) READOUT_DIM else 1f) // T362: the bar's strength
             .onGloballyPositioned { c ->
                 c.boundsInWindow().let { b -> Glance.linePx[l.kind] = intArrayOf(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt()) }
                 Glance.laidOut = true
@@ -308,7 +308,6 @@ private fun deadlineNow(navigating: Boolean): GlanceLine? {
 private fun clock(ms: Long): String = io.github.jasondorjeshort.dystopo.app.ClockFormat.text(ms)
 
 private const val REFRESH_MS = 500L
-private const val DIM = 0.6f
 private const val REF_DP = 100f
 
 /** The type size's bounds: the smallest still legible at arm's length, the largest a figure needs. */

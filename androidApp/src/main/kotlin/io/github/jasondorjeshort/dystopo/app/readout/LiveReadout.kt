@@ -65,7 +65,11 @@ import java.util.concurrent.TimeUnit
  *   estimator as a prior (applied once per report); `GET /readout` › `seaLevelPressure` shows it.
  *
  * The estimator reads on its own clock (the fixes' times): [refresh] reads it at the wall clock moved by the last fix's
- * offset from it, so a replay's file times and a device's GPS times both see gaps in real time. T177: the climb window
+ * offset from it, so a replay's file times and a device's GPS times both see gaps in real time. T362: each fix and sample
+ * is passed with `SystemClock.elapsedRealtime` beside it and the read takes it too, so gaps, the dim and the hold after a
+ * clock going back are measured on a clock that no wall-clock change moves; the jump rule is the estimator's
+ * ([ReadoutEstimator.isJump]: the position restarts, the height stays); `GET /readout` › `readout` adds `dimReason`,
+ * `recent` and `lastRestart`, and `inputs.counts` `dimToggles` (the elevation's dim coming or going, read to read). T177: the climb window
  * ([AppSettings.climbWindowS]) is part of the options, so a change takes effect at the next [refresh] with the window's
  * history kept; `GET /readout` › `bar` reports the switch, the window and each field's `state` and text. The strip
  * ([ReadoutStrip]) calls [refresh] twice a second while shown and draws [snapshot]; `GET /readout` ([json]) mirrors it.
@@ -95,9 +99,6 @@ object LiveReadout {
 
     /** A network fix this soon after a GPS one is not used (the map listens to both providers). */
     const val GPS_PRECEDENCE_MS = 10_000L
-
-    /** A step longer than this, faster than the profile's speed bound, is a jump: the estimator starts afresh (as `Heading.JUMP_M`). */
-    const val JUMP_M = 2_000.0
 
     /** The map's own fixes and the sensor's pressure are ignored this long after an injected fix or pressure. */
     const val INJECTED_PRECEDENCE_MS = 10_000L
@@ -140,14 +141,15 @@ object LiveReadout {
         else if (lastGpsAt != 0L && now - lastGpsAt < GPS_PRECEDENCE_MS) { bump("networkFixesSkipped"); return }
         val fix = GpsLocationSource.toFix(loc, provider)
         bump("mapFixes")
-        post { feedFix(fix) }
+        post { feedFix(fix, now) }
     }
 
     /** An injected fix (`POST /location`, a replay), from the recorder's injected source (any thread). */
     fun onInjectedFix(fix: LocationFix) {
-        lastInjectedAt = SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
+        lastInjectedAt = now
         bump("injectedFixes")
-        post { feedFix(fix) }
+        post { feedFix(fix, now) }
     }
 
     // T257: the last pressure sample as read (any thread writes, the readout's thread reads).
@@ -193,16 +195,17 @@ object LiveReadout {
         raw(hPa, "replay") // T257
         bump("replayPressure")
         PressureWatch.onReplayPressure(timeMs, hPa) // T178: the trend takes the replay's column too
-        post { ensure().onPressure(PressureSample(timeMs, hPa, PressureSampleSource.REPLAY)) } // T204: the source, so a switch is a new offset
+        post { ensure().onPressure(PressureSample(timeMs, hPa, PressureSampleSource.REPLAY), now) } // T204: the source, so a switch is a new offset; T362: elapsed
     }
 
     /** A barometer sample ([Barometer], its own thread); [wallMs] on the wall clock. */
     fun onSensorPressure(wallMs: Long, hPa: Double) {
         if (SystemClock.elapsedRealtime() - lastInjectedAt < INJECTED_PRECEDENCE_MS) { bump("sensorPressureIgnored"); return }
         raw(hPa, "sensor") // T257
+        val now = SystemClock.elapsedRealtime() // T362
         post {
             if (!clockKnown) bump("sensorPressureBeforeClock")
-            else { bump("sensorPressure"); ensure().onPressure(PressureSample(wallMs + offsetMs, hPa, PressureSampleSource.SENSOR)) }
+            else { bump("sensorPressure"); ensure().onPressure(PressureSample(wallMs + offsetMs, hPa, PressureSampleSource.SENSOR), now) }
         }
     }
 
@@ -333,24 +336,23 @@ object LiveReadout {
 
     private fun <T> call(block: () -> T): T = worker.submit(Callable(block)).get(5, TimeUnit.SECONDS)
 
-    private fun feedFix(fix: LocationFix) {
-        // A jump (the first fix of a replay far from the last device fix, a network fix replaced by GPS after a long
-        // silence) is not travel: start afresh rather than read a speed, a climb and a suspect barometer into it.
-        lastFed?.let { l ->
-            val d = io.github.jasondorjeshort.dystopo.gpx.TrackStats.distanceM(l.lat, l.lon, fix.lat, fix.lon)
-            val dt = (fix.time - l.time) / 1000.0
-            if (d > JUMP_M && (dt <= 0 || d / dt > AppSettings.trackProfile(activity()).speedBoundMps)) {
-                est = null
-                routeHint = null
-                bump("jumpResets")
-            }
-        }
+    /**
+     * T362: [elapsedMs] is when the fix came on `SystemClock.elapsedRealtime` (the fix itself carries the wall clock's
+     * time), so the estimator measures gaps and the dim on a clock no setting moves. A jump (the first fix of a replay far
+     * from the last device fix, a network fix after GPS) is the estimator's own rule now ([ReadoutEstimator.isJump]): the
+     * position restarts and the height stays; here only the route's hint is dropped and `jumpResets` counted.
+     */
+    private fun feedFix(fix: LocationFix, elapsedMs: Long) {
         lastFed = fix
         lastFix = fix // T197
         val e = ensure()
+        if (e.isJump(fix)) {
+            routeHint = null
+            bump("jumpResets")
+        }
         offsetMs = fix.time - System.currentTimeMillis()
         clockKnown = true
-        e.onFix(fix, routeAlong(fix))
+        e.onFix(fix, routeAlong(fix), elapsedMs)
     }
 
     /** Progress along the navigated line when the fix is within its off-route distance of it. */
@@ -395,7 +397,7 @@ object LiveReadout {
 
     private fun recompute() {
         val e = ensure()
-        val r = e.readout(System.currentTimeMillis() + offsetMs)
+        val r = e.readout(System.currentTimeMillis() + offsetMs, SystemClock.elapsedRealtime()) // T362: gaps on elapsed time
         val units = AppSettings.units
         val pressureUnit = AppSettings.pressureUnit // T337
         val o = e.options
@@ -413,6 +415,10 @@ object LiveReadout {
         val decl = if (o.course.magnetic) lastFix?.let { ReadoutText.declination(it.lat, it.lon, System.currentTimeMillis()) } else null
         val drawnP = pressureDrawn()
         val items = StripText.items(withPressure, o, units, both, PressureWatch.arrow, PressureWatch.arrowLabel, trendSlot(), decl, drawnP, pressureUnit) // T178: the trend's arrow
+        // T362: how often the elevation's dim came and went, read to read (the blink the owner saw), for `GET /readout`.
+        val dimNow = items.firstOrNull { it.entry == ReadoutEntry.ELEVATION }?.dimmed
+        val dimBefore = snapshot?.items?.firstOrNull { it.entry == ReadoutEntry.ELEVATION }?.dimmed
+        if (dimNow != null && dimBefore != null && dimNow != dimBefore) bump("dimToggles")
         snapshot = Snapshot(withPressure, o, units, items, StripText.gap(r.gapS), wanted, both, decl, drawnP, pressureUnit)
     }
 
