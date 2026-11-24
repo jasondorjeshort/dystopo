@@ -224,8 +224,10 @@ internal fun PickerButton(text: String, onClick: () -> Unit) {
 /**
  * T234 (ADR 0056, B1a): one row of the one list ([OfflineMapList.Row]): its name, its state word and its size; a tap opens what
  * it holds, whether it counts in the budget, its shape, zooms and bounds, where it came from, and its actions (Show on map,
- * Show first, Update, Retry, Keep on this phone or Allow clearing, Rename, Remove ...). Rename edits here; [onAction] runs the
+ * Start here, Update, Retry, Keep on this phone or Allow clearing, Rename, Remove ...). Rename edits here; [onAction] runs the
  * rest ([runRowAction]). Replaces T75's area card, T91's pack note on it and T140's needs-newer card (the state word says it).
+ * T361: on the row that carries [help] (the list's first switch), the help icon of Start here ([START_HERE_HELP]) follows the
+ * action, or, on the map it chose, the line that says so.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -253,12 +255,21 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = fals
         // T342: "Use on this phone" on every map that opens, so whether it is used shows without opening the row.
         row.off?.let { off -> UseOnPhone(row.id, off, help) { onAction(USE_ON_PHONE) } }
         if (open) {
-            for (line in row.detail) BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            for (line in row.detail) {
+                if (help && line == OfflineMapList.STARTS_HERE) Row(verticalAlignment = Alignment.CenterVertically) { // T361
+                    BasicText(line, Modifier.weight(1f, fill = false), style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    HelpIcon(START_HERE_KEY)
+                } else BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 for (a in row.actions) when (a) {
                     OfflineMapList.RENAME -> Action(a) { renaming = row.name }
                     OfflineMapList.REMOVE -> Action(a, Color(0xFFD73027)) { onAction(a) }
                     OfflineMapList.DISMISS -> Action(a, Muted) { onAction(a) }
+                    OfflineMapList.START_HERE -> Row(verticalAlignment = Alignment.CenterVertically) { // T361
+                        Action(a) { onAction(a) }
+                        if (help) HelpIcon(START_HERE_KEY)
+                    }
                     else -> Action(a) { onAction(a) }
                 }
             }
@@ -353,7 +364,9 @@ internal fun runRowAction(row: OfflineMapList.Row, action: String, inputs: Offli
             app.map.onMain { io.github.jasondorjeshort.dystopo.app.packs.PacksUi.lowered = true }
             linkedMapOf("camera" to io.github.jasondorjeshort.dystopo.app.packs.fitAbove(PackBounds(b[0], b[1], b[2], b[3])))
         }
-        OfflineMapList.SHOW_FIRST -> manager.activate(p ?: throw IllegalStateException("${row.id} is not a pack"), moveCamera = false)
+        // T361: the list stays open and the camera stays; the app opens on this map next time (the open view's pack candidate).
+        OfflineMapList.START_HERE -> manager.activate(p ?: throw IllegalStateException("${row.id} is not a pack"), moveCamera = false)
+            .also { io.github.jasondorjeshort.dystopo.app.PackView.activated(p) }
         OfflineMapList.UPDATE -> if (p != null) manager.catalogClient.update(p).json() else record().let { r -> AreaDownload.start(r.area, r.name, r.tripId) }
         OfflineMapList.DOWNLOAD_AGAIN -> record().let { r -> AreaDownload.start(r.area, r.name, r.tripId) }
         OfflineMapList.RETRY, OfflineMapList.RESUME_NOW -> when {
@@ -496,6 +509,18 @@ internal val USE_ON_PHONE_HELP: List<HelpText> = listOf(
     },
 )
 
+/**
+ * T361 (ADR 0066, ADR 0031: listed for the owner): the help of a map's Start here, by what a user notices since depth comes
+ * first (T354): where the app opens, the contours made ready first, and the map shown between two of equal detail.
+ */
+internal const val START_HERE_KEY = "areas.startHere"
+internal val START_HERE_HELP: List<HelpText> = listOf(
+    HelpText(START_HERE_KEY, OfflineMapList.START_HERE, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, a map's row", show = { Areas.screenOpen = true }) {
+        "The app opens on the map you start here, and its contour lines are made ready first. Where two maps cover a place " +
+            "in the same detail, this one is shown. Where another map is more detailed, that one is shown, whichever map you start here."
+    },
+)
+
 internal val AREAS_HELP: List<HelpText> = run {
     val show = { Areas.screenOpen = true }
     listOf(
@@ -507,7 +532,7 @@ internal val AREAS_HELP: List<HelpText> = run {
         HelpText("areas.corridor", "Corridors", "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, the line under the title", show = show) { units ->
             corridorHelp(AppSettings.tripCorridorM, units)
         },
-    )
+    ) + START_HERE_HELP // T361
 }
 
 /**

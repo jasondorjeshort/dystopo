@@ -4,7 +4,7 @@ app/TileService.kt | no DEM pack | developer-only: the JSON error of the decode 
 app/areas/AreaDownload.kt | a box is a region pack, which holds one zoom range | developer-only: refuses POST /areas/download with a box and demMaxZoom; the picker never sends one
 app/areas/AreaDownload.kt | is tiles in the cache; the trail graph is built from vector packs | developer-only: a manifest item's note in GET /areas/plan
 app/areas/Areas.kt | is the pack {}: {} | developer-only: refuses POST /areas/pin on a pack's record; the list shows no toggle there (PACK_NOTE says why)
-app/areas/AreasScreen.kt | {} is not a pack | developer-only: refuses the Show first action on a row with no pack through POST /areas/rows/action; the row has no such button
+app/areas/AreasScreen.kt | {} is not a pack | developer-only: refuses the Start here action on a row with no pack through POST /areas/rows/action; the row has no such button
 app/online/RegionDownload.kt | a region download is already running | developer-only: names the region job and its route (DELETE /online/download); the picker waits for the job instead
 app/online/RegionDownload.kt | invalid pack name | developer-only: the picker makes the name valid first (RegionDownload.packNameFrom), so only a route reaches it
 app/packs/PackCatalogClient.kt | the server has no pack | developer-only: a JSON reason in GET /packs/catalog's graph offer, read by the owner of a debug build

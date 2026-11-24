@@ -162,7 +162,8 @@ object OfflineMapList {
 
     // The actions, by their labels.
     const val SHOW_ON_MAP = "Show on map"
-    const val SHOW_FIRST = "Show first"
+    /** T361 (ADR 0066, the owner's name): makes the map the one the app opens on and the tie between two maps of equal depth. */
+    const val START_HERE = "Start here"
     const val UPDATE = "Update"
     const val DOWNLOAD_AGAIN = "Download again"
     const val RETRY = "Retry"
@@ -182,7 +183,8 @@ object OfflineMapList {
     const val NEVER_CLEARED = "Never cleared; outside the budget"
     const val IN_BUDGET = "Counts in the budget"
     const val CLEARED_FIRST = "Counts in the budget; cleared first when space runs short"
-    const val SHOWN_FIRST = "Shown first where maps overlap"
+    /** T361: the line on the map [START_HERE] chose; depth decides first since T354, this map only breaks a tie. */
+    const val STARTS_HERE = "The app opens on this map. Where another map is just as detailed, this one is shown."
     const val REMOVE_STOPS_ONLY = "Remove stops this download; the map stays until you remove it again."
     /** T242: where an area row's share would be while the online cache's index is built. */
     const val INDEXING_LINE = io.github.jasondorjeshort.dystopo.app.online.TileCache.INDEXING_LINE
@@ -232,7 +234,7 @@ object OfflineMapList {
         val detail = ArrayList<String>()
         if (pack != null) detail += if (pack.hasVector && pack.hasDem) HOLDS_ALL else if (pack.hasVector) HOLDS_VECTOR else HOLDS_TERRAIN
         detail += NEVER_CLEARED
-        if (pack?.name == i.active && pack != null) detail += SHOWN_FIRST
+        if (pack?.name == i.active && pack != null) detail += STARTS_HERE
         val zooms = if (pack?.minZoom != null && pack.maxZoom != null) "z${pack.minZoom}-${pack.maxZoom}" else newest?.area?.let { zoomText(it) }
         zooms?.let { detail += "Zooms $it" }
         bounds?.let { detail += boundsLine(it) }
@@ -250,7 +252,7 @@ object OfflineMapList {
         val actions = ArrayList<String>()
         if (removal == null) {
             if (bounds != null) actions += SHOW_ON_MAP
-            if (pack != null && pack.usable && p != i.active && p !in i.off) actions += SHOW_FIRST // T342: not while off
+            if (pack != null && pack.usable && p != i.active && p !in i.off) actions += START_HERE // T342: not while off
             job?.actions?.forEach { a -> if (a != DownloadStatus.Action.REMOVE.label && a !in actions) actions += a }
             region?.actions?.forEach { a -> if (a != DownloadStatus.Action.REMOVE.label && a !in actions) actions += a }
             if (update && job == null && pack != null) actions += UPDATE

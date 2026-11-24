@@ -104,14 +104,14 @@ class MapOffTest {
     }
 
     @Test
-    fun theRowHasTheSwitchAndNoShowFirstWhileOff() {
+    fun theRowHasTheSwitchAndNoStartHereWhileOff() {
         val packs = listOf(OfflineMapList.Pack("wide", 100, usable = true, hasDem = true, hasVector = true), OfflineMapList.Pack("fine", 100, usable = true, hasDem = true, hasVector = true))
         val rows = OfflineMapList.rows(OfflineMapList.Inputs(packs = packs, active = "wide", off = setOf("fine")))
         val fine = rows.single { it.pack == "fine" }
         val wide = rows.single { it.pack == "wide" }
         assertEquals(true, fine.off)
         assertEquals(false, wide.off)
-        assertFalse(OfflineMapList.SHOW_FIRST in fine.actions)
+        assertFalse(OfflineMapList.START_HERE in fine.actions)
         assertEquals(true, fine.json()["off"])
         // A map not on the phone (a download under way) has no switch.
         val job = OfflineMapList.Job("new", "running", "downloading")
