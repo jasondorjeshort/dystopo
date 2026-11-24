@@ -29,3 +29,15 @@ where the owner's input beats the agent's, and belongs below the threshold whate
 
 - What earns confidence, and which classes never auto-accept (safety, privacy, new data flows, the app's identity).
 - How the owner sees and reverses an auto-accepted answer.
+
+Question: how far to take this now? It changes who decides the owner's questions, the part of the process ADR 0065
+and the triage skill give the owner, and your own word puts design of the project's documents below any threshold.
+- (a) Recommended: a first step only. Each `Question:` carries a confidence line (high, medium, low) and what drives
+  it (settled by an ADR or a survey, reversible, user-visible, safety, privacy, a new data flow, process design);
+  nothing is auto-accepted yet. After two triages, `queue-list.js ideas --stats` (its idea has a Plan) reads picks
+  against recommendations by confidence, and a proposal decides whether a threshold exists and which classes never
+  pass it.
+- (b) A proposal, critic and ADR now, with a threshold from the start and the classes that never auto-accept.
+- (c) Rest it: the multiple-choice questions are quick enough as they are.
+
+Answer:
