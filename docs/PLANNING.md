@@ -1196,6 +1196,31 @@ Test in a Colorado mountain area covered by two overlapping lidar surveys:
 
 **2026-11-24: T353 merged: wave 47's closing sweep fixes; the features part split in two.** Merged as 2f4a56aa (verifier MERGE WITH NOTES on afb6d870). The closing sweep's three red parts were tools reading stale after T344 and T346, not app bugs: `recenter` measured the scale bar, which now also holds the zoom label (the app zoomed z13.0 to z14.0 while the tool read 0.59 levels; `scale_mpp` now leaves out the label); the a11y contrast line was the map's own Flights status line read on the sky plot's pixels (`flightsStatus` added to the map's layer, so it counts as covered; no baseline line changed); the features `horizon` step counted the map's credit node, whose 48 dp touch target reaches 3 dp into the switch (`under_switch` now leaves out a node the bare map had). The features part had outgrown its 1500 s ceiling (1170 s at wave 42, 1404 s at wave 46, about 1510 to 1560 s after T344's panorama-list step); on the owner's ruling ("Raise and split now") it is now `features` (install-map, search through drive) and `features-sky` (install-map, horizon, panorama, panorama-list, flights, horizonflights), both 2100 s. The verifier's sweep through features-sky: 20 parts, none failed; features 801 s, features-sky 819 s, a11y 928 s; recenter three runs ok (tap 0.92 levels, labels 13.0 to 14.0); check 6258 tests. Follow-ups: the route step once missed its "Saved" line within 15 s (passed on retry); the sweep emulator dropped once mid-part; the credit's touch target overlapping the switch by 3 dp; the map's controls stay in the accessibility tree under the sky views.
 
+**2026-11-24: wave 47 closed: the sweep, T353, two counted reruns and v0.1.43-alpha published.**
+- **The closing sweep** `out/sweep-20261123-w47` (main 40a64e0e) was red on four parts:
+  - `a11y`: one new contrast line on horizon-flights.
+  - `features`: the `horizon` step's credit line, then the part's 1500 s ceiling.
+  - `recenter`: tap 0.59 levels.
+  - `update`: an adb drop.
+- **Green in that run:** `startup` (mapview 51 against 89, first frame 3,349 against 5,050 ms), `two-maps` and `apk-strings`.
+- **First rerun:** `update` was green in `out/sweep-20261123-w47-rerun`.
+- **T353** (its entry above) found the other three were tools reading stale after T344 and T346. It split `features` in two, on the owner's ruling.
+- **Second counted rerun:** `out/sweep-20261124-w47-rerun2` (`-Only a11y,features,features-sky,recenter -RerunOf`, main a85af373) was green with no retry:
+  - `a11y` 910 s: 0 new, 18 moved, 145 of 145 matched.
+  - `features` 793 s.
+  - `features-sky` 813 s, after the guard's reboot at 6.0 GB.
+  - `recenter` 71 s: tap 0.92 levels, labels 13.0 to 14.0.
+  - No changes sheet: the sweep ran without `-Prev`.
+- **The tag** is on 34c7b91c (the changelog cut; versionCode 2340), built by the workflow in about 5.5 minutes.
+- **Checked from the draft:**
+  - the certificate "CN=Dystopo release, O=Dystopo" with the fingerprint beginning `47:31:38:10`, and the six checksums ok;
+  - the upgrade from 0.1.42 (2171 to 2340) ok in 211 s with nothing lost;
+  - `features` 21 of 21 steps in 1,472 s, with one screencap "device not found" that recovered;
+  - the strings scan clean.
+  No phone was connected.
+- **Published** 2026-11-24 06:43 UTC.
+- **Cost:** 15 tasks, about 15.5M fresh tokens across their agents (the per-task lines are in the wave record). T343's fix round was the largest at 3.8M, and T353's verifier ran the sweep through `features-sky`. The 7-day meter read 28 when the first task started and 38 when the last finished, shared with other work.
+
 Phase-0 algorithms live in `shared` from the start, so the same code runs on Android in phase 1. Their speed and memory on the JVM are measured, then checked again on a real device.
 **2026-10-24: v0.1.11-alpha published** (tag on ec44b866, versionCode 485; GitHub Releases: the universal APK, the server and devtool zips, `NOTICES.md`, `SHA256SUMS.txt`, `version.json` and the world tour sheet; published 13:34 UTC). The wave 18 sweep (`out/sweep-20261023-2206`, main at dd0383f1): 23 parts green and `device-tour` red on T127's direct step with a server, fixed by T135 and its `-Only device-boot,device-tour` rerun green. The Release workflow ran on the tag push and, with the `RELEASE_*` secrets still absent, produced a debug-signed APK (`-debugsigned`, CN=Android Debug) that a phone on 0.1.10 refused to install over (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, caught by the upgrade check from the draft); the release was then built locally at the tag by the `release` skill's fallback as v0.1.10 was (`licenseCheck`, `assembleRelease`, the two `installDist`, 148 s; the world tour 32 of 32) and the draft's assets replaced, the debug-signed APK deleted. Verified from the draft itself: the release certificate (`47313810a431...`, CN=Dystopo release), versionName 0.1.11-alpha and versionCode 485, all six checksums, `version.json` against the APK, `NOTICES.md` byte-identical to the build's; on a fresh API 35 emulator the upgrade from the published v0.1.10-alpha (461 to 485) keeping the first-run state, contours, a track, a trip and metric units with 0 crash lines, features 13 of 13, the strings scan 0 term hits over 660,818 strings. No phone was connected; the real-phone checks are the owner's. The notes were written by hand from the changelog section and scanned. Restoring the secrets would let the workflow sign again.
 
