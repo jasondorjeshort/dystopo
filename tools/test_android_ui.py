@@ -140,6 +140,21 @@ mpp14 = ui.scale_mpp(bar("Scale 500 m", round(84 * d2 + ui.SCALE_PAD_DP * d2)), 
 assert ui.zoom_step(mpp13, mpp14) == 1.0, (mpp13, mpp14)
 assert abs(ui.zoom_step(mpp14, ui.scale_mpp(bar("Scale 200 m", round(33.6 * d2 + ui.SCALE_PAD_DP * d2)), d2))) < 0.05
 assert ui.zoom_step(None, mpp14) is None and ui.scale_mpp([{"desc": "Recenter", "bounds": [0, 0, 1, 1]}]) is None
+# T353: since T346 the bar's node also holds the zoom label (8 dp after the ruler, 28 dp wide); the ruler alone counts.
+def bar_z(desc, ruler_dp, zoom):
+    x1 = 20 + round(ruler_dp * d2 + ui.SCALE_PAD_DP * d2)
+    zx = x1 + round(ui.ZOOM_LABEL_PAD_DP * d2)
+    return [{"desc": desc, "bounds": [20, 2000, zx + round(28 * d2), 2060]}, {"desc": f"Map zoom {zoom}", "bounds": [zx, 2010, zx + round(28 * d2), 2050]}]
+assert abs(ui.zoom_step(ui.scale_mpp(bar_z("Scale 1 km", 84, "13.0"), d2), ui.scale_mpp(bar_z("Scale 500 m", 84, "14.0"), d2)) - 1.0) < 0.02
+assert ui.zoom_label(bar_z("Scale 1 km", 84, "13.0")) == 13.0 and ui.zoom_label(bar("Scale 1 km", 100)) is None
+# T353: under the switch, the map's own node (same text, same bounds as on the bare map) is not the view's.
+_sw = [21, 2190, 803, 2316]
+_credit = {"text": "© OpenStreetMap contributors · Sources", "desc": "", "bounds": [16, 2072, 1064, 2198]}
+_row = {"text": "GPS 8", "desc": "", "bounds": [40, 2200, 400, 2260]}
+assert ui.under_switch([_credit, _row], _sw) == [_credit["text"], "GPS 8"]
+assert ui.under_switch([_credit, _row], _sw, beneath=[dict(_credit)]) == ["GPS 8"]
+assert ui.under_switch([dict(_credit, bounds=[16, 2169, 1064, 2198])], _sw, beneath=[_credit]) == []  # clipped by the view: the map's
+assert ui.under_switch([dict(_credit, bounds=[16, 2100, 1064, 2230])], _sw, beneath=[_credit]) == [_credit["text"]]  # moved: the view's
 
 # T185: the checked capture (android-firstrun.py's Device.capture) on a fake adb: empty, cut short, then good bytes.
 fr = ui.firstrun

@@ -757,4 +757,11 @@ finally:
     a11y.time.sleep = _sleep
 # end T351
 
+# T353: the Flights layer's status line is the map's even when the bare map (Flights off) did not show it: under a sky
+# view it is in the map's layer, so it is covered, not read for contrast on the view's pixels.
+_mt = a11y.map_tags([{"id": 1, "testTag": "scaleBar"}])
+assert _mt == {"scaleBar", "flightsStatus"}, _mt
+assert 7 in a11y.in_layer([{"id": 7, "testTag": "flightsStatus"}, {"id": 9}], _mt)
+# end T353
+
 print("test_android_a11y: ok")
