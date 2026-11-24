@@ -97,6 +97,7 @@ Slot 2, as soon as T354 is merged (the action's meaning changes there); no other
 **Interacts with:** T366, through `OfflineMapList.kt` and `AreasScreen.kt` (this one merged first).
 **Done when:** `./gradlew check` green; frames of the row's actions at font 1.0 and 2.0; a tap on "Start here" on the coarse map leaves the fine one serving inside it (`GET /holdings`) and moves the start view; `tools/android-a11y.py --screens offline-maps,offline-maps-off` with nothing beyond the baseline; nothing outside closed records still says "Show first" or "Shown first" (`git grep`). The strings in the report.
 **Checks:** none.
+**Status: merged.** Verifier MERGE WITH NOTES on b4da9a7a (merged as 65ec5346), no fix round, behind `main` by five commits outside its files and not rebased. Follow-ups, the first two for T366, which follows in the same files: at font 2.0 the chosen map's line is cut in its third line (the row's detail is capped at three lines; the help has the full text); the "Start here" help icon sits only on the list's first row, so with that row closed and another open none is on screen; the a11y screens show one map, so no sweep frame shows the action; an off map that is still the stored choice keeps the chosen-map line with no help icon (as before); `android-emu.ps1` still fails its default pack push in a fresh worktree. The new wording (the action, the row line, the help text) is in the merge commit for the owner's eye (ADR 0031). Edits outside Owns: none.
 
 ### T362. The readout's elevation holds through a jump and does not blink
 First in slot 2.

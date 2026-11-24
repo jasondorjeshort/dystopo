@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-24
 
+- T361: "Show first" becomes "Start here"
 - T355: Direct mode's requests inside the public vector source's terms: four at once for downloads, a named app, the registry
 - T363: Why a value on the bar is a dash, a "?" or dimmed: a mark on the bar, the reason in the glance view
 - T354: The lookup and the order: depth first, one function for what the phone holds
