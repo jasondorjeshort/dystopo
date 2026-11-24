@@ -27,6 +27,15 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
  *   progress. `DELETE /online/download`: cancel.
  * - `POST /online/retry`: forget the backoff and recent failures; `POST /online/cache/clear[?pinned=1]`: empty the tile
  *   cache but the pinned offline areas' tiles (T106; with `pinned=1` those too), answering `deleted` and `pinnedKept`.
+ *   T355: in direct mode it empties the source block cache too (`cache/sources/`' ranges, the decoded blocks, the open
+ *   GeoTIFFs, the geoid memo; the public vector source's TileJSON stays), so the next read of a block fetches again:
+ *   `sourceBlocks` (`filesDeleted`, `bytesDeleted`, `decodedBytesDropped`; null with a server).
+ * - T355, `GET /online` › `direct.publicVector`: the public vector source's requests by its terms, `downloads` (an offline
+ *   download's: `limit` 4 over every download, `inFlight`, `maxInFlight` the most seen at once since the app started,
+ *   `waiting`, `requests`, `waitMs` for a permit) and `views` (the map's own, T341's fetch behind the overview, the stall
+ *   recovery: their own `limit` 16, the same fields), never waiting behind the downloads; `retryAfter` (`holdLeftMs`,
+ *   `holds` answers that set one, `waits` downloads that waited one out, `refused` requests answered 429 without a request
+ *   during one). `direct.userAgent`: the User-Agent every source request sends. `direct.inFlight` stays the all-sources count.
  * - The server itself is a setting: `POST /settings?server=http://10.0.2.2:8765` (empty for offline only), see [setServer].
  */
 object OnlineRoutes {
@@ -54,7 +63,9 @@ object OnlineRoutes {
                     s.fetcher?.retryNow()
                     Response.json(s.json(null))
                 }
-                "POST" to "/online/cache/clear" -> Response.json(clearCache(s.cache, pinnedToo = r.query["pinned"] == "1"))
+                "POST" to "/online/cache/clear" -> Response.json(
+                    clearCache(s.cache, pinnedToo = r.query["pinned"] == "1") + mapOf("sourceBlocks" to if (s.isDirect) s.direct.clearSourceCache() else null), // T355
+                )
                 else -> Response.notFound()
             }
         } catch (e: IllegalArgumentException) {

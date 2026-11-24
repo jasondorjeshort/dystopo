@@ -69,6 +69,19 @@ class SourceCapReached(message: String) : RuntimeException(message)
  * `OnlineService.stalledDem`: renders that just failed fail again at once ([failedRenders]), the recovery renders the tile
  * again past the memos ([retryDem]), a read that answers after a stall wakes it ([onSourcesAnswered]); [demBase] is the
  * debug hook that points the range reads at a dead host.
+ *
+ * T355, OpenFreeMap's terms (https://openfreemap.org/tos/, read 2026-11-24; ADR 0060's owner paragraph): an offline
+ * download is "made with at most 4 parallel requests" and "sent with a unique User-Agent identifying your app", data is
+ * not collected "in automated ways" except for offline downloads, and "there are no limits on the number of map views or
+ * requests". So every request to the public vector source (its tiles and its TileJSON) passes [ofmGet] and its
+ * [OfmLimiter]: a request made inside [download] (an area or box download, a trip's corridor, the prefetch ahead, the
+ * phone's own pack build) takes one of [OFM_DOWNLOAD_PARALLEL] permits; any other (the map's own tiles, T341's fetch
+ * behind the overview, the stall recovery's retries) is a map view and takes one of [OFM_VIEW_PARALLEL], its own, so a
+ * view never waits behind a download nor behind the elevation reads; the stall guard's clock starts once the permit is
+ * held. A 429 (or a 503 with `Retry-After`) holds every request to the source until its `Retry-After` has passed
+ * ([OfmLimiter.call]). Every source request names the app and its version ([userAgent]). Nothing asks the public source
+ * on a timer: the online probe's `live/info` answers from the phone's network state ([info]), and the TileJSON is
+ * fetched again only by a tile request once the disk copy is a day old (`NoTimedPublicFetchTest`).
  */
 class DirectSources(private val context: android.content.Context, private val cacheRoot: File, internal val cache: TileCache) : HttpGet {
     val http = PhoneSourceHttp(this)
@@ -87,6 +100,13 @@ class DirectSources(private val context: android.content.Context, private val ca
         caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) &&
             !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) && !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
     }.getOrDefault(false)
+
+    /** T355: the phone has a network that offers the internet ([info]: the probe asks no source). */
+    fun hasNetwork(): Boolean = runCatching {
+        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }.getOrDefault(true)
 
     /** Reading is held back now: on mobile data with mobile data turned off by the user (Settings › Sources). */
     fun blockedOnMobile(): Boolean = !onMobileData && onCellular()
@@ -711,13 +731,23 @@ class DirectSources(private val context: android.content.Context, private val ca
      * still end within [OSM_GUARD_MS] ([ofmRetries]), below MapLibre's own 10 s timeout. It waited 30 s an attempt
      * with two attempts before, holding the loopback request and the map's idle state for a minute
      * (finding 2026-10-16-cold-view-gap). Stalls are counted in `osmStalls` (`GET /firstrun/direct`).
+     *
+     * T355: every request to the public vector source passes here, by route (the debug base override's included): it holds
+     * a download's or a view's permit ([ofmLimits]) for all its attempts, and the guard's clock starts once the permit is
+     * held, so a wait for one never eats the guard's 9 s. A `Retry-After` is obeyed inside ([OfmLimiter.call]).
      */
     private fun ofmGet(url: String): SourceReply {
+        val download = isDownload
+        return ofmLimits.run(download) { ofmAttempts(url, download) }
+    }
+
+    /** [ofmGet]'s attempts, with its permit held: the guard's clock starts here. */
+    private fun ofmAttempts(url: String, download: Boolean): SourceReply {
         val started = System.nanoTime()
         var attempts = 0
         while (true) {
             try {
-                return http.ofm(url)
+                return ofmLimits.call(download) { http.ofm(url) }
             } catch (e: IOException) {
                 attempts++
                 if (!ofmRetries(attempts, (System.nanoTime() - started) / 1_000_000)) throw e
@@ -725,6 +755,9 @@ class DirectSources(private val context: android.content.Context, private val ca
             }
         }
     }
+
+    /** T355: the public vector source's permits (downloads, views) and its `Retry-After` hold. */
+    val ofmLimits = OfmLimiter()
 
     private fun osm(path: String): HttpReply {
         val t = parseTile(path, ".pbf") ?: return HttpReply(404, ByteArray(0))
@@ -755,16 +788,17 @@ class DirectSources(private val context: android.content.Context, private val ca
 
     // ---- what a server's probe and credits routes say ----
 
+    /**
+     * `live/info`, which the online probe asks every 30 s (5 s while offline). T355: answered from the phone's own network
+     * state, never by a request: it fetched OpenFreeMap's TileJSON whenever no source had answered for a minute, so a phone
+     * left open asked the public source about once a minute on a timer. No network (airplane mode, no route) is a
+     * [ConnectFailed], so the indicator still notices a lost or returned network; a source that fails while the network is
+     * up is noticed by its tiles, as before.
+     */
     private fun info(): HttpReply {
-        // Recently fine: no request. Otherwise one real request (the TileJSON), so the indicator notices the network.
         if (System.currentTimeMillis() - lastOkAt > 60_000) {
-            ofm = null
-            val reply = try {
-                SourceIo.get(OFM_TILEJSON, 10_000, 1)
-            } catch (e: IOException) {
-                throw ConnectFailed("${e.javaClass.simpleName}: ${e.message}", e)
-            }
-            if (reply.status != 200) throw IOException("OpenFreeMap TileJSON: HTTP ${reply.status}")
+            ofm = null // the template is read again from the disk copy by the next tile
+            if (!hasNetwork()) throw ConnectFailed("no network")
         }
         val registry = SourceRegistry.builtIn
         val body = linkedMapOf(
@@ -854,6 +888,34 @@ class DirectSources(private val context: android.content.Context, private val ca
         return linkedMapOf("bytesBefore" to before, "bytesAfter" to total, "filesDeleted" to deleted, "capBytes" to sourceCacheCapBytes)
     }
 
+    /**
+     * T355 (T340's follow-up; `POST /online/cache/clear`): empties the source block cache, so the next read of a block
+     * fetches it again and a cold measurement is cold: every cached range under `cache/sources/` (the COG blocks and the
+     * index pages, with their validators), the decoded blocks, the open GeoTIFFs (their headers are read again), the geoid
+     * memo, the synthesis pyramid and the failure memo. The public vector source's TileJSON stays: it is fetched again
+     * only once it is a day old. Same lock as [trimSourceCache].
+     */
+    @Synchronized
+    fun clearSourceCache(): Map<String, Any?> {
+        val root = File(cacheRoot, "sources")
+        var bytes = 0L
+        var deleted = 0
+        for (f in FileTrees.files(root)) {
+            if (f.name == "planet.json") continue
+            val len = f.length()
+            if (f.delete()) {
+                bytes += len
+                deleted++
+            }
+        }
+        SourceIo.tiffPool = TiffPool(TIFF_POOL)
+        val decoded = trimBlocks()
+        trimGeoidMemo()
+        dropPyramid()
+        failedRenders.clear()
+        return linkedMapOf("filesDeleted" to deleted, "bytesDeleted" to bytes, "decodedBytesDropped" to decoded)
+    }
+
     fun json(): Map<String, Any?> {
         val n = demRendered.get()
         return linkedMapOf(
@@ -866,6 +928,8 @@ class DirectSources(private val context: android.content.Context, private val ca
             "maxZoom" to maxZoom, "demSynthesized" to demSynthesized.get(), "renderedByZoom" to synchronized(renderedByZoom) { renderedByZoom.mapKeys { "z${it.key}" } }, "demRendered" to n, "demMsAvg" to if (n == 0L) null else demMs.get() / n, "demMsMax" to demMaxMs.get(),
             "osmFetched" to osmFetched.get(), "osmBytes" to osmBytes.get(),
             "osmStalls" to http.osmStalls.get(), "osmGuardMs" to OSM_GUARD_MS, "osmBase" to osmBase, // T123
+            // T355: the public vector source's requests, downloads and views apart, the Retry-After hold, the User-Agent sent.
+            "publicVector" to ofmLimits.json(), "userAgent" to http.userAgent,
             // T155: the DEM stall hook, renders failing at once after a network failure, reads that answered after a stall.
             "demBase" to demBase, "failedRenders" to linkedMapOf("now" to failedRenders.size(System.currentTimeMillis()), "blocked" to failedRenders.blocked, "ttlMs" to failedRenders.ttlMs),
             "rangeAnsweredAfterStall" to http.answeredAfterStall.get(), "stallBreaker" to http.breaker.json(),
@@ -917,8 +981,41 @@ class DirectSources(private val context: android.content.Context, private val ca
          */
         const val FETCHER_IN_FLIGHT = 48
 
-        /** Source requests (range reads, index pages) at once over every source. */
+        /** Source requests (range reads, index pages) at once over every source but the public vector source ([OfmLimiter]). */
         const val MAX_RANGE_REQUESTS = 16
+
+        /** T355: the public vector source's terms: an offline download's requests at once, over every download ([download]). */
+        const val OFM_DOWNLOAD_PARALLEL = 4
+
+        /**
+         * T355: the public vector source's map-view requests at once (the terms set no limit on views). 16: the ceiling they
+         * had before, when they shared [MAX_RANGE_REQUESTS] with the elevation reads; their own now, so neither a download
+         * nor a burst of range reads holds a view's tile back.
+         */
+        const val OFM_VIEW_PARALLEL = 16
+
+        private val downloading = ThreadLocal<Boolean>()
+
+        /**
+         * T355: runs [block] (one tile of an offline download: an area or box download, a trip's corridor, the prefetch
+         * ahead, the phone's pack build) as a download: its requests to the public vector source, made on this thread,
+         * take the download's permits ([OFM_DOWNLOAD_PARALLEL]) and wait out a `Retry-After`.
+         */
+        fun <T> download(block: () -> T): T {
+            val before = downloading.get()
+            downloading.set(true)
+            try {
+                return block()
+            } finally {
+                downloading.set(before)
+            }
+        }
+
+        /** T355: true on a thread inside [download]. */
+        val isDownload: Boolean get() = downloading.get() == true
+
+        /** T355: the User-Agent of every source request: the app and its version (the public vector source's terms). Pure, tested. */
+        fun userAgent(version: String): String = "dystopo-android/${version.ifBlank { "unknown" }} (+https://github.com/jasondorjeshort/dystopo)"
 
         /** Open GeoTIFFs kept ([TiffPool]) and the decoded blocks' memory cap ([DecodedBlocks]; an eighth of the heap at most, [decodedCapBytes]). */
         const val TIFF_POOL = 96
@@ -1127,7 +1224,8 @@ class DirectSources(private val context: android.content.Context, private val ca
 
 /**
  * The sources' HTTP on the phone ([SourceIo.http]): every request through [CleartextPolicy] (redirects checked
- * hop by hop), at most [DirectSources.MAX_RANGE_REQUESTS] at once, counted against the session cap. No route
+ * hop by hop), at most [DirectSources.MAX_RANGE_REQUESTS] at once (T355: the public vector source's requests hold their
+ * own permits instead, [OfmLimiter]), counted against the session cap, named by [userAgent]. No route
  * or no DNS is a [SourceOffline] (not retried); the cap a [SourceCapReached].
  */
 class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
@@ -1187,9 +1285,12 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
     /** T123: OpenFreeMap requests that got no connection or no byte within the stall guard ([DirectSources.OSM_STALL_MS]). */
     val osmStalls = AtomicLong()
 
-    /** T123: one attempt of an OpenFreeMap request under the stall guard ([DirectSources.ofmRetries] decides on another). */
+    /**
+     * T123: one attempt of an OpenFreeMap request under the stall guard ([DirectSources.ofmRetries] decides on another).
+     * T355: without one of [permits]: the caller holds the public vector source's own ([DirectSources.ofmLimits]).
+     */
     fun ofm(url: String): SourceReply = try {
-        send(url, DirectSources.OSM_STALL_MS, DirectSources.OSM_CONNECT_MS) {}
+        send(url, DirectSources.OSM_STALL_MS, DirectSources.OSM_CONNECT_MS, gated = false) {}
     } catch (e: java.net.SocketTimeoutException) {
         osmStalls.incrementAndGet()
         throw e
@@ -1197,7 +1298,10 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
 
     override fun get(url: String, timeoutMs: Long): SourceReply = send(url, timeoutMs) {}
 
-    private fun send(start: String, timeoutMs: Long, connectTimeoutMs: Int = 15_000, prepare: (HttpURLConnection) -> Unit): SourceReply {
+    /** T355: sent with every request: the app and its version (the public vector source's terms ask for it). */
+    val userAgent: String = DirectSources.userAgent(io.github.jasondorjeshort.dystopo.app.BuildConfig.VERSION_NAME)
+
+    private fun send(start: String, timeoutMs: Long, connectTimeoutMs: Int = 15_000, gated: Boolean = true, prepare: (HttpURLConnection) -> Unit): SourceReply {
         if (!owner.exempting && sessionBytes >= owner.sessionCapBytes) {
             owner.capReachedAt = System.currentTimeMillis()
             throw SourceCapReached(owner.capMessage())
@@ -1207,7 +1311,7 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
             throw SourceOffline(DirectSources.MOBILE_DATA_OFF, null)
         }
         val queued = System.nanoTime()
-        permits.acquire()
+        if (gated) permits.acquire()
         val started = System.nanoTime()
         waitMs.addAndGet((started - queued) / 1_000_000)
         inFlight.incrementAndGet()
@@ -1220,7 +1324,7 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
                 conn.connectTimeout = connectTimeoutMs
                 conn.readTimeout = timeoutMs.toInt()
                 conn.useCaches = false
-                conn.setRequestProperty("User-Agent", "dystopo-android/0.1 (+https://github.com/jasondorjeshort/dystopo)")
+                conn.setRequestProperty("User-Agent", userAgent)
                 prepare(conn)
                 try {
                     try {
@@ -1244,7 +1348,9 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
                     // connection to the pool (keep-alive): the next range read to the same host skips the TCP and
                     // TLS handshakes and slow start; disconnect() closed it after every request.
                     reused = true
-                    return SourceReply(status, body)
+                    // T355: a 429 (or a 503) says when to ask again; the public vector source's limiter obeys it.
+                    val retryAfter = if (status == 429 || status == 503) conn.getHeaderField("Retry-After") else null
+                    return SourceReply(status, body, retryAfter?.let { mapOf(OfmLimiter.RETRY_AFTER to it) } ?: emptyMap())
                 } finally {
                     if (!reused) conn.disconnect()
                 }
@@ -1253,7 +1359,7 @@ class PhoneSourceHttp(private val owner: DirectSources) : SourceHttp {
         } finally {
             netMs.addAndGet((System.nanoTime() - started) / 1_000_000)
             inFlight.decrementAndGet()
-            permits.release()
+            if (gated) permits.release()
         }
     }
 }
@@ -1362,6 +1468,135 @@ class StallBreaker {
         const val TRIP_STALLS = 6
         const val TRIP_QUIET_MS = 15_000L
         const val PROBE_MS = 2_000L
+    }
+}
+
+/**
+ * T355: the public vector source's requests at once and its `Retry-After`, by the source's terms (read 2026-11-24): an
+ * offline download's requests ([run] with `download`) take one of [downloads] permits, [DirectSources.OFM_DOWNLOAD_PARALLEL]
+ * for every download together; a map view's take one of [views], their own, so a view never waits behind a download. A
+ * 429, or a 503 with `Retry-After`, holds the source until the time it names ([holdUntil]; [DEFAULT_RETRY_AFTER_MS]
+ * without one, at most [MAX_RETRY_AFTER_MS]): before then a download waits ([call]; a hold longer than
+ * [MAX_DOWNLOAD_WAIT_MS] fails its tile at once, and the download's own stall and resume rules take over) and a view is
+ * answered 429 at once without a request (its stall guard, under the map's 10 s, would not outlast a hold). Counters for
+ * `GET /online` › `direct.publicVector`. Pure, tested (`OfmLimiterTest`).
+ */
+class OfmLimiter(
+    val views: Int = DirectSources.OFM_VIEW_PARALLEL,
+    val downloads: Int = DirectSources.OFM_DOWNLOAD_PARALLEL,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val sleep: (Long) -> Unit = { Thread.sleep(it) },
+) {
+    /** One kind of request: its permits and counters (in flight now, the most seen at once, requests, ms waited for a permit). */
+    class Lane(val limit: Int) {
+        internal val permits = Semaphore(limit, true)
+        val inFlight = java.util.concurrent.atomic.AtomicInteger()
+        val maxInFlight = java.util.concurrent.atomic.AtomicInteger()
+        val requests = AtomicLong()
+        val waitMs = AtomicLong()
+        val waiting = java.util.concurrent.atomic.AtomicInteger()
+
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "limit" to limit, "inFlight" to inFlight.get(), "maxInFlight" to maxInFlight.get(), "waiting" to waiting.get(),
+            "requests" to requests.get(), "waitMs" to waitMs.get(),
+        )
+    }
+
+    val download = Lane(downloads)
+    val view = Lane(views)
+
+    /** Wall clock ms until which the source asked not to be asked ([RETRY_AFTER]); 0: no hold. */
+    @Volatile var holdUntil = 0L
+        private set
+    /** Answers that set a hold, download waits for one, requests refused at once because of one. */
+    val holds = AtomicLong()
+    val heldWaits = AtomicLong()
+    val heldRefused = AtomicLong()
+
+    /** Runs [block] (one request and its attempts) holding a permit of [download]'s lane or the view lane's. */
+    fun <T> run(download: Boolean, block: () -> T): T {
+        val lane = if (download) this.download else view
+        val queued = clock()
+        lane.waiting.incrementAndGet()
+        try {
+            lane.permits.acquire()
+        } finally {
+            lane.waiting.decrementAndGet()
+        }
+        lane.waitMs.addAndGet(clock() - queued)
+        lane.requests.incrementAndGet()
+        lane.maxInFlight.accumulateAndGet(lane.inFlight.incrementAndGet(), ::maxOf)
+        try {
+            return block()
+        } finally {
+            lane.inFlight.decrementAndGet()
+            lane.permits.release()
+        }
+    }
+
+    /**
+     * One attempt of a request through [send], obeying a hold: a download waits it out and asks again after a 429 (at
+     * most [MAX_THROTTLED] times), a view gets a 429 back at once. The reply is [send]'s, or a 429 made here ([HELD]).
+     */
+    fun call(download: Boolean, send: () -> SourceReply): SourceReply {
+        var throttled = 0
+        while (true) {
+            if (!admit(download)) return SourceReply(429, ByteArray(0), mapOf(HELD to "1"))
+            val reply = send()
+            val header = reply.headers[RETRY_AFTER]
+            if (reply.status != 429 && !(reply.status == 503 && header != null)) return reply
+            hold(header)
+            if (!download || ++throttled > MAX_THROTTLED) return reply
+        }
+    }
+
+    /** True to send now; a download sleeps out a hold of at most [MAX_DOWNLOAD_WAIT_MS] first. */
+    private fun admit(download: Boolean): Boolean {
+        while (true) {
+            val left = holdUntil - clock()
+            if (left <= 0) return true
+            if (!download || left > MAX_DOWNLOAD_WAIT_MS) {
+                heldRefused.incrementAndGet()
+                return false
+            }
+            heldWaits.incrementAndGet()
+            sleep(left)
+        }
+    }
+
+    /** A 429 (or a 503 with [RETRY_AFTER]) answered now with [header]: the source is held until then. */
+    fun hold(header: String?) {
+        val now = clock()
+        val until = now + retryAfterMs(header, now)
+        synchronized(this) { if (until > holdUntil) holdUntil = until }
+        holds.incrementAndGet()
+    }
+
+    fun json(): Map<String, Any?> = linkedMapOf(
+        "downloads" to download.json(), "views" to view.json(),
+        "retryAfter" to linkedMapOf("holdLeftMs" to maxOf(0L, holdUntil - clock()), "holds" to holds.get(), "waits" to heldWaits.get(), "refused" to heldRefused.get()),
+    )
+
+    companion object {
+        /** The reply header [SourceReply.headers] carries `Retry-After` under ([PhoneSourceHttp] sets it on a 429 or a 503). */
+        const val RETRY_AFTER = "retry-after"
+        /** Marks a 429 made here, without a request. */
+        const val HELD = "x-dystopo-held"
+        const val DEFAULT_RETRY_AFTER_MS = 30_000L
+        const val MAX_RETRY_AFTER_MS = 3_600_000L
+        const val MAX_DOWNLOAD_WAIT_MS = 120_000L
+        const val MAX_THROTTLED = 3
+
+        /** `Retry-After` [header] (seconds, or an HTTP date) as ms from [now]; [DEFAULT_RETRY_AFTER_MS] when absent or unreadable. Pure, tested. */
+        fun retryAfterMs(header: String?, now: Long): Long {
+            val h = header?.trim().orEmpty()
+            val ms = h.toLongOrNull()?.let { it * 1000 }
+                ?: runCatching {
+                    java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("GMT") }.parse(h)!!.time - now
+                }.getOrNull()
+                ?: DEFAULT_RETRY_AFTER_MS
+            return ms.coerceIn(0L, MAX_RETRY_AFTER_MS)
+        }
     }
 }
 
