@@ -260,7 +260,7 @@ class OfflineMapListTest {
         val i = L.Inputs(packs = listOf(usable))
         val row = L.rows(i).single()
         assertEquals(p, row.name)
-        assertEquals(listOf(L.SHOW_ON_MAP, L.SHOW_FIRST, L.REMOVE), row.actions)
+        assertEquals(listOf(L.SHOW_ON_MAP, L.START_HERE, L.REMOVE), row.actions)
         assertEquals(L.RemovePlan(deletePack = p), L.removePlan(row, i))
         assertTrue(L.NEVER_CLEARED in row.detail && L.HOLDS_ALL in row.detail, row.detail.toString())
         assertTrue(row.detail.none { it.startsWith("From ") }, "a pack with no record says nothing of where it came from")
@@ -344,8 +344,11 @@ class OfflineMapListTest {
         val i = L.Inputs(packs = listOf(usable), catalog = mapOf(p to CatalogStatus.UPDATE), active = p)
         val row = L.rows(i).single()
         assertEquals("Update available", row.state)
-        assertEquals(listOf(L.SHOW_ON_MAP, L.UPDATE, L.REMOVE), row.actions, "the primary pack has no Show first")
-        assertTrue(L.SHOWN_FIRST in row.detail)
+        assertEquals(listOf(L.SHOW_ON_MAP, L.UPDATE, L.REMOVE), row.actions, "the primary pack has no Start here")
+        assertTrue(L.STARTS_HERE in row.detail)
+        // T361: the owner's name, and the line that is true since depth comes first (T354).
+        assertEquals("Start here", L.START_HERE)
+        assertEquals("The app opens on this map. Where another map is just as detailed, this one is shown.", L.STARTS_HERE)
     }
 
     @Test

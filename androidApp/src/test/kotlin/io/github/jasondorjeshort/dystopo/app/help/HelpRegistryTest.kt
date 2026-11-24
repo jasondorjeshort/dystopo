@@ -217,6 +217,9 @@ class HelpRegistryTest {
             // T341: More detail from online.
             "direct.onlineDetail",
             // end T341
+            // T361: an offline map's "Start here".
+            "areas.startHere",
+            // end T361
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
@@ -416,4 +419,15 @@ class HelpRegistryTest {
         }
     }
     // end T363
+
+    // T361: Start here's help says where the app opens and which map wins a tie, beside the row's switch on Offline maps.
+    @Test
+    fun theStartHereHelpSaysWhereTheAppOpensAndWhoWinsATie() {
+        val h = HelpRegistry.byKey(io.github.jasondorjeshort.dystopo.app.areas.START_HERE_KEY)!!
+        assertEquals("Start here", h.title)
+        val t = h.text(ContourUnits.METERS)
+        assertTrue("The app opens on the map you start here" in t && "in the same detail, this one is shown" in t && "more detailed" in t, t)
+        assertEquals(setOf("AreasScreen.kt"), references["areas.startHere"])
+    }
+    // end T361
 }
