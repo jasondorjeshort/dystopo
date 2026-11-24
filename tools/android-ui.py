@@ -36,7 +36,8 @@ Parts:
                Flights section offline (`horizon-flights-offline`); both put back.
                T314: in the `flights` step, the Flight tracking: Route lines row (frame `flights-route-lines-row`) and
                its help pop-up (`flights-route-lines-help`), read before Flight tracking is turned on.
-               --feature-steps runs only the steps named.
+               --feature-steps runs only the steps named. T353: --features-half map runs install-map to drive, sky
+               install-map then horizon to horizonflights (the sweep's parts `features` and `features-sky`).
   flights      (T311, debug build: --serial, --port) the Flights layer on the replay fixture
                (shared/src/commonTest/resources/aircraft/rainier-replay.json, POST /aircraft/replay with an undulation
                for the emulator's fix): the map at Rainier z9 with silhouettes, trails and labels (frame `flights-map`),
@@ -1863,9 +1864,20 @@ def switch_rects(nodes):
     return [n["bounds"] for n in nodes if n["desc"] == SWITCH_LABEL and n["bounds"]]
 
 
-def under_switch(nodes, rect):
+def under_switch(nodes, rect, beneath=()):
     """T315: the texts of the nodes, other than the switch's own, whose bounds reach into [rect] by more than a pixel; a
-    node that holds the whole switch is what it stands on (the map's view under the Horizon view, a pane), not a row."""
+    node that holds the whole switch is what it stands on (the map's view under the Horizon view, a pane), not a row.
+    T353: [beneath], the nodes of the map before the view opened: one with the same text within the bounds it had there
+    is the map's, still in the tree under the view (the dump clips it to what the view leaves), not the view's: the credit
+    line, above the four-segment switch since T344, whose node is Compose's 48 dp touch target and so reaches 3 dp into
+    the switch below the plate it draws."""
+    def inside(b, o):
+        return o[0] <= b[0] and o[1] <= b[1] and b[2] <= o[2] and b[3] <= o[3]
+
+    def the_maps(n):
+        t = n["text"] or n["desc"]
+        return any((m["text"] or m["desc"]) == t and m["bounds"] and inside(n["bounds"], m["bounds"]) for m in beneath)
+    nodes = [n for n in nodes if not n["bounds"] or not the_maps(n)]
     def inter(b):
         return min(b[2], rect[2]) - max(b[0], rect[0]) > 1 and min(b[3], rect[3]) - max(b[1], rect[1]) > 1
 
@@ -1898,6 +1910,7 @@ def horizon_step(dev):
     if not n:
         return {"ok": False, "backs": backs, "error": f"no Horizon segment on the map after {backs} Back (texts: {dev.texts(nodes)[:25]})"}
     on_map = switch_rects(nodes)
+    map_nodes = nodes  # T353: the map's own nodes, which stay in the tree under the view
     dev.tap(n)
     n, nodes = dev.wait_for(HORIZON_TOGGLES, 15)
     if not n:
@@ -1932,7 +1945,7 @@ def horizon_step(dev):
         if same:
             break
     end_png = dev.screencap("horizon-end")[0]
-    under = under_switch(end_nodes, sw) if sw else []
+    under = under_switch(end_nodes, sw, beneath=map_nodes) if sw else []
     end_texts = dev.texts(end_nodes)
     sats = next((t for t in texts + after_texts + end_texts if re.search(r"^\d+ used of \d+ in view|^No satellites heard", t)), None)  # the summary's, not the plot's description
     peaks = next((t for t in texts + after_texts + end_texts if re.search(r"just out of sight within|^No named peak|^No offline map with peak|^Finding the peaks", t)), None)
@@ -3329,6 +3342,25 @@ def part_horizonflights(args):
 
 # --- features (a) -----------------------------------------------------------------------------------------------
 
+# T353: the features part's steps in order, and its two halves (the owner, 2026-11-23: the part had outgrown its 1500 s
+# ceiling): --features-half map runs install-map to drive, sky the sky views from horizon on; each half starts with
+# install-map, and every other step is in exactly one half (a new step not named in FEATURES_SKY goes to map).
+FEATURE_STEPS = ("install-map", "search", "route-to", "route", "routes-list", "waypoint", "track", "two-tracks", "gpx", "share-gpx",
+                 "sync", "sync-sheet", "share", "settings", "drive", "horizon", "panorama", "panorama-list", "flights", "horizonflights")
+FEATURES_SKY = ("horizon", "panorama", "panorama-list", "flights", "horizonflights")
+
+
+def feature_half(half):
+    """T353: the step names a --features-half runs, in order: all ("" or "all"), "map" or "sky"."""
+    if half in ("", "all"):
+        return FEATURE_STEPS
+    if half == "sky":
+        return ("install-map",) + FEATURES_SKY
+    if half == "map":
+        return tuple(s for s in FEATURE_STEPS if s not in FEATURES_SKY)
+    raise ValueError(f"--features-half is all, map or sky, not {half!r}")
+
+
 def part_features(args):
     dev = device(args, "")
     run = Run(dev)
@@ -3495,6 +3527,7 @@ def part_features(args):
         close_sheet(dev)
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
+    half = feature_half(getattr(args, "features_half", "all"))  # T353; test_android_ui.py checks FEATURE_STEPS is this list
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev)),
@@ -3503,6 +3536,8 @@ def part_features(args):
                      ("flights", lambda: flights_step(dev)),  # T311: flights
                      ("horizonflights", lambda: horizon_flights_step(dev))):  # T312
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
+            continue
+        if name not in half:
             continue
         run.step(name, fn)
     run.step("alive", lambda: alive_and_clean(dev))
@@ -3847,12 +3882,31 @@ def scale_metres(desc):
 SCALE_PAD_DP = 2  # ScaleBar.kt: the ruler's stroke (the node's bounds lie inside the plate's padding)
 
 
+ZOOM_LABEL_PAD_DP = 8  # ScaleBar.kt (T346): the zoom label's start padding beside the ruler, inside the bar's node
+
+
+def zoom_label_node(nodes):
+    """T353: the scale bar's zoom label (T346, "Map zoom 13.0"), or None when the option is off."""
+    return next((n for n in nodes if re.match(r"^Map zoom -?\d", n["desc"] or "") and n["bounds"]), None)
+
+
+def zoom_label(nodes):
+    """T353: the zoom the scale bar's label reads (cut to a tenth, ScaleBar.kt's zoomLabelText), or None."""
+    n = zoom_label_node(nodes)
+    return float(n["desc"].split()[-1]) if n else None
+
+
 def scale_mpp(nodes, density=1.0):
     """Metres per pixel the scale bar shows: its first length over the ruler's width (its node's width less the stroke,
-    [density] px per dp; a label wider than the ruler makes it a few percent off), or None."""
+    [density] px per dp; a label wider than the ruler makes it a few percent off), or None. T353: since T346 the node
+    also holds the zoom label at the ruler's right; the label and its padding are not the ruler's."""
     n = next((n for n in nodes if (n["desc"] or "").startswith("Scale ") and n["bounds"]), None)
     metres = scale_metres(n["desc"]) if n else None
-    w = (n["bounds"][2] - n["bounds"][0] - SCALE_PAD_DP * density) if n else 0
+    right = n["bounds"][2] if n else 0
+    z = zoom_label_node(nodes) if n else None
+    if z and n["bounds"][0] < z["bounds"][0] <= right:
+        right = z["bounds"][0] - ZOOM_LABEL_PAD_DP * density
+    w = (right - n["bounds"][0] - SCALE_PAD_DP * density) if n else 0
     return metres / w if metres and w > 0 else None
 
 
@@ -3898,7 +3952,8 @@ def part_recenter(args):
         st["p0"] = find_puck(ras)
         st["size"] = (ras.w, ras.h)
         st["density"] = screen(dev)[2]
-        st["mpp0"] = scale_mpp(dev.nodes(), st["density"])
+        nodes = dev.nodes()
+        st["mpp0"], st["z0"] = scale_mpp(nodes, st["density"]), zoom_label(nodes)
         return {"ok": st["p0"] is not None, "puck": st["p0"], "screen": f"{ras.w}x{ras.h}", "png": png,
                 **({} if st["p0"] else {"error": "no location puck on the map (#1a66d9 dot)"})}
 
@@ -3909,7 +3964,8 @@ def part_recenter(args):
         ras, png = still("panned")
         p = find_puck(ras)
         st["p1"] = p
-        st["mpp1"] = scale_mpp(dev.nodes(), st["density"])  # a pan keeps the zoom
+        nodes = dev.nodes()
+        st["mpp1"], st["z1"] = scale_mpp(nodes, st["density"]), zoom_label(nodes)  # a pan keeps the zoom
         moved = math.dist(p, st["p0"]) if p else None
         ok = p is None or moved >= 100  # off screen counts as moved
         return {"ok": ok, "puck": p, "movedPx": round(moved, 1) if moved is not None else None, "png": png,
@@ -3925,7 +3981,8 @@ def part_recenter(args):
         ras, png = still("recentred")
         p = find_puck(ras)
         off = math.dist(p, st["p0"]) if p else None
-        st["mpp2"] = scale_mpp(dev.nodes(), st["density"])
+        nodes = dev.nodes()
+        st["mpp2"], st["z2"] = scale_mpp(nodes, st["density"]), zoom_label(nodes)
         dz = zoom_step(st.get("mpp1") or st.get("mpp0"), st["mpp2"])
         want = RECENTER_CLOSE_ZOOM - RECENTER_OPEN_ZOOM
         placed = off is not None and off <= args.recenter_tol
@@ -3946,7 +4003,8 @@ def part_recenter(args):
         dev.tap(n)
         time.sleep(1.0)
         ras, png = still("second-tap")
-        st["mpp3"] = scale_mpp(dev.nodes(), st["density"])
+        nodes = dev.nodes()
+        st["mpp3"], st["z3"] = scale_mpp(nodes, st["density"]), zoom_label(nodes)
         dz = zoom_step(st.get("mpp2"), st["mpp3"])
         ok = dz is not None and abs(dz) <= args.zoom_tol
         return {"ok": ok, "zoomStep": dz, "png": png,
@@ -3957,7 +4015,8 @@ def part_recenter(args):
             break
     run.step("alive", lambda: alive_and_clean(dev), shot=False)
     return run.report(puckBefore=st.get("p0"), puckPanned=st.get("p1"),
-                      metresPerPx={k: round(st[k], 3) if st.get(k) else None for k in ("mpp0", "mpp1", "mpp2", "mpp3")})
+                      metresPerPx={k: round(st[k], 3) if st.get(k) else None for k in ("mpp0", "mpp1", "mpp2", "mpp3")},
+                      zoomLabels={k: st.get(k) for k in ("z0", "z1", "z2", "z3")})  # T353: what the scale bar's zoom label (T346) read
 
 
 # --- network (g) -----------------------------------------------------------------------------------------------------
@@ -5162,6 +5221,8 @@ def main():
     ap.add_argument("--drive-osm", default=os.path.join(REPO, "out", "montblanc-outdoors.pmtiles"),
                     help="features: the drive step's vector pack; when it is missing the step drives on the rainier pack (T288)")
     ap.add_argument("--feature-steps", default="", help="features: only these steps (comma-separated; install-map always runs), for a rerun of one")
+    ap.add_argument("--features-half", default="all", choices=("all", "map", "sky"),
+                    help="features (T353): map runs install-map to drive, sky install-map and the sky views from horizon on")
     ap.add_argument("--server", default="", help="a Dystopo server URL the emulator reaches (the host's LAN address)")
     ap.add_argument("--server-cmd", default="", help="network: JSON list, the command that starts that server")
     ap.add_argument("--server-config", default="", help="network: config file of the standalone server (./gradlew :server:installDist) to start, kill and restart")

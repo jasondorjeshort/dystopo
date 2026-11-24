@@ -134,7 +134,9 @@ sunrise and sunset to the millisecond (`sunsetDifferenceMs` 0). Over the flat ho
 The sweep opens the view in `android-ui.py features` (step `horizon`, by the map's switch since T309, the view's Map
 segment closing it; frames `horizon`, `horizon-scrolled` and, T315, `horizon-end` at the end of the scroll; `gps` and
 `gps-plot` before T308; T315: it fails unless the switch's rectangle on the view is the map's, `switchMapPx` and
-`switchViewPx`, and nothing of the view lies under it at the end of the scroll, `underSwitch`) and `android-a11y.py`
+`switchViewPx`, and nothing of the view lies under it at the end of the scroll, `underSwitch`; T353: a node the bare map
+had, same text within the same bounds, is the map's under the view and not counted, such as the credit line, whose 48 dp
+touch target above the four-segment switch reaches 3 dp into it) and `android-a11y.py`
 (screen `horizon`, `gps` before T308).
 
 ## Another place (T317)

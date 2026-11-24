@@ -340,9 +340,16 @@ def text_findings(unmerged, screen, density, raster):
     return out, read
 
 
+# T353: the map's own overlays that the bare map (Flights off) does not show, so its tags miss them: the Flights layer's
+# status line ("Flights: Getting flight data" while the feed loads, AircraftCard.kt). On a sky view with Flights on, the
+# line lay in the tree under the view, and its contrast was read on the view's pixels (2.22: the plot, not the line).
+MAP_OVERLAY_TAGS = frozenset({"flightsStatus"})
+
+
 def map_tags(nodes):
-    """The test tags of the map's own controls (the map screen with nothing open): the layer a screen opens over."""
-    return {n["testTag"] for n in nodes if n.get("testTag")}
+    """The test tags of the map's own controls (the map screen with nothing open): the layer a screen opens over; T353:
+    with the map's overlays that only a layer turned on shows ([MAP_OVERLAY_TAGS])."""
+    return {n["testTag"] for n in nodes if n.get("testTag")} | MAP_OVERLAY_TAGS
 
 
 def in_layer(nodes, tags):

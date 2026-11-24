@@ -563,6 +563,14 @@ class UiScan:
     def __init__(self, source):
         tree = ast.parse(source)
         self.top = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        # T353: part_features runs as two sweep parts; the steps FEATURES_SKY names write under ui/features-sky/.
+        self.sky = ()
+        for n in tree.body:
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "FEATURES_SKY" for t in n.targets):
+                try:
+                    self.sky = tuple(ast.literal_eval(n.value))
+                except ValueError:
+                    pass
 
     @staticmethod
     def nested(fn):
@@ -638,6 +646,7 @@ class UiScan:
             for n in dict.fromkeys(self.frames(fn, {}, scope)):
                 if n not in stepped:
                     out.append({"part": part, "step": None, "frame": n})
+        out = [{**w, "part": "features-sky"} if w["part"] == "features" and w["step"] in self.sky else w for w in out]
         return [w for w in out if len(w["frame"].replace("*", "").replace("-", "")) >= MIN_LITERAL]
 
 

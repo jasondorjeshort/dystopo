@@ -15,6 +15,7 @@ outside frame on it, and android-check.py's area_of and write_place (a name, nev
 
 Needs Playwright with a Chromium (the bundled one by default, as the sheet does with --channel '').
 """
+import ast
 import importlib.util
 import json
 import os
@@ -563,11 +564,23 @@ class CheckFirst(unittest.TestCase):
     def test_the_real_tools(self):
         have = {(w["part"], w["step"], w["frame"]) for w in diff.static_writers(here)}
         self.assertIn(("flights", "slow", "flights-slow"), have)  # the debug flights part, which the sweep does not run
-        self.assertIn(("features", "horizon", "horizon-point"), have)
-        self.assertIn(("features", "flights", "flights-refresh-help"), have)
+        # T353: the sky steps of part_features write under ui/features-sky/, the sweep's second features part.
+        self.assertIn(("features-sky", "horizon", "horizon-point"), have)
+        self.assertIn(("features-sky", "flights", "flights-refresh-help"), have)
+        self.assertIn(("features", "drive", "drive-row"), have)
+        self.assertNotIn(("features", "horizon", "horizon-point"), have)
+        with open(os.path.join(here, "android-ui.py"), encoding="utf-8") as f:
+            src = f.read()
+        scan = diff.UiScan(src)
+        steps = [s for s, _e in scan.step_calls(scan.top["part_features"]) if s != "alive"]
+        named = next(ast.literal_eval(n.value) for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                     and any(getattr(t, "id", None) == "FEATURE_STEPS" for t in n.targets))
+        self.assertEqual(tuple(steps), named, "android-ui.py's FEATURE_STEPS is not part_features' step list")
+        self.assertTrue(scan.sky and set(scan.sky) < set(named))
         self.assertIn(("a11y", "horizon-flights", "horizon-flights-2.0"), have)
         parts, _src = diff.sweep_parts(here)
         self.assertIn("features", parts)
+        self.assertIn("features-sky", parts)
         self.assertNotIn("flights", parts)
         r = diff.check_first(["flights-slow", "horizon-point"], None, here, parts=parts)
         self.assertEqual(r["missing"], ["flights-slow"])

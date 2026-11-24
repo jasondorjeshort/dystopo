@@ -496,6 +496,7 @@ PARTS = {
     "search": tour_part,
     "apk-strings": apk_strings,
     "features": ui_part,
+    "features-sky": ui_part,  # T353: the features part's second half
     "recenter": ui_part,
     "diagnostics": ui_part,  # T154
     "upgrade": ui_part,
@@ -590,7 +591,8 @@ def sheet_images(d):
     add("Release smoke tour", os.path.join("release", "*.png"))
     add("First run (release, by taps)", os.path.join("first-run", "*.png"))
     add("First run, no server (release, by taps)", os.path.join("first-run", "direct", "*.png"))  # T105
-    for part, title in (("features", "Release features (by taps)"), ("recenter", "Recenter (by taps)"),
+    for part, title in (("features", "Release features (by taps)"), ("features-sky", "Release features, the sky views (by taps)"),
+                        ("recenter", "Recenter (by taps)"),
                         ("diagnostics", "Diagnostics row (by taps)"), ("upgrade", "Upgrade in place"),
                         ("permissions", "Permissions"),
                         ("background", "Background recording under doze"), ("network", "Network: throttled, server killed"),
