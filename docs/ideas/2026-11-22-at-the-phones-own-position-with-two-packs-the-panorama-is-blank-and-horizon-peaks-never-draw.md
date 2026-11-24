@@ -91,3 +91,13 @@ first and steps past a tile with no peak names, under the same lease, and the Pe
 the primary, and an activate with the Panorama open. Left for the owner's capture on the phone, at the moment of the
 blank on the debug build: `GET /packs` (`notOpened`, `inUse`), `GET /firstrun` `mapHolds.regions`, `GET /horizon`
 `peaks` (`tilesRead`, `maps`) and `GET /panorama`, and one `adb logcat -s Dystopo DystopoAssets`.
+
+Question: T340 and T352 built every fix this file asks for and shipped in v0.1.43-alpha; what is left is your look on
+the phone. Which fits?
+- (a) Recommended: try it on v0.1.43-alpha at the same place with the same two maps. If the Panorama and the Peaks
+  draw, say so and this file is deleted; if not, capture the debug routes above at the moment of the blank and the
+  next triage turns it into a Plan from the capture.
+- (b) It is already gone on v0.1.43-alpha: delete the file now.
+- (c) Keep it open without a check until a later release.
+
+Answer:
