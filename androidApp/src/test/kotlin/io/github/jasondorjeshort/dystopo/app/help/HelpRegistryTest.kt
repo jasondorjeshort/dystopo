@@ -220,6 +220,9 @@ class HelpRegistryTest {
             // T361: an offline map's "Start here".
             "areas.startHere",
             // end T361
+            // T364: Show flights.
+            "map.flights",
+            // end T364
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])

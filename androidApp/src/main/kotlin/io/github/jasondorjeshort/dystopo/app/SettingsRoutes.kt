@@ -94,6 +94,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   synced as `app.<key>`; turning it on polls at once, off forgets every aircraft. `GET /aircraft` shows the effect.
  *   T314: `aircraftRouteLines=selected|all` (default selected: "Flight tracking: Route lines"), synced as
  *   `app.aircraftRouteLines`; the map's faint lines follow at once (`GET /aircraft` › `routeLines`).
+ *   T364: `mapFlights=1|0` (default on: "Show flights", Settings › Map options, shown while Flight tracking is on), synced
+ *   as `app.mapFlights`: off, the map stops asking for flights and clears its marks; on, it asks at once (`GET /aircraft` ›
+ *   `mapShown`, `mapAsksBecause` `hidden`; `POST /aircraft?map=` sets the same).
  *   T337: `pressureUnit=mbar|hpa|inhg|mmhg` (default mbar whatever `units` says; the symbols `hPa`, `inHg`, `mmHg` read
  *   too), synced as `app.pressureUnit`: the unit every shown pressure reads in (the readout bar, the warning card and the
  *   help); the bar and the card follow at once. `GET /readout` reports it (`pressureUnit`, `bar.pressure.unit` and `text`).
@@ -225,6 +228,8 @@ class SettingsRoutes(private val app: DystopoApp) {
         if (given(AppSettings.SHOW_DIVERGENCE)) io.github.jasondorjeshort.dystopo.app.divergence.DivergenceLayer.refresh()
         // T311: the Flights layer polls at once when turned on, forgets every aircraft when turned off.
         if (given(AppSettings.AIRCRAFT, AppSettings.AIRCRAFT_REFRESH_S, AppSettings.AIRCRAFT_AIRPORTS, AppSettings.AIRCRAFT_ROUTE_LINES)) io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.settingsChanged() // T314: route lines
+        // T364: "Show flights" on the map; the map asks, or stops asking and clears its marks, at once (no poll forced).
+        if (given(AppSettings.MAP_FLIGHTS)) io.github.jasondorjeshort.dystopo.app.aircraft.AircraftPoller.nudge()
         // T47: map options; a fixed interval the new units do not offer goes back to auto.
         var map = if (parsed.map.isEmpty()) mapBefore else MapOptions.parse(parsed.map, mapBefore, AppSettings.units)
         map.contourInterval?.let { if (it !in MapOptions.intervals(AppSettings.units)) map = map.copy(contourInterval = null) }

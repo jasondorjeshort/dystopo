@@ -60,6 +60,11 @@ data class AircraftView(
  * Once a second it makes [view] ([AircraftTracker]: positions moved up, stale marked, old dropped, routes checked,
  * distances and angles from the phone) and tells its listeners. Feed data stays in memory (ODbL); turning Flight
  * tracking off forgets it.
+ *
+ * T364 ([FlightAsks], the pattern: an overlay is one data switch and one show key per view, a hidden view stops asking):
+ * with nobody asking nothing is built or published ([rebuilds], [publishes]) and no request is made; the once-a-second
+ * ticker runs only while Flight tracking is on ([tickerRunning]) and is started again by the setting, a request or a
+ * listener.
  */
 object AircraftPoller {
     const val MAP = "map"
@@ -69,7 +74,8 @@ object AircraftPoller {
 
     private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-aircraft").apply { isDaemon = true } }
     private val poller = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-aircraft-poll").apply { isDaemon = true } }
-    @Volatile private var started = false
+    /** T364: the ticker's schedule while Flight tracking is on; null while it is off. */
+    @Volatile private var tickerTask: java.util.concurrent.ScheduledFuture<*>? = null
 
     private val tracker = AircraftTracker()
     private val lock = Any()
@@ -126,6 +132,15 @@ object AircraftPoller {
         private set
     @Volatile var ticks = 0L
         private set
+    // T364: the idle cost's counters (GET /aircraft): polls made (the feed's or a replay's), views built, views published.
+    @Volatile var polls = 0L
+        private set
+    @Volatile var rebuilds = 0L
+        private set
+    @Volatile var publishes = 0L
+        private set
+    val tickerRunning: Boolean get() = tickerTask != null
+    // end T364
     @Volatile var pausedBecause: String? = null
         private set
 
@@ -166,11 +181,17 @@ object AircraftPoller {
     fun history(hex: String): List<TrackPoint> = synchronized(lock) { tracker.history(hex) }
 
     /** T314: the feed's answered polls so far (the map's faint route lines are rebuilt when it moves, not every tick). */
-    val polls: Long get() = synchronized(lock) { tracker.polls }
+    val answered: Long get() = synchronized(lock) { tracker.polls }
 
-    /** A setting changed (`SettingsRoutes.apply`): on polls at once, off forgets everything. */
+    /** A setting changed (`SettingsRoutes.apply`): on polls at once, off forgets everything (and T364: stops the ticker). */
     fun settingsChanged() {
         if (!on) forget() else lastPollAt = 0L
+        start()
+        ticker.execute { runCatching { tick() } }
+    }
+
+    /** T364: a view's show key changed (`mapFlights`): one tick now, so the view asks or stops asking at once; no poll forced. */
+    fun nudge() {
         start()
         ticker.execute { runCatching { tick() } }
     }
@@ -180,13 +201,20 @@ object AircraftPoller {
         publish(AircraftView.EMPTY.copy(atMs = System.currentTimeMillis(), owners = owners()))
     }
 
+    /** T364: starts the once-a-second ticker while Flight tracking is on ([FlightAsks.plan]); off, it stays stopped. */
     private fun start() {
-        if (started) return
+        if (tickerTask != null || !io.github.jasondorjeshort.dystopo.aircraft.FlightAsks.plan(on, emptySet()).ticker) return
         synchronized(this) {
-            if (started) return
-            started = true
-            ticker.scheduleWithFixedDelay({ runCatching { tick() } }, 1, 1, TimeUnit.SECONDS)
+            if (tickerTask != null || !on) return
+            tickerTask = ticker.scheduleWithFixedDelay({ runCatching { tick() } }, 1, 1, TimeUnit.SECONDS)
         }
+    }
+
+    /** T364: stops the ticker (Flight tracking off; called on the tick thread after the last forget). */
+    private fun stop() = synchronized(this) {
+        if (on) return@synchronized
+        tickerTask?.cancel(false)
+        tickerTask = null
     }
 
     /** Why it does not poll now, or null when it may: off, nobody asks, or the app in the background. */
@@ -203,10 +231,14 @@ object AircraftPoller {
         val now = System.currentTimeMillis()
         if (!on) {
             if (flow.value.aircraft.isNotEmpty() || flow.value.state != FeedState.WAITING) forget()
+            pausedBecause = "off"
+            stop() // T364: no ticker while Flight tracking is off
             return
         }
-        ensureRoutes()
         pausedBecause = pauseReason()
+        // T364: nobody asks, so nothing is built, published or requested ([FlightAsks.plan]); the tracker keeps what it held.
+        if (!io.github.jasondorjeshort.dystopo.aircraft.FlightAsks.plan(on, owners()).rebuild) return
+        ensureRoutes()
         val refreshS = AppSettings.AIRCRAFT_REFRESH_S.value
         if (pausedBecause == null && !polling && now - lastPollAt >= refreshS * 1000L) {
             val ask = synchronized(asks) { asks.entries.maxByOrNull { it.value.at } }
@@ -220,10 +252,12 @@ object AircraftPoller {
             tracker.checkStalled(now, refreshS)
             tracker.view(now, observer(), routes, AppSettings.AIRCRAFT_AIRPORTS.value, refreshS) // T316: the times scale with it
         }
+        rebuilds++
         publish(AircraftView(list, state, message, now, owners()))
     }
 
     private fun publish(v: AircraftView) {
+        publishes++
         flow.value = v
         for (l in listeners) runCatching { l(v) }
     }
@@ -231,6 +265,7 @@ object AircraftPoller {
     /** One poll on the poll thread. */
     private fun poll(owner: String, q: AircraftQuery) {
         val now = System.currentTimeMillis()
+        polls++
         lastQuery = q
         lastOwner = owner
         val r = replay
@@ -407,6 +442,8 @@ object AircraftPoller {
         "requests" to requests, "skippedLimited" to skippedLimited, "quota" to quotaJson(now), "quotaLine" to quotaLine(now),
         "observer" to observer()?.let { o -> linkedMapOf("heightM" to Math.round(o.heightM), "undulationM" to o.undulationM, "undulationOverride" to undulationOverride) },
         "routes" to routesJson(), "ticks" to ticks, "forceOffline" to forceOffline,
+        // T364: the idle cost (a view that does not show flights stops asking; nobody asking, nothing is built or published)
+        "tickerRunning" to tickerRunning, "polls" to polls, "rebuilds" to rebuilds, "publishes" to publishes,
         "groundSamples" to groundSamples, "lastGroundMs" to lastGroundMs, // T316: the ground under each aircraft
     )
 }

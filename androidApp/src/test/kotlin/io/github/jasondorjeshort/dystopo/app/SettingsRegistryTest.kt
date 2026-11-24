@@ -71,6 +71,7 @@ class SettingsRegistryTest {
         "aircraftRouteLines" to "all", // T314
         "panoramaSteering" to "follow", // T330
         "pressureUnit" to "inhg", // T337
+        "mapFlights" to false, // T364
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -122,6 +123,9 @@ class SettingsRegistryTest {
     // T346 (ADR 0033: one key added, synced): the scale bar's zoom label, `app.scaleBar.zoom` (no `GET /settings` key).
     private val t346Keys = listOf("scaleBar.zoom")
     // end T346
+    // T364 (ADR 0033: one key added, synced): "Show flights" on the map.
+    private val t364Keys = listOf("mapFlights")
+    // end T364
     private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot") +
         t308Keys + t308Keys.map { "app.$it" } +
         // T311 (ADR 0033: three keys added, synced): Flight tracking, its refresh and airport names.
@@ -140,8 +144,11 @@ class SettingsRegistryTest {
         t337Keys + t337Keys.map { "app.$it" } +
         // end T337
         // T346
-        t346Keys.map { "app.$it" }
+        t346Keys.map { "app.$it" } +
         // end T346
+        // T364
+        t364Keys + t364Keys.map { "app.$it" }
+        // end T364
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -152,10 +159,11 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one, T337 one, T346 one")
-        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1, t257Synced().size)
+        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one, T337 one, T346 one, T364 one")
+        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1, t257Synced().size)
+        assertEquals("off", SettingsSync.current()["app.mapFlights"], "T364: the seeded off syncs as off")
         assertEquals("on", SettingsSync.current()["app.scaleBar.zoom"], "T346: nothing stored, the default (on)")
-        assertTrue(t257Synced().filterKeys { it != "app.scaleBar.zoom" && it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys && it.removePrefix("app.") !in t337Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertTrue(t257Synced().filterKeys { it != "app.scaleBar.zoom" && it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys && it.removePrefix("app.") !in t337Keys && it.removePrefix("app.") !in t364Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
         assertEquals("all", SettingsSync.current()["app.aircraftRouteLines"], "T314: the seeded all syncs as all")
         assertEquals("follow", SettingsSync.current()["app.panoramaSteering"], "T330: the seeded follow syncs as follow")
         assertEquals("inhg", SettingsSync.current()["app.pressureUnit"], "T337: the seeded inhg syncs as inhg")
@@ -539,4 +547,36 @@ class SettingsRegistryTest {
         assertEquals("Pressure units", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.PRESSURE_UNIT.label)
     }
     // end T337
+
+    // T364
+    /**
+     * T364: "Show flights" (`mapFlights`) is on by default, synced as `app.mapFlights` `on`/`off`, posted and read back, and
+     * through sync; a value other than a switch's is refused with the key named. Its row is drawn in Map options
+     * (`MapOptionsSection`) while Flight tracking is on, and the Flight tracking rows stay where they were (T370 moves them).
+     */
+    @Test
+    fun showFlightsIsOnByDefaultAndSynced() {
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(true, AppSettings.MAP_FLIGHTS.value)
+        assertEquals("on", SettingsSync.current()["app.mapFlights"])
+        assertTrue(AppSettings.MAP_FLIGHTS.synced)
+        assertEquals("mapFlights", AppSettings.KEY_MAP_FLIGHTS)
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("mapFlights" to "0")))
+        for ((s, v) in posted.plain) @Suppress("UNCHECKED_CAST") AppSettings.set(s as Setting<Any>, v)
+        assertEquals(false, AppSettings.MAP_FLIGHTS.value)
+        assertEquals(false, AppSettings.json()["mapFlights"])
+        assertEquals("off", SettingsSync.current()["app.mapFlights"])
+        val refused = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("mapFlights" to "sometimes")))
+        assertTrue("mapFlights" in refused.message, refused.message)
+        val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(SettingsSync.plan(mapOf("app.mapFlights" to "on"), emptyMap(), SettingsRoutes.KEYS).params))
+        assertEquals(true, back[AppSettings.MAP_FLIGHTS])
+        AppSettings.load(FakePrefs(mapOf("server" to "", "aircraft" to true)))
+        assertEquals(true, AppSettings.MAP_FLIGHTS.value, "tracking on, nothing stored: shown")
+        val options = java.io.File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/options/MapOptionsSection.kt").readText()
+        assertTrue("if (AppSettings.AIRCRAFT.value) {" in options && "OptionRow(SHOW_FLIGHTS" in options, "the row is drawn in Map options while Flight tracking is on")
+        assertEquals("Show flights", io.github.jasondorjeshort.dystopo.app.options.SHOW_FLIGHTS)
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.MAP)
+        assertEquals(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.AIRCRAFT_ROUTE_LINES, rows.last(), "T370 moves the Flight tracking rows, not this task")
+    }
+    // end T364
 }

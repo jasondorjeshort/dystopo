@@ -803,4 +803,36 @@ finally:
     a11y.time.sleep = _sleep
 # end T363
 
+# T364: the map with Flight tracking on and Show flights off is a map screen; it plays the replay, hides the map's flights
+# and checks the map asks for none; its end shows them again and puts Flight tracking and the replay back.
+class HiddenSrv(BodySrv):
+    def ok(self, method, path, body=None, **kw):
+        self.calls.append((method, path, body is not None))
+        return {"mapAsksBecause": "hidden", "count": 0} if path.startswith("/aircraft?map=0") else {}
+
+
+hid = [s for s in a11y.SCREENS if s[0] == "map-flights-hidden"]
+assert len(hid) == 1 and hid[0][3] == "map" and hid[0][2] is not None, hid
+hs = HiddenSrv()
+hid[0][1](type("C", (), {"srv": hs})())
+assert [c[1].split("?")[0] for c in hs.calls] == ["/camera", "/aircraft/replay", "/aircraft"] and hs.calls[1][2], hs.calls
+assert hs.calls[2][1].startswith("/aircraft?map=0"), hs.calls
+hs.calls.clear()
+hid[0][2](type("C", (), {"srv": hs})())
+assert hs.calls[0][1].startswith("/aircraft?map=1") and ("POST", "/settings?aircraft=0", False) in hs.calls, hs.calls
+
+
+class ShownSrv(HiddenSrv):
+    def ok(self, method, path, body=None, **kw):
+        self.calls.append((method, path, body is not None))
+        return {"mapAsksBecause": None, "count": 3}
+
+
+try:
+    hid[0][1](type("C", (), {"srv": ShownSrv()})())
+    raise AssertionError("a map still showing flights passed")
+except RuntimeError as e:
+    assert "still shows flights" in str(e), e
+# end T364
+
 print("test_android_a11y: ok")

@@ -148,6 +148,13 @@ fun MapOptionsSection(change: (Map<String, Any?>) -> Unit) {
         OptionRow("Show zoom level", ZOOM_LABEL_HINT, help = "map.zoomLabel") {
             OnOff(zoom) { io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.setShowZoom(it) }
         }
+        // T364: the map's own show key for flights, while Flight tracking (the data) is on; synced (`mapFlights`).
+        if (AppSettings.AIRCRAFT.value) {
+            OptionRow(SHOW_FLIGHTS, SHOW_FLIGHTS_HINT, help = "map.flights") {
+                OnOff(AppSettings.MAP_FLIGHTS.value) { io.github.jasondorjeshort.dystopo.app.aircraft.AircraftLayer.setShown(it) { SettingsUi.revision++ } }
+            }
+        }
+        // end T364
     }
 }
 
@@ -215,6 +222,11 @@ private fun ViewshedRows() {
         }
     }
 }
+
+// T364: the Show flights row (ADR 0031 strings).
+internal const val SHOW_FLIGHTS = "Show flights"
+internal const val SHOW_FLIGHTS_HINT = "aircraft on this map; the Horizon, Panorama and List views have their own Flights button"
+// end T364
 
 /** T346: under the Show zoom level row's On and Off. */
 internal const val ZOOM_LABEL_HINT = "the map's zoom beside the scale bar, such as z8.4"
@@ -439,5 +451,13 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
                 "step in halves the distance across the screen. Some of what the map shows starts at a zoom level, " +
                 "such as an offline map's detail, so the number tells you which you are looking at."
         },
+        // T364
+        HelpText("map.flights", SHOW_FLIGHTS, "$place › $SHOW_FLIGHTS", needs = "Flight tracking on", show = show) {
+            "Shows on this map the aircraft Flight tracking finds; tap one for its card. Off, the map draws no aircraft and " +
+                "asks for no flight data, which saves data and battery. The Horizon, Panorama and List views have their own " +
+                "Flights button, so you can keep flights there and not on the map. Flight tracking itself turns the flight " +
+                "data on or off everywhere."
+        },
+        // end T364
     )
 }
