@@ -453,10 +453,9 @@ internal val MAP_OPTIONS_HELP: List<HelpText> = run {
         },
         // T364
         HelpText("map.flights", SHOW_FLIGHTS, "$place › $SHOW_FLIGHTS", needs = "Flight tracking on", show = show) {
-            "Shows on this map the aircraft Flight tracking finds; tap one for its card. Off, the map draws no aircraft and " +
-                "asks for no flight data, which saves data and battery. The Horizon, Panorama and List views have their own " +
-                "Flights button, so you can keep flights there and not on the map. Flight tracking itself turns the flight " +
-                "data on or off everywhere."
+            "Shows on this map the aircraft Flight tracking finds; tap one for its card. Off, the map draws none and asks " +
+                "for no flight data, saving data and battery. The Horizon, Panorama and List views keep their own Flights " +
+                "button. Flight tracking turns the flight data on or off everywhere."
         },
         // end T364
     )
