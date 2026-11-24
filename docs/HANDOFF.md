@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-24, at commit 65ec5346, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
+Updated: 2026-11-24, at commit 4d190b2e, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the wave's
 paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
@@ -22,7 +22,7 @@ paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47
 
 ## Waiting on user
 
-- **The two-maps blank Panorama is still broken on your phone on v0.1.43-alpha** (your Answer of 2026-11-24 in `docs/ideas/2026-11-22-at-the-phones-own-position-with-two-packs-the-panorama-is-blank-and-horizon-peaks-never-draw.md`): the next step is the phone on USB for one `adb logcat -s Dystopo DystopoAssets` while you open the Horizon view and the Panorama there (the release build is enough; no Gradle slot). Take it before wave 48's release, which changes the maps' order (T354).
+- **The blank Panorama on your phone on v0.1.43-alpha is still unexplained** (`docs/ideas/2026-11-22-at-the-phones-own-position-with-two-packs-the-panorama-is-blank-and-horizon-peaks-never-draw.md`): the next step is the phone on USB for one `adb logcat -s Dystopo DystopoAssets` while you open the Horizon view and the Panorama there (the release build is enough; no Gradle slot), before wave 48's release, which changes the maps' order (T354). The missing peaks are explained (the other session, 2026-11-24, from your screenshots): both downloads there are drawn areas kept as tiles, and the Horizon's peak read asks offline maps only; your choice puts search and peaks from tiles first in wave 49.
 - **Answered 2026-11-24, for wave 49's planning:** the 200 km view range with the map's chips kept at 10, 30 and 100; a large area offered as several downloads, each by a tap, after T369 has merged (the two ideas' Answer: lines).
 - **For your eye when T369 reports:** in direct mode nearly every country row is over the cap; and the prefetch ahead saves tiles without a tap, which the terms' line on automated collection may not cover.
 - **For your eye, new wording:** T363's twenty reason sentences, glance notes and two help texts (merge commit d8c9e38a); T361's "Start here", its row line and help (65ec5346).
