@@ -8,7 +8,7 @@ paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47
 
 ## Now
 
-- **Wave 48 is launched** (the owner, 2026-11-24: "Go ahead with the wave when ready."), **coordinated by the side session in the second clone**, not by the main session: sixteen tasks, T354 to T366 and T368 to T370, in `docs/TASKS.md`, after two premise reads against the code wave 47 left and a critic (LAUNCH AFTER EDITS, answered in the wave paragraph). Running: T354 (slot 1, the lookup) and T362 (slot 2, the readout), each an implementer with its own emulator (consoles 5570 and 5574, hosts 8694 and 8696).
+- **Wave 48 is launched** (the owner, 2026-11-24: "Go ahead with the wave when ready."), **coordinated by the side session in the second clone**, not by the main session: sixteen tasks, T354 to T366 and T368 to T370, in `docs/TASKS.md`, after two premise reads against the code wave 47 left and a critic (LAUNCH AFTER EDITS, answered in the wave paragraph). Merged: T362 (56fff2d0). Running: T354's verifier (slot 1; the branch is at b70a72c6) and T363's implementer (slot 2), each with its own emulator (consoles 5570 and 5574, hosts 8694 and 8696).
 - **Order** (the board's Order sentence is binding): slot 1 T354, T355, T356, T368, T357, T358, T365; slot 2 T362, T363, T361, T364, T370, T369, T366, T359, T360. Next ports: consoles 5578 and up by fours, hosts 8698 and up by twos; never 9012 or 9013.
 - **Where things run:** implementers make worktrees from the main checkout (`dystopo-wt/Tnn`) and use its cache; merges and pushes happen in the second clone (hooks on, the private terms copied in). The live viewer on 8765 is down; T368 and T358 need a server set, so a chore starts it from the main checkout before T356 merges.
 - **Cost:** the 7-day meter read 40 at launch (the side session's account), the 5-hour meter 6; 17.5 points figured, 57.5 against the hold of 97. Reset 2026-11-28 03:00 UTC.
@@ -22,7 +22,8 @@ paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47
 
 ## Waiting on user
 
-- **Two Questions from the planning** (blank Answer: lines): what the map's "What can I see from here" does when the sky views' range is 200 km (`docs/ideas/2026-11-22-the-view-range-may-be-too-short-for-peaks-80-miles-away.md`; the task is held for wave 49), and whether a large area is offered as several downloads, each by a tap, now that the public source's terms name it (`docs/ideas/2026-11-24-a-large-area-as-several-downloads-each-by-a-tap.md`).
+- **The two-maps blank Panorama is still broken on your phone on v0.1.43-alpha** (your Answer of 2026-11-24 in `docs/ideas/2026-11-22-at-the-phones-own-position-with-two-packs-the-panorama-is-blank-and-horizon-peaks-never-draw.md`): the next step is the phone on USB for one `adb logcat -s Dystopo DystopoAssets` while you open the Horizon view and the Panorama there (the release build is enough; no Gradle slot). Take it before wave 48's release, which changes the maps' order (T354).
+- **Answered 2026-11-24, for wave 49's planning:** the 200 km view range with the map's chips kept at 10, 30 and 100; a large area offered as several downloads, each by a tap, after T369 has merged (the two ideas' Answer: lines).
 - **For your eye when T369 reports:** in direct mode nearly every country row is over the cap; and the prefetch ahead saves tiles without a tap, which the terms' line on automated collection may not cover.
 - **ADR 0067's step two** (the Horizon view's pane into the List) waits for you to have seen step one on v0.1.43-alpha.
 - **On the phone, v0.1.43-alpha and older:** the handoff of commit c93655c8 and the board's Owner actions pending.
