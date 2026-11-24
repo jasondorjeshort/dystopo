@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-24
+
+- T362: The readout's elevation holds through a jump and does not blink
+
 ## v0.1.43-alpha (2026-11-24)
 
 ### 2026-11-24
