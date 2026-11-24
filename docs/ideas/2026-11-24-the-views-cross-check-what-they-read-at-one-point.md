@@ -1,7 +1,7 @@
 ---
 date: 2026-11-24
 kind: chore
-related: [2026-11-22-at-the-phones-own-position-with-two-packs-the-panorama-is-blank-and-horizon-peaks-never-draw.md, 2026-11-22-a-why-is-this-blank-overlay.md, 2026-11-24-the-app-notices-when-its-views-disagree.md]
+related: [2026-11-07-search-and-routes-find-nothing-outside-a-pack.md, 2026-11-22-a-why-is-this-blank-overlay.md, 2026-11-24-the-app-notices-when-its-views-disagree.md]
 ---
 
 # The views cross-check what they read at one point

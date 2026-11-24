@@ -1,7 +1,7 @@
 ---
 date: 2026-11-24
 kind: feature
-related: [2026-11-24-the-views-cross-check-what-they-read-at-one-point.md, 2026-11-10-real-phone-check-as-a-one-tap-self-test.md, 2026-11-22-at-the-phones-own-position-with-two-packs-the-panorama-is-blank-and-horizon-peaks-never-draw.md]
+related: [2026-11-24-the-views-cross-check-what-they-read-at-one-point.md, 2026-11-10-real-phone-check-as-a-one-tap-self-test.md, 2026-11-07-search-and-routes-find-nothing-outside-a-pack.md]
 ---
 
 # The app notices when its views disagree, and offers to send the evidence (moonshot)

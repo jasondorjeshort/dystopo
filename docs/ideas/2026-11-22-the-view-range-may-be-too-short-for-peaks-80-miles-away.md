@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: question
-related: [2026-11-22-at-the-phones-own-position-with-two-packs-the-panorama-is-blank-and-horizon-peaks-never-draw.md]
+related: [2026-11-07-search-and-routes-find-nothing-outside-a-pack.md]
 ---
 
 # The View range cap (100 km) may be short: the owner has seen peaks about 80 miles away

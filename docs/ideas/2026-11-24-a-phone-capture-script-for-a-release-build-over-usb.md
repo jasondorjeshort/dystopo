@@ -1,7 +1,7 @@
 ---
 date: 2026-11-24
 kind: chore
-related: [2026-11-22-at-the-phones-own-position-with-two-packs-the-panorama-is-blank-and-horizon-peaks-never-draw.md, 2026-11-10-real-phone-check-as-a-one-tap-self-test.md, 2026-11-08-the-owners-phone-in-the-sweep.md]
+related: [2026-11-07-search-and-routes-find-nothing-outside-a-pack.md, 2026-11-10-real-phone-check-as-a-one-tap-self-test.md, 2026-11-08-the-owners-phone-in-the-sweep.md]
 ---
 
 # A phone capture script for a release build over USB
