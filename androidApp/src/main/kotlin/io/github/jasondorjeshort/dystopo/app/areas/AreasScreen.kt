@@ -258,7 +258,7 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = fals
             for (line in row.detail) {
                 if (help && line == OfflineMapList.STARTS_HERE) Row(verticalAlignment = Alignment.CenterVertically) { // T361
                     BasicText(line, Modifier.weight(1f, fill = false), style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    HelpIcon(START_HERE_KEY)
+                    HelpIcon("areas.startHere") // [START_HERE_KEY]
                 } else BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -268,7 +268,7 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = fals
                     OfflineMapList.DISMISS -> Action(a, Muted) { onAction(a) }
                     OfflineMapList.START_HERE -> Row(verticalAlignment = Alignment.CenterVertically) { // T361
                         Action(a) { onAction(a) }
-                        if (help) HelpIcon(START_HERE_KEY)
+                        if (help) HelpIcon("areas.startHere") // [START_HERE_KEY]
                     }
                     else -> Action(a) { onAction(a) }
                 }
@@ -515,7 +515,7 @@ internal val USE_ON_PHONE_HELP: List<HelpText> = listOf(
  */
 internal const val START_HERE_KEY = "areas.startHere"
 internal val START_HERE_HELP: List<HelpText> = listOf(
-    HelpText(START_HERE_KEY, OfflineMapList.START_HERE, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, a map's row", show = { Areas.screenOpen = true }) {
+    HelpText("areas.startHere", OfflineMapList.START_HERE, "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, a map's row", show = { Areas.screenOpen = true }) {
         "The app opens on the map you start here, and its contour lines are made ready first. Where two maps cover a place " +
             "in the same detail, this one is shown. Where another map is more detailed, that one is shown, whichever map you start here."
     },
