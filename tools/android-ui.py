@@ -36,7 +36,8 @@ Parts:
                Flights section offline (`horizon-flights-offline`); both put back.
                T314: in the `flights` step, the Flight tracking: Route lines row (frame `flights-route-lines-row`) and
                its help pop-up (`flights-route-lines-help`), read before Flight tracking is turned on.
-               --feature-steps runs only the steps named.
+               --feature-steps runs only the steps named. T353: --features-half map runs install-map to drive, sky
+               install-map then horizon to horizonflights (the sweep's parts `features` and `features-sky`).
   flights      (T311, debug build: --serial, --port) the Flights layer on the replay fixture
                (shared/src/commonTest/resources/aircraft/rainier-replay.json, POST /aircraft/replay with an undulation
                for the emulator's fix): the map at Rainier z9 with silhouettes, trails and labels (frame `flights-map`),
@@ -3341,6 +3342,25 @@ def part_horizonflights(args):
 
 # --- features (a) -----------------------------------------------------------------------------------------------
 
+# T353: the features part's steps in order, and its two halves (the owner, 2026-11-23: the part had outgrown its 1500 s
+# ceiling): --features-half map runs install-map to drive, sky the sky views from horizon on; each half starts with
+# install-map, and every other step is in exactly one half (a new step not named in FEATURES_SKY goes to map).
+FEATURE_STEPS = ("install-map", "search", "route-to", "route", "routes-list", "waypoint", "track", "two-tracks", "gpx", "share-gpx",
+                 "sync", "sync-sheet", "share", "settings", "drive", "horizon", "panorama", "panorama-list", "flights", "horizonflights")
+FEATURES_SKY = ("horizon", "panorama", "panorama-list", "flights", "horizonflights")
+
+
+def feature_half(half):
+    """T353: the step names a --features-half runs, in order: all ("" or "all"), "map" or "sky"."""
+    if half in ("", "all"):
+        return FEATURE_STEPS
+    if half == "sky":
+        return ("install-map",) + FEATURES_SKY
+    if half == "map":
+        return tuple(s for s in FEATURE_STEPS if s not in FEATURES_SKY)
+    raise ValueError(f"--features-half is all, map or sky, not {half!r}")
+
+
 def part_features(args):
     dev = device(args, "")
     run = Run(dev)
@@ -3507,6 +3527,7 @@ def part_features(args):
         close_sheet(dev)
         return {"ok": not missing, "png": png, **({"error": f"missing {missing}"} if missing else {})}
 
+    half = feature_half(getattr(args, "features_half", "all"))  # T353; test_android_ui.py checks FEATURE_STEPS is this list
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev)),
@@ -3515,6 +3536,8 @@ def part_features(args):
                      ("flights", lambda: flights_step(dev)),  # T311: flights
                      ("horizonflights", lambda: horizon_flights_step(dev))):  # T312
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
+            continue
+        if name not in half:
             continue
         run.step(name, fn)
     run.step("alive", lambda: alive_and_clean(dev))
@@ -5198,6 +5221,8 @@ def main():
     ap.add_argument("--drive-osm", default=os.path.join(REPO, "out", "montblanc-outdoors.pmtiles"),
                     help="features: the drive step's vector pack; when it is missing the step drives on the rainier pack (T288)")
     ap.add_argument("--feature-steps", default="", help="features: only these steps (comma-separated; install-map always runs), for a rerun of one")
+    ap.add_argument("--features-half", default="all", choices=("all", "map", "sky"),
+                    help="features (T353): map runs install-map to drive, sky install-map and the sky views from horizon on")
     ap.add_argument("--server", default="", help="a Dystopo server URL the emulator reaches (the host's LAN address)")
     ap.add_argument("--server-cmd", default="", help="network: JSON list, the command that starts that server")
     ap.add_argument("--server-config", default="", help="network: config file of the standalone server (./gradlew :server:installDist) to start, kill and restart")

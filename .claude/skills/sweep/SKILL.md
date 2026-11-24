@@ -47,7 +47,9 @@ under `first-run.direct` and its own section of the sheet), then T81's release r
 APKs in `apk\`): `features` (T288: its last step `drive` opens Settings > Navigation and tracking at Plan drives for and
 its help, then plans one drive under each value on the `montblanc` pack, Les Houches to Chamonix, where the card's fuel
 line shows; the pair is the checkout's `out\montblanc-*.pmtiles` (in a worktree copied there from `-DataDir`, T299); without it the step
-drives on `rainier` and reports `fuelLine: absent`), `recenter` (T105), `diagnostics` (T154: the Diagnostics row by taps,
+drives on `rainier` and reports `fuelLine: absent`), `features-sky` (T353: the same tool's steps from `horizon` on, the
+sky views and Flight tracking, after its own install of the map; the part was split from `features` when it passed its
+ceiling), `recenter` (T105), `diagnostics` (T154: the Diagnostics row by taps,
 T143's checks), `permissions`, `upgrade` (from `-PrevRelease`,
 default the latest published release, its APK for the emulator's ABI downloaded with `gh`),
 `background`, `network` and `update` (T83: the in-app update by taps against a mock releases API on

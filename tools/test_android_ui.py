@@ -147,6 +147,18 @@ def bar_z(desc, ruler_dp, zoom):
     return [{"desc": desc, "bounds": [20, 2000, zx + round(28 * d2), 2060]}, {"desc": f"Map zoom {zoom}", "bounds": [zx, 2010, zx + round(28 * d2), 2050]}]
 assert abs(ui.zoom_step(ui.scale_mpp(bar_z("Scale 1 km", 84, "13.0"), d2), ui.scale_mpp(bar_z("Scale 500 m", 84, "14.0"), d2)) - 1.0) < 0.02
 assert ui.zoom_label(bar_z("Scale 1 km", 84, "13.0")) == 13.0 and ui.zoom_label(bar("Scale 1 km", 100)) is None
+# T353: the features part's two halves: each starts with install-map, every other step in exactly one, the order kept
+# (part_features checks at run time that its step list is FEATURE_STEPS).
+_m, _s = ui.feature_half("map"), ui.feature_half("sky")
+assert _m[0] == _s[0] == "install-map" and ui.feature_half("all") == ui.feature_half("") == ui.FEATURE_STEPS
+assert sorted(_m[1:] + _s[1:]) == sorted(ui.FEATURE_STEPS[1:]) and not set(_m[1:]) & set(_s[1:])
+assert list(_m) == [x for x in ui.FEATURE_STEPS if x in _m] and list(_s) == [x for x in ui.FEATURE_STEPS if x in _s]
+assert _m[-1] == "drive" and _s[1:] == ("horizon", "panorama", "panorama-list", "flights", "horizonflights")
+try:
+    ui.feature_half("both")
+    raise AssertionError("an unknown half was accepted")
+except ValueError:
+    pass
 # T353: under the switch, the map's own node (same text, same bounds as on the bare map) is not the view's.
 _sw = [21, 2190, 803, 2316]
 _credit = {"text": "© OpenStreetMap contributors · Sources", "desc": "", "bounds": [16, 2072, 1064, 2198]}

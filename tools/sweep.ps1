@@ -57,7 +57,10 @@
 #                screenshots), the Routes list, a recorded track, GPX export, sync with the sweep's server, the sync
 #                sheet, the Share screen, Settings; T288: Plan drives for and its help, then a drive under each of its
 #                values on the montblanc pair (this checkout's out\, else -DataDir's by path; rainier without it); no crash
-#   recenter     T105 (T93's follow-up): pan away from the fix, one tap on Recenter, the puck back where it was
+#                T353: install-map to drive (android-ui.py features --features-half map), screenshots in ui\features\.
+#   features-sky T353: the rest of the features steps, after its own install-map: the Horizon view, the Panorama, the
+#                List view, Flight tracking's rows and the Horizon view's Flights (--features-half sky; ui\features-sky\)
+#   recenter    T105 (T93's follow-up): pan away from the fix, one tap on Recenter, the puck back where it was
 #   diagnostics  T154 (T143's follow-up): Settings > About and advanced > Diagnostics on the sweep's release build (the
 #                release key, Gradle's in the main checkout, tools\sign-release.ps1's from a worktree, T293): every line, the max heap equal to dalvik.vm.heapsize,
 #                Copy report, Refresh, then after a force-stop "Last session" names how it ended. Screenshots in ui\diagnostics\.
@@ -271,9 +274,9 @@ $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
 $allParts = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour',
-    'routes', 'search', 'probe', 'bothunits', 'release', 'apk-strings', 'first-run', 'features', 'recenter', 'diagnostics', 'upgrade', 'permissions', 'background', 'network',
+    'routes', 'search', 'probe', 'bothunits', 'release', 'apk-strings', 'first-run', 'features', 'features-sky', 'recenter', 'diagnostics', 'upgrade', 'permissions', 'background', 'network',
     'update', 'matrix')
-$deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'release', 'first-run', 'features', 'recenter', 'diagnostics', 'upgrade', 'permissions',
+$deviceParts = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'release', 'first-run', 'features', 'features-sky', 'recenter', 'diagnostics', 'upgrade', 'permissions',
     'background', 'network', 'update', 'matrix')
 $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
@@ -320,7 +323,12 @@ $ceilings['two-maps'] = 1500
 # T288: features took 322 to 421 s before its drive step; the step (Plan drives for, its help and three drives on the
 # montblanc pack, with the pack's push, a cold start and the phone's first routing graph) took 283 to 328 s alone on the
 # implementer's emulator, so about 750 s for the part: 1500 s, twice that, for a loaded emulator and a slow graph build.
-$ceilings['features'] = 1500
+# T353 (the owner, 2026-11-23: "Raise and split now"): the steps added since took the part to 1170 s (wave 42), 1404 s
+# (wave 46) and past 1500 s (wave 47, killed after its last step, twice). Split in two: features (install-map to drive,
+# about 820 s in wave 46's timings) and features-sky (install-map, then the sky views, about 760 s); each keeps 2100 s,
+# the stopgap the owner chose, well over twice either half.
+$ceilings['features'] = 2100
+$ceilings['features-sky'] = 2100
 # T289: the route sheet's 24 routes took 104 s on the implementer's PC with the graph files built (3 to 6 s a route, mostly
 # the JVM's start and the picture); a graph file built anew adds about a minute a pack, so 600 s.
 $ceilings['route-sheet'] = 600
@@ -337,7 +345,7 @@ $outsideTimeoutS = 1800
 
 # T292: the order the Part calls below run in (not $allParts: startup and a11y run after bothunits, apk-strings last);
 # tools/test_sweep_summary.py checks it against the calls. -ListParts prints it (the header gives the shape) and exits.
-$runOrder = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'two-maps', 'release', 'first-run', 'features', 'recenter', 'permissions', 'diagnostics', 'upgrade', 'background', 'network', 'update', 'matrix', 'phone-attach', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics', 'phone-release', 'apk-strings')
+$runOrder = @('check', 'server', 'notices', 'tour', 'demo-static', 'demo-serve', 'live', 'sync-sim', 'route-sheet', 'device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'two-maps', 'release', 'first-run', 'features', 'features-sky', 'recenter', 'permissions', 'diagnostics', 'upgrade', 'background', 'network', 'update', 'matrix', 'phone-attach', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics', 'phone-release', 'apk-strings')
 if ($ListParts) {
     $debugBuild = @('device-boot', 'device-tour', 'routes', 'search', 'probe', 'bothunits', 'startup', 'a11y', 'two-maps', 'phone-install', 'phone-tour', 'phone-startup', 'phone-diagnostics')
     $i = 0
@@ -1392,8 +1400,13 @@ try {
                 # else read by path from -DataDir; with neither the step drives on rainier and reports no fuel line.
                 $driveDir = if (Test-Path (Join-Path $localOut 'montblanc-outdoors.pmtiles')) { $localOut } else { $DataDir }
                 $driveArgs = @('--drive-osm', (Join-Path $driveDir 'montblanc-outdoors.pmtiles'), '--drive-dem', (Join-Path $driveDir 'montblanc-dem.pmtiles'))
-                Run $py (@('-I', 'tools/android-ui.py', 'features', '--serial', $serial, '--apk', (Release-Apk $serial), '--server', $uiServer,
+                Run $py (@('-I', 'tools/android-ui.py', 'features', '--features-half', 'map', '--serial', $serial, '--apk', (Release-Apk $serial), '--server', $uiServer,
                         '--dem', $dem, '--osm', $osm, '--out', (Join-Path $ui 'features')) + $driveArgs + $knownArgs) (Join-Path $Out 'features.json') (Join-Path $Out 'features.err.log')
+            }
+            # T353: the features part's second half, the sky views (no server: none of its steps syncs).
+            $null = Part 'features-sky' {
+                Run $py (@('-I', 'tools/android-ui.py', 'features', '--features-half', 'sky', '--serial', $serial, '--apk', (Release-Apk $serial),
+                        '--dem', $dem, '--osm', $osm, '--out', (Join-Path $ui 'features-sky')) + $knownArgs) (Join-Path $Out 'features-sky.json') (Join-Path $Out 'features-sky.err.log')
             }
             # T105 (T93's follow-up): the recentre button by taps on the release build.
             $null = Part 'recenter' {
