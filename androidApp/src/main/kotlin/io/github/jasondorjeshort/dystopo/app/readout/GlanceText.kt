@@ -1,5 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.readout
 
+import io.github.jasondorjeshort.dystopo.app.help.ReasonText
+
 /**
  * T210: one line of the glance view ([GlanceView]): a small [caption] over the big [value] with its [unit], the
  * elevation's [trend] arrow and the [plusMinus] when asked for, and the other unit system's [other] text in both-units
@@ -28,16 +30,23 @@ data class GlanceLine(
     /** T218: a second widest caption and value (with no unit) the line must also hold: the fit takes the wider of each. */
     val captionAlso: String? = null,
     val valueAlso: String? = null,
+    /**
+     * T363: the line under the value saying why it is not a plain figure and what would end it ([StripItem.note]), and
+     * its reason's code; null for a plain figure. The fit reserves its row only while it is there.
+     */
+    val reason: String? = null,
+    val reasonCode: String? = null,
 ) {
     /** "1650 m", "↑320 m/h ± 40", "1 h 20 min": the value as one text. */
     val full: String get() = (if (unit.isEmpty()) value else "$value $unit") + (trend?.let { " $it" } ?: "") + (plusMinus?.let { " $it" } ?: "")
 
-    /** What a screen reader says for the line: "elevation 1650 m". */
-    val spoken: String get() = "$caption $full"
+    /** What a screen reader says for the line: "elevation 1650 m"; T363: with its reason's sentence after it. */
+    val spoken: String get() = "$caption $full" + (reason?.let { ". $it" } ?: "")
 
     fun json(): Map<String, Any?> = linkedMapOf(
         "kind" to kind, "caption" to caption, "value" to value, "unit" to unit, "trend" to trend, "plusMinus" to plusMinus,
         "other" to other, "full" to full, "dimmed" to dimmed, "colour" to colour,
+        "reason" to reason, "reasonCode" to reasonCode, // T363
     )
 
     companion object {
@@ -73,7 +82,37 @@ object GlanceText {
         kind = it.entry.code, caption = it.caption, value = it.value, unit = it.unit, trend = it.trend, plusMinus = it.plusMinus,
         other = it.other, dimmed = it.dimmed, captionTemplate = it.captionTemplate, valueTemplate = it.template.text,
         unitTemplate = it.template.unit, trendSlot = it.trendSlot, plusMinusTemplate = it.template.plusMinus, otherTemplate = it.otherTemplate,
+        reason = it.note, reasonCode = it.reason?.code, // T363
     )
+
+    /**
+     * T363: the glance view's notes under the figures: [leftOut] what the bar leaves out for room (or the bar hidden for
+     * room), and [recent] what went wrong in the last minute, newest first (the owner, 2026-11-23: "If there's a gps drop
+     * or etc in the last 60 seconds we can trivially fit that on the screen"), even when every value is normal again;
+     * empty when nothing did.
+     */
+    data class Notes(val leftOut: String?, val recent: List<String>) {
+        val empty: Boolean get() = leftOut == null && recent.isEmpty()
+
+        fun json(): Map<String, Any?> = linkedMapOf("leftOut" to leftOut, "recentHeading" to if (recent.isEmpty()) null else ReasonText.RECENT_HEADING, "recent" to recent)
+    }
+
+    /**
+     * The notes from [r] (its record of faults, read at its elapsed time), [pinEnded] (when the known height's mark went
+     * and why, [LiveReadout.pinEnded]), the bar's [dropped] entries and whether it is [hiddenForRoom]; distances in [units].
+     */
+    fun notes(r: io.github.jasondorjeshort.dystopo.readout.Readout?, pinEnded: Pair<Long, String?>?, dropped: List<String>, hiddenForRoom: Boolean,
+              units: io.github.jasondorjeshort.dystopo.render.ContourUnits): Notes {
+        val recent = ArrayList<String>()
+        if (r != null) {
+            val pin = pinEnded?.takeIf { r.elapsedMs - it.first in 0..ReasonText.RECENT_MS }?.let { ReasonText.pinEnd(it.second, r.elapsedMs - it.first) }
+            recent += listOfNotNull(pin) + ReasonText.recent(r.recent, r.elapsedMs, units)
+        }
+        return Notes(ReasonText.leftOut(dropped, hiddenForRoom), recent.take(MAX_RECENT))
+    }
+
+    /** At most this many last-minute lines. */
+    const val MAX_RECENT = 4
 
     /**
      * The turn-around clock as a line, from its reading ([state] a `TurnState` key, [colour], [turnBackMs], [arrivalMs])
@@ -124,6 +163,9 @@ object GlanceFit {
     const val OTHER = 0.3f
     const val GAP = 0.12f
 
+    /** T363: a reason's line under the value, at most this share of the value's size (smaller when the sentence needs it). */
+    const val REASON = 0.22f
+
     /** One fit: the value's type size in px, the columns, and whether even the smallest size fits ([fits] false: the lines clip). */
     data class Fit(val valuePx: Float, val columns: Int, val fits: Boolean) {
         val captionPx get() = valuePx * CAPTION
@@ -150,8 +192,10 @@ object GlanceFit {
         if (l.trendSlot) w += TREND_ARROWS.maxOf { m.size(" $it", v, true).first }
         l.plusMinusTemplate?.let { w += m.size(" $it", v * UNIT, false).first }
         val other = l.otherTemplate?.let { m.size(it, v * OTHER, false) }
+        // T363: a reason's row, its height only: its type shrinks to the column's width when the sentence needs it.
+        val reason = l.reason?.let { m.size("Ag", v * REASON, false).second } ?: 0f
         return maxOf(maxOf(w, valueAlso?.first ?: 0f), maxOf(cap.first, capAlso?.first ?: 0f), other?.first ?: 0f) to
-            (maxOf(value.second, valueAlso?.second ?: 0f) + cap.second + (other?.second ?: 0f))
+            (maxOf(value.second, valueAlso?.second ?: 0f) + cap.second + (other?.second ?: 0f) + reason)
     }
 
     /** Whether [lines] fit [widthPx] by [heightPx] at value size [v] in [cols] columns. */

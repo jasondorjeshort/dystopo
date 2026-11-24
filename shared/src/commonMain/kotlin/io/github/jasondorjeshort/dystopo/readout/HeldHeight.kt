@@ -13,6 +13,6 @@ data class HeldHeight(val heightM: Double, val sigmaM: Double, val source: Strin
     fun value(): ReadoutValue = ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, heightM, sigmaM, source, dimmed = true, reason = REASON)
 
     companion object {
-        const val REASON = "held"
+        val REASON = ReadoutReason.HELD // T363: the closed set
     }
 }

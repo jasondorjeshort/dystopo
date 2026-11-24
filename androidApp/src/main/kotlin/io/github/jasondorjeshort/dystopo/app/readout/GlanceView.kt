@@ -71,6 +71,8 @@ object Glance {
 
     // What the view drew last (main thread): the lines, the fit, where they sit, and texts that overflowed.
     internal var lines: List<GlanceLine> = emptyList()
+    internal var notes: GlanceText.Notes = GlanceText.Notes(null, emptyList()) // T363
+    internal var reasonPx = LinkedHashMap<String, Float>() // T363: each reason line's type size as drawn
     internal var deadlineSource: String? = null
     internal var fit: GlanceFit.Fit? = null
     internal var valueSp = 0f
@@ -110,6 +112,8 @@ object Glance {
             "lines" to if (open) lines.map { l -> l.json() + mapOf("boundsPx" to linePx[l.kind]?.toList()) } else emptyList<Any>(),
             "count" to if (open) lines.size else 0,
             "description" to if (open) GlanceText.description(lines) else null,
+            "notes" to if (open) notes.json() else null, // T363
+            "reasonPx" to if (open) reasonPx.mapValues { r1(it.value) } else null,
             "deadline" to linkedMapOf("shown" to (open && lines.any { it.kind == GlanceLine.DEADLINE }), "source" to deadlineSource),
             "fit" to f?.let {
                 linkedMapOf(
@@ -175,6 +179,7 @@ fun GlanceView() {
     BackHandler { Glance.close("back") }
     var lines by remember { mutableStateOf(GlanceText.lines(LiveReadout.snapshot?.items ?: LiveReadout.placeholder())) }
     var source by remember { mutableStateOf<String?>(null) }
+    var notes by remember { mutableStateOf(currentNotes()) } // T363
     var night by remember { mutableStateOf(ScaleBarLayout.night) } // the map's night style, as the scale bar last drew it
     LaunchedEffect(Unit) {
         while (true) {
@@ -186,6 +191,7 @@ fun GlanceView() {
             val d = if (!runs) null else withContext(Dispatchers.Default) { deadlineNow(navigating) }
             source = d?.let { if (navigating) "navigation" else "recording" }
             lines = GlanceText.lines(items, d)
+            notes = currentNotes()
             night = ScaleBarLayout.night
             Foreground.delay(REFRESH_MS)
         }
@@ -195,6 +201,7 @@ fun GlanceView() {
     val muted = if (night) NightMuted else DayMuted
     SideEffect {
         Glance.lines = lines
+        Glance.notes = notes
         Glance.deadlineSource = source
         Glance.night = night
     }
@@ -210,6 +217,7 @@ fun GlanceView() {
                 HelpIcon("readout.glance")
             }
             Figures(lines, ink, muted, night, Modifier.fillMaxWidth().weight(1f))
+            Notes(notes, ink, muted)
         }
     }
 }
@@ -228,7 +236,8 @@ private fun Figures(lines: List<GlanceLine>, ink: Color, muted: Color, night: Bo
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         // Fitted on the templates only: the size changes with the entries shown and the room, never with the figures.
-        val shape = lines.map { it.copy(caption = "", value = "", unit = "", trend = null, plusMinus = null, other = null, dimmed = false, colour = "") }
+        // T363: a reason's row is reserved while the line has one (the type refits when a state comes or goes, not as figures change).
+        val shape = lines.map { it.copy(caption = "", value = "", unit = "", trend = null, plusMinus = null, other = null, dimmed = false, colour = "", reason = it.reason?.let { "" }, reasonCode = null) }
         val fit = remember(shape, w, h, density.density, density.fontScale) {
             // A text's size grows in proportion to its type size on one line: each text is measured once, at REF_DP.
             val ref = with(density) { REF_DP.dp.toPx() }
@@ -252,7 +261,7 @@ private fun Figures(lines: List<GlanceLine>, ink: Color, muted: Color, night: Bo
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap, Alignment.CenterVertically)) {
             for (row in rows) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                    for (l in row) Line(l, fit, ink, muted, night, Modifier.weight(1f))
+                    for (l in row) Line(l, fit, ink, muted, night, Modifier.weight(1f), reasonSize(l, fit, (w - (fit.columns - 1) * fit.gapPx) / fit.columns * WIDTH_SAFETY, measurer, density))
                     if (row.size < fit.columns) Box(Modifier.weight(1f))
                 }
             }
@@ -260,8 +269,40 @@ private fun Figures(lines: List<GlanceLine>, ink: Color, muted: Color, night: Bo
     }
 }
 
+/**
+ * T363: the type size of [l]'s reason line: the fit's [GlanceFit.REASON] share of the value's size, smaller where the
+ * sentence would not fit [colW] on one line, never under [MIN_DP] (it wraps to a second line there).
+ */
+private fun reasonSize(l: GlanceLine, fit: GlanceFit.Fit, colW: Float, measurer: androidx.compose.ui.text.TextMeasurer, density: androidx.compose.ui.unit.Density): Float {
+    val text = l.reason ?: return 0f
+    val ref = with(density) { REF_DP.dp.toPx() }
+    val wAtRef = measurer.measure(text, style(density, ref, false), softWrap = false, maxLines = 1, density = density).size.width.toFloat()
+    val fits = if (wAtRef > 0) colW / wAtRef * ref else Float.MAX_VALUE
+    return maxOf(with(density) { MIN_DP.dp.toPx() }, minOf(fit.valuePx * GlanceFit.REASON, fits))
+}
+
+/** T363: what the bar leaves out for room and what went wrong in the last minute, under the figures; nothing when neither. */
 @Composable
-private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, night: Boolean, modifier: Modifier) {
+private fun Notes(n: GlanceText.Notes, ink: Color, muted: Color) {
+    if (n.empty) return
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        n.leftOut?.let { BasicText(it, style = TextStyle(color = muted, fontSize = 14.sp)) }
+        if (n.recent.isNotEmpty()) {
+            BasicText(io.github.jasondorjeshort.dystopo.app.help.ReasonText.RECENT_HEADING, style = TextStyle(color = ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+            for (line in n.recent) BasicText(line, style = TextStyle(color = ink, fontSize = 14.sp))
+        }
+    }
+}
+
+/** T363: the notes now: the readout's record, the known height's end, the bar's room (main thread). */
+private fun currentNotes(): GlanceText.Notes {
+    val hidden = !StripLayout.shown && StripLayout.hiddenBecause in setOf(StripLayout.NO_ROOM_BELOW_WARNING_CARD, StripLayout.NO_ROOM_BESIDE_CHIPS)
+    val dropped = if (StripLayout.shown) StripLayout.droppedItems else emptyList()
+    return GlanceText.notes(LiveReadout.snapshot?.readout, LiveReadout.pinEnded, dropped, hidden, io.github.jasondorjeshort.dystopo.app.AppSettings.units)
+}
+
+@Composable
+private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, night: Boolean, modifier: Modifier, reasonPx: Float = 0f) {
     val accent = when (l.colour) {
         "red" -> if (night) NightRed else DayRed
         "amber" -> if (night) NightAmber else DayAmber
@@ -271,23 +312,29 @@ private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, ni
     val valueColor = accent ?: ink
     val captionColor = accent ?: muted
     fun overflow(part: String) = { r: TextLayoutResult -> Glance.overflow["${l.kind}.$part"] = r.hasVisualOverflow }
+    // T362: the bar's strength; T363: on the figures only, the reason under them at full strength.
+    val dim = Modifier.alpha(if (l.dimmed) READOUT_DIM else 1f)
     Column(
         modifier
-            .alpha(if (l.dimmed) READOUT_DIM else 1f) // T362: the bar's strength
             .onGloballyPositioned { c ->
                 c.boundsInWindow().let { b -> Glance.linePx[l.kind] = intArrayOf(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt()) }
                 Glance.laidOut = true
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        BasicText(l.caption, style = style(density, fit.captionPx, false, captionColor), softWrap = false, maxLines = 1, onTextLayout = overflow("caption"))
-        Row {
+        BasicText(l.caption, dim, style = style(density, fit.captionPx, false, captionColor), softWrap = false, maxLines = 1, onTextLayout = overflow("caption"))
+        Row(dim) {
             BasicText(l.value, Modifier.alignBy(FirstBaseline), style = style(density, fit.valuePx, true, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("value"))
             if (l.unit.isNotEmpty()) BasicText(" ${l.unit}", Modifier.alignBy(FirstBaseline), style = style(density, fit.unitPx, false, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("unit"))
             l.trend?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = style(density, fit.valuePx, true, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("trend")) }
             l.plusMinus?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = style(density, fit.unitPx, false, muted), softWrap = false, maxLines = 1, onTextLayout = overflow("plusMinus")) }
         }
-        l.other?.let { BasicText(it, style = style(density, fit.otherPx, false, muted), softWrap = false, maxLines = 1, onTextLayout = overflow("other")) }
+        l.other?.let { BasicText(it, dim, style = style(density, fit.otherPx, false, muted), softWrap = false, maxLines = 1, onTextLayout = overflow("other")) }
+        // T363: why the value is not a plain figure and what ends it, at full strength under the dimmed figure.
+        l.reason?.let {
+            SideEffect { Glance.reasonPx[l.kind] = reasonPx }
+            BasicText(it, style = style(density, reasonPx, false, valueColor), maxLines = 2, onTextLayout = overflow("reason"))
+        }
     }
 }
 
@@ -335,6 +382,7 @@ internal val GLANCE_HELP: List<HelpText> = listOf(
         show = { Glance.show("help") },
     ) {
         "The readout's figures as large as the screen allows, with the time to turn back first while the turn-around clock " +
-            "runs. It shows the entries switched on in the readout's settings. The screen stays on; tap or go back to return."
+            "runs. A line under a value says why it is a dash, a \"?\" or dimmed and what ends that; below, what went wrong " +
+            "in the last minute. Tap or go back to return."
     },
 )

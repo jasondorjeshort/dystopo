@@ -7,6 +7,8 @@ import io.github.jasondorjeshort.dystopo.readout.Readout
 import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
 import io.github.jasondorjeshort.dystopo.readout.ReadoutHeights
 import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
+import io.github.jasondorjeshort.dystopo.readout.ReadoutFault
+import io.github.jasondorjeshort.dystopo.readout.ReadoutReason
 import io.github.jasondorjeshort.dystopo.readout.ReadoutValue
 import io.github.jasondorjeshort.dystopo.readout.ValueState
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
@@ -108,9 +110,12 @@ class GlanceTextTest {
     @Test
     fun theFitHoldsWhileTheFiguresChange() {
         val a = GlanceText.lines(StripText.items(walk, all, ContourUnits.METERS))
-        val b = GlanceText.lines(StripText.items(walk.copy(elevation = v(ReadoutEntry.ELEVATION, 4392.0), climb = v(ReadoutEntry.CLIMB, null, ValueState.DASH)), all, ContourUnits.METERS))
-        fun shape(l: List<GlanceLine>) = l.map { it.copy(caption = "", value = "", unit = "", trend = null, plusMinus = null, other = null, dimmed = false, colour = "") }
+        val b = GlanceText.lines(StripText.items(walk.copy(elevation = v(ReadoutEntry.ELEVATION, 4392.0), climb = v(ReadoutEntry.CLIMB, -0.4)), all, ContourUnits.METERS))
+        fun shape(l: List<GlanceLine>) = l.map { it.copy(caption = "", value = "", unit = "", trend = null, plusMinus = null, other = null, dimmed = false, colour = "", reason = it.reason?.let { "" }, reasonCode = null) }
         assertEquals(shape(a), shape(b), "the view fits on this shape, which the figures do not change")
+        // T363: a state that is not a plain figure adds its reason's row (the type refits when a state comes or goes).
+        val c = GlanceText.lines(StripText.items(walk.copy(climb = v(ReadoutEntry.CLIMB, null, ValueState.DASH)), all, ContourUnits.METERS))
+        assertTrue(shape(a) != shape(c) && c[1].reason != null)
         assertEquals(GlanceFit.fit(a, 1000f, 2000f, 10f, 2000f, fake), GlanceFit.fit(b, 1000f, 2000f, 10f, 2000f, fake))
     }
 
@@ -144,5 +149,38 @@ class GlanceTextTest {
             assertTrue(l.value.length * fit.valuePx * 0.6f <= 320f, l.value)
             assertTrue(l.caption.length * fit.captionPx * 0.6f <= 320f, l.caption)
         }
+    }
+
+    // T363: a line under each value that is not a plain figure, and the notes: what went wrong in the last minute, what
+    // the bar leaves out.
+    @Test
+    fun aReasonUnderTheValueAndTheLastMinute() {
+        val gap = walk.copy(elevation = ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, 1650.2, null, "gnss", dimmed = true, reason = ReadoutReason.NO_FIX),
+            gapS = 8.0, dimReason = ReadoutReason.NO_FIX)
+        val lines = GlanceText.lines(StripText.items(gap, bar, ContourUnits.METERS))
+        assertEquals("No GPS fix: the last height, until a fix comes.", lines[0].reason)
+        assertEquals("no fix", lines[0].reasonCode)
+        assertNull(lines[1].reason, "the climb's figure is plain")
+        assertTrue(lines[0].spoken.endsWith(". No GPS fix: the last height, until a fix comes."), lines[0].spoken)
+        // The fit reserves the reason's row: the same lines without a reason fit a larger type in the same room.
+        val m = GlanceFit.Measure { text, px, _ -> text.length * px * 0.55f to px * 1.2f }
+        val with = GlanceFit.fit(lines, 1000f, 600f, 10f, 900f, m)
+        val without = GlanceFit.fit(lines.map { it.copy(reason = null) }, 1000f, 600f, 10f, 900f, m)
+        assertTrue(with.valuePx < without.valuePx, "${with.valuePx} < ${without.valuePx}")
+        // The last minute: a 9 s gap that ended 40 s ago, a jump 20 s ago, a gap still going (left out), one 70 s ago (gone).
+        val now = 1_000_000L
+        val record = listOf(
+            ReadoutFault(ReadoutFault.GAP, now - 70_000 - 9_000, lengthMs = 9_000),
+            ReadoutFault(ReadoutFault.GAP, now - 40_000 - 9_000, lengthMs = 9_000),
+            ReadoutFault(ReadoutFault.RESTART, now - 20_000, cause = ReadoutFault.CAUSE_JUMP, detail = 3002.0),
+            ReadoutFault(ReadoutFault.GAP, now - 6_000, lengthMs = 6_000, ongoing = true),
+        )
+        val r = walk.copy(recent = record, elapsedMs = now)
+        val notes = GlanceText.notes(r, null, listOf("fixAge", "accuracy"), false, ContourUnits.METERS)
+        assertEquals(listOf("Position jumped 3.00 km, 20 s ago", "GPS lost for 9 s, 40 s ago"), notes.recent)
+        assertEquals("Left off the bar for room: fix age, accuracy.", notes.leftOut)
+        val pin = GlanceText.notes(r.copy(recent = emptyList()), now - 12_000 to "barometer", emptyList(), false, ContourUnits.FEET)
+        assertEquals(listOf("Set height no longer used, 12 s ago: barometer not in use"), pin.recent)
+        assertTrue(GlanceText.notes(r.copy(recent = emptyList()), null, emptyList(), false, ContourUnits.METERS).empty, "nothing went wrong: no notes")
     }
 }

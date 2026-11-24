@@ -44,10 +44,10 @@ class ReadoutClimbWindowTest {
             val states = r.map { it.climb.state }
             println("T177 window $w s: climb states ${states.groupingBy { it.code }.eachCount()}, at 20 s ${r[20].climb.state.code} (${r[20].climb.reason}), end ${(r.last().climb.value!! * 3600).toLong()} m/h")
             assertEquals(ValueState.UNKNOWN, r[20].climb.state, "window $w: filling at 20 s") // T250: "?", not a dash
-            assertEquals("filling", r[20].climb.reason)
+            assertEquals(ReadoutReason.FILLING, r[20].climb.reason)
             // T250: standing with the barometer the estimate can tell level: 0, not a dash.
             for (i in 60 until 175) assertEquals(ValueState.ZERO, r[i].climb.state, "window $w: standing at $i s (${r[i].climb.reason})")
-            assertEquals("still", r[170].climb.reason)
+            assertEquals(ReadoutReason.STILL, r[170].climb.reason)
             // On the flat: 0 once the window holds the walk (a mean over a window that still holds standing is still 0).
             for (i in 200 until 355) assertEquals(ValueState.ZERO, r[i].climb.state, "window $w: flat walk at $i s (${r[i].climb.value})")
             val end = r.last().climb
@@ -153,7 +153,7 @@ class ReadoutClimbWindowTest {
             for (s in w + 1..2 * w) {
                 val c = series[s - 1]
                 assertEquals(ValueState.UNKNOWN, c.state, "baro $withBaro window $w: \"?\" at $s s") // T250: too little data, not a dash
-                assertEquals("no fix", c.reason)
+                assertEquals(ReadoutReason.NO_FIX, c.reason)
                 assertTrue(c.dimmed)
             }
             println("T192 baro $withBaro window $w s: last fix ${atFix.state.code} ${(atFix.value!! * 3600).toLong()} m/h, held to ${w} s, then ${series.last().state.code} (${series.last().reason})")

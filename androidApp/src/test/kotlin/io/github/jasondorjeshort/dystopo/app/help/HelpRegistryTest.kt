@@ -404,4 +404,16 @@ class HelpRegistryTest {
         assertEquals(setOf("DirectSourcesRows.kt"), references["direct.onlineDetail"])
     }
     // end T341
+
+    // T363: the readout bar's and the glance view's help say what the "?" mark is and where its reason is.
+    @Test
+    fun theReadoutHelpSaysWhereTheReasonIs() {
+        for (u in ContourUnits.entries) {
+            val bar = HelpRegistry.byKey("settings.readoutBar")!!.text(u)
+            assertTrue("\"?\"" in bar && "tap the bar to see why" in bar, bar)
+            val glance = HelpRegistry.byKey("readout.glance")!!.text(u)
+            assertTrue("A line under a value says why" in glance && "in the last minute" in glance, glance)
+        }
+    }
+    // end T363
 }

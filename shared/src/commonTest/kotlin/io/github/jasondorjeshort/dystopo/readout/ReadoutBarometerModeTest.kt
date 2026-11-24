@@ -128,7 +128,7 @@ class ReadoutBarometerModeTest {
         assertTrue(r.subList(0, outAt).none { it.barometer.out != null }, "nothing else put it out first")
         assertEquals("disagreement", r[outAt].barometer.reason)
         assertEquals(ValueState.DASH, r[outAt].climb.state)
-        assertEquals("contradiction", r[outAt].climb.reason)
+        assertEquals(ReadoutReason.CONTRADICTION, r[outAt].climb.reason)
         assertTrue(backAt != null && backAt >= 420 + 60 * (ReadoutTuning.AGREE_WINDOWS - 1) && backAt <= 420 + 60 * (ReadoutTuning.AGREE_WINDOWS + 1), "back after agreeing ($backAt)")
         assertEquals(1L, r.last().counters["disagreements"])
         assertEquals(1L, r.last().counters["agreements"])
@@ -173,11 +173,11 @@ class ReadoutBarometerModeTest {
         val fixes = sim.fixes(truth)
         val withBaro = replay(est(Activity.FOOT, BarometerMode.AUTO), fixes, sim.pressure(truth))
         assertEquals(ValueState.UNKNOWN, withBaro[10].climb.state)
-        assertEquals("filling", withBaro[10].climb.reason)
+        assertEquals(ReadoutReason.FILLING, withBaro[10].climb.reason)
         assertEquals("? m/h", ReadoutText.of(withBaro[10].climb, ReadoutOptions.defaults(Activity.FOOT), ContourUnits.METERS)!!.full)
         for (i in 120 until 235) assertEquals(ValueState.ZERO, withBaro[i].climb.state, "flat walk with the barometer at $i s (${withBaro[i].climb.reason})")
         for (i in 330 until 420) assertEquals(ValueState.ZERO, withBaro[i].climb.state, "standing with the barometer at $i s (${withBaro[i].climb.reason})")
-        assertEquals("still", withBaro[400].climb.reason)
+        assertEquals(ReadoutReason.STILL, withBaro[400].climb.reason)
         // Without it, on GNSS heights 6 m noisy, the flat walk's mean cannot tell 100 m/h from level: "?", not 0.
         val gnss = replay(est(Activity.FOOT, BarometerMode.NEVER), fixes, null)
         val states = (120 until 240).map { gnss[it].climb.state }
@@ -188,13 +188,13 @@ class ReadoutBarometerModeTest {
         println("T250 climb on GNSS alone with a 4 m slow error: RMS ${kotlin.math.sqrt((120 until 240).sumOf { slow[it].climb.value!!.let { v -> v * v } } / 120) * 3600} m/h, sigma ${slow[200].climb.sigma?.let { it * 3600 }} m/h")
         assertTrue(states.none { it == ValueState.ZERO }, "never 0 when it cannot tell")
         assertTrue(states.count { it == ValueState.UNKNOWN } > states.size * 9 / 10, "\"?\" on the flat on GNSS alone")
-        assertEquals("uncertain", gnss[200].climb.reason)
+        assertEquals(ReadoutReason.UNCERTAIN, gnss[200].climb.reason)
         // A gap past the hold: "?" (no fix), not a dash.
         val e = est(Activity.FOOT, BarometerMode.AUTO)
         replay(e, fixes, sim.pressure(truth))
         val late = e.readout(truth.last().t + 120_000)
         assertEquals(ValueState.UNKNOWN, late.climb.state)
-        assertEquals("no fix", late.climb.reason)
+        assertEquals(ReadoutReason.NO_FIX, late.climb.reason)
     }
 
     @Test

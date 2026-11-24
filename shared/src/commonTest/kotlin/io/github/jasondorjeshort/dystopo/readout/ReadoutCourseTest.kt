@@ -126,8 +126,8 @@ class ReadoutCourseTest {
         val all = ReadoutOptions.defaults(Activity.FOOT).let { it.copy(accuracy = it.accuracy.copy(shown = true), fixAge = it.fixAge.copy(shown = true)) }
         val est = ReadoutEstimator(io.github.jasondorjeshort.dystopo.model.ActivityProfile.of(Activity.FOOT), all)
         val t0 = ReadoutSim.T0
-        assertEquals("no fix", est.readout(t0).accuracy.reason)
-        assertEquals("no samples", est.readout(t0).pressure.reason)
+        assertEquals(ReadoutReason.NO_FIX, est.readout(t0).accuracy.reason)
+        assertEquals(ReadoutReason.NO_SAMPLES, est.readout(t0).pressure.reason)
         est.onFix(LocationFix(ReadoutSim.LAT0, ReadoutSim.LON0, 1600.0, t0, accuracyM = 6.5, speedMps = 1.2, courseDeg = 163.0))
         est.onPressure(PressureSample(t0 + 500, 842.3))
         val r = est.readout(t0 + 4_000)

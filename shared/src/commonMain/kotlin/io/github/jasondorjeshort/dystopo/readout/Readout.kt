@@ -67,6 +67,134 @@ enum class ValueState(val code: String) {
 }
 
 /**
+ * T363: how a reason bears on the value it explains, for the bar's "?" mark ([ReadoutReasons.marked]): [NONE] a figure
+ * or off, nothing to say; [AT_REST] a value at rest (a speed standing still, the course held from the last movement),
+ * explained in the glance view but not marked; [MISSING] the data is not there; [STALE] it is there but old, held or
+ * in doubt.
+ */
+enum class ReasonKind { NONE, AT_REST, MISSING, STALE }
+
+/**
+ * T363: why a readout value is not a plain figure: the closed set of [ReadoutValue.reason] and [Readout.dimReason]
+ * ([code] is what `GET /readout` reports; before T363 these were free strings). The phone's glance view gives each a
+ * sentence (`app/help/ReasonText.kt`, its test fails on a reason with none) and [ReadoutReasons] says which one a value
+ * shows.
+ */
+enum class ReadoutReason(val code: String, val kind: ReasonKind) {
+    /** Switched off in the readout's settings: not drawn. */
+    OFF("off", ReasonKind.NONE),
+
+    /** No fix for the gap, or none yet. */
+    NO_FIX("no fix", ReasonKind.MISSING),
+
+    /** T362: a fix came after a gap; dimmed until a second within the gap of it ([DimLatch]). */
+    RESUMING("resuming", ReasonKind.STALE),
+
+    /** T362: the activity changed and no fix came since. */
+    ACTIVITY("activity", ReasonKind.STALE),
+
+    /** T362: the last height held across a clock going back ([HeldHeight]); T192: the climb held through a gap. */
+    HELD("held", ReasonKind.STALE),
+
+    NO_HEIGHT_YET("no height yet", ReasonKind.MISSING),
+    NO_SPEED_YET("no speed yet", ReasonKind.MISSING),
+
+    /** A fix but no movement since the start: no course to show; at rest. */
+    NO_COURSE_YET("no course yet", ReasonKind.AT_REST),
+
+    /** Standing still: the speed's dash, the climb's 0 standing, the course held from the last movement (T363). */
+    STILL("still", ReasonKind.AT_REST),
+
+    /** The climb's 0 while moving: a figure. */
+    NEAR_ZERO("near zero", ReasonKind.NONE),
+
+    /** T250: the barometer and the GNSS disagree; the climb a dash until they agree. */
+    CONTRADICTION("contradiction", ReasonKind.STALE),
+
+    /** T250: the climb's window filling. */
+    FILLING("filling", ReasonKind.MISSING),
+
+    /** T250: the climb too uncertain to tell from level. */
+    UNCERTAIN("uncertain", ReasonKind.MISSING),
+
+    /** T257: no pressure sample yet. */
+    NO_SAMPLES("no samples", ReasonKind.MISSING),
+
+    /** T257: no pressure sample for the staleness window. */
+    SILENT("silent", ReasonKind.STALE),
+
+    /** T257: the fix gave no accuracy. */
+    NOT_GIVEN("not given", ReasonKind.MISSING),
+    ;
+
+    companion object {
+        fun of(code: String?): ReadoutReason? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/**
+ * T363: what a drawn readout value says beyond its figure (pure; `ReadoutReasonsTest`): the reason it shows ([of]), and
+ * whether the bar marks it with a small "?" ([marked]). The owner's answer of 2026-11-23: the reason shows in the glance
+ * view under the value, and the bar's value carries a "?" while it is not normal (missing, held or stale, never a value
+ * simply at rest, such as a speed standing still).
+ */
+object ReadoutReasons {
+    /** The dims' own reasons: a dimmed value shows the dim's reason, not the one its state had before the gap. */
+    val DIM: Set<ReadoutReason> = setOf(ReadoutReason.NO_FIX, ReadoutReason.RESUMING, ReadoutReason.ACTIVITY, ReadoutReason.HELD)
+
+    /**
+     * The reason [v] shows, [dimReason] the readout's ([Readout.dimReason]), or null for a plain figure and a value
+     * switched off: null [v] (before the first readout) reads as no fix; a dimmed value its dim's reason (a held climb or
+     * height `held`); the course held from the last movement `still`; a dash, a "?" or a value not drawn its own reason.
+     */
+    fun of(v: ReadoutValue?, dimReason: ReadoutReason?): ReadoutReason? {
+        if (v == null) return ReadoutReason.NO_FIX
+        if (v.reason == ReadoutReason.OFF) return null
+        if (v.dimmed) return if (v.reason == ReadoutReason.HELD) ReadoutReason.HELD else dimReason ?: v.reason?.takeIf { it in DIM } ?: ReadoutReason.NO_FIX
+        return when (v.state) {
+            ValueState.SHOWN -> if (v.entry == ReadoutEntry.COURSE && v.frozen) ReadoutReason.STILL else null
+            ValueState.ZERO -> null
+            else -> v.reason ?: ReadoutReason.NO_FIX
+        }
+    }
+
+    /** The bar marks the value: its reason says the data is missing or stale, and the value does not read "?" already. */
+    fun marked(reason: ReadoutReason?, readsUnknown: Boolean): Boolean =
+        reason != null && !readsUnknown && (reason.kind == ReasonKind.MISSING || reason.kind == ReasonKind.STALE)
+
+    /**
+     * Every (entry, reason) a drawn value can show ([of]), for the sentence table's tests: `ReadoutReasonsTest` reaches
+     * each with a fixture (and every state in [STATES]), and the phone's `ReasonTextTest` finds a sentence for each. The
+     * sentence depends on the entry and the reason, whatever the state (a dimmed figure, a held "?" and a held dash in a
+     * gap all say "no fix").
+     */
+    val POSSIBLE: Set<Pair<ReadoutEntry, ReadoutReason>> = buildSet {
+        val r = ReadoutReason.entries.filter { it.kind != ReasonKind.NONE }
+        fun on(e: ReadoutEntry, vararg rs: ReadoutReason) { for (x in rs) { require(x in r); add(e to x) } }
+        val dims = arrayOf(ReadoutReason.NO_FIX, ReadoutReason.RESUMING, ReadoutReason.ACTIVITY)
+        on(ReadoutEntry.ELEVATION, *dims, ReadoutReason.HELD, ReadoutReason.NO_HEIGHT_YET)
+        on(ReadoutEntry.CLIMB, *dims, ReadoutReason.HELD, ReadoutReason.NO_HEIGHT_YET, ReadoutReason.FILLING, ReadoutReason.UNCERTAIN, ReadoutReason.CONTRADICTION)
+        // An activity change clears the fixes, so the speed and the accuracy read "no fix" then, not dimmed.
+        on(ReadoutEntry.SPEED, ReadoutReason.NO_FIX, ReadoutReason.RESUMING, ReadoutReason.NO_SPEED_YET, ReadoutReason.STILL)
+        on(ReadoutEntry.COURSE, *dims, ReadoutReason.NO_COURSE_YET, ReadoutReason.STILL)
+        on(ReadoutEntry.PRESSURE, ReadoutReason.NO_SAMPLES, ReadoutReason.SILENT)
+        on(ReadoutEntry.ACCURACY, ReadoutReason.NO_FIX, ReadoutReason.RESUMING, ReadoutReason.NOT_GIVEN)
+        on(ReadoutEntry.FIX_AGE, ReadoutReason.NO_FIX)
+    }
+
+    /** Every state each entry can be in as the estimator gives it (`ReadoutReasonsTest` reaches each with a fixture). */
+    val STATES: Map<ReadoutEntry, Set<ValueState>> = mapOf(
+        ReadoutEntry.ELEVATION to setOf(ValueState.SHOWN, ValueState.HIDDEN),
+        ReadoutEntry.CLIMB to setOf(ValueState.SHOWN, ValueState.ZERO, ValueState.UNKNOWN, ValueState.DASH, ValueState.HIDDEN),
+        ReadoutEntry.SPEED to setOf(ValueState.SHOWN, ValueState.DASH, ValueState.HIDDEN),
+        ReadoutEntry.COURSE to setOf(ValueState.SHOWN, ValueState.HIDDEN),
+        ReadoutEntry.PRESSURE to setOf(ValueState.SHOWN, ValueState.DASH, ValueState.HIDDEN),
+        ReadoutEntry.ACCURACY to setOf(ValueState.SHOWN, ValueState.DASH, ValueState.HIDDEN),
+        ReadoutEntry.FIX_AGE to setOf(ValueState.SHOWN, ValueState.HIDDEN),
+    )
+}
+
+/**
  * One value of the readout (T160). [value] and [sigma] (1-sigma) are SI: speed m/s, climb m/s, course degrees true,
  * elevation metres above mean sea level (EGM2008); [ReadoutText] turns them into text in the user's units.
  * [source] says where the value came from: speed `fix` (the fix's own speed), `route` (distance along the navigated
@@ -84,11 +212,11 @@ data class ReadoutValue(
     val source: String? = null,
     val dimmed: Boolean = false,
     val frozen: Boolean = false,
-    val reason: String? = null,
+    val reason: ReadoutReason? = null,
 ) {
     fun json(): Map<String, Any?> = linkedMapOf(
         "state" to state.code, "value" to value?.let { r3(it) }, "sigma" to sigma?.let { r3(it) }, "source" to source,
-        "dimmed" to dimmed, "frozen" to frozen, "reason" to reason,
+        "dimmed" to dimmed, "frozen" to frozen, "reason" to reason?.code,
     )
 }
 
@@ -186,16 +314,16 @@ data class Readout(
      * with nothing to show; the phone's bar draws the pressure from its own last sample ([PressureSample]s reach the
      * estimator only once a fix has set the clock).
      */
-    val pressure: ReadoutValue = ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = "no samples"),
-    val accuracy: ReadoutValue = ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = "no fix"),
-    val fixAge: ReadoutValue = ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "no fix"),
+    val pressure: ReadoutValue = ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = ReadoutReason.NO_SAMPLES),
+    val accuracy: ReadoutValue = ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = ReadoutReason.NO_FIX),
+    val fixAge: ReadoutValue = ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = ReadoutReason.NO_FIX),
     /**
      * T362: the elapsed time the readout was read at ([ReadoutEstimator.readout]'s `elapsedNowMs`; the input clock when
      * none is given), why the values are dimmed for the fix stream ([dimReason]: `no fix`, `resuming`, `activity`; null
      * when they are not), what went wrong lately ([recent], [RecentFaults]) and the last restart ([lastRestart]).
      */
     val elapsedMs: Long = timeMs,
-    val dimReason: String? = null,
+    val dimReason: ReadoutReason? = null,
     val recent: List<ReadoutFault> = emptyList(),
     val lastRestart: ReadoutFault? = null,
 ) {
@@ -218,7 +346,7 @@ data class Readout(
         "counters" to counters, "provenance" to provenance,
         "climbWindowS" to climbWindowS, "climbFilledS" to climbFilledS?.let { r3(it) },
         // T362
-        "dimReason" to dimReason, "recent" to recent.map { it.json(elapsedMs) }, "lastRestart" to lastRestart?.json(elapsedMs),
+        "dimReason" to dimReason?.code, "recent" to recent.map { it.json(elapsedMs) }, "lastRestart" to lastRestart?.json(elapsedMs),
     )
 }
 
@@ -613,7 +741,7 @@ class ReadoutEstimator(
         climbShown = false
         climbResolves = false
         // T192's gap rule still holds: in a gap the climb is held from here, not the new offset's live value (T250: "?").
-        climbAtFix = climbAtFix?.takeIf { it.state != ValueState.HIDDEN && !contradicted }?.let { ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = it.source, reason = "filling") } ?: climbAtFix
+        climbAtFix = climbAtFix?.takeIf { it.state != ValueState.HIDDEN && !contradicted }?.let { ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = it.source, reason = ReadoutReason.FILLING) } ?: climbAtFix
         clearClimbWindow()
     }
 
@@ -670,7 +798,7 @@ class ReadoutEstimator(
         // T362: dimmed in a gap and after one until a second fix of a run ([DimLatch]); after an activity change until a fix.
         val dimReason = when {
             last != null -> latch.reason(elapsedNowMs, gapMs)
-            profileRestart && latch.lastFixElapsedMs != null -> ReadoutFault.CAUSE_ACTIVITY
+            profileRestart && latch.lastFixElapsedMs != null -> ReadoutReason.ACTIVITY
             else -> DimLatch.NO_FIX
         }
         val dim = dimReason != null
@@ -683,15 +811,15 @@ class ReadoutEstimator(
             ?: pos?.let { Triple(it.first, it.second, "positions") }
 
         val speed = when {
-            !options.speed.shown -> ReadoutValue(ReadoutEntry.SPEED, ValueState.HIDDEN, reason = "off")
-            last == null -> ReadoutValue(ReadoutEntry.SPEED, ValueState.HIDDEN, reason = "no fix")
-            !moving && chosen != null -> ReadoutValue(ReadoutEntry.SPEED, ValueState.DASH, source = chosen.third, dimmed = dim, reason = "still")
-            chosen == null -> ReadoutValue(ReadoutEntry.SPEED, ValueState.HIDDEN, dimmed = dim, reason = "no speed yet")
+            !options.speed.shown -> ReadoutValue(ReadoutEntry.SPEED, ValueState.HIDDEN, reason = ReadoutReason.OFF)
+            last == null -> ReadoutValue(ReadoutEntry.SPEED, ValueState.HIDDEN, reason = ReadoutReason.NO_FIX)
+            !moving && chosen != null -> ReadoutValue(ReadoutEntry.SPEED, ValueState.DASH, source = chosen.third, dimmed = dim, reason = ReadoutReason.STILL)
+            chosen == null -> ReadoutValue(ReadoutEntry.SPEED, ValueState.HIDDEN, dimmed = dim, reason = ReadoutReason.NO_SPEED_YET)
             else -> ReadoutValue(ReadoutEntry.SPEED, ValueState.SHOWN, chosen.first, chosen.second, chosen.third, dim)
         }
         val course = when {
-            !options.course.shown -> ReadoutValue(ReadoutEntry.COURSE, ValueState.HIDDEN, reason = "off")
-            lastCourse == null -> ReadoutValue(ReadoutEntry.COURSE, ValueState.HIDDEN, dimmed = dim, reason = if (last == null) "no fix" else "no course yet")
+            !options.course.shown -> ReadoutValue(ReadoutEntry.COURSE, ValueState.HIDDEN, reason = ReadoutReason.OFF)
+            lastCourse == null -> ReadoutValue(ReadoutEntry.COURSE, ValueState.HIDDEN, dimmed = dim, reason = if (last == null) ReadoutReason.NO_FIX else ReadoutReason.NO_COURSE_YET)
             else -> ReadoutValue(ReadoutEntry.COURSE, ValueState.SHOWN, lastCourse, lastCourseSigma, lastCourseSource, dim, frozen = !moving)
         }
 
@@ -700,9 +828,9 @@ class ReadoutEstimator(
         val heightDim = dim && !fused
         val heldHeight = held?.takeIf { !filter.heightKnown && it.holds(elapsedNowMs) }
         val elevation = when {
-            !options.elevation.shown -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.HIDDEN, reason = "off")
+            !options.elevation.shown -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.HIDDEN, reason = ReadoutReason.OFF)
             heldHeight != null -> heldHeight.value() // T362: held across a clock going back, dimmed, `held`
-            !filter.heightKnown -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.HIDDEN, reason = "no height yet")
+            !filter.heightKnown -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.HIDDEN, reason = ReadoutReason.NO_HEIGHT_YET)
             else -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, filter.heightM, filter.heightSigmaM, heightSource, heightDim, reason = if (heightDim) dimReason else null)
         }
         val windowed = climbWindowed
@@ -711,8 +839,8 @@ class ReadoutEstimator(
         // the climb window has passed since that fix; it never decays toward zero on inputs that are not fixes.
         val climb = when {
             gap == null || last == null || held == null || !options.climb.shown || held.state == ValueState.HIDDEN -> climbValue(nowMs, heightDim)
-            (sinceFixMs ?: 0L) > climbHoldMs -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = held.source, dimmed = true, reason = "no fix") // T250: "?", not a dash
-            else -> held.copy(dimmed = true, frozen = true, reason = held.reason ?: "held")
+            (sinceFixMs ?: 0L) > climbHoldMs -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = held.source, dimmed = true, reason = ReadoutReason.NO_FIX) // T250: "?", not a dash
+            else -> held.copy(dimmed = true, frozen = true, reason = held.reason ?: ReadoutReason.HELD)
         }
 
         val mode = options.barometer.code
@@ -735,20 +863,20 @@ class ReadoutEstimator(
         // T257: the pressure as last read, the fix's accuracy and its age.
         val sampleMs = lastSampleMs
         val pressure = when {
-            !options.pressure.shown -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = "off")
-            lastPressureHPa == null || sampleMs == null -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = "no samples")
-            nowMs - sampleMs > ElevationFilter.BARO_FRESH_MS -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.DASH, source = lastSampleSource?.code, reason = "silent")
+            !options.pressure.shown -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = ReadoutReason.OFF)
+            lastPressureHPa == null || sampleMs == null -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = ReadoutReason.NO_SAMPLES)
+            nowMs - sampleMs > ElevationFilter.BARO_FRESH_MS -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.DASH, source = lastSampleSource?.code, reason = ReadoutReason.SILENT)
             else -> ReadoutValue(ReadoutEntry.PRESSURE, ValueState.SHOWN, lastPressureHPa, source = lastSampleSource?.code)
         }
         val accuracy = when {
-            !options.accuracy.shown -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = "off")
-            last == null -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = "no fix")
-            last.hAcc == null || !last.hAcc.isFinite() || last.hAcc <= 0 -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.DASH, dimmed = dim, reason = "not given")
+            !options.accuracy.shown -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = ReadoutReason.OFF)
+            last == null -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = ReadoutReason.NO_FIX)
+            last.hAcc == null || !last.hAcc.isFinite() || last.hAcc <= 0 -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.DASH, dimmed = dim, reason = ReadoutReason.NOT_GIVEN)
             else -> ReadoutValue(ReadoutEntry.ACCURACY, ValueState.SHOWN, last.hAcc, source = "fix", dimmed = dim)
         }
         val fixAge = when {
-            !options.fixAge.shown -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "off")
-            last == null -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "no fix")
+            !options.fixAge.shown -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = ReadoutReason.OFF)
+            last == null -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = ReadoutReason.NO_FIX)
             else -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.SHOWN, ((sinceFixMs ?: (nowMs - last.t)) / 1000.0).coerceAtLeast(0.0), source = "fix") // T362: elapsed
         }
         val heights = ReadoutHeights(
@@ -797,15 +925,15 @@ class ReadoutEstimator(
         // T250: a figure when sure, 0 only for a near zero the estimate could tell, "?" for too little data, a dash
         // only while the barometer and the GNSS contradict and the barometer is out for it.
         return when {
-            !options.climb.shown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "off")
-            !filter.heightKnown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = "no height yet")
-            contradicted -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, source = climbSource, dimmed = heightDim, reason = "contradiction")
+            !options.climb.shown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = ReadoutReason.OFF)
+            !filter.heightKnown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.HIDDEN, reason = ReadoutReason.NO_HEIGHT_YET)
+            contradicted -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.DASH, source = climbSource, dimmed = heightDim, reason = ReadoutReason.CONTRADICTION)
             windowed && climbSpanS < minOf(ReadoutTuning.CLIMB_MIN_FILL_S, options.climbWindowS.toDouble()) ->
-                ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, climbV, climbSigma, climbSource, heightDim, reason = "filling")
+                ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, climbV, climbSigma, climbSource, heightDim, reason = ReadoutReason.FILLING)
             climbShown -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.SHOWN, climbV, climbSigma, climbSource, heightDim)
-            !climbResolves -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, climbV, climbSigma, climbSource, heightDim, reason = "uncertain")
-            moving -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = "near zero")
-            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = "still")
+            !climbResolves -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, climbV, climbSigma, climbSource, heightDim, reason = ReadoutReason.UNCERTAIN)
+            moving -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = ReadoutReason.NEAR_ZERO)
+            else -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.ZERO, climbV, climbSigma, climbSource, heightDim, reason = ReadoutReason.STILL)
         }
     }
 

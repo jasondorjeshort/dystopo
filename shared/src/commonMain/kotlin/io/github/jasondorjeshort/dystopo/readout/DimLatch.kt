@@ -33,7 +33,7 @@ class DimLatch {
         lastFixElapsedMs?.let { elapsedNowMs - it }?.takeIf { it > gapMs }
 
     /** Why the values are dimmed at [elapsedNowMs]: [NO_FIX] in a gap, [RESUMING] after one until a second fix, else null. */
-    fun reason(elapsedNowMs: Long, gapMs: Long): String? = when {
+    fun reason(elapsedNowMs: Long, gapMs: Long): ReadoutReason? = when {
         lastFixElapsedMs == null -> NO_FIX
         gapMs(elapsedNowMs, gapMs) != null -> NO_FIX
         latched -> RESUMING
@@ -41,11 +41,11 @@ class DimLatch {
     }
 
     companion object {
-        /** No fix for the gap (or none yet). */
-        const val NO_FIX = "no fix"
+        /** No fix for the gap (or none yet). T363: the readout's closed set of reasons. */
+        val NO_FIX = ReadoutReason.NO_FIX
 
         /** A fix came after a gap; the dim waits for a second within the gap of it. */
-        const val RESUMING = "resuming"
+        val RESUMING = ReadoutReason.RESUMING
     }
 }
 

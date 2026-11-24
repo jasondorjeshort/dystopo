@@ -24,6 +24,8 @@ import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
@@ -250,6 +252,8 @@ fun ReadoutStrip(night: Boolean) {
     val entries = items.map { it.entry.code }
     val degreesAt = items.indexOfFirst { it.compact != null } // T257: the course with degrees, which has a shorter form
     val description = StripText.line(items.take(drawn), markLabel, short) ?: "" // T210
+    val states = StripText.states(items.take(drawn)) // T363: the state words, apart from the description
+    val reasonMarkStyle = TextStyle(color = ink, fontSize = 10.sp, fontWeight = FontWeight.Bold) // T363
     Layout(
         modifier = Modifier
             .control("readoutStrip") // T238
@@ -267,6 +271,7 @@ fun ReadoutStrip(night: Boolean) {
             .pointerInput(Unit) { detectTapGestures(onTap = { Glance.show("bar") }) }
             .clearAndSetSemantics {
                 contentDescription = description
+                states?.let { stateDescription = it } // T363
                 onClick(label = GLANCE_OPEN_LABEL) { Glance.show("bar"); true }
             },
         measurePolicy = remember(entries, degreesAt) { DroppingFlow(entries, degreesAt, ITEM_GAP, ROW_GAP) { k, s -> if (drawn != k) drawn = k; if (short != s) short = s } },
@@ -275,20 +280,25 @@ fun ReadoutStrip(night: Boolean) {
             // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
             val markSlot = it.pinSlot // T257: its own flag (it rode on the trend's slot before the arrow could move to the pressure)
             val tapMark = markSlot && mark
-            Column(Modifier.alpha(if (it.dimmed) READOUT_DIM else 1f).then(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier)) {
+            // T363: the dim on each part, so the reason's "?" beside the caption draws at full strength.
+            val dim = Modifier.alpha(if (it.dimmed) READOUT_DIM else 1f)
+            Column(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         BasicText(it.captionTemplate, Modifier.alpha(0f), style = captionStyle)
-                        BasicText(it.caption, style = captionStyle)
+                        Row {
+                            BasicText(it.caption, dim, style = captionStyle)
+                            ReasonMark(it.marked, reasonMarkStyle)
+                        }
                     }
-                    if (markSlot) PinMark(mark, markStyle)
+                    if (markSlot) Box(dim) { PinMark(mark, markStyle) }
                 }
-                Box {
+                Box(dim) {
                     ValueRow(it.template.text, it.template.unit, it.template.plusMinus, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle, trendTemplate = it.trendSlot)
                     ValueRow(it.value, it.unit, it.plusMinus, it.trend, Modifier, valueStyle, unitStyle, pmStyle)
                 }
                 it.otherTemplate?.let { t ->
-                    Box {
+                    Box(dim) {
                         BasicText(t, Modifier.alpha(0f), style = otherStyle)
                         BasicText(it.other.orEmpty(), style = otherStyle)
                     }
@@ -432,6 +442,27 @@ private val ROW_GAP = 2.dp
 
 /** T224: the plate's padding above and below the entries ([StripLayout.elevationPlatePx] adds it to the measured entry). */
 private val PLATE_PADDING_Y = 3.dp
+
+/**
+ * T363: the small "?" after a value's caption while its data is missing or stale ([StripItem.marked]; the owner's answer
+ * of 2026-11-23: the reason itself is in the glance view, which a tap on the bar opens). It takes no room: laid out at
+ * zero width and height, drawn into the room the caption's template leaves (or the gap after the entry), so the mark
+ * never widens an entry, leaves one out or moves anything.
+ */
+@Composable
+private fun ReasonMark(shown: Boolean, style: TextStyle) {
+    if (!shown) return
+    BasicText(
+        "\u2009?",
+        Modifier.layout { m, _ ->
+            val p = m.measure(Constraints())
+            layout(0, 0) { p.place(0, 0) }
+        },
+        style = style,
+        softWrap = false,
+        maxLines = 1,
+    )
+}
 
 /**
  * T197: the known height's mark beside the elevation's caption: a survey point's triangle ([LiveReadout.PIN_GLYPH]),
