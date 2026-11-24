@@ -39,6 +39,8 @@ map here; this area has map tiles only" with its Offline maps link, the route ca
 
 Came up again: 2026-11-24, the owner (screenshots from v0.1.43-alpha), at the phone's own place inside two drawn areas downloaded in direct mode, both rows reading "Map only" and "From direct://sources" in Offline maps (one under 1 GB at z8-15, one of tens of GB over a large part of the country): search says "Search needs an offline map here; this area has map tiles only", routes do not work, and the owner, online and holding the deepest download the app offers, called it "the original" issue. New: direct mode is now the common way a map gets onto the phone, so an area of tiles is the main case, not a side case; the routing graph from tiles is wanted as much as search; and the row's "Map only" does not tell the user that search and routes will not work there (say it on the row and in "Draw an area" before the download).
 
+Priority: first in wave 49, by the owner's choice of 2026-11-24 (multiple choice); the pass takes the Horizon view's peaks from the same tile read, and the routing graph from tiles is measured and planned in it.
+
 Plan: one pass, search first. Measure, on the emulator, a city-sized tile area saved by "Download this region" as
 tiles: the tile count at the index's zooms, the time and heap to build `search/PlaceSearch.kt`'s index by decoding
 those tiles from the online cache (the same decode `ensure` runs over a pack's archive), and the index's size; then
