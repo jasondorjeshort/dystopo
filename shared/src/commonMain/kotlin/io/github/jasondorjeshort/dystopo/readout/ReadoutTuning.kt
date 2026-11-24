@@ -179,6 +179,24 @@ object ReadoutTuning {
     /** No fix for longer than this (or three fix intervals) dims the values and counts the gap. */
     const val GAP_S = 5.0
 
+    // T362: the readout's rule for a jump, a clock going back and the dim (`docs/findings/2026-11-23-the-readouts-dash-
+    // and-blink-read-from-the-code.md`). The figures are first values: the 60 s hold matches the climb's and the
+    // barometer's suspect hold, not a measured trace.
+
+    /** A step longer than this (m), faster than the profile's speed bound, is a jump: the position restarts, the height stays. */
+    const val JUMP_M = 2_000.0
+
+    /** After a jump the first GNSS or DEM height this far (m) from the kept one re-anchors the height on it. */
+    const val JUMP_REANCHOR_M = 100.0
+
+    /** After a clock going back the last height is held, dimmed (`held`), this long (elapsed ms) or until a new one. */
+    const val HELD_HEIGHT_MS = 60_000L
+
+    /** What went wrong lately ([RecentFaults]) is kept this long (elapsed ms) and at most [FAULTS_MAX] entries. */
+    const val FAULTS_KEEP_MS = 600_000L
+    const val FAULTS_MAX = 20
+    // end T362
+
     private const val FT = 0.3048
 
     private data class W(val low: Double, val medium: Double, val high: Double)

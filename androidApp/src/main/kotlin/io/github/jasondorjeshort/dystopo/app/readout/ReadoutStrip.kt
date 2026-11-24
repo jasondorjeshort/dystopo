@@ -275,7 +275,7 @@ fun ReadoutStrip(night: Boolean) {
             // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
             val markSlot = it.pinSlot // T257: its own flag (it rode on the trend's slot before the arrow could move to the pressure)
             val tapMark = markSlot && mark
-            Column(Modifier.alpha(if (it.dimmed) DIM else 1f).then(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier)) {
+            Column(Modifier.alpha(if (it.dimmed) READOUT_DIM else 1f).then(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         BasicText(it.captionTemplate, Modifier.alpha(0f), style = captionStyle)
@@ -297,7 +297,7 @@ fun ReadoutStrip(night: Boolean) {
         }
         // T257: the course's point alone, the last child: placed in the course's stead only when the bar is short of room.
         items.getOrNull(degreesAt)?.let { c ->
-            Column(Modifier.alpha(if (c.dimmed) DIM else 1f)) {
+            Column(Modifier.alpha(if (c.dimmed) READOUT_DIM else 1f)) {
                 Box {
                     BasicText(c.captionTemplate, Modifier.alpha(0f), style = captionStyle)
                     BasicText(c.caption, style = captionStyle)
@@ -475,7 +475,11 @@ private fun ValueRow(value: String, unit: String, plusMinus: String?, trend: Str
 }
 
 private const val REFRESH_MS = 500L
-private const val DIM = 0.45f
+/**
+ * T362: the one strength a dimmed value is drawn at, on the bar and in the glance view ([GlanceView]); 0.45 on the bar
+ * and 0.6 in the glance view before. A first value, not measured.
+ */
+internal const val READOUT_DIM = 0.5f
 
 /** T192: both plates are drawn at full alpha (`GET /readout` `layout.plateOpaque`). */
 internal val PLATE_OPAQUE: Boolean get() = Plate.alpha == 1f && NightPlate.alpha == 1f

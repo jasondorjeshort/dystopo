@@ -116,6 +116,14 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * T337: `pressureUnit` (the pressure's own unit, `mbar`, `hpa`, `inhg` or `mmhg`; `POST /settings?pressureUnit=`) and
  * `bar.pressure` adds `unit` and `text` (the reading in it; `hPa` stays the number as measured); `trend.card` adds
  * `pressureUnit`, the unit its lines read in.
+ * T362, the dim and the restarts: gaps are measured on elapsed time; `readout` adds `dimReason` (`no fix` in a gap,
+ * `resuming` after one until a second fix within the gap, `activity` after an activity change until a fix; null
+ * undimmed), `recent` (what went wrong lately, oldest first: `kind` `gap`, `restart`, `barometer silent`, `late fix`;
+ * `cause` of a restart `jump`, `clock`, `activity`; `agoS`, `lengthS`, `detail` the jump's metres or the clock's seconds
+ * back, `ongoing` for a gap still going) and `lastRestart`; `readout.elevation.reason` adds `held` (the last height held
+ * dimmed after a clock went back, up to 60 s) and the dim's reason; `readout.counters` add `jumpResets`,
+ * `jumpReanchors`, `heldHeights`; `inputs.counts` add `dimToggles`. The elevation's "no height yet" draws "?"
+ * (`bar.fields` `state` `unknown`).
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
  * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).
