@@ -1,16 +1,16 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-24, at commit d8c9e38a, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
+Updated: 2026-11-24, at commit a85a9f76, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the wave's
 paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
 ## Now
 
-- **Wave 48 is launched** (the owner, 2026-11-24: "Go ahead with the wave when ready."), **coordinated by the side session in the second clone**, not by the main session: sixteen tasks, T354 to T366 and T368 to T370, in `docs/TASKS.md`, after two premise reads against the code wave 47 left and a critic (LAUNCH AFTER EDITS, answered in the wave paragraph). Merged: T362 (56fff2d0), T354 (81b70c86), T363 (d8c9e38a). Running: T355's verifier in slot 1 (branch head 5d1432b6; on its MERGE, T356 launches there) and T361's implementer in slot 2, each with its own emulator (consoles 5570 and 5574, hosts 8694 and 8696).
+- **Wave 48 is launched** (the owner, 2026-11-24: "Go ahead with the wave when ready."), **coordinated by the side session in the second clone**, not by the main session: sixteen tasks, T354 to T366 and T368 to T370, in `docs/TASKS.md`, after two premise reads against the code wave 47 left and a critic (LAUNCH AFTER EDITS, answered in the wave paragraph). Merged: T362 (56fff2d0), T354 (81b70c86), T363 (d8c9e38a), T355 (a85a9f76). Running: T356's implementer in slot 1 and T361's verifier in slot 2 (branch head b4da9a7a; on its MERGE, T364 launches there), each with its own emulator (consoles 5570 and 5574, hosts 8694 and 8696).
 - **Order** (the board's Order sentence is binding): slot 1 T354, T355, T356, T368, T357, T358, T365; slot 2 T362, T363, T361, T364, T370, T369, T366, T359, T360. Next ports: consoles 5578 and up by fours, hosts 8698 and up by twos; never 9012 or 9013.
-- **Where things run:** implementers make worktrees from the main checkout (`dystopo-wt/Tnn`) and use its cache; merges and pushes happen in the second clone (hooks on, the private terms copied in). The live viewer on 8765 is down; T368 and T358 need a server set, so a chore starts it from the main checkout before T356 merges. Leftovers for a moment when no emulator runs: the verifiers' worktrees `T354-verify` and `T363-verify` under the worktree root were refused removal (held by a process the tool cannot name).
+- **Where things run:** implementers make worktrees from the main checkout (`dystopo-wt/Tnn`) and use its cache; merges and pushes happen in the second clone (hooks on, the private terms copied in). The live viewer on 8765 is down; T368 and T358 need a server set, so a chore starts it from the main checkout before T356 merges (T356 is running: start it when its report arrives). Leftovers for a moment when no emulator runs: the verifier's worktree `T363-verify` under the worktree root was refused removal (held by a process the tool cannot name).
 - **Cost:** the 7-day meter read 40 at launch (the side session's account), the 5-hour meter 6; 17.5 points figured, 57.5 against the hold of 97. Reset 2026-11-28 03:00 UTC.
 
 ## Next
