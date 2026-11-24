@@ -93,6 +93,13 @@ Added 2026-11-23 from the owner's top-priority report `docs/ideas/2026-11-22-at-
 **Checks:** none.
 **Status: merged.** Verifier MERGE on 0b742855 (merged as a23e936f), no fix round. Follow-ups: T340's block flaked once at off/outside on the implementer's run (the Panorama's place went stale between `/panorama` and `?wait`, likely `TerrainRead.Epoch`'s reachable flag offline; the verifier's run was green); the activate row's logcat check holds only what was logged (0 Dystopo lines in one capture); the owner's capture on the phone is still wanted. Edits outside Owns: `SkyViewSections.kt` (the names sentence), `PanoramaData.kt` (`peakMaps`), `LayerFilter.kt` made public, `PackSetNotOpenedTest.kt`.
 
+### T353. Wave 47's closing sweep fixes
+Added 2026-11-23 from the closing sweep `out/sweep-20261123-w47` (on 40a64e0e), red on three parts; launched at once.
+**Goal:** (1) `a11y`: the passing line "Flights: Getting flight data" fails contrast on `horizon-flights:1.0` (and once on `panorama:1.0`): fix its colour, not the baseline. (2) `features`: the `horizon` step found the credit line at the end of the scroll under the switch and the part ran to its 1500 s ceiling: the app (T344's viewport or credit) or the step's stale expectation, fixed where the fault is. (3) `recenter`: a tap zoomed 0.59 levels, not 1: reproduced on `main`'s APK; a flake shown by runs, or the cause fixed.
+**Owns:** the files the three fixes need, named in the report; no budget or baseline change but a line a fix strikes.
+**Done when:** `./gradlew check` green; `tools/sweep.ps1 -Only a11y,features,recenter` green on the branch; `recenter` three times running; the cause of each red part stated with evidence.
+**Checks:** none.
+
 ### T345. The tools' tests run with check
 First in its slot.
 **Goal:** the Plan of `docs/ideas/2026-11-22-the-tools-tests-run-with-check.md` (the side session's triage of 2026-11-22, which supersedes this board's first text): `tools/run-tool-tests.py` runs each `tools/test_*.py` in its own `python -I` process, then `node .claude/hooks/test-hooks.js`; it skips with a named reason where a tool is missing or a file needs Windows (`test_verify_task.py` without `powershell`, the hooks without `node`), prints one JSON object (per file: ok, seconds, the failure's tail) and exits 1 on any failure; an `Exec` task `toolsTest` in `check` beside `userTextCheck`, its inputs `tools/**/*.py`, `tools/*.ps1` and `.claude/hooks/**` so an unchanged tree is up to date. A test red on `main` today is fixed where the fault is the test's and reported otherwise. Out of scope: converting the plain-assert files to `unittest` (a follow-up, in the report), `verify-task.ps1`. The idea file is deleted on the branch. [no-check: the runner is new in this task]
