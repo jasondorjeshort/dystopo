@@ -34,7 +34,7 @@ data class PackCoverage(
     val maxZoom: Int,
     val bounds: PackBounds,
     val profile: VectorProfile = VectorProfile.UNKNOWN,
-    /** The pack the user chose last (`POST /packs/activate`): first within a profile (T49). */
+    /** The pack the user chose last (`POST /packs/activate`): first between two of equal depth within a profile (T354; T49 put it ahead of depth). */
     val primary: Boolean = false,
     /** The archive stores whole upstream tiles even at its edges (built from OpenFreeMap), so an edge tile is complete. */
     val wholeTiles: Boolean = false,
@@ -42,9 +42,9 @@ data class PackCoverage(
 
 /**
  * Several packs on the map at once (T41): every usable pack is consulted, tile by tile, in a fixed
- * order. Vector archives rank by profile first (outdoors over plain OpenMapTiles, T37), then the
- * user's primary pack (T49: the pack the user chose wins over a deeper one of the same profile), then
- * the deeper archive, then the smaller (more specific) box, then the name.
+ * order ([ORDER]). Vector archives rank by profile first (outdoors over plain OpenMapTiles, T37), then
+ * the deeper archive, then the user's primary pack (T354, ADR 0066: the tie between two of equal depth;
+ * T49 had put it ahead of a deeper one), then the smaller (more specific) box, then the name.
  * For one tile the first archive in that order that holds the whole tile wins; when none does (a tile
  * on a pack edge), the first that overlaps it, so an edge tile clipped to a small pack loses to a
  * larger pack that has all of it.
@@ -72,13 +72,13 @@ object PackPrecedence {
 
     private fun area(b: PackBounds) = (b.maxLon - b.minLon) * (b.maxLat - b.minLat)
 
-    val ORDER: Comparator<PackCoverage> = compareBy<PackCoverage>(
-        { it.profile.rank },
-        { if (it.primary) 0 else 1 }, // T49: ahead of depth
-        { -it.maxZoom },
-        { area(it.bounds) },
-        { it.pack },
-    )
+    /**
+     * T354 (ADR 0066 decision 1): the vector profile, then [Holdings.depthFirst]: the deeper archive, then the map chosen last
+     * (the tie between two of equal depth; before T354 it went ahead of depth, T49), then the smaller box, then the name. The
+     * lookup's [Holdings.ORDER] ranks maps the same way, so `GET /holdings` and the tile paths agree.
+     */
+    val ORDER: Comparator<PackCoverage> = compareBy<PackCoverage> { it.profile.rank }
+        .then(Holdings.depthFirst({ it.maxZoom }, { it.primary }, { 0 }, { area(it.bounds) }, { it.pack }))
 
     /** [archives] in precedence order. */
     fun <T> sort(archives: List<T>, coverage: (T) -> PackCoverage): List<T> = archives.sortedWith(compareBy(ORDER, coverage))

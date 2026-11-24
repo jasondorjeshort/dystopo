@@ -67,13 +67,35 @@ class PackPrecedenceTest {
     }
 
     @Test
-    fun primaryThenDeeperThenSmallerThenName() {
-        // T49: the pack the user chose outranks a deeper pack of the same profile.
+    fun deeperThenPrimaryThenSmallerThenName() {
+        // T354 (ADR 0066): depth first; the pack the user chose is the tie between two of equal depth (T49 had it first).
         val a = PackCoverage("a", 8, 13, rainier, primary = true)
         val b = PackCoverage("b", 8, 14, rainier)
         val d = PackCoverage("d", 8, 14, paradise)
         val e = PackCoverage("e", 8, 13, rainier)
         val f = PackCoverage("f", 8, 14, rainier)
-        assertEquals(listOf("a", "d", "b", "f", "e"), PackPrecedence.sort(listOf(e, f, b, a, d)) { it }.map { it.pack })
+        assertEquals(listOf("d", "b", "f", "a", "e"), PackPrecedence.sort(listOf(e, f, b, a, d)) { it }.map { it.pack })
+        val c = PackCoverage("c", 8, 14, rainier, primary = true)
+        assertEquals(listOf("c", "d", "b", "f", "a", "e"), PackPrecedence.sort(listOf(e, f, b, a, d, c)) { it }.map { it.pack }, "chosen wins the tie over a smaller box")
+    }
+
+    @Test
+    fun theFineMapServesInsideItWhicheverMapWasChosenLast() {
+        // The two-maps fixture's pair: a wide coarse map (vector z8 to z13, elevation to z11) and a fine one inside it (z14).
+        val wideBox = PackBounds(-121.95, 46.68, -121.45, 46.98)
+        val fineBox = PackBounds(-121.82, 46.80, -121.68, 46.90)
+        for (chosenWide in listOf(true, false)) {
+            val dem = PackPrecedence.sort(listOf(PackCoverage("wide", 8, 11, wideBox, primary = chosenWide), PackCoverage("fine", 8, 14, fineBox, primary = !chosenWide))) { it }
+            val vec = PackPrecedence.sort(listOf(
+                PackCoverage("wide", 8, 13, wideBox, VectorProfile.OUTDOORS, primary = chosenWide), PackCoverage("fine", 8, 14, fineBox, VectorProfile.OUTDOORS, primary = !chosenWide),
+            )) { it }
+            for (z in 12..15) { // the zooms whose summit tile lies wholly in the fine box (above, a tile across its edge goes to the box that holds all of it)
+                val (_, x, y) = tile(46.8529, -121.7604, z) // the summit, inside both
+                assertEquals("fine", dem[PackPrecedence.choose(dem, z, x, y, PackRoleZooms.DEM)].pack, "dem z$z chosenWide=$chosenWide")
+                if (z <= 13) assertEquals("fine", vec[PackPrecedence.choose(vec, z, x, y, PackRoleZooms.VECTOR)].pack, "vector z$z chosenWide=$chosenWide")
+                val (_, xw, yw) = tile(46.73, -121.56, z) // inside the wide map only
+                assertEquals("wide", dem[PackPrecedence.choose(dem, z, xw, yw, PackRoleZooms.DEM)].pack)
+            }
+        }
     }
 }

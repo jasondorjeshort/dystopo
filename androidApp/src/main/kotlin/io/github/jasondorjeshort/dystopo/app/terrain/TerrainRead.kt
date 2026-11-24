@@ -37,7 +37,7 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
             val h = pk.header
             val box = PackBounds(h.minLon, h.minLat, h.maxLon, h.maxLat)
             val name = tiles.packs.packOf(pk) ?: pk.name
-            ElevationSource(name, h.maxZoom, box, MergedTerrain.wholeTileReach(box, h.minZoom)) { w ->
+            ElevationSource(name, h.maxZoom, box, MergedTerrain.wholeTileReach(box, h.minZoom), chosen = tiles.packs.dem === pk) { w -> // T354: the chosen map is the tie
                 val p = synchronized(pyramids) {
                     pyramids.getOrPut(name) {
                         DemPyramid(h.minZoom, h.maxZoom, TileService.demDecoder(), cacheTiles = 48) { z, x, y ->

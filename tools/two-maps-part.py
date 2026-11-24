@@ -271,6 +271,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
         table["t342"] = t342_collect(dev, wait_ms, raw_dir)  # T342: the rows with a map switched off (its block, below)
         table["t343"] = t343_collect(dev, raw_dir)  # T343: the Download card at three places (its block, below)
         table["t341"] = t341_collect(dev, raw_dir)  # T341: GET /why and the chip at the overview's zooms (its block, below)
+        table["t354"] = t354_collect(dev, wait_ms, raw_dir)  # T354: GET /holdings against /why and the sky views, each map chosen in turn (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
     finally:
@@ -373,6 +374,7 @@ def assertions(table):
     # T341
     out += t341_assertions(table)
     # end T341
+    out += t354_assertions(table)  # T354
     return out
 
 
@@ -638,6 +640,131 @@ def t341_assertions(table):
             out.append({"what": "T341:map-cause", "row": row, "cause": r.get("cause")})
     return out
 # end T341
+
+
+# T354
+# ADR 0066's lookup (`GET /holdings`) against what `/why`, `/horizon` and `/panorama` name, each map chosen last in turn
+# (`activate()`), at all four places. With the network off and a cold start (the online tile cache and the direct sources'
+# block cache emptied first, the app stopped for the second), so only the two maps answer: for each map made the primary, at
+# each place the camera at ZOOM, then `GET /holdings` and `GET /why` (both for that point and zoom), "Sky from here" and
+# the Panorama with `?wait=`. Asserted per row: every read answered; `/why`'s `answersVector` and `answersDem` name the
+# lookup's `tilePathServes`, which (no cache, no area here) is its `serves`; the lookup's elevation members agree with the
+# order the Horizon view's and the Panorama's terrain read took its maps in (the maps both name, in the same order); where
+# a map's box holds the place, the lookup's `readZoom` is the Horizon's zoom; inside both maps the fine map serves both
+# tiles; the activated map is the one marked `chosen`. Across the two primaries: at each place the same map serves (the
+# fixture's maps differ in depth everywhere, so the map chosen last never decides). The stored primary is put back at the
+# end. Nothing here reads the clock but the waits; it depends on no earlier part's state (it switches the network off,
+# empties the caches and restarts itself), only on the fixture this part installed.
+def t354_collect(dev, wait_ms, raw_dir):
+    out = {"rows": []}
+    _, active0 = dev.runas("cat files/packs/active 2>/dev/null; true")
+    out["storedPrimary"] = active0.strip() or None
+    try:
+        out["network"] = fx.network(dev, False)
+        dev.adb("shell", "am", "force-stop", fx.PACKAGE, timeout=30)
+        dev.runas("rm -rf cache/sources; true")
+        dev.restart()
+        _, _, err = dev.call("/online/cache/clear", "POST", timeout=120)
+        out["onlineCacheCleared"] = not err
+        for m in fx.MAPS:
+            act = activate(dev, m["name"])
+            for place in fx.PLACES:
+                lat, lon = place["lat"], place["lon"]
+                row = {"chosen": m["name"], "activate": act["ok"], "place": place["id"], "inside": place["inside"], "errors": []}
+                reads = {}
+
+                def do(name, path, method="GET", timeout=60, keep=True):
+                    st, body, err = dev.call(path, method, timeout=timeout)
+                    if err or body is None:
+                        row["errors"].append({"read": name, "path": path.split("?")[0], "status": st, "error": err or "no JSON body"})
+                    if keep:
+                        reads[name] = body
+                        if raw_dir:
+                            with open(os.path.join(raw_dir, f"t354-{m['name']}-{place['id']}-{name}.json"), "w", encoding="utf-8", newline="\n") as fh:
+                                json.dump({"path": path, "status": st, "error": err, "body": body}, fh, indent=1)
+                    return body
+
+                do("camera", f"/camera?lat={lat}&lon={lon}&zoom={ZOOM}&bearing=0", "POST", keep=False)
+                time.sleep(3.0)
+                h = do("holdings", f"/holdings?z={ZOOM}&lat={lat}&lon={lon}")
+                w = do("why", f"/why?z={ZOOM}&lat={lat}&lon={lon}")
+                do("horizonOpen", f"/horizon/ui?lat={lat}&lon={lon}", "POST", keep=False)
+                hz = do("horizon", f"/horizon?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+                do("panoramaOpen", "/horizon/switch?to=panorama", "POST", keep=False)
+                pn = do("panorama", f"/panorama?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+                do("mapBack", "/horizon/switch?to=map", "POST", keep=False)
+
+                def role(r):
+                    return {"serves": get(h, r, "serves"), "tilePathServes": get(h, r, "tilePathServes"), "depth": get(h, r, "depth"),
+                            "members": [x.get("name") for x in get(h, r, "members") or [] if isinstance(x, dict)],
+                            "holds": [x.get("holds") for x in get(h, r, "members") or [] if isinstance(x, dict)],
+                            "chosen": [x.get("name") for x in get(h, r, "members") or [] if isinstance(x, dict) and x.get("chosen")],
+                            "off": get(h, r, "off"), "networkAdds": get(h, r, "network", "adds")}
+                row.update(
+                    vector=role("vector"), dem=role("dem"), readZoom=get(h, "readZoom"),
+                    whyVector=[x.get("name") for x in get(w, "maps") or [] if isinstance(x, dict) and x.get("answersVector")],
+                    whyDem=[x.get("name") for x in get(w, "maps") or [] if isinstance(x, dict) and x.get("answersDem")],
+                    whyPrimary=[x.get("name") for x in get(w, "maps") or [] if isinstance(x, dict) and x.get("primary")],
+                    horizonMaps=get(hz, "horizon", "terrain", "maps"), horizonZoom=get(hz, "horizon", "zoom"),
+                    panoramaMaps=get(pn, "work", "terrain", "maps"),
+                )
+                out["rows"].append(row)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        if out["storedPrimary"]:
+            dev.runas(f"echo {out['storedPrimary']} > files/packs/active; true")
+        else:
+            dev.runas("rm -f files/packs/active; true")
+    return out
+
+
+def t354_assertions(table):
+    out = []
+    t = table.get("t354")
+    if not isinstance(t, dict):
+        return out  # not run: the phases failed before it, or a table from before T354
+    if t.get("error"):
+        out.append({"what": "T354:error", "error": t["error"]})
+    rows = t.get("rows") or []
+    if len(rows) != len(fx.MAPS) * len(fx.PLACES):
+        out.append({"what": "T354:rows", "rows": len(rows)})
+    fine = fx.MAPS[1]["name"]
+    for r in rows:
+        row = f"t354/{r.get('chosen')}/{r.get('place')}"
+        if r.get("errors") or not r.get("activate"):
+            out.append({"what": "T354:unread", "row": row, "errors": r.get("errors"), "activate": r.get("activate")})
+            continue
+        v, d = r.get("vector") or {}, r.get("dem") or {}
+        for name, x in (("vector", v), ("dem", d)):
+            if x.get("serves") != x.get("tilePathServes"):
+                out.append({"what": f"T354:{name}-serves-tile-path", "row": row, "serves": x.get("serves"), "tilePath": x.get("tilePathServes")})
+        if r.get("whyVector") != [m for m in [v.get("tilePathServes")] if m and m != "world"]:
+            out.append({"what": "T354:why-vector", "row": row, "why": r.get("whyVector"), "holdings": v.get("tilePathServes")})
+        if r.get("whyDem") != [m for m in [d.get("tilePathServes")] if m]:
+            out.append({"what": "T354:why-dem", "row": row, "why": r.get("whyDem"), "holdings": d.get("tilePathServes")})
+        members = d.get("members") or []
+        for view in ("horizon", "panorama"):
+            maps = r.get(f"{view}Maps") or []
+            if [m for m in maps if m in members] != [m for m in members if m in maps]:
+                out.append({"what": f"T354:{view}-order", "row": row, view: maps, "holdings": members})
+        if r.get("inside") and r.get("readZoom") != r.get("horizonZoom"):
+            out.append({"what": "T354:read-zoom", "row": row, "holdings": r.get("readZoom"), "horizon": r.get("horizonZoom")})
+        if r.get("place") == "inside-both" and (v.get("serves") != fine or d.get("serves") != fine):
+            out.append({"what": "T354:fine-inside", "row": row, "vector": v.get("serves"), "dem": d.get("serves")})
+        for name, x in (("vector", v), ("dem", d)):
+            if any(c != r.get("chosen") for c in x.get("chosen") or []):
+                out.append({"what": f"T354:{name}-chosen", "row": row, "chosen": x.get("chosen")})
+        if r.get("whyPrimary") != [r.get("chosen")]:
+            out.append({"what": "T354:why-primary", "row": row, "primary": r.get("whyPrimary")})
+    by_place = {}
+    for r in rows:
+        by_place.setdefault(r.get("place"), set()).add(((r.get("vector") or {}).get("serves"), (r.get("dem") or {}).get("serves")))
+    for place, seen in by_place.items():
+        if len(seen) > 1:
+            out.append({"what": "T354:chosen-matters", "place": place, "serves": sorted(seen, key=str)})
+    return out
+# end T354
 
 
 def main(argv=None):

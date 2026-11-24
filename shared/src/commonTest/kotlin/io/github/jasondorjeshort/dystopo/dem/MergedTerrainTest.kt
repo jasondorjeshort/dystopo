@@ -134,5 +134,39 @@ class MergedTerrainTest {
         assertEquals(14, MergedTerrain.pointZoom(sources, 46.0, -121.7, 14), "outside both: the online source's, capped")
         assertEquals(14, MergedTerrain.pointZoom(sources.take(2), 46.5, -121.75, 14), "past the boxes, inside the fine map's tiles")
         assertNull(MergedTerrain.pointZoom(sources.take(2), 40.0, -100.0, 14))
+        // T354: the online source waits behind its input; on, its deeper stored maximum counts beside the maps'.
+        val stored12 = listOf(source("wide", 11, wideBox, 1f), source("net", 12, null, 3f))
+        assertEquals(11, MergedTerrain.pointZoom(stored12, 46.73, -121.56, 14))
+        assertEquals(12, MergedTerrain.pointZoom(stored12, 46.73, -121.56, 14, onlineByDepth = true))
+    }
+
+    @Test
+    fun theOrderIsTheLookupsDepthThenTheChosenMap() {
+        // T354: two maps of equal depth: the one chosen last first, whatever the box or the name.
+        val chosen = ElevationSource("z-chosen", 14, wideBox, chosen = true) { null }
+        val other = ElevationSource("a-other", 14, fineBox) { null }
+        assertEquals(listOf("z-chosen", "a-other"), MergedTerrain.order(listOf(other, chosen)).map { it.name })
+        // A deeper map still goes first.
+        val deeper = ElevationSource("deeper", 15, wideBox) { null }
+        assertEquals(listOf("deeper", "z-chosen", "a-other"), MergedTerrain.order(listOf(other, chosen, deeper)).map { it.name })
+    }
+
+    @Test
+    fun theOnlineSourceStaysLastUntilItsInputIsOn() {
+        val maps = listOf(source("wide", 11, wideBox, 1f), source("fine", 14, fineBox, 2f))
+        val net = source("net", 12, null, 3f)
+        assertEquals(listOf("fine", "wide", "net"), MergedTerrain.order(maps + net).map { it.name })
+        // On (T368): by depth, after a map of equal depth.
+        assertEquals(listOf("fine", "net", "wide"), MergedTerrain.order(maps + net, onlineByDepth = true).map { it.name })
+        assertEquals(listOf("fine", "net"), MergedTerrain.order(listOf(source("net", 14, null, 3f), maps[1]), onlineByDepth = true).map { it.name })
+        // Inside the wide map only: off, the wide map's cells; on, the online source's (it stores deeper).
+        val w = window(46.73, -121.56, size = 16)
+        assertTrue(MergedTerrain.read(w, maps + net).values.all { it == 1f })
+        val t = MergedTerrain.Tally()
+        assertTrue(MergedTerrain.read(w, maps + net, t, onlineByDepth = true).values.all { it == 3f })
+        assertEquals(listOf(MergedTerrain.ONLINE), t.cells.keys.toList())
+        // Inside the fine map the fine map's cells either way.
+        val wf = window(46.85, -121.76, size = 16)
+        assertTrue(MergedTerrain.read(wf, maps + net, onlineByDepth = true).values.all { it == 2f })
     }
 }
