@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-23
+verified: 2026-11-24
 source: observed on this machine; the wave 12 and 13 paragraphs in docs/TASKS.md
 ---
 
@@ -27,6 +27,13 @@ wins and this file gets fixed.
 | Private terms | `devtool.local.json` in this main checkout; the privacy hooks read it from the main checkout even in worktrees |
 | Coordinator's servers | live viewer on 8765 (`serve --live`, Rainier packs in `out/`); PIDs in `out/coordinator-pids.txt` (`live-8765 <pid>`) |
 | RAM, CPU, disks | 128 GB, 16 cores (2026-11-09: 98 GB free with no emulator running); C: about 290 GB free, E: about 1.4 TB free. The owner widened ADR 0057's one-Gradle-agent default to two at once for this PC on 2026-11-09 (wave 31's paragraph in `docs/TASKS.md`); the emulator cap of 2 and the guard stay |
+
+**A second clone on this account** (2026-11-24, the side session's; the coordinator of wave 48 sits in it):
+`C:\Users\Dorje\Documents\src\dystopo-2`. It has `core.hooksPath`, `core.longpaths` and `merge.conflictStyle diff3`
+set and its own copies of `devtool.local.json` and `local.properties` (both gitignored; copy them again when the main
+checkout's change), but no `cache/` and no `out/`: task worktrees are still made from the main checkout
+(`dystopo-wt\<task-id>`) and use its cache, the coordinator's merges and pushes happen in the second clone, and a
+server or a sweep is started from the main checkout. Two sessions never edit one working tree.
 
 ## The other account (second account, wave 12 second half and wave 13 second half)
 
