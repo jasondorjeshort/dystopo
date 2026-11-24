@@ -88,9 +88,10 @@ object Holdings {
         }
         // The overview holds the tile. The online member goes ahead only where it stores deeper, under the setting.
         if (online == null) return Answer(Source.OVERVIEW, false, "overview")
-        if (!online.detail) return Answer(Source.OVERVIEW, false, "overview-online-off")
         if (online.storedMaxZoom <= overview!!.maxZoom) return Answer(Source.OVERVIEW, false, "overview")
+        // T356 (decision 2): the kept tile is held by the phone, ranked by depth whatever the setting says; the setting gates fetches.
         if (cached) return Answer(Source.CACHE, false, "online-kept")
+        if (!online.detail) return Answer(Source.OVERVIEW, false, "overview-online-off")
         if (!online.allowed) return Answer(Source.OVERVIEW, false, "overview-not-allowed")
         return Answer(Source.OVERVIEW, true, "online-fetching")
     }

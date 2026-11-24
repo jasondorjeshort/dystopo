@@ -324,7 +324,9 @@ and the network is asked only where nothing here covers the view." Its reach is 
 vector source (stored to z14, or a server's `osmMaxZoom`) is deeper than the overview, so each overview tile is answered at
 once and the online tile is fetched behind it (`OnlineTiles.fetchBehind`); once tiles land, one refresh of the vector source
 (the stall recovery's, settled over 10 s) redraws them from the cache, and from then on the kept tile answers, offline too.
-Off, or with no source, the overview answers as before. The rule is `shared/.../packs/Holdings.kt` (`vectorTile`, tested);
+Off, the overview answers and nothing is fetched behind it, but a tile already kept answers in its place (T356, ADR 0066
+decision 2: what the phone holds ranks by depth whatever a setting says; the setting gates fetches only); with no source,
+the overview answers as before. The rule is `shared/.../packs/Holdings.kt` (`vectorTile`, tested);
 the chip reads "from public sources" (or "viewed earlier") once the map was given the online tile, and at z6 and z7, where
 the network draws the vector map below the phone's own elevation (z8), it names that tile's source instead of "no data
 here". `GET /why` explains a view (`android-debug-routes.md`).
@@ -338,8 +340,23 @@ the chosen map went ahead of a deeper one (T49), so a coarse map chosen last dre
 credits' order) and `MergedTerrain` (the sky views' terrain read, whose online source stays last until T368). The same
 file is the lookup for what the phone holds at a point or a tile (`Holdings.tile` / `point`: the maps, the downloaded
 areas' held cells, the tile cache, the overview, a map that is off listed as holding nothing, and the deeper zoom the
-network would add); `GET /holdings` reports it and `GET /why` reads its maps and its vector answer from it. No tile path
-reads the areas, the cache or the network member through it yet (T356, T368).
+network would add); `GET /holdings` reports it and `GET /why` reads its maps and its vector answer from it.
+T356 (ADR 0066 decision 1, build task 2's first half): **the tile paths read everything the phone holds, by depth.**
+`HeldTiles` (`app/TileService.kt`) ranks the maps, the downloaded areas' held cells and the tile cache as the lookup does:
+where an area's cell or a cached tile is deeper than every map that answers the tile (an area to z15 inside a map whose
+elevation stops at z11), it answers the DEM tile and the contour and shade tiles made over it (through the online pyramid,
+`OnlineTiles.packDem`, or with no source set a pyramid of what the phone holds), ahead of the map's overzoom; a map as deep
+keeps the tile. The held tiles are read from the cache only, never the network, at the fetcher's keys and at each area's
+own source key, so an area answers in airplane mode and with no source set at all (no server, direct reading off), and an
+area-only phone draws its cells (before, an area's tiles were read only through a source's fetcher). Outside the maps with
+a source set the online path reads the cache first as before, and the network only where the phone holds nothing (the
+network where it is finer is T368's). The style's top zooms come from the maps' and the finished areas' stored ranges
+(before, the deepest map's zoom capped the elevation everywhere with a map installed), and the vector source is in the
+style when only an area holds vector tiles. **Downloads skip only what a map stores:** an area or corridor download
+(`AreaDownload.fetchTile`) and the prefetch ahead (`AheadPrefetch`) skip an elevation tile only where a map stores it at its
+own depth and whole (`HeldTiles.mapStores`); a map answers deeper elevation by overzoom, so before a z15 area inside a z11
+map skipped its z12 to z15 elevation. Vector tiles are skipped as before. The request log names the holding that answered
+in the maps' place (`area:<name>`, `cache`).
 T265: the map zooms out to z1 (`MapController.MIN_ZOOM`; z3 before), the whole world on one screen. The terrain layers
 start where their sources do (`MapLibreStyle`'s layer `minzoom`): the hillshade and the shade one map zoom below the DEM's
 lowest tile zoom (256-px tiles; online z6, so map z5; direct mode z8, so z7), the contours at theirs (online z8), so

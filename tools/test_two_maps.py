@@ -254,6 +254,25 @@ assert whats == sorted(["T354:rows", "T354:why-dem", "T354:horizon-order", "T354
                         "T354:unread", "T354:dem-serves-tile-path", "T354:why-dem", "T354:chosen-matters"]), whats
 # end T354
 
+# T356's block: an area's z15 cells inside the coarse map, offline and with no source set.
+png = part.t356_png(15, 5319, 11561, size=8)
+assert png[:4] == bytes([0x89]) + b"PNG" and b"IHDR" in png and b"IDAT" in png, "a PNG"
+_, tx, ty = part.t356_tile(15, 46.73, -121.56)
+lines = [{"path": f"/dem/15/{tx}/{ty}.png", "pack": "area:t356-held", "status": 200}, {"path": f"/contours/15/{tx + 1}/{ty}.pbf", "pack": "area:t356-held", "status": 200},
+         {"path": f"/dem/15/{tx + 5}/{ty}.png", "pack": "rainier-wide", "status": 200}, {"path": "/osm/14/1/1.pbf", "pack": None, "status": 200}]
+t356_seen = part.t356_here([{"path": "/dem/15/0/0.png"}] + lines, 1, 5, 46.73, -121.56)
+assert [h["kind"] for h in t356_seen] == ["dem", "contours"], t356_seen
+assert part.t356_here(lines, 5, 5, 46.73, -121.56) == [], "nothing new"
+ph = lambda name, serves="t356-held", z15=None: {"phase": name, "errors": [], "dem": {"serves": serves, "tilePathServes": serves}, "z15Here": z15 if z15 is not None else t356_seen}
+t356_good = {"download": {"state": "done", "inPacks": 30, "demFetchedByZoom": {"12": 4, "13": 6, "14": 9, "15": 20}}, "phases": [ph("airplane"), ph("no-source")]}
+assert part.t356_assertions({"t356": t356_good}) == [], part.t356_assertions({"t356": t356_good})
+assert part.t356_assertions({}) == []
+t356_bad = {"download": {"state": "done", "inPacks": 30, "demFetchedByZoom": {"12": 4}},  # the old skip: nothing past the map's z11 inside it
+            "phases": [ph("airplane", serves="rainier-wide"), ph("no-source", z15=[{"kind": "dem", "pack": None, "status": 404}])]}
+whats = sorted(f["what"] for f in part.t356_assertions({"t356": t356_bad}))
+assert whats == sorted(["T356:download-skip", "T356:holdings", "T356:request-log", "T356:z15-404"]), whats
+# end T356
+
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:
     sweep = fh.read()

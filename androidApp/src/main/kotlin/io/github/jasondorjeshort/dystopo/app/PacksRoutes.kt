@@ -16,8 +16,8 @@ import kotlin.math.floor
  *   depth first: `name`, `kind` map, area, cache or overview, `depth`, `holds` stores, synthesises or edge, `serves`,
  *   `chosen`, vector `profile`), `off` (the maps switched off that would), `network` (`storedMaxZoom`, `adds`: the deeper
  *   zoom the network would add, `ahead`: it would go ahead under More detail from online, not yet used by a tile path;
- *   `allowed`, `onlineDetail`, `notAllowedBecause`), `tilePathServes` (what the tile paths answer today, from the maps
- *   and the overview alone); `overviewRule` (T341's answer for the vector tile, `GET /why`'s `online.vector`); `readZoom`
+ *   `allowed`, `onlineDetail`, `notAllowedBecause`), `tilePathServes` (what the tile paths answer: the maps and the
+ *   overview, or T356's area cell or cached tile deeper than the maps where its tile is on the phone); `overviewRule` (T341's answer for the vector tile, `GET /why`'s `online.vector`); `readZoom`
  *   (the zoom the sky views read the point at); `holdings` (every input: `name`, `kind`, `vector` and `dem` zooms and box,
  *   `profile`, `chosen`, `off`); `online` (the online member: `vectorMaxZoom`, `demMaxZoom` stored, `allowed`,
  *   `onlineDetail`, `notAllowedBecause`; null with no source set). `GET /why`'s `maps` and `online.vector` read the same answer.
@@ -75,11 +75,13 @@ object PacksRoutes {
         val zoom: Double, val lat: Double, val lon: Double, val holdings: List<Holdings.Holding>, val online: Holdings.Online?,
         val vector: Holdings.Here, val dem: Holdings.Here, val vectorNow: Holdings.Here, val demNow: Holdings.Here,
         val overviewRule: Holdings.Answer, val readZoom: Int?,
+        /** T356: what the tile paths serve, the held cells deeper than the maps included (`TileService.held`); null: [vectorNow]'s and [demNow]'s. */
+        val vectorPath: String? = null, val demPath: String? = null,
     ) {
         fun json(): Map<String, Any?> = linkedMapOf(
             "zoom" to zoom, "lat" to lat, "lon" to lon,
-            "vector" to vector.json() + ("tilePathServes" to vectorNow.serving?.holding?.name),
-            "dem" to dem.json() + ("tilePathServes" to demNow.serving?.holding?.name),
+            "vector" to vector.json() + ("tilePathServes" to (vectorPath ?: vectorNow.serving?.holding?.name)),
+            "dem" to dem.json() + ("tilePathServes" to (demPath ?: demNow.serving?.holding?.name)),
             "overviewRule" to overviewRule.json(), "readZoom" to readZoom,
             "holdings" to holdings.map { it.json() }, "online" to online?.json(),
         )
@@ -117,6 +119,8 @@ object PacksRoutes {
         return HoldingsHere(
             zoom, lat, lon, all, member, vector, Holdings.point(Holdings.Role.DEM, lat, lon, dz, all, member), vectorNow,
             Holdings.point(Holdings.Role.DEM, lat, lon, dz, now, member), rule, Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM),
+            vector.let { h -> app.tiles.held.deeper(Holdings.Role.VECTOR, h.z, h.x, h.y)?.takeIf { app.tiles.held.tile(Holdings.Role.VECTOR, h.z, h.x, h.y) != null }?.holding?.name ?: "cache".takeIf { rule.serves == Holdings.Source.CACHE } }, // T356: and T341's kept tile at the overview's zooms
+            Holdings.point(Holdings.Role.DEM, lat, lon, dz, all, member).let { h -> app.tiles.held.deeper(Holdings.Role.DEM, h.z, h.x, h.y)?.takeIf { app.tiles.held.tile(Holdings.Role.DEM, h.z, h.x, h.y) != null }?.holding?.name }, // T356
         )
     }
 

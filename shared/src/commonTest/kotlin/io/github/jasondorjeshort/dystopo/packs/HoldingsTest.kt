@@ -41,9 +41,10 @@ class HoldingsTest {
     }
 
     @Test
-    fun withTheSettingOffTheOverviewAnswersAsBefore() {
+    fun withTheSettingOffNothingIsFetchedButTheKeptTileStillAnswers() {
         assertEquals(Triple(Source.OVERVIEW, false, "overview-online-off"), answer(4, on = online(detail = false)))
-        assertEquals(Triple(Source.OVERVIEW, false, "overview-online-off"), answer(4, on = online(detail = false), cached = true))
+        // T356 (ADR 0066 decision 2): the kept tile is held by the phone, ranked by depth whatever the setting says.
+        assertEquals(Triple(Source.CACHE, false, "online-kept"), answer(4, on = online(detail = false), cached = true))
     }
 
     @Test

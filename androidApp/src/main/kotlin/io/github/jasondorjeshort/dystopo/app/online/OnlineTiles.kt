@@ -76,8 +76,33 @@ class OnlineTiles(
     /** True when the DEM pack answers tile z/x/y (stored, or synthesized from its ancestors). */
     fun packCoversDem(z: Int, x: Int, y: Int): Boolean = packs.demFor(z, x, y) != null // T41: any pack
 
-    /** T88: the encoded DEM tile z/x/y from the pack that answers it, or null (direct contour tiles across a pack's edge). */
-    fun packDem(z: Int, x: Int, y: Int): ByteArray? = packs.demFor(z, x, y)?.tile(z, x, y)
+    /**
+     * T88: the encoded DEM tile z/x/y from the pack that answers it, or null (direct contour tiles across a pack's edge).
+     * T356 (ADR 0066 decision 1): an area's cell or a cached tile deeper than that pack first ([held]); never the network.
+     */
+    fun packDem(z: Int, x: Int, y: Int): ByteArray? = held?.tile(Holdings.Role.DEM, z, x, y) ?: packs.demFor(z, x, y)?.tile(z, x, y)
+
+    // ---- T356: what the phone holds, ranked by depth ----
+
+    /** T356: the tile service's [io.github.jasondorjeshort.dystopo.app.HeldTiles], set when it is made; null until then. */
+    @Volatile var held: io.github.jasondorjeshort.dystopo.app.HeldTiles? = null
+
+    /**
+     * T356: the online tile cache as a holding of the lookup: a tile is held where the fetcher's cache has it
+     * ([OnlineFetcher.hasCached]), its depth the source's stored maximum (the vector source's, the elevation's:
+     * [DirectSources.maxZoom] or a server's declared `demMaxZoom`, else the URL range), as `GET /holdings` lists it.
+     */
+    fun cacheHolding(): Holdings.Holding {
+        val direct = fetcher.server == DirectSources.SERVER
+        val osm = if (direct) OSM_MAX_ZOOM else (service.info?.get("osmMaxZoom") as? Number)?.toInt() ?: OSM_MAX_ZOOM
+        val dem = if (direct) service.direct.maxZoom else (service.info?.get("demMaxZoom") as? Number)?.toInt() ?: DEM_MAX_ZOOM
+        return Holdings.Holding(
+            "cache", Holdings.Kind.CACHE, Holdings.Stored(0, osm), Holdings.Stored(0, dem), io.github.jasondorjeshort.dystopo.packs.VectorProfile.OPENMAPTILES,
+            cells = { role, z, x, y -> if (role == Holdings.Role.VECTOR) fetcher.hasCached("osm", "$z/$x/$y.pbf") else fetcher.hasCached("dem", "$z/$x/$y.png") },
+        )
+    }
+
+    // end T356
 
     fun packCoversOsm(z: Int, x: Int, y: Int): Boolean = packs.osmFor(z, x, y) != null // T41: any pack
 
@@ -133,7 +158,8 @@ class OnlineTiles(
     fun vectorAnswer(z: Int, x: Int, y: Int, member: Holdings.Online = onlineMember()): Holdings.Answer {
         val answering = packs.osmFor(z, x, y)
         val ov = overview
-        val overviewZoom = ov != null && z in ov.minZoom..ov.maxZoom && member.detail && member.storedMaxZoom > ov.maxZoom
+        // T356 (ADR 0066 decision 2): the kept tile answers whatever the setting says; the setting gates the fetch behind only.
+        val overviewZoom = ov != null && z in ov.minZoom..ov.maxZoom && member.storedMaxZoom > ov.maxZoom
         val cached = overviewZoom && answering === packs.world && fetcher.hasCached("osm", "$z/$x/$y.pbf")
         return Holdings.vectorTile(z, answering != null && answering !== packs.world, ov, member, cached)
     }
@@ -214,7 +240,7 @@ class OnlineTiles(
     // end T341
 
     /** True when the contour tile lies wholly inside the DEM pack: the pack path (and its cache) makes it, as without a server. */
-    fun packCoversContour(z: Int, x: Int, y: Int): Boolean = packs.demContains(z, x, y) // T41: wholly inside any pack
+    fun packCoversContour(z: Int, x: Int, y: Int): Boolean = packs.demContains(z, x, y) && held?.deeperOver(z, x, y) == null // T41: wholly inside any pack; T356: and no held cell deeper there
 
     /**
      * T98: the plan options of contour tile z/x/y over a configured server's DEM ([DirectSources.contourOptions] for the
@@ -374,7 +400,7 @@ class OnlineTiles(
 
     /** Encoded DEM tile for the pyramid: the pack's where it covers, else fetched; null when nobody has it. */
     private fun demBytes(z: Int, x: Int, y: Int): ByteArray? {
-        if (packCoversDem(z, x, y)) return packs.demFor(z, x, y)?.tile(z, x, y) // T41
+        if (packCoversDem(z, x, y)) return packDem(z, x, y) // T41; T356: a deeper held cell first
         if (z !in demMinZoom..DEM_MAX_ZOOM) return null
         return when (val f = fetcher.get("dem", "$z/$x/$y.png")) {
             is Fetch.Hit -> f.bytes

@@ -272,6 +272,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
         table["t343"] = t343_collect(dev, raw_dir)  # T343: the Download card at three places (its block, below)
         table["t341"] = t341_collect(dev, raw_dir)  # T341: GET /why and the chip at the overview's zooms (its block, below)
         table["t354"] = t354_collect(dev, wait_ms, raw_dir)  # T354: GET /holdings against /why and the sky views, each map chosen in turn (its block, below)
+        table["t356"] = t356_collect(dev, raw_dir)  # T356: an area's z15 cells inside the coarse map, offline and with no source (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
     finally:
@@ -375,6 +376,7 @@ def assertions(table):
     out += t341_assertions(table)
     # end T341
     out += t354_assertions(table)  # T354
+    out += t356_assertions(table)  # T356
     return out
 
 
@@ -765,6 +767,206 @@ def t354_assertions(table):
             out.append({"what": "T354:chosen-matters", "place": place, "serves": sorted(seen, key=str)})
     return out
 # end T354
+
+
+# T356
+# What the phone holds, ranked by depth (ADR 0066 decision 1), in the tile paths and the downloads' skip. A local stub
+# server (this script, on the host, reached as 10.0.2.2) serves synthetic elevation tiles (a smooth made-up surface, no
+# place's data) and no vector tiles; the phone's server is set to it, and a corridor at `wide-only` (inside the coarse map,
+# whose elevation stops at z11) is downloaded at z10 to z15. Asserted: the download fetched its z12 to z15 elevation from
+# the stub (before T356 a map's overzoom skipped it) and skipped what the coarse map stores; then, in airplane mode with the
+# server still set and again with no source set (server cleared, direct reading off), after a cold start: `GET /holdings` at
+# the place names the area as what serves the z15 elevation tile and as the tile path's (`tilePathServes`); with the camera
+# at z15 the request log names the area (`area:<name>`) for the elevation and contour tiles there, and no z15 tile of the
+# place is a 404. Pinned: the online tile cache is emptied first; the settings it changes (server, direct reading, the
+# network) are read first and put back, and the area is deleted, at the end; nothing reads the clock but the waits. It
+# depends on no earlier part, only on the fixture this part installed.
+T356_AREA = "t356-held"
+T356_LINE = "46.726,-121.566;46.734,-121.554"  # at the fixture's wide-only place, inside the coarse map only
+
+
+def t356_png(z, x, y, size=256):
+    """A synthetic Terrarium tile: a smooth surface of global pixel position (no place's data), the same across zooms."""
+    import math
+    import struct
+    import zlib
+    rows = []
+    scale = 2.0 ** (15 - z)
+    for j in range(size):
+        gy = (y * size + j) * scale
+        row = bytearray([0])
+        for i in range(size):
+            gx = (x * size + i) * scale
+            e = 1200.0 + 250.0 * math.sin(gx / 700.0) * math.cos(gy / 900.0)
+            v = e + 32768.0
+            row += bytes((int(v // 256) & 255, int(v) & 255, int((v - int(v)) * 256) & 255))
+        rows.append(bytes(row))
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"".join(rows), 6)) + chunk(b"IEND", b""))
+
+
+def t356_stub():
+    """The stub server on a free host port: `/live/info`, `/dem/z/x/y.png` (synthetic), 404 for the rest; (server, port, log)."""
+    import re
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    log = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def reply(self, code, body=b"", ctype="application/octet-stream"):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+            log.append({"path": self.path.split("?")[0], "status": code})
+
+        def do_POST(self):  # no /area manifest: the phone makes it
+            self.reply(404)
+
+        def do_GET(self):
+            p = self.path.split("?")[0]
+            if p == "/live/info":
+                return self.reply(200, json.dumps({"demMinZoom": 6, "demMaxZoom": 15, "osmMaxZoom": 14}).encode(), "application/json")
+            m = re.match(r"^/dem/(\d+)/(\d+)/(\d+)\.png$", p)
+            if m and 6 <= int(m.group(1)) <= 15:
+                return self.reply(200, t356_png(*(int(g) for g in m.groups())), "image/png")
+            return self.reply(404)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, srv.server_address[1], log
+
+
+def t356_tile(z, lat, lon):
+    import math
+    n = 2 ** z
+    return z, int((lon + 180.0) / 360.0 * n), int((1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n)
+
+
+def t356_here(lines, total_before, total_after, lat, lon):
+    """The request log's lines since `total_before` for the elevation, contour and shade tiles at z15 within one tile of the place."""
+    new = lines[-(total_after - total_before):] if total_after > total_before else []
+    _, cx, cy = t356_tile(15, lat, lon)
+    here = []
+    for line in new:
+        parts = line.get("path", "").split("/")
+        if len(parts) > 4 and parts[1] in ("dem", "contours", "shade") and parts[2] == "15":
+            tx, ty = int(parts[3]), int(parts[4].split(".")[0])
+            if abs(tx - cx) <= 1 and abs(ty - cy) <= 1:
+                here.append({"kind": parts[1], "tile": f"15/{tx}/{ty}", "pack": line.get("pack"), "status": line.get("status")})
+    return here
+
+
+def t356_collect(dev, raw_dir):
+    out = {"phases": []}
+    place = next(p for p in fx.PLACES if p["id"] == "wide-only")
+    lat, lon = place["lat"], place["lon"]
+    _, s0, _ = dev.call("/settings")
+    _, d0, _ = dev.call("/firstrun/direct")
+    server0 = (s0 or {}).get("server") or ""
+    direct0 = bool((d0 or {}).get("enabled"))
+    out["before"] = {"serverSet": bool(server0), "direct": direct0}
+    srv, port, log = t356_stub()
+    area_id = None
+
+    def save(name, body):
+        if raw_dir:
+            with open(os.path.join(raw_dir, f"t356-{name}.json"), "w", encoding="utf-8", newline="\n") as fh:
+                json.dump(body, fh, indent=1)
+
+    try:
+        fx.network(dev, True)
+        dev.call("/online/cache/clear", "POST", timeout=120)
+        dev.call("/settings?server=" + urllib.parse.quote(f"http://10.0.2.2:{port}", safe=""), "POST")
+        time.sleep(3.0)
+        _, started, err = dev.call(f"/areas/download?line={T356_LINE}&bufferM=300&minZoom=10&maxZoom=15&name={T356_AREA}", "POST", timeout=60)
+        area_id = get(started, "download", "id")
+        t0, dl = time.time(), None
+        while time.time() - t0 < 300:
+            _, dl, _ = dev.call("/areas/download")
+            if get(dl, "state") in ("done", "failed", "partial", "cancelled"):
+                break
+            time.sleep(2.0)
+        save("download", dl)
+        dem = [z for z, x, y in (map(int, e["path"][5:-4].split("/")) for e in list(log) if e["path"].startswith("/dem/") and e["status"] == 200)
+               if abs(x - t356_tile(z, lat, lon)[1]) <= 2 and abs(y - t356_tile(z, lat, lon)[2]) <= 2]  # the corridor's, not a view's elsewhere
+        out["download"] = {"error": err, "id": area_id, "state": get(dl, "state"), "planned": get(dl, "planned"), "fetched": get(dl, "fetched"),
+                           "inPacks": get(dl, "inPacks"), "failed": get(dl, "failed"),
+                           "demFetchedByZoom": {str(z): dem.count(z) for z in sorted(set(dem))}}
+        for name, source in (("airplane", True), ("no-source", False)):
+            fx.network(dev, False)
+            if not source:
+                dev.call("/settings?server=", "POST")
+                dev.call("/firstrun/direct?on=0", "POST")
+            dev.restart()
+            ph = {"phase": name}
+            _, h, e1 = dev.call(f"/holdings?z=14.5&lat={lat}&lon={lon}")
+            save(f"{name}-holdings", h)
+            ph["dem"] = {"serves": get(h, "dem", "serves"), "tilePathServes": get(h, "dem", "tilePathServes"), "tile": get(h, "dem", "tile")}
+            dev.call(f"/camera?lat={lat + 0.3}&lon={lon}&zoom=10&bearing=0", "POST")
+            time.sleep(4.0)
+            _, pre, _ = dev.call("/stats/requests?limit=1")
+            dev.call(f"/camera?lat={lat}&lon={lon}&zoom=15&bearing=0", "POST")
+            time.sleep(15.0)
+            _, req, e2 = dev.call("/stats/requests?limit=1500")
+            ph["errors"] = [e for e in (e1, e2) if e]
+            req = req or {}
+            ph["z15Here"] = t356_here(req.get("lines") or [], (pre or {}).get("total", 0), req.get("total", 0), lat, lon)
+            save(f"{name}-z15", ph["z15Here"])
+            out["phases"].append(ph)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        try:
+            if area_id:
+                dev.call(f"/areas/{area_id}", "DELETE")
+            fx.network(dev, True)
+            dev.call("/settings?server=" + urllib.parse.quote(server0, safe=""), "POST")
+            dev.call(f"/firstrun/direct?on={1 if direct0 else 0}", "POST")
+        except Exception as e:
+            out["restoreError"] = f"{type(e).__name__}: {e}"[:300]
+        srv.shutdown()
+    return out
+
+
+def t356_assertions(table):
+    out = []
+    t = table.get("t356")
+    if not isinstance(t, dict):
+        return out  # not run: the phases failed before it, or a table from before T356
+    for k in ("error", "restoreError"):
+        if t.get(k):
+            out.append({"what": f"T356:{k}", "error": t[k]})
+    d = t.get("download") or {}
+    by = {int(z): n for z, n in (d.get("demFetchedByZoom") or {}).items()}
+    if d.get("state") != "done" or any(by.get(z, 0) == 0 for z in (12, 13, 14, 15)) or not d.get("inPacks"):
+        out.append({"what": "T356:download-skip", "download": d})
+    for ph in t.get("phases") or []:
+        row = f"t356/{ph.get('phase')}"
+        if ph.get("errors"):
+            out.append({"what": "T356:unread", "row": row, "errors": ph["errors"]})
+            continue
+        dem = ph.get("dem") or {}
+        if dem.get("serves") != T356_AREA or dem.get("tilePathServes") != T356_AREA:
+            out.append({"what": "T356:holdings", "row": row, "dem": dem})
+        here = ph.get("z15Here") or []
+        kinds = {h["kind"] for h in here if h.get("pack") == f"area:{T356_AREA}" and h.get("status") == 200}
+        if "dem" not in kinds or "contours" not in kinds:
+            out.append({"what": "T356:request-log", "row": row, "z15": here[:12]})
+        if any(h.get("status") == 404 for h in here):
+            out.append({"what": "T356:z15-404", "row": row, "z15": [h for h in here if h.get("status") == 404][:6]})
+    if len(t.get("phases") or []) != 2 and not t.get("error"):
+        out.append({"what": "T356:phases", "phases": len(t.get("phases") or [])})
+    return out
+# end T356
 
 
 def main(argv=None):

@@ -82,6 +82,11 @@ class ShadeService(
     private val cache: () -> TileCache = { ContourCache.get() },
     /** T65: the `/stats` counters, owned by the app ([io.github.jasondorjeshort.dystopo.app.TileCounters]) so they stay cumulative across tile service reopens. */
     val counters: ShadeCounters = ShadeCounters(),
+    /**
+     * T356 (ADR 0066 decision 1): with no source set, the pyramid over what the phone holds (an area's cells where they are
+     * deeper than the maps), for a tile the caller says the maps do not make ([tile]'s `packCovers` false).
+     */
+    private val heldPyramid: () -> DemPyramid? = { null },
 ) {
     val served = counters.served
     val cacheHits = counters.cacheHits
@@ -110,12 +115,16 @@ class ShadeService(
 
     /**
      * Shade tile z/x/y as PNG: the pack's (cached) where its DEM covers the tile, else the online DEM's, else
-     * a 404. Flat ground and areas without data give a transparent tile.
+     * a 404. Flat ground and areas without data give a transparent tile. T356: [packCovers] false with no source set: made
+     * from what the phone holds ([heldPyramid]), not kept (an area's cells deeper than the maps, or no map at all).
      */
     fun tile(z: Int, x: Int, y: Int, packCovers: Boolean): TileResult {
         val o = options ?: return notFound()
         try {
-            val bytes = if (packCovers || online == null) {
+            val held = if (!packCovers && online == null) heldPyramid() else null // T356
+            val bytes = if (held != null) {
+                generate(held, o, z, x, y)
+            } else if (packCovers || online == null) {
                 val (p, identity) = pyramidFor(z, x, y) ?: return notFound()
                 cachedOrGenerate(p, identity, o, z, x, y)
             } else {
@@ -209,7 +218,10 @@ class ShadeService(
         val o = SunShadeOptions(minute * 60_000L)
         val sv = counters.sunServed
         try {
-            val bytes = if (packCovers || online == null) {
+            val held = if (!packCovers && online == null) heldPyramid() else null // T356
+            val bytes = if (held != null) {
+                generateSun(held, o, z, x, y).first
+            } else if (packCovers || online == null) {
                 val (p, identity) = pyramidFor(z, x, y) ?: run {
                     sv.notFound.incrementAndGet()
                     return TileResult.notFound()

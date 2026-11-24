@@ -168,10 +168,15 @@ object AheadPrefetch {
         runs++
     }
 
-    private fun present(t: Tile, fetcher: OnlineFetcher?): Boolean {
-        val packs = runCatching { app.tiles.packs }.getOrNull()
-        val inPack = if (t.route == AreaManifest.ROUTE_DEM) packs?.demFor(t.z, t.x, t.y) != null else packs?.osmFor(t.z, t.x, t.y) != null
-        return inPack || (fetcher != null && Areas.cached(t.route, t.path)) // T74: versioned keys, every source
+    private fun present(t: Tile, fetcher: OnlineFetcher?): Boolean = inPack(t) || (fetcher != null && Areas.cached(t.route, t.path)) // T74: versioned keys, every source
+
+    /**
+     * T356 (ADR 0066): a map stores the tile at its own depth ([io.github.jasondorjeshort.dystopo.app.HeldTiles.mapStores]); a map
+     * answers deeper elevation by overzoom, which skipped the corridor's elevation inside a coarse map before.
+     */
+    private fun inPack(t: Tile): Boolean {
+        val tiles = runCatching { app.tiles }.getOrNull() ?: return false
+        return if (t.route == AreaManifest.ROUTE_DEM) tiles.held.mapStores(io.github.jasondorjeshort.dystopo.packs.Holdings.Role.DEM, t.z, t.x, t.y) else tiles.packs.osmFor(t.z, t.x, t.y) != null
     }
 
     private fun fetchSegment(k: Int, total: Double, progress: Double, fetcher: OnlineFetcher) {
@@ -189,11 +194,9 @@ object AheadPrefetch {
         Areas.pinTransient("ahead:$k", AreaPins.cover(area), fetcher.currentVersions())
         val started = System.currentTimeMillis()
         s.progressAtFetchM = progress
-        val packs = runCatching { app.tiles.packs }.getOrNull()
         val futures = tiles.map { t ->
             pool.submit(Callable {
-                val inPack = if (t.route == AreaManifest.ROUTE_DEM) packs?.demFor(t.z, t.x, t.y) != null else packs?.osmFor(t.z, t.x, t.y) != null
-                if (inPack) return@Callable "pack" to 0
+                if (inPack(t)) return@Callable "pack" to 0 // T356
                 val transform: (ByteArray) -> ByteArray = if (t.route == AreaManifest.ROUTE_OSM) OnlineFetcher::gunzipIfNeeded else { b -> b }
                 when (val f = io.github.jasondorjeshort.dystopo.app.online.DirectSources.download { fetcher.get(t.route, t.path, transform, fresh = true) }) { // T95: the current version; T355: a download
                     is Fetch.Hit -> (if (f.cached) "cached" else "fetched") to f.bytes.size

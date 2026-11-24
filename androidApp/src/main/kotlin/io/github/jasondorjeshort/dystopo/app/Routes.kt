@@ -101,6 +101,7 @@ class Routes(private val app: DystopoApp) {
     /**
      * T123: which pack a tile at [path] came from, for the request log: the region pack that holds it, or
      * `online:<source key>` where the online fallback answers (the same coverage checks as [TileService]); null otherwise.
+     * T356: `area:<name>` or `cache` where an area's cell or a cached tile deeper than the maps answers ([HeldTiles.logName]).
      */
     private fun packOf(path: String): String? = runCatching {
         val m = anyTile.matchEntire(path) ?: return null
@@ -111,6 +112,7 @@ class Routes(private val app: DystopoApp) {
         val online = o?.let { "online:${it.fetcher.serverKey}" }
         // A Pack's own name is its role (`dem`, `osm`); the log names the region it belongs to.
         fun region(p: Pack?): String? = p?.let { pack -> t.packs.regions.firstOrNull { it.dem === pack || it.osm === pack }?.name ?: pack.file.name }
+        t.heldLogName(kind, z, x, y)?.let { return it } // T356: an area's cell (`area:<name>`) or a cached tile (`cache`) deeper than the maps
         when (kind) {
             "osm" -> if (o != null && o.vectorAnswer(z, x, y).serves.let { it == io.github.jasondorjeshort.dystopo.packs.Holdings.Source.NETWORK || it == io.github.jasondorjeshort.dystopo.packs.Holdings.Source.CACHE }) online else region(t.packs.osmCandidates(z, x, y).firstOrNull()) // T341: the kept online tile at the overview's zooms
             "contours" -> if (o != null && !o.packCoversContour(z, x, y)) online else region(t.packs.demFor(z, x, y, io.github.jasondorjeshort.dystopo.packs.PackRoleZooms.CONTOUR))
