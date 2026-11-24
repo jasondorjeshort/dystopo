@@ -189,6 +189,15 @@ data class Readout(
     val pressure: ReadoutValue = ReadoutValue(ReadoutEntry.PRESSURE, ValueState.HIDDEN, reason = "no samples"),
     val accuracy: ReadoutValue = ReadoutValue(ReadoutEntry.ACCURACY, ValueState.HIDDEN, reason = "no fix"),
     val fixAge: ReadoutValue = ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "no fix"),
+    /**
+     * T362: the elapsed time the readout was read at ([ReadoutEstimator.readout]'s `elapsedNowMs`; the input clock when
+     * none is given), why the values are dimmed for the fix stream ([dimReason]: `no fix`, `resuming`, `activity`; null
+     * when they are not), what went wrong lately ([recent], [RecentFaults]) and the last restart ([lastRestart]).
+     */
+    val elapsedMs: Long = timeMs,
+    val dimReason: String? = null,
+    val recent: List<ReadoutFault> = emptyList(),
+    val lastRestart: ReadoutFault? = null,
 ) {
     operator fun get(entry: ReadoutEntry): ReadoutValue = when (entry) {
         ReadoutEntry.SPEED -> speed
@@ -208,6 +217,8 @@ data class Readout(
         "fixSpeedMps" to fixSpeedMps?.let { r3(it) }, "routeSpeedMps" to routeSpeedMps?.let { r3(it) },
         "counters" to counters, "provenance" to provenance,
         "climbWindowS" to climbWindowS, "climbFilledS" to climbFilledS?.let { r3(it) },
+        // T362
+        "dimReason" to dimReason, "recent" to recent.map { it.json(elapsedMs) }, "lastRestart" to lastRestart?.json(elapsedMs),
     )
 }
 
@@ -254,7 +265,20 @@ data class Readout(
  *   barometer is out for it. In a gap of the fixes (T192) it holds the value of the last fix, dimmed and `frozen`, and
  *   is "?" (`no fix`) once the climb window (the air: the gap rule) has passed since that fix, whatever the barometer
  *   reads meanwhile.
- * - **A gap** in the fixes (over 5 s or three intervals) dims the values and [Readout.gapS] counts it.
+ * - **A gap** in the fixes (over 5 s or three intervals) dims the values and [Readout.gapS] counts it. T362: gaps are
+ *   measured on elapsed time ([onFix]'s `elapsedMs`, [readout]'s `elapsedNowMs`; the input clock when not given, as in
+ *   replays and tests), never the fixes' wall-clock times, and the dim leaves only on the second fix of a run whose
+ *   fixes came within the gap of each other ([DimLatch]), so fixes in bursts give one steady dim, not a blink per gap.
+ *   Every dimmed elevation carries a reason ([Readout.dimReason]: `no fix`, `resuming`, `activity`; or `held`).
+ * - **A jump** (T362, moved here from the phone's `LiveReadout`): a step over [ReadoutTuning.JUMP_M] faster than the
+ *   profile's speed bound ([isJump]) restarts the position, speed, course and climb window, and keeps the elevation
+ *   filter and the barometer offset: the height is not lost to a network fix far off. The first GNSS or DEM height
+ *   after it more than [ReadoutTuning.JUMP_REANCHOR_M] from the kept one re-anchors the height on it (`jumpReanchors`).
+ * - **A clock going back** (an input over [CLOCK_BACK_MS] older than the latest) restarts everything, the elevation
+ *   filter too (it cannot step back in time); T362: the last height is held dimmed, reason `held` ([HeldHeight]), until
+ *   the new filter has one or [ReadoutTuning.HELD_HEIGHT_MS] pass, then "no height yet".
+ * - **What went wrong lately** (T362, [RecentFaults], [Readout.recent]): each gap with its length, each restart with its
+ *   cause, the barometer going silent, a fix skipped as late; each with its elapsed time.
  * - **A known height** (T197, [pin]): a summit, a saddle or a sign the user stands at replaces the elevation; with the
  *   barometer fused it holds as a pin ([BarometerStatus.pinnedAt]) until the offset's own random walk has doubled its
  *   sigma, GNSS and DEM heights set aside meanwhile ([ElevationFilter]).
@@ -341,7 +365,32 @@ class ReadoutEstimator(
         "suspects" to 0L, "reopens" to 0L, "demTries" to 0L, "clockResets" to 0L,
         "newOffsets" to 0L, "newOffsetsSource" to 0L, "newOffsetsStep" to 0L, // T204
         "disagreements" to 0L, "agreements" to 0L, // T250: out for a disagreement, back after agreeing
+        "jumpResets" to 0L, "jumpReanchors" to 0L, "heldHeights" to 0L, // T362
     )
+
+    // T362: the dim on elapsed time, the height held across a clock going back, the jump's last position, the record.
+    private val latch = DimLatch()
+    private var held: HeldHeight? = null
+    private var lastPos: Triple<Double, Double, Long>? = null
+    /** The elapsed time of the latest input (fix or sample), for a restart's time. */
+    private var lastElapsedIn: Long? = null
+    /** A jump happened and no GNSS or DEM height came since: the next one far from the kept height re-anchors it. */
+    private var jumpPending = false
+    /** [setProfile] cleared the fixes and no fix came since: the values dim with reason `activity`. */
+    private var profileRestart = false
+    private val faults = RecentFaults()
+    private var lastRestart: ReadoutFault? = null
+    /** The barometer sample time a silence was last noted for, so one silence is one fault. */
+    private var silenceNotedFor: Long? = null
+
+    /** T362: how many jumps restarted the position (the phone's `LiveReadout` reads it to drop its route hint). */
+    val jumpResets: Long get() = counts["jumpResets"] ?: 0L
+
+    private fun restart(cause: String, elapsedMs: Long?, detail: Double? = null) {
+        val f = ReadoutFault(ReadoutFault.RESTART, elapsedMs ?: lastElapsedIn ?: 0L, cause = cause, detail = detail)
+        faults.add(f)
+        lastRestart = f
+    }
 
     init {
         applyBarometerSwitch(null)
@@ -356,6 +405,8 @@ class ReadoutEstimator(
         moving = false
         lastCourse = null
         climbAtFix = null
+        profileRestart = true // T362: dims with a reason until the next fix
+        restart(ReadoutFault.CAUSE_ACTIVITY, null)
         endContradiction() // T250: the windows restart with the activity
         windowStart = null
         disagreeRun = 0
@@ -396,12 +447,36 @@ class ReadoutEstimator(
     /**
      * One fix. [routeAlongM] is the progress along the navigated line (`Navigator`'s `NavState.progress`) when
      * navigating and on the route, else null. Fixes not newer than the last are ignored.
+     * T362: [elapsedMs] is the elapsed realtime the fix came at (the phone's `SystemClock.elapsedRealtime`), passed beside
+     * the fix, whose own time is the wall clock's; gaps and the dim are measured on it. Replays and tests may leave it
+     * out: the fix's time stands in.
      */
-    fun onFix(fix: LocationFix, routeAlongM: Double? = null) {
-        clockCheck(fix.time)
+    fun onFix(fix: LocationFix, routeAlongM: Double? = null, elapsedMs: Long = fix.time) {
+        clockCheck(fix.time, elapsedMs)
+        lastElapsedIn = elapsedMs
+        if (isJump(fix)) {
+            val l = lastPos!!
+            restartPosition()
+            jumpPending = true
+            bump("jumpResets")
+            restart(ReadoutFault.CAUSE_JUMP, elapsedMs, TrackStats.distanceM(l.first, l.second, fix.lat, fix.lon))
+        }
         val last = fixes.lastOrNull()
-        if (last != null && fix.time <= last.t) { bump("lateInputs"); return }
+        if (last != null && fix.time <= last.t) {
+            bump("lateInputs")
+            faults.add(ReadoutFault(ReadoutFault.LATE_FIX, elapsedMs))
+            return
+        }
         bump("fixes")
+        lastPos = Triple(fix.lat, fix.lon, fix.time)
+        profileRestart = false
+        val interval = latch.onFix(elapsedMs, gapMs)
+        if (interval != null && interval > gapMs) faults.add(ReadoutFault(ReadoutFault.GAP, elapsedMs - interval, lengthMs = interval))
+        val sampleMs = lastSampleMs
+        if (baroAllowed && sampleMs != null && fix.time - sampleMs > ElevationFilter.BARO_FRESH_MS && silenceNotedFor != sampleMs) {
+            silenceNotedFor = sampleMs
+            faults.add(ReadoutFault(ReadoutFault.BAROMETER_SILENT, elapsedMs, lengthMs = fix.time - sampleMs))
+        }
         val afterGap = last != null && fix.time - last.t > gapMs
         var speed = fix.speedMps?.takeIf { it.isFinite() && it >= 0 }
         if (speed != null && (afterGap || speed > profile.speedBoundMps)) { bump("spikesDropped"); speed = null }
@@ -426,23 +501,71 @@ class ReadoutEstimator(
 
         if (ele != null) {
             val vAcc = fix.verticalAccuracyM?.takeIf { it > 0 } ?: fix.accuracyM?.takeIf { it > 0 }?.let { it * VACC_PER_HACC } ?: DEFAULT_VACC_M
-            if (vAcc <= MAX_VACC_M) filter.gnss(fix.time, ele, vAcc)
+            if (vAcc <= MAX_VACC_M) { afterJump(ele); filter.gnss(fix.time, ele, vAcc) }
             disagreement(fix.time, ele, vAcc)
         }
         demAtLastFix = dem?.elevation(fix.lat, fix.lon)?.takeIf { it.isFinite() }
         demUpdate(s, v)
         smooth(fix.time)
         climbAtFix = climbValue(fix.time, heightDim = false)
+        if (filter.heightKnown) held = null // T362: the new filter has a height: the held one goes
+    }
+
+    /**
+     * T362: [fix] is a jump from the last fix: over [ReadoutTuning.JUMP_M] away, faster than the profile's speed bound
+     * (or not later on the fixes' clock). Pure; the phone asks it before projecting the fix on a route.
+     */
+    fun isJump(fix: LocationFix): Boolean {
+        val l = lastPos ?: return false
+        val d = TrackStats.distanceM(l.first, l.second, fix.lat, fix.lon)
+        val dt = (fix.time - l.third) / 1000.0
+        return d > ReadoutTuning.JUMP_M && (dt <= 0 || d / dt > profile.speedBoundMps)
+    }
+
+    /** T362: a jump restarts the horizontal state (fixes, speed, course, the climb window); the elevation filter stays. */
+    private fun restartPosition() {
+        fixes.clear()
+        moving = false
+        lastCourse = null
+        lastDemAt = null
+        windowStart = null
+        disagreeRun = 0
+        climbAtFix = null
+        smoothAt = null
+        smoothV = 0.0
+        climbShown = false
+        climbResolves = false
+        clearClimbWindow()
+    }
+
+    /**
+     * T362: the first GNSS or DEM height [eleM] after a jump: one over [ReadoutTuning.JUMP_REANCHOR_M] from the kept
+     * height re-anchors the height on it (a fresh filter, the barometer's offset taken afresh at its next sample), as the
+     * gate would otherwise reject it for a long while; a nearer one is used as any other.
+     */
+    private fun afterJump(eleM: Double) {
+        if (!jumpPending) return
+        jumpPending = false
+        if (!filter.heightKnown || abs(eleM - filter.heightM) <= ReadoutTuning.JUMP_REANCHOR_M) return
+        bump("jumpReanchors")
+        filter = ElevationFilter(activity)
+        applyBarometerSwitch(null)
+        smoothAt = null
+        smoothV = 0.0
+        climbShown = false
+        climbResolves = false
+        clearClimbWindow()
     }
 
     /**
      * One barometer sample (hPa). Samples older than the filter's time are applied at its time and counted. T204: a
      * step past the activity's climb cap or a change of [PressureSample.source] is a new offset ([newOffset]).
      */
-    fun onPressure(sample: PressureSample) {
+    fun onPressure(sample: PressureSample, elapsedMs: Long = sample.timeMs) {
         if (!(sample.hPa in 300.0..1100.0)) return
         bump("pressureSamples")
-        clockCheck(sample.timeMs)
+        clockCheck(sample.timeMs, elapsedMs)
+        lastElapsedIn = elapsedMs
         val lastT = baro.lastOrNull()?.first
         if (lastT != null && sample.timeMs < lastT) bump("lateInputs")
         lastPressureHPa = sample.hPa
@@ -535,12 +658,23 @@ class ReadoutEstimator(
         return PinResult(held, before?.let { eleM - it }, reason)
     }
 
-    /** The readout at [nowMs] (normally the latest input's time or the wall clock): pure, it changes nothing. */
-    fun readout(nowMs: Long): Readout {
+    /**
+     * The readout at [nowMs] (normally the latest input's time or the wall clock moved to the fixes' clock): pure, it
+     * changes nothing. T362: [elapsedNowMs] is the elapsed realtime now, on the clock of [onFix]'s `elapsedMs` (the input
+     * clock when left out); the gap, the dim, the fix's age and the climb's hold are measured on it.
+     */
+    fun readout(nowMs: Long, elapsedNowMs: Long = nowMs): Readout {
         val last = fixes.lastOrNull()
-        val gap = last?.let { nowMs - it.t }?.takeIf { it > gapMs }
+        val gap = if (last == null) null else latch.gapMs(elapsedNowMs, gapMs)
         val gapS = gap?.let { it / 1000.0 }
-        val dim = last == null || gap != null
+        // T362: dimmed in a gap and after one until a second fix of a run ([DimLatch]); after an activity change until a fix.
+        val dimReason = when {
+            last != null -> latch.reason(elapsedNowMs, gapMs)
+            profileRestart && latch.lastFixElapsedMs != null -> ReadoutFault.CAUSE_ACTIVITY
+            else -> DimLatch.NO_FIX
+        }
+        val dim = dimReason != null
+        val sinceFixMs = latch.lastFixElapsedMs?.let { elapsedNowMs - it }
         val fixSpeed = last?.let { fixSpeed(it.t) }
         val pos = if (fixSpeed == null) last?.let { positionSpeed(it.t) } else null
         val route = last?.let { routeSpeed(it.t) }
@@ -562,17 +696,14 @@ class ReadoutEstimator(
         }
 
         val fused = filter.fused(nowMs)
-        val heightSource = when {
-            fused -> "barometer"
-            filter.gnssUpdates == 0 && filter.demUpdates > 0 -> "dem"
-            filter.lastDemMs?.let { nowMs - it <= DEM_RECENT_MS } == true -> "gnss+dem"
-            else -> "gnss"
-        }
+        val heightSource = heightSource(nowMs)
         val heightDim = dim && !fused
+        val heldHeight = held?.takeIf { !filter.heightKnown && it.holds(elapsedNowMs) }
         val elevation = when {
             !options.elevation.shown -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.HIDDEN, reason = "off")
+            heldHeight != null -> heldHeight.value() // T362: held across a clock going back, dimmed, `held`
             !filter.heightKnown -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.HIDDEN, reason = "no height yet")
-            else -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, filter.heightM, filter.heightSigmaM, heightSource, heightDim)
+            else -> ReadoutValue(ReadoutEntry.ELEVATION, ValueState.SHOWN, filter.heightM, filter.heightSigmaM, heightSource, heightDim, reason = if (heightDim) dimReason else null)
         }
         val windowed = climbWindowed
         val held = climbAtFix
@@ -580,7 +711,7 @@ class ReadoutEstimator(
         // the climb window has passed since that fix; it never decays toward zero on inputs that are not fixes.
         val climb = when {
             gap == null || last == null || held == null || !options.climb.shown || held.state == ValueState.HIDDEN -> climbValue(nowMs, heightDim)
-            nowMs - last.t > climbHoldMs -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = held.source, dimmed = true, reason = "no fix") // T250: "?", not a dash
+            (sinceFixMs ?: 0L) > climbHoldMs -> ReadoutValue(ReadoutEntry.CLIMB, ValueState.UNKNOWN, source = held.source, dimmed = true, reason = "no fix") // T250: "?", not a dash
             else -> held.copy(dimmed = true, frozen = true, reason = held.reason ?: "held")
         }
 
@@ -618,7 +749,7 @@ class ReadoutEstimator(
         val fixAge = when {
             !options.fixAge.shown -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "off")
             last == null -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.HIDDEN, reason = "no fix")
-            else -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.SHOWN, ((nowMs - last.t) / 1000.0).coerceAtLeast(0.0), source = "fix")
+            else -> ReadoutValue(ReadoutEntry.FIX_AGE, ValueState.SHOWN, ((sinceFixMs ?: (nowMs - last.t)) / 1000.0).coerceAtLeast(0.0), source = "fix") // T362: elapsed
         }
         val heights = ReadoutHeights(
             last?.ele,
@@ -643,7 +774,18 @@ class ReadoutEstimator(
             if (filter.priors > 0) listOf(STATION_SOURCE_ID) else emptyList(),
             climbWindowS = if (windowed) options.climbWindowS else null,
             climbFilledS = if (windowed) minOf(climbSpanS, options.climbWindowS.toDouble()) else null,
-            pressure = pressure, accuracy = accuracy, fixAge = fixAge)
+            pressure = pressure, accuracy = accuracy, fixAge = fixAge,
+            // T362: an ongoing gap is the record's last entry until the fix that ends it records it whole.
+            elapsedMs = elapsedNowMs, dimReason = dimReason, lastRestart = lastRestart,
+            recent = faults.at(elapsedNowMs, if (gap != null && sinceFixMs != null) ReadoutFault(ReadoutFault.GAP, elapsedNowMs - sinceFixMs, lengthMs = sinceFixMs, ongoing = true) else null))
+    }
+
+    /** Where the height comes from at [nowMs]: `barometer` (fused), `dem` (the DEM alone so far), `gnss+dem`, `gnss`. */
+    private fun heightSource(nowMs: Long): String = when {
+        filter.fused(nowMs) -> "barometer"
+        filter.gnssUpdates == 0 && filter.demUpdates > 0 -> "dem"
+        filter.lastDemMs?.let { nowMs - it <= DEM_RECENT_MS } == true -> "gnss+dem"
+        else -> "gnss"
     }
 
     /** The climb as the filter and the window give it at [nowMs] (also snapshotted at each fix for a gap, T192). */
@@ -871,6 +1013,7 @@ class ReadoutEstimator(
         val slope = slopeAt(d, s.lat, s.lon) ?: return
         if (slope > DEM_MAX_SLOPE_DEG) return
         if (nearStructure?.invoke(s.lat, s.lon) == true) return
+        afterJump(h) // T362
         val sigma = hypot(DEM_SIGMA_M, kotlin.math.tan(slope * DEG) * hAcc)
         if (filter.dem(s.t, h, sigma)) lastDemAt = s
     }
@@ -894,10 +1037,18 @@ class ReadoutEstimator(
      * Without this every later input counts as late, the filter never predicts, the climb stays at zero and the
      * elevation lags.
      */
-    private fun clockCheck(tMs: Long) {
+    private fun clockCheck(tMs: Long, elapsedMs: Long) {
         val latest = listOfNotNull(fixes.lastOrNull()?.t, baro.lastOrNull()?.first, filter.timeMs).maxOrNull() ?: return
         if (tMs >= latest - CLOCK_BACK_MS) return
         bump("clockResets")
+        // T362: the last height is held, dimmed, until the new filter has one or the hold passes.
+        if (filter.heightKnown) {
+            held = HeldHeight(filter.heightM, filter.heightSigmaM, heightSource(latest), elapsedMs)
+            bump("heldHeights")
+        }
+        restart(ReadoutFault.CAUSE_CLOCK, elapsedMs, (latest - tMs) / 1000.0)
+        jumpPending = false
+        lastPos = null
         fixes.clear()
         baro.clear()
         moving = false
