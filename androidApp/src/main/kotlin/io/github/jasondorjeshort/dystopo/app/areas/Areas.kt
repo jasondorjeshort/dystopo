@@ -309,6 +309,40 @@ object Areas : VersionPins {
         return maps + areas
     }
 
+    /** T354: [lookupHoldings]' areas, built again only when [list] changes. */
+    @Volatile private var lookupAreas: Pair<List<Record>, List<io.github.jasondorjeshort.dystopo.packs.Holdings.Holding>>? = null
+
+    /**
+     * T354 (ADR 0066's lookup): the inputs [holdings] builds for [HeldHere], as the lookup's
+     * [io.github.jasondorjeshort.dystopo.packs.Holdings.Holding]s, except the maps that are open, which
+     * `PackSet.holdings` gives from the archives the tile service ranks: each map that is off (T342: listed, holding nothing;
+     * its archives' zooms and boxes from [PackManager]'s headers) and each finished tile area (its own cells at its zooms,
+     * the map from its first zoom to its deepest, the elevation to its `demMaxZoom`; the vector profile OpenMapTiles, the
+     * online source's). Any thread but the UI one.
+     */
+    fun lookupHoldings(): List<io.github.jasondorjeshort.dystopo.packs.Holdings.Holding> {
+        val pm = PackManager.get(app)
+        val off = pm.offNames()
+        fun stored(a: io.github.jasondorjeshort.dystopo.packs.PackArchiveInfo?) = a?.let { io.github.jasondorjeshort.dystopo.packs.Holdings.Stored(it.minZoom, it.maxZoom, it.bounds) }
+        val offMaps = pm.list().filter { it.info.name in off }.map { l ->
+            io.github.jasondorjeshort.dystopo.packs.Holdings.Holding(l.info.name, io.github.jasondorjeshort.dystopo.packs.Holdings.Kind.MAP, stored(l.info.vector), stored(l.info.dem), off = true)
+        }
+        awaitLoaded()
+        val all = list
+        val areas = lookupAreas?.takeIf { it.first === all }?.second ?: all.filter { it.pack == null && it.opaque == null && it.state == "done" }.map { r ->
+            val sets = java.util.concurrent.ConcurrentHashMap<Int, TileSet>()
+            val a = r.area
+            io.github.jasondorjeshort.dystopo.packs.Holdings.Holding(
+                r.name, io.github.jasondorjeshort.dystopo.packs.Holdings.Kind.AREA,
+                io.github.jasondorjeshort.dystopo.packs.Holdings.Stored(a.minZoom, a.maxZoom, a.bounds),
+                io.github.jasondorjeshort.dystopo.packs.Holdings.Stored(a.minZoom, a.demMaxZoom ?: a.maxZoom, a.bounds),
+                io.github.jasondorjeshort.dystopo.packs.VectorProfile.OPENMAPTILES,
+                cells = { _, z, x, y -> sets.getOrPut(z) { io.github.jasondorjeshort.dystopo.areas.TileCover.of(a, z) }.contains(x, y) },
+            )
+        }.also { lookupAreas = all to it }
+        return offMaps + areas
+    }
+
     /** T95 ([VersionPins]): the pins with their versions, for the fetcher's lookups and version changes. */
     override fun pins(): AreaPins {
         awaitLoaded()

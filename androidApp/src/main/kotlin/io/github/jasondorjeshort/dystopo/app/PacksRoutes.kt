@@ -1,10 +1,26 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
 import io.github.jasondorjeshort.dystopo.app.packs.PackManager
 import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
+import io.github.jasondorjeshort.dystopo.packs.Holdings
+import io.github.jasondorjeshort.dystopo.packs.VectorProfile
+import io.github.jasondorjeshort.dystopo.tiles.ShadeTiles
+import kotlin.math.floor
 
 /**
  * Debug routes for packs, the files behind the offline maps (registered with one line in [Routes]):
+ * - T354 `GET /holdings[?z=&lat=&lon=]` (default: the camera's zoom and centre): ADR 0066's lookup ([Holdings]) at the
+ *   point, for the vector tile at the zoom and the elevation tile one zoom deeper (`vector`, `dem`): `serves`, `servesKind`
+ *   and `depth` (the holding that answers now and its stored maximum), `members` (every holding that answers the tile,
+ *   depth first: `name`, `kind` map, area, cache or overview, `depth`, `holds` stores, synthesises or edge, `serves`,
+ *   `chosen`, vector `profile`), `off` (the maps switched off that would), `network` (`storedMaxZoom`, `adds`: the deeper
+ *   zoom the network would add, `ahead`: it would go ahead under More detail from online, not yet used by a tile path;
+ *   `allowed`, `onlineDetail`, `notAllowedBecause`), `tilePathServes` (what the tile paths answer today, from the maps
+ *   and the overview alone); `overviewRule` (T341's answer for the vector tile, `GET /why`'s `online.vector`); `readZoom`
+ *   (the zoom the sky views read the point at); `holdings` (every input: `name`, `kind`, `vector` and `dem` zooms and box,
+ *   `profile`, `chosen`, `off`); `online` (the online member: `vectorMaxZoom`, `demMaxZoom` stored, `allowed`,
+ *   `onlineDetail`, `notAllowedBecause`; null with no source set). `GET /why`'s `maps` and `online.vector` read the same answer.
  * - `GET /packs`: every pack on the device (name, bounds, zooms, bytes, attribution, per-archive
  *   header facts) and which one is active. T352: `notOpened`, each archive the last open left closed (`pack`, `archive`
  *   `dem` or `osm`, `file`, `reason`: the exception or `short: <bytes> of <expected> bytes`, `dropped`: the whole pack left
@@ -43,7 +59,79 @@ import io.github.jasondorjeshort.dystopo.app.packs.PacksUi
 object PacksRoutes {
     private val packPath = Regex("^/packs/([^/]+)$")
 
+    // ---- T354: GET /holdings, ADR 0066's lookup at a point ----
+
+    /**
+     * T354: the lookup's answer at ([lat], [lon]) and [zoom], which `GET /holdings` and `GET /why` both report (one answer,
+     * two routes): the vector tile at the map's zoom and the elevation tile one zoom deeper (`GET /why`'s two tiles), each
+     * over every holding ([vector], [dem]) and over the holdings the tile paths read today, the maps and the world overview
+     * ([vectorNow], [demNow]: what `PackSet.osmFor` and `demFor` answer; T356 moves the tile paths onto the whole lookup);
+     * [overviewRule] T341's rule for the vector tile ([Holdings.vectorTile], the tile path's at the overview's zooms) read
+     * from the same answer; [readZoom] the zoom the sky views read the point's terrain at ([Holdings.readZoom], capped at
+     * `ShadeTiles.POINT_ZOOM` as the Horizon view caps it; outside every map it names the online source's stored maximum,
+     * where the terrain read still uses the URL range until T368).
+     */
+    class HoldingsHere(
+        val zoom: Double, val lat: Double, val lon: Double, val holdings: List<Holdings.Holding>, val online: Holdings.Online?,
+        val vector: Holdings.Here, val dem: Holdings.Here, val vectorNow: Holdings.Here, val demNow: Holdings.Here,
+        val overviewRule: Holdings.Answer, val readZoom: Int?,
+    ) {
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "zoom" to zoom, "lat" to lat, "lon" to lon,
+            "vector" to vector.json() + ("tilePathServes" to vectorNow.serving?.holding?.name),
+            "dem" to dem.json() + ("tilePathServes" to demNow.serving?.holding?.name),
+            "overviewRule" to overviewRule.json(), "readZoom" to readZoom,
+            "holdings" to holdings.map { it.json() }, "online" to online?.json(),
+        )
+    }
+
+    /**
+     * T354: everything the phone holds, as the lookup's inputs: the open maps and the world overview ([PackSet.holdings]), the
+     * maps that are off and the finished tile areas (`Areas.lookupHoldings`), and the online tile cache (`cache`: a tile is
+     * held where the fetcher's cache has it, `TileCache.contains` through [io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher.hasCached];
+     * its depth the online source's stored maximum; absent with no source set, when nothing reads it); with the online member.
+     */
+    fun holdings(app: DystopoApp): Pair<List<Holdings.Holding>, Holdings.Online?> {
+        val t = app.tiles
+        val o = t.online
+        val member = o?.onlineMember()
+        val areas = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.lookupHoldings() }.getOrDefault(emptyList())
+        val cache = if (o == null || member == null) null else Holdings.Holding(
+            "cache", Holdings.Kind.CACHE, Holdings.Stored(0, member.storedMaxZoom), Holdings.Stored(0, member.demMaxZoom ?: OnlineTiles.DEM_MAX_ZOOM),
+            VectorProfile.OPENMAPTILES,
+            cells = { role, z, x, y -> if (role == Holdings.Role.VECTOR) o.fetcher.hasCached("osm", "$z/$x/$y.pbf") else o.fetcher.hasCached("dem", "$z/$x/$y.png") },
+        )
+        return (t.packs.holdings() + areas + listOfNotNull(cache)) to member
+    }
+
+    /** T354: [HoldingsHere] at ([lat], [lon]) and [zoom]. */
+    fun holdingsHere(app: DystopoApp, zoom: Double, lat: Double, lon: Double): HoldingsHere {
+        val (all, member) = holdings(app)
+        val vz = floor(zoom).toInt().coerceAtLeast(0)
+        val dz = (floor(zoom).toInt() + 1).coerceIn(0, OnlineTiles.DEM_MAX_ZOOM)
+        val now = all.filter { !it.off && (it.kind == Holdings.Kind.MAP || it.kind == Holdings.Kind.OVERVIEW) }
+        val vector = Holdings.point(Holdings.Role.VECTOR, lat, lon, vz, all, member)
+        val vectorNow = Holdings.point(Holdings.Role.VECTOR, lat, lon, vz, now, member)
+        val overview = all.firstOrNull { it.kind == Holdings.Kind.OVERVIEW }?.vector?.let { Holdings.Overview(it.minZoom, it.maxZoom) }
+        val rule = Holdings.vectorTile(vz, vectorNow.serving?.holding?.kind == Holdings.Kind.MAP, overview, member, vector.members.any { it.holding.kind == Holdings.Kind.CACHE })
+        return HoldingsHere(
+            zoom, lat, lon, all, member, vector, Holdings.point(Holdings.Role.DEM, lat, lon, dz, all, member), vectorNow,
+            Holdings.point(Holdings.Role.DEM, lat, lon, dz, now, member), rule, Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM),
+        )
+    }
+
+    /** `GET /holdings[?z=&lat=&lon=]` (default: the camera's zoom and centre). */
+    private fun holdingsRoute(app: DystopoApp, r: Request): Response {
+        val cam = runCatching { app.map.onMain(5_000) { app.map.map?.cameraPosition } }.getOrNull()
+        val z = r.query["z"]?.toDoubleOrNull() ?: cam?.zoom ?: return bad("no camera; give z, lat and lon")
+        val lat = r.query["lat"]?.toDoubleOrNull() ?: cam?.target?.latitude ?: return bad("no camera; give lat")
+        val lon = r.query["lon"]?.toDoubleOrNull() ?: cam?.target?.longitude ?: return bad("no camera; give lon")
+        return Response.json(holdingsHere(app, z, lat, lon).json())
+    }
+    // end T354
+
     fun handle(app: DystopoApp, r: Request): Response? {
+        if (r.method == "GET" && r.path == "/holdings") return holdingsRoute(app, r) // T354
         if (r.path != "/packs" && !r.path.startsWith("/packs/")) return null
         val m = PackManager.get(app)
         return try {

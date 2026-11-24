@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app
 
+import io.github.jasondorjeshort.dystopo.packs.Holdings
 import io.github.jasondorjeshort.dystopo.packs.PackArchiveInfo
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.packs.PackCoverage
@@ -70,11 +71,12 @@ class Pack(val name: String, val file: File) : AutoCloseable {
  * `osm.pmtiles` that tools/android-push-pack.ps1 pushes is the pack `default`.
  *
  * [TileService] asks [demFor] / [osmFor] per tile: the archives are ranked by [PackPrecedence.ORDER] (vector:
- * outdoors profile over plain OpenMapTiles, then the primary pack, then the deeper archive, then the
- * smaller box, then the name), and a tile goes to the first archive that holds all of it, else the first that overlaps.
+ * outdoors profile over plain OpenMapTiles, then the deeper archive, then the primary pack, then the
+ * smaller box, then the name; T354, ADR 0066: depth before the primary), and a tile goes to the first archive that holds
+ * all of it, else the first that overlaps. The lookup ([holdings], `GET /holdings`) ranks them the same way.
  * The primary pack ([name], stored in `files/packs/active`, set by
- * [io.github.jasondorjeshort.dystopo.app.packs.PackManager.activate]) is where the map starts, what the
- * contour warm-up prepares and a tie-breaker in the ranking; [dem] and [osm] are its archives.
+ * [io.github.jasondorjeshort.dystopo.app.packs.PackManager.activate]) is where the map starts, the units seeding, what the
+ * contour warm-up prepares and the tie between two archives of equal depth; [dem] and [osm] are its archives.
  *
  * T342: a map switched off ("Use on this phone" off) is not opened, so nothing that reads maps through this set (the tile
  * server, the terrain reads, search, routing, peers' tiles) sees it; [off] names those on the phone. The state is a field
@@ -140,6 +142,20 @@ class PackSet(val regions: List<Region>, val glyphDir: File?, val name: String? 
 
     fun osmCandidates(z: Int, x: Int, y: Int): List<Pack> =
         PackPrecedence.candidates(osmCoverage, z, x, y, PackRoleZooms.VECTOR).map { osmPacks[it] }
+
+    /**
+     * T354: the opened maps and the world overview as the lookup's holdings ([Holdings.tile]): each map's vector and elevation
+     * archives' zooms and boxes as [PackPrecedence] ranks them (the same coverage, so the lookup and [demFor] / [osmFor] answer
+     * alike), [Holdings.Holding.chosen] the primary. The maps that are off are not opened: `Areas.lookupHoldings` lists them.
+     */
+    fun holdings(): List<Holdings.Holding> {
+        fun stored(c: PackCoverage?) = c?.let { Holdings.Stored(it.minZoom, it.maxZoom, it.bounds, it.wholeTiles) }
+        return regions.map { r ->
+            Holdings.Holding(
+                r.name, Holdings.Kind.MAP, stored(r.osmCoverage), stored(r.demCoverage), r.osmCoverage?.profile ?: VectorProfile.UNKNOWN, chosen = r.primary,
+            )
+        } + listOfNotNull(worldCoverage?.let { Holdings.Holding(WORLD_NAME, Holdings.Kind.OVERVIEW, stored(it), null, it.profile) })
+    }
 
     /** Every opened archive of the downloaded packs (T264: the world overview is not one; [close] closes it too). */
     val archives: List<Pack> get() = regions.flatMap { listOfNotNull(it.dem, it.osm) }

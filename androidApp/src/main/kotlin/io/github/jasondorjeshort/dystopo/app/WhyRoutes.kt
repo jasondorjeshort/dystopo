@@ -14,10 +14,12 @@ import kotlin.math.floor
  * - `GET /why[?z=&lat=&lon=]` (default: the camera's zoom and centre): for that point and zoom, the vector tile (512 px, the
  *   map's zoom) and the DEM tile (256 px, one zoom deeper) it lies in, and
  *   - `maps`: each offline map on the phone, its vector and elevation zooms, whether its box holds the point and whether it
- *     answers the vector or the elevation tile; `off`, the maps switched off (T342), which answer nothing;
+ *     answers the vector or the elevation tile (T354: from the lookup's answer, `GET /holdings`' `tilePathServes`, the
+ *     maps and the overview the tile paths read today); `off`, the maps switched off (T342), which answer nothing;
  *   - `overview`: the world overview's zooms and whether it holds the vector tile;
  *   - `online`: whether a source is set, its state, whether a fetch may run now (and why not), the setting `onlineDetail`
  *     with the vector source's stored maximum ([OnlineTiles.overviewJson]), [Holdings.vectorTile]'s answer for the tile
+ *     (T354: `GET /holdings`' `overviewRule`, read from the same answer)
  *     (`vector`: who serves, whether the network fetches behind it), how the network path answered that tile last
  *     (`lastVector`: `online`, `cached`, `wider`, or null when it never did) and the elevation source of the view
  *     ([OnlineTiles.viewSource]) with the online elevation's first zoom;
@@ -54,27 +56,31 @@ class WhyRoutes(private val app: DystopoApp) {
         val o = t.online
         val (vz, vx, vy) = tile(floor(zoom).toInt().coerceAtLeast(0), lat, lon)
         val (dz, dx, dy) = tile((floor(zoom).toInt() + 1).coerceIn(0, OnlineTiles.DEM_MAX_ZOOM), lat, lon)
-        val vectorPack = packs.osmFor(vz, vx, vy)
-        val demPack = packs.demFor(dz, dx, dy)
+        // T354: `maps` and `online.vector` from the lookup's answer, the one `GET /holdings` reports (what the tile paths read today).
+        val here = PacksRoutes.holdingsHere(app, zoom, lat, lon)
+        val vectorServes = here.vectorNow.serving?.holding
+        val demServes = here.demNow.serving?.holding
         val maps = packs.regions.map { reg ->
             val h = (reg.osm ?: reg.dem)!!.header
             val holds = lon >= h.minLon && lon <= h.maxLon && lat >= h.minLat && lat <= h.maxLat
             linkedMapOf(
                 "name" to reg.name, "primary" to (packs.primary === reg),
                 "vectorZooms" to reg.osm?.header?.let { listOf(it.minZoom, it.maxZoom) }, "demZooms" to reg.dem?.header?.let { listOf(it.minZoom, it.maxZoom) },
-                "holdsPoint" to holds, "answersVector" to (reg.osm != null && vectorPack === reg.osm), "answersDem" to (reg.dem != null && demPack === reg.dem),
+                "holdsPoint" to holds,
+                "answersVector" to (vectorServes?.kind == Holdings.Kind.MAP && vectorServes.name == reg.name),
+                "answersDem" to (demServes?.kind == Holdings.Kind.MAP && demServes.name == reg.name),
             )
         }
         val floorMap = maps.filter { it["holdsPoint"] == true && (it["vectorZooms"] as? List<*>)?.let { zs -> vz < (zs[0] as Int) } == true }
         val ov = packs.world?.header
-        val overviewHolds = packs.worldAnswers(vz, vx, vy)
-        val answer = o?.vectorAnswer(vz, vx, vy)
+        val overviewHolds = vectorServes?.kind == Holdings.Kind.OVERVIEW
+        val answer = if (o == null) null else here.overviewRule
         val last = o?.vectorSource("$vz/$vx/$vy.pbf")
-        val member = o?.onlineMember()
-        val demSource = o?.viewSource(lat, lon, zoom)?.first ?: if (demPack != null) OnlineTiles.PACK else OnlineTiles.NONE
+        val member = here.online
+        val demSource = o?.viewSource(lat, lon, zoom)?.first ?: if (demServes != null) OnlineTiles.PACK else OnlineTiles.NONE
         val options = AppSettings.mapOptions
         val drawCause = when {
-            vectorPack != null && vectorPack !== packs.world -> "none"
+            vectorServes?.kind == Holdings.Kind.MAP -> "none"
             answer == null -> when {
                 overviewHolds -> "overview"
                 floorMap.isNotEmpty() -> "below-maps-floor"

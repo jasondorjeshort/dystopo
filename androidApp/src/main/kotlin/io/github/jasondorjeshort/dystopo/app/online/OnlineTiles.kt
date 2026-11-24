@@ -86,17 +86,20 @@ class OnlineTiles(
     /**
      * T341 (ADR 0066): the online member as [Holdings.vectorTile] takes it: the vector source's stored maximum (OpenFreeMap's
      * z14 with the phone's own sources, else the server's declared `osmMaxZoom`), whether a fetch may run now (not offline,
-     * not paused by Mobile data or the session limit) and the setting `onlineDetail` ([OnlineDetail]).
+     * not paused by Mobile data or the session limit) and the setting `onlineDetail` ([OnlineDetail]). T354: the elevation
+     * source's stored maximum joins it: the phone's own reading stores to [DirectSources.maxZoom] (the setting, z12 by
+     * default; its z15 is the URL range), a server to its declared `demMaxZoom` (the URL range when it declares none).
      */
     fun onlineMember(): Holdings.Online {
         val direct = fetcher.server == DirectSources.SERVER
         val stored = if (direct) OSM_MAX_ZOOM else (service.info?.get("osmMaxZoom") as? Number)?.toInt() ?: OSM_MAX_ZOOM
+        val demStored = if (direct) service.direct.maxZoom else (service.info?.get("demMaxZoom") as? Number)?.toInt() ?: DEM_MAX_ZOOM
         val reason = when {
             fetcher.state == "offline" || !hasNetwork() -> "offline"
             direct -> service.direct.notice()
             else -> null
         }
-        return Holdings.Online(stored, reason == null, OnlineDetail.on, reason)
+        return Holdings.Online(stored, reason == null, OnlineDetail.on, reason, demStored)
     }
 
     @Volatile private var networkAt = Long.MIN_VALUE / 2

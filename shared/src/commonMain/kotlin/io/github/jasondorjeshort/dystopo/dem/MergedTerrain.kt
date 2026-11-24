@@ -2,6 +2,7 @@ package io.github.jasondorjeshort.dystopo.dem
 
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
+import io.github.jasondorjeshort.dystopo.packs.Holdings
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import kotlin.math.floor
 
@@ -16,6 +17,8 @@ class ElevationSource(
     val maxZoom: Int,
     val bounds: PackBounds?,
     val reach: PackBounds? = bounds,
+    /** T354: the map chosen last (`POST /packs/activate`): first between two maps of equal depth (ADR 0066). */
+    val chosen: Boolean = false,
     val read: (MercatorWindow) -> ElevationGrid?,
 ) {
     val online: Boolean get() = bounds == null
@@ -26,9 +29,11 @@ class ElevationSource(
  * owner's rule of 2026-11-22: "look at the highest resolution available at the point and expect to step down to a coarser
  * pack once it leaves the finer one"). For each cell of a window:
  *
- * 1. the offline maps whose box holds the cell, the deepest first ([ORDER]: deepest, then the smaller box, then the name;
- *    which map the user chose last plays no part, unlike `PackPrecedence`, whose order this leaves alone);
+ * 1. the offline maps whose box holds the cell, the deepest first ([ORDER]: the lookup's rule, `Holdings.depthFirst`, which
+ *    `PackPrecedence` shares since T354: deepest, then the map chosen last, then the smaller box, then the name);
  * 2. then the online source, where it is in the list (the caller leaves it out offline, or where the data rules forbid it);
+ *    T354: last whatever its depth while `onlineByDepth` is false (every caller today); true ranks it among the maps by its
+ *    stored maximum, ahead of a map only where it stores deeper (ADR 0066 decision 2, T368 turns it on);
  * 3. then what a map's whole tiles hold past its box ([ElevationSource.reach]), the deepest first: a margin can be as coarse
  *    as the map's first zoom, so the online source, which has full detail there, goes before it.
  *
@@ -41,15 +46,19 @@ object MergedTerrain {
 
     private fun area(b: PackBounds) = (b.maxLon - b.minLon) * (b.maxLat - b.minLat)
 
-    /** The order the maps are asked in: the offline maps deepest first (then the smaller box, then the name), the online source last. */
-    val ORDER: Comparator<ElevationSource> = compareBy<ElevationSource>(
-        { if (it.online) 1 else 0 },
-        { -it.maxZoom },
-        { it.bounds?.let(::area) ?: Double.MAX_VALUE },
-        { it.name },
-    )
+    /**
+     * T354: the lookup's rule ([Holdings.depthFirst]): deepest first, then the map chosen last, then a map before the online
+     * source, then the smaller box, then the name. With [onlineByDepth] false the online source is last whatever its depth.
+     */
+    fun order(onlineByDepth: Boolean): Comparator<ElevationSource> {
+        val rule = Holdings.depthFirst<ElevationSource>({ it.maxZoom }, { it.chosen }, { if (it.online) 1 else 0 }, { it.bounds?.let(::area) ?: Double.MAX_VALUE }, { it.name })
+        return if (onlineByDepth) rule else compareBy<ElevationSource> { if (it.online) 1 else 0 }.then(rule)
+    }
 
-    fun order(sources: List<ElevationSource>): List<ElevationSource> = sources.sortedWith(ORDER)
+    /** The order the maps are asked in today: the offline maps deepest first, the online source last ([order] with `onlineByDepth` false). */
+    val ORDER: Comparator<ElevationSource> = order(onlineByDepth = false)
+
+    fun order(sources: List<ElevationSource>, onlineByDepth: Boolean = false): List<ElevationSource> = sources.sortedWith(order(onlineByDepth))
 
     /** The box a map's tiles cover: [bounds] widened to the whole tiles of its first zoom [minZoom]. */
     fun wholeTileReach(bounds: PackBounds, minZoom: Int): PackBounds {
@@ -65,15 +74,17 @@ object MergedTerrain {
     private fun holds(b: PackBounds, lon: Double, lat: Double) = lon >= b.minLon && lon <= b.maxLon && lat >= b.minLat && lat <= b.maxLat
 
     /**
-     * The zoom to read a point's terrain at, at most [cap]: the deepest map whose box holds ([lat], [lon]), else the deepest
-     * whose tiles reach it, else the online source's; null when nothing in [sources] answers there.
+     * The zoom to read a point's terrain at, at most [cap] ([Holdings.pointZoom], the lookup's rule): the deepest map whose box
+     * holds ([lat], [lon]), else the deepest whose tiles reach it, else the online source's; with [onlineByDepth] the online
+     * source's stored maximum counts beside the maps' and the deeper wins. Null when nothing in [sources] answers there.
      */
-    fun pointZoom(sources: List<ElevationSource>, lat: Double, lon: Double, cap: Int): Int? {
+    fun pointZoom(sources: List<ElevationSource>, lat: Double, lon: Double, cap: Int, onlineByDepth: Boolean = false): Int? {
         val maps = sources.filter { !it.online }
-        val z = maps.filter { holds(it.bounds!!, lon, lat) }.maxOfOrNull { it.maxZoom }
-            ?: maps.filter { it.reach != null && holds(it.reach, lon, lat) }.maxOfOrNull { it.maxZoom }
-            ?: sources.filter { it.online }.maxOfOrNull { it.maxZoom }
-        return z?.let { minOf(it, cap) }
+        return Holdings.pointZoom(
+            maps.filter { holds(it.bounds!!, lon, lat) }.map { it.maxZoom },
+            maps.filter { it.reach != null && holds(it.reach, lon, lat) }.map { it.maxZoom },
+            sources.filter { it.online }.maxOfOrNull { it.maxZoom }, onlineByDepth, cap,
+        )
     }
 
     /** Cells each source gave ([cells], by name, in the order they first gave any), the cells none had, the reads made. */
@@ -95,15 +106,17 @@ object MergedTerrain {
         fun json(): Map<String, Any?> = linkedMapOf("cells" to LinkedHashMap(cells), "missing" to missing, "windows" to windows, "reads" to reads)
     }
 
-    /** Window [w] read cell by cell from [sources] (in any order: [order] is applied), counting into [tally]. */
-    fun read(w: MercatorWindow, sources: List<ElevationSource>, tally: Tally? = null): ElevationGrid {
-        val ordered = order(sources)
+    /**
+     * Window [w] read cell by cell from [sources] (in any order: [order] is applied with [onlineByDepth]), counting into
+     * [tally]: each source over its box in that order (the online source anywhere), then the maps' margins.
+     */
+    fun read(w: MercatorWindow, sources: List<ElevationSource>, tally: Tally? = null, onlineByDepth: Boolean = false): ElevationGrid {
+        val ordered = order(sources, onlineByDepth)
         val values = FloatArray(w.width * w.height) { Float.NaN }
         val lons = DoubleArray(w.width) { w.lonAt(it) }
         val lats = DoubleArray(w.height) { w.latAt(it) }
+        for (s in ordered) fill(w, values, lons, lats, s, s.bounds, tally)
         val maps = ordered.filter { !it.online }
-        for (s in maps) fill(w, values, lons, lats, s, s.bounds, tally)
-        for (s in ordered.filter { it.online }) fill(w, values, lons, lats, s, null, tally)
         for (s in maps) if (s.reach != null && s.reach != s.bounds) fill(w, values, lons, lats, s, s.reach, tally)
         tally?.let { t ->
             t.windows++
