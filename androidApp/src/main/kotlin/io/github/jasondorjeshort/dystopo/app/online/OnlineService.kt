@@ -749,6 +749,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
         "wider" to widerJson(), // T254: tiles cut from a wider zoom the phone holds
+        "behind" to BehindRefresh.json(), // T368: the fetches behind what the phone holds and their batched refreshes
         "stalledOsm" to stalledOsm.json() + osmRefresh.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138; T144: settleMs, refreshes
         "stalledDem" to stalledDem.json() + demRefresh.json() + linkedMapOf( // T155
             "sourceRefreshes" to demSourceRefreshes.get(), "lastSourceRefresh" to lastDemRefresh, "retrying" to demRetrying.get(),
