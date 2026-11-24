@@ -138,22 +138,23 @@ class HeldTiles(
      * The holding [deeper] names for a contour or shade tile z/x/y (512 px, reading elevation about one zoom deeper): the
      * elevation tile of its own extent, else one of its four children; null when the maps make it.
      */
-    fun deeperOver(z: Int, x: Int, y: Int): Holdings.Member? {
-        val dem = Holdings.Role.DEM
-        if (z > MAX_DEM) return deeper(dem, MAX_DEM, x shr (z - MAX_DEM), y shr (z - MAX_DEM))
-        deeper(dem, z, x, y)?.let { return it }
-        if (z + 1 > MAX_DEM) return null
-        for (dy in 0..1) for (dx in 0..1) deeper(dem, z + 1, 2 * x + dx, 2 * y + dy)?.let { return it }
-        return null
+    fun deeperOver(z: Int, x: Int, y: Int): Holdings.Member? = overTiles(z, x, y).firstNotNullOfOrNull { (tz, tx, ty) -> deeper(Holdings.Role.DEM, tz, tx, ty) }
+
+    /** The elevation tiles [deeperOver] asks for contour or shade tile z/x/y: its own extent (at most z15), then its four children. */
+    private fun overTiles(z: Int, x: Int, y: Int): List<Triple<Int, Int, Int>> {
+        if (z > MAX_DEM) return listOf(Triple(MAX_DEM, x shr (z - MAX_DEM), y shr (z - MAX_DEM)))
+        if (z + 1 > MAX_DEM) return listOf(Triple(z, x, y))
+        return listOf(Triple(z, x, y)) + (0..3).map { Triple(z + 1, 2 * x + it % 2, 2 * y + it / 2) }
     }
 
-    /** `area:<name>` or `cache` for the request log, when [deeper] answers the tile ([kind] `dem`, `shade`, `contours`, `osm`). */
+    /**
+     * `area:<name>` or `cache` for the request log: the holding whose tile answered ahead of the maps (its bytes found), for
+     * tile z/x/y of [kind] (`dem`, `shade`, `contours` read the elevation under them, `osm` the vector tile); null otherwise.
+     */
     fun logName(kind: String, z: Int, x: Int, y: Int): String? {
-        val m = when (kind) {
-            "osm" -> deeper(Holdings.Role.VECTOR, z, x, y)
-            "contours", "shade" -> deeperOver(z, x, y)
-            else -> deeper(Holdings.Role.DEM, z, x, y)
-        } ?: return null
+        val role = if (kind == "osm") Holdings.Role.VECTOR else Holdings.Role.DEM
+        val tiles = if (kind == "contours" || kind == "shade") overTiles(z, x, y) else listOf(Triple(z, x, y))
+        val m = tiles.firstNotNullOfOrNull { (tz, tx, ty) -> deeper(role, tz, tx, ty)?.takeIf { tile(role, tz, tx, ty) != null } } ?: return null
         return if (m.holding.kind == Holdings.Kind.AREA) "area:${m.holding.name}" else "cache"
     }
 
@@ -455,7 +456,7 @@ class TileService(
     private fun areaZooms(): Pair<List<Holdings.Stored>, List<Holdings.Stored>> {
         val records = runCatching { io.github.jasondorjeshort.dystopo.app.areas.Areas.list }.getOrDefault(emptyList())
             .filter { it.pack == null && it.opaque == null && it.state == "done" }
-        return records.map { Holdings.Stored(it.area.minZoom, it.area.demMaxZoom ?: it.area.maxZoom) } to records.map { Holdings.Stored(it.area.minZoom, it.area.maxZoom) }
+        return records.map { Holdings.Stored(it.area.minZoom, it.area.demMaxZoom ?: it.area.maxZoom) } to records.map { Holdings.Stored(it.area.minZoom, minOf(it.area.maxZoom, OnlineTiles.OSM_MAX_ZOOM)) } // vector tiles stop at z14 (MapLibre overzooms)
     }
 
     /** T356: shade tile z/x/y is made from the maps' own pyramids (not from deeper held cells, nor online). */
