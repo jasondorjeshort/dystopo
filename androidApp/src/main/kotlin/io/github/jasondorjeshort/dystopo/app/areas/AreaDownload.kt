@@ -655,7 +655,7 @@ object AreaDownload {
         }
         val path = "$z/$x/$y.${item.ext}"
         val transform: (ByteArray) -> ByteArray = if (item.route == AreaManifest.ROUTE_OSM) OnlineFetcher::gunzipIfNeeded else { b -> b }
-        val ok = when (val f = fetcher.get(item.route, path, transform, fresh = true)) { // T95: the current version, so a download again refreshes
+        val ok = when (val f = DirectSources.download { fetcher.get(item.route, path, transform, fresh = true) }) { // T95: the current version, so a download again refreshes; T355: a download
             is Fetch.Hit -> {
                 if (!valid(item.route, f.bytes)) {
                     Areas.cacheKeys(item.route, path, held = false).forEach { OnlineService.get(app).cache.remove(it) } // T242: one key, also while indexing

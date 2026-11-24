@@ -195,7 +195,7 @@ object AheadPrefetch {
                 val inPack = if (t.route == AreaManifest.ROUTE_DEM) packs?.demFor(t.z, t.x, t.y) != null else packs?.osmFor(t.z, t.x, t.y) != null
                 if (inPack) return@Callable "pack" to 0
                 val transform: (ByteArray) -> ByteArray = if (t.route == AreaManifest.ROUTE_OSM) OnlineFetcher::gunzipIfNeeded else { b -> b }
-                when (val f = fetcher.get(t.route, t.path, transform, fresh = true)) { // T95: the current version
+                when (val f = io.github.jasondorjeshort.dystopo.app.online.DirectSources.download { fetcher.get(t.route, t.path, transform, fresh = true) }) { // T95: the current version; T355: a download
                     is Fetch.Hit -> (if (f.cached) "cached" else "fetched") to f.bytes.size
                     Fetch.Missing -> "missing" to 0
                     is Fetch.Unavailable -> "failed" to 0

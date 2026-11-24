@@ -126,7 +126,7 @@ class LocalPackBuild(
         val futures = tiles.map { t ->
             pool.submit(Callable {
                 if (cancelled()) null else {
-                    val f = fetcher.get(route, "${t.first}/${t.second}/${t.third}$ext", if (route == "osm") OnlineFetcher::gunzipIfNeeded else { b -> b })
+                    val f = DirectSources.download { fetcher.get(route, "${t.first}/${t.second}/${t.third}$ext", if (route == "osm") OnlineFetcher::gunzipIfNeeded else { b -> b }) } // T355: a download
                     done.incrementAndGet()
                     when (f) {
                         is Fetch.Hit -> f.bytes
