@@ -92,6 +92,8 @@ the primary, and an activate with the Panorama open. Left for the owner's captur
 blank on the debug build: `GET /packs` (`notOpened`, `inUse`), `GET /firstrun` `mapHolds.regions`, `GET /horizon`
 `peaks` (`tilesRead`, `maps`) and `GET /panorama`, and one `adb logcat -s Dystopo DystopoAssets`.
 
+Came up again: 2026-11-24, the owner (screenshots of Offline maps on v0.1.43-alpha). New: the "two overlapping offline downloads" are both drawn areas downloaded in direct mode and kept as tiles ("Map only", "From direct://sources"), not packs. The peak read asks packs only (`HorizonData.kt:167` builds a `PeakMap` per open pack), so peaks none at that place is the code's present design, not a fault of T352's order; peaks from tile areas belong with search's index from tiles (`2026-11-07-search-and-routes-find-nothing-outside-a-pack.md`). The Panorama's blank is not explained by this: its terrain read takes the online pyramid, whose cache holds an area's tiles (`TerrainRead.kt:58`), so the USB capture still decides it, now with the question whether the drawn areas hold elevation tiles at all (the larger row says "elevation to z13", the smaller names no elevation).
+
 Question: T340 and T352 built every fix this file asks for and shipped in v0.1.43-alpha; what is left is your look on
 the phone. Which fits?
 - (a) Recommended: try it on v0.1.43-alpha at the same place with the same two maps. If the Panorama and the Peaks
