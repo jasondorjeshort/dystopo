@@ -764,4 +764,43 @@ assert _mt == {"scaleBar", "flightsStatus"}, _mt
 assert 7 in a11y.in_layer([{"id": 7, "testTag": "flightsStatus"}, {"id": 9}], _mt)
 # end T353
 
+# T363: the readout's states (the bar dimmed in a gap, its values marked "?") and the glance view after a jump and a gap:
+# the barometer set to Never and put back as found, the glance view opened by its route and closed by the end.
+class ReadoutSrv:
+    def __init__(self):
+        self.calls = []
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/settings":
+            return {"readoutBarometer": "always"}
+        if path == "/readout":
+            return {"bar": {"fields": [{"entry": "elevation", "mark": True}]}}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+ry = {s[0]: s for s in a11y.SCREENS if s[0] in ("readout-states", "glance")}
+assert ry["readout-states"][3] == "map" and ry["glance"][3] == "screen", ry
+a11y.time.sleep = lambda s: None
+try:
+    rs = ReadoutSrv()
+    rctx = type("C", (), {"srv": rs})()
+    ry["readout-states"][1](rctx)
+    assert rs.calls[:3] == [("GET", "/settings"), ("POST", "/settings?readoutBarometer=never"), ("POST", "/readout/reset")], rs.calls
+    assert sum(1 for c in rs.calls if c[1].startswith("/location?")) == 4 and rs.calls[-1] == ("GET", "/readout"), rs.calls
+    rs.calls.clear()
+    ry["glance"][1](rctx)
+    assert any("provider=network" in c[1] for c in rs.calls) and rs.calls[-1] == ("POST", "/readout/glance?open=1"), rs.calls
+    assert rs.calls[-2][1].startswith("/location?"), "the gap ended before the view opens"
+    rs.calls.clear()
+    ry["glance"][2](rctx)
+    assert rs.calls == [("POST", "/readout/glance?open=0"), ("POST", "/settings?readoutBarometer=always")], rs.calls
+finally:
+    a11y.time.sleep = _sleep
+# end T363
+
 print("test_android_a11y: ok")

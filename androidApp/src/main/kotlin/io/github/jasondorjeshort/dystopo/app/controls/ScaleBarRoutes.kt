@@ -50,7 +50,7 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   navigating: `alongM`, `distanceM`, `onRoute`), `inputs` (counts per input, the clock offset) and `layout` (`placement`
  *   `beside` or `above`, T177 `naturalWidthPx` (the bar's one-row width it is chosen on) and `besideRoomPx`, `boundsPx`, `sizePx`, the scale bar's and the recentre button's bounds, `clearOfScaleBar`,
  *   `clearOfRecentre`, `clearOfNavCard`, `clearOfBottomPanels`, T192 `plateOpaque`). T192: in a gap of the fixes the
- *   climb holds the last fix's value (`dimmed`, `frozen`), then a dash with `reason` `no fix` past the climb window.
+ *   climb holds the last fix's value (`dimmed`, `frozen`), then "?" (`unknown`, T250) with `reason` `no fix` past the climb window.
  *   T204: `layout` adds `drawnItems`, `droppedItems` (entries left out from the end of their order for room, font scale
  *   2.0, the pressure warning's card above) and `fits`; `hiddenBecause` adds `noRoomBelowWarningCard`; `readout.counters`
  *   add `newOffsets` (`newOffsetsSource`, `newOffsetsStep`) and `baroFallbacks`.
@@ -124,6 +124,11 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * dimmed after a clock went back, up to 60 s) and the dim's reason; `readout.counters` add `jumpResets`,
  * `jumpReanchors`, `heldHeights`; `inputs.counts` add `dimToggles`. The elevation's "no height yet" draws "?"
  * (`bar.fields` `state` `unknown`).
+ * T363, the reasons: every `reason` and `dimReason` is one code of a closed set (shared `readout/Readout.kt`
+ * `ReadoutReason`; the codes are the ones above, unchanged); `bar.fields` add `reason` (the reason the value shows, null
+ * for a plain figure: a dimmed value its dim's, the course held from the last movement `still`) and `mark` (the bar's small
+ * "?": missing or stale data, never a value at rest nor one that reads "?" already); `drawn` adds `reason`, `mark` and
+ * `note` (the glance view's sentence, `app/help/ReasonText.kt`).
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
  * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).

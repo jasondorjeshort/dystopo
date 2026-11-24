@@ -280,22 +280,21 @@ fun ReadoutStrip(night: Boolean) {
             // T197: the elevation carries the known height's mark; a tap on it says where and when the height was set.
             val markSlot = it.pinSlot // T257: its own flag (it rode on the trend's slot before the arrow could move to the pressure)
             val tapMark = markSlot && mark
-            // T363: the dim on each part, so the reason's "?" beside the caption draws at full strength.
+            // T363: the dim on each part, so the reason's "?" draws at full strength.
             val dim = Modifier.alpha(if (it.dimmed) READOUT_DIM else 1f)
+            val at = remember { MarkPlace() }
+            MarkedEntry(it.marked, at, reasonMarkStyle) {
             Column(if (tapMark) Modifier.clickable { onMarkTap(context) } else Modifier) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box {
                         BasicText(it.captionTemplate, Modifier.alpha(0f), style = captionStyle)
-                        Row {
-                            BasicText(it.caption, dim, style = captionStyle)
-                            ReasonMark(it.marked, reasonMarkStyle)
-                        }
+                        BasicText(it.caption, dim.then(at.record { w, h -> at.captionW = w; at.captionH = h }), style = captionStyle)
                     }
                     if (markSlot) Box(dim) { PinMark(mark, markStyle) }
                 }
                 Box(dim) {
                     ValueRow(it.template.text, it.template.unit, it.template.plusMinus, null, Modifier.alpha(0f), valueStyle, unitStyle, pmStyle, trendTemplate = it.trendSlot)
-                    ValueRow(it.value, it.unit, it.plusMinus, it.trend, Modifier, valueStyle, unitStyle, pmStyle)
+                    ValueRow(it.value, it.unit, it.plusMinus, it.trend, at.record { w, _ -> at.valueW = w }, valueStyle, unitStyle, pmStyle)
                 }
                 it.otherTemplate?.let { t ->
                     Box(dim) {
@@ -303,6 +302,7 @@ fun ReadoutStrip(night: Boolean) {
                         BasicText(it.other.orEmpty(), style = otherStyle)
                     }
                 }
+            }
             }
         }
         // T257: the course's point alone, the last child: placed in the course's stead only when the bar is short of room.
@@ -443,25 +443,46 @@ private val ROW_GAP = 2.dp
 /** T224: the plate's padding above and below the entries ([StripLayout.elevationPlatePx] adds it to the measured entry). */
 private val PLATE_PADDING_Y = 3.dp
 
+/** T363: where an entry's caption and value texts end (px, measured in the same pass), for its "?" mark's place. */
+private class MarkPlace {
+    var captionW = 0
+    var captionH = 0
+    var valueW = 0
+
+    /** A modifier that records its node's measured size through [set]. */
+    fun record(set: (Int, Int) -> Unit): Modifier = Modifier.layout { m, c ->
+        val p = m.measure(c)
+        set(p.width, p.height)
+        layout(p.width, p.height) { p.place(0, 0) }
+    }
+}
+
 /**
- * T363: the small "?" after a value's caption while its data is missing or stale ([StripItem.marked]; the owner's answer
- * of 2026-11-23: the reason itself is in the glance view, which a tap on the bar opens). It takes no room: laid out at
- * zero width and height, drawn into the room the caption's template leaves (or the gap after the entry), so the mark
- * never widens an entry, leaves one out or moves anything.
+ * T363: an entry with the small "?" while its data is missing or stale ([StripItem.marked]; the owner's answer of
+ * 2026-11-23: the reason itself is in the glance view, which a tap on the bar opens). The mark takes no room: the entry
+ * keeps its own size, and the mark is drawn after the caption's text where the entry's width leaves room for it, else
+ * after the value's text where that does, else after the caption into the gap between entries; so it never widens an
+ * entry, leaves one out or moves anything.
  */
 @Composable
-private fun ReasonMark(shown: Boolean, style: TextStyle) {
-    if (!shown) return
-    BasicText(
-        "\u2009?",
-        Modifier.layout { m, _ ->
-            val p = m.measure(Constraints())
-            layout(0, 0) { p.place(0, 0) }
-        },
-        style = style,
-        softWrap = false,
-        maxLines = 1,
-    )
+private fun MarkedEntry(marked: Boolean, at: MarkPlace, style: TextStyle, content: @Composable () -> Unit) {
+    Layout(content = {
+        content()
+        if (marked) BasicText("\u2009?", style = style, softWrap = false, maxLines = 1)
+    }) { ms, c ->
+        val entry = ms[0].measure(c)
+        val m = ms.getOrNull(1)?.measure(Constraints())
+        layout(entry.width, entry.height) {
+            entry.place(0, 0)
+            if (m != null) {
+                when {
+                    entry.width - at.captionW >= m.width -> m.place(at.captionW, 0)
+                    entry.width - at.valueW >= m.width -> m.place(at.valueW, at.captionH) // the value's row starts under the caption's
+                    else -> m.place(at.captionW, 0)
+                }
+            }
+        }
+    }
 }
 
 /**

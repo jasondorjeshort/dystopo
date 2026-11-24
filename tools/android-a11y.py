@@ -1273,6 +1273,54 @@ def end_panorama_layers(c):
 # end T351
 
 
+# T363
+def readout_gap(c, jump=False):
+    """T363: the readout bar in states that are not plain figures: the barometer set to Never (else the emulator's fixed
+    sea-level pressure takes over the height 10 s after the last fix), the readout reset, four fixes at Paradise a second
+    apart, [jump] then a network fix 3 km north with no height and one back, then 8 s with none: the values dimmed with
+    "no fix 8 s" and the bar's "?" marks. snapshot()'s fresh fix just before the frame makes it "resuming" (still dimmed,
+    still marked: the dim leaves on the second fix of a run). The barometer's setting as found is put back by
+    end_readout_states."""
+    c.readout_baro_found = (c.srv.ok("GET", "/settings") or {}).get("readoutBarometer")
+    c.srv.ok("POST", "/settings?readoutBarometer=never")
+    c.srv.ok("POST", "/readout/reset")
+    for k in range(4):
+        c.srv.ok("POST", f"/location?lat={PARADISE[0] + k * 0.00002:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
+        time.sleep(1.0)
+    if jump:
+        c.srv.ok("POST", f"/location?lat={PARADISE[0] + 0.027:.6f}&lon={PARADISE[1]}&accuracy=40&provider=network")
+        time.sleep(1.0)
+        c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
+    time.sleep(8.0)
+
+
+def scr_readout_states(c):
+    """T363: the map with the readout bar dimmed in a gap of the fixes, its values marked with the small "?"."""
+    readout_gap(c)
+    j = c.srv.ok("GET", "/readout") or {}
+    if not any(f.get("mark") for f in ((j.get("bar") or {}).get("fields") or [])):
+        raise RuntimeError(f"no value marked: {json.dumps((j.get('bar') or {}).get('fields'))[:300]}")
+
+
+def end_readout_states(c):
+    c.srv.call("POST", "/readout/glance?open=0")
+    found = getattr(c, "readout_baro_found", None)
+    c.srv.call("POST", f"/settings?readoutBarometer={found or 'auto'}")
+
+
+def scr_glance(c):
+    """T363: the glance view (POST /readout/glance?open=1, as a tap on the bar opens it) after a jump and an 8 s gap that a
+    fix ended: a line under each value that is not a plain figure (the climb's window filling after the reset) and "In the
+    last minute" with the gap and the jumps. The fix that ends the gap comes before the view opens, so snapshot()'s fresh
+    fix (the second of the run: the dim goes) changes no line's count between the frame and the semantics."""
+    readout_gap(c, jump=True)
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
+    time.sleep(1.5)
+    c.srv.ok("POST", "/readout/glance?open=1")
+    time.sleep(1.0)
+# end T363
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1331,6 +1379,10 @@ SCREENS = [
     # T351
     ("panorama-layers", scr_panorama_layers, end_panorama_layers, "screen"),
     # end T351
+    # T363
+    ("readout-states", scr_readout_states, end_readout_states, "map"),
+    ("glance", scr_glance, end_readout_states, "screen"),
+    # end T363
 ]
 
 

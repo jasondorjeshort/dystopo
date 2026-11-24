@@ -163,7 +163,7 @@ object GlanceFit {
     const val OTHER = 0.3f
     const val GAP = 0.12f
 
-    /** T363: a reason's line under the value, at most this share of the value's size (smaller when the sentence needs it). */
+    /** T363: a reason's line under the value, at most this share of the value's size (smaller when the sentence needs it, never under the fit's smallest size, which its row reserves). */
     const val REASON = 0.22f
 
     /** One fit: the value's type size in px, the columns, and whether even the smallest size fits ([fits] false: the lines clip). */
@@ -182,7 +182,7 @@ object GlanceFit {
     fun columns(n: Int, widthPx: Float, heightPx: Float): Int = if (n >= 3 && widthPx > heightPx) 2 else 1
 
     /** A line's width and height at value size [v]. */
-    fun lineSize(l: GlanceLine, v: Float, m: Measure): Pair<Float, Float> {
+    fun lineSize(l: GlanceLine, v: Float, m: Measure, reasonMinPx: Float = 0f): Pair<Float, Float> {
         val cap = m.size(l.captionTemplate, v * CAPTION, false)
         val capAlso = l.captionAlso?.let { m.size(it, v * CAPTION, false) }
         val value = m.size(l.valueTemplate, v, true)
@@ -193,15 +193,15 @@ object GlanceFit {
         l.plusMinusTemplate?.let { w += m.size(" $it", v * UNIT, false).first }
         val other = l.otherTemplate?.let { m.size(it, v * OTHER, false) }
         // T363: a reason's row, its height only: its type shrinks to the column's width when the sentence needs it.
-        val reason = l.reason?.let { m.size("Ag", v * REASON, false).second } ?: 0f
+        val reason = l.reason?.let { m.size("Ag", maxOf(v * REASON, reasonMinPx), false).second } ?: 0f
         return maxOf(maxOf(w, valueAlso?.first ?: 0f), maxOf(cap.first, capAlso?.first ?: 0f), other?.first ?: 0f) to
             (maxOf(value.second, valueAlso?.second ?: 0f) + cap.second + (other?.second ?: 0f) + reason)
     }
 
     /** Whether [lines] fit [widthPx] by [heightPx] at value size [v] in [cols] columns. */
-    fun fitsAt(lines: List<GlanceLine>, widthPx: Float, heightPx: Float, v: Float, cols: Int, m: Measure): Boolean {
+    fun fitsAt(lines: List<GlanceLine>, widthPx: Float, heightPx: Float, v: Float, cols: Int, m: Measure, reasonMinPx: Float = 0f): Boolean {
         val colW = (widthPx - (cols - 1) * v * GAP) / cols
-        val sizes = lines.map { lineSize(it, v, m) }
+        val sizes = lines.map { lineSize(it, v, m, reasonMinPx) }
         if (sizes.any { it.first > colW }) return false
         val rows = sizes.chunked(cols).map { r -> r.maxOf { it.second } }
         return rows.sum() + (rows.size - 1).coerceAtLeast(0) * v * GAP <= heightPx
@@ -211,13 +211,13 @@ object GlanceFit {
     fun fit(lines: List<GlanceLine>, widthPx: Float, heightPx: Float, minPx: Float, maxPx: Float, m: Measure): Fit {
         val cols = columns(lines.size, widthPx, heightPx)
         if (lines.isEmpty() || widthPx <= 0f || heightPx <= 0f) return Fit(minPx, cols, lines.isEmpty())
-        if (!fitsAt(lines, widthPx, heightPx, minPx, cols, m)) return Fit(minPx, cols, false)
-        if (fitsAt(lines, widthPx, heightPx, maxPx, cols, m)) return Fit(maxPx, cols, true)
+        if (!fitsAt(lines, widthPx, heightPx, minPx, cols, m, minPx)) return Fit(minPx, cols, false)
+        if (fitsAt(lines, widthPx, heightPx, maxPx, cols, m, minPx)) return Fit(maxPx, cols, true)
         var lo = minPx
         var hi = maxPx
         repeat(20) {
             val mid = (lo + hi) / 2
-            if (fitsAt(lines, widthPx, heightPx, mid, cols, m)) lo = mid else hi = mid
+            if (fitsAt(lines, widthPx, heightPx, mid, cols, m, minPx)) lo = mid else hi = mid
         }
         return Fit(lo, cols, true)
     }
