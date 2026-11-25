@@ -186,31 +186,53 @@ class OnlineTiles(
 
     /**
      * T341: fetches vector tile z/x/y behind the overview tile answered for it now, on the prefetch pool, once per tile while
-     * it is in flight or landed. A landed tile asks for one refresh of the map's vector source (coalesced with the stall
-     * recovery's, [OnlineService.osmRefresh]), after which MapLibre asks again and the kept tile answers. A failed fetch may be
-     * tried again on the next ask; a tile the source does not have is not.
+     * it is in flight or landed. A failed fetch may be tried again on the next ask; a tile the source does not have is not.
+     * T368 (ADR 0066 decision 2): also an elevation tile behind a map ([role] [Holdings.Role.DEM]), where the network stores
+     * deeper than the map answering it: on the direct reader's own threads with the phone's own sources (a render), else the
+     * prefetch pool. A landed elevation tile joins [BehindRefresh]'s batch: one refresh of the elevation source per settled
+     * batch at a camera rest, made without a blank frame ([SeamlessDemRefresh]), after which MapLibre asks again and the tile
+     * held in the cache answers (`TileService`'s held tiles rank the cache by the source's stored depth). Vector tiles keep
+     * T341's refresh. These are map views (T355: the views' lane, never a download's four); Mobile data and the session limit
+     * apply in the fetcher.
      */
-    fun fetchBehind(z: Int, x: Int, y: Int) {
-        val path = "$z/$x/$y.pbf"
+    fun fetchBehind(z: Int, x: Int, y: Int, role: Holdings.Role = Holdings.Role.VECTOR) {
+        val dem = role == Holdings.Role.DEM
+        val path = if (dem) "$z/$x/$y.png" else "$z/$x/$y.pbf"
         if (!behind.add(path)) return
-        behindStarted.incrementAndGet()
-        service.prefetch {
-            fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded).also { f ->
-                service.served("osm", f)
-                when (f) {
-                    is Fetch.Hit -> {
+        if (dem) BehindRefresh.dem.started() else behindStarted.incrementAndGet()
+        val work: () -> Fetch = {
+            val f = try {
+                if (dem) fetcher.get("dem", path) else fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded)
+            } catch (e: Throwable) {
+                Fetch.Unavailable("${e.javaClass.simpleName}: ${e.message}")
+            }
+            service.served(if (dem) "dem" else "osm", f)
+            when (f) {
+                is Fetch.Hit -> {
+                    if (dem) service.recordDem(z, x, y, if (f.cached) OnlineService.CACHED else OnlineService.ONLINE) else {
                         fetchedBehind.add(path)
                         behindLanded.incrementAndGet()
                         behindBytes.addAndGet(f.bytes.size.toLong())
-                        service.osmRefresh.recovered(System.currentTimeMillis(), 1)
                     }
-                    is Fetch.Unavailable -> {
-                        behindFailed.incrementAndGet()
-                        behind.remove(path)
-                    }
-                    Fetch.Missing -> behindFailed.incrementAndGet()
+                    // T341's vector tiles: one refresh of the vector source, coalesced with the stall recovery's; T368's elevation: its own.
+                    if (dem) BehindRefresh.dem.landed(System.currentTimeMillis(), f.bytes.size) else service.osmRefresh.recovered(System.currentTimeMillis(), 1)
+                }
+                is Fetch.Unavailable -> {
+                    if (dem) BehindRefresh.dem.failed() else behindFailed.incrementAndGet()
+                    behind.remove(path)
+                }
+                Fetch.Missing -> {
+                    if (dem) BehindRefresh.dem.failed() else behindFailed.incrementAndGet()
                 }
             }
+            if (dem) BehindRefresh.poke()
+            f
+        }
+        try {
+            if (dem && fetcher.server == DirectSources.SERVER) service.direct.request(work) else service.prefetch(work)
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            if (dem) BehindRefresh.dem.failed()
+            behind.remove(path)
         }
     }
 
@@ -562,7 +584,13 @@ class OnlineTiles(
         val zt = (floor(zoom).toInt() + 1).coerceIn(0, DEM_MAX_ZOOM)
         fun tile(z: Int) = Triple(z, WebMercator.lonToX(lon, z).toInt().coerceIn(0, (1 shl z) - 1), WebMercator.latToY(lat, z).toInt().coerceIn(0, (1 shl z) - 1))
         val (z0, x0, y0) = tile(zt)
-        if (packCoversDem(z0, x0, y0)) return PACK to null
+        if (packCoversDem(z0, x0, y0)) {
+            // T368: inside a map, a cached tile past the map's own depth answers ahead of it (fetched behind it, or kept): only
+            // then is the view's elevation the network's. A cached tile at a zoom the map stores is not finer than the map's.
+            val mapDepth = packs.demFor(z0, x0, y0)?.header?.maxZoom ?: DEM_MAX_ZOOM
+            if (z0 > mapDepth && held?.deeper(Holdings.Role.DEM, z0, x0, y0)?.holding?.kind == Holdings.Kind.CACHE) return (service.demSource(z0, x0, y0) ?: OnlineService.CACHED) to Triple(z0, x0, y0)
+            return PACK to null
+        }
         for (z in listOf(zt, zt - 1, zt + 1, zt - 2).filter { it in 0..DEM_MAX_ZOOM }) {
             val t = tile(z)
             // T254: a tile cut from a wider zoom names its ancestor (the tile the phone holds, which an offline map may record).
@@ -574,6 +602,13 @@ class OnlineTiles(
         viewTile(lat, lon, zoom).let { (z, x, y) -> vectorSource("$z/$x/$y.pbf") }?.let { return it to null }
         return (if (worldDraws(lat, lon, zoom)) WORLD else NONE) to null
     }
+
+    /**
+     * T368: an offline map (not the world overview) answers the view's vector tile at the map's zoom, so the map drawn there is
+     * the phone's: the online map credit is left out though the elevation came from the network ([OnlineService.credits]).
+     */
+    fun vectorFromPack(lat: Double, lon: Double, zoom: Double): Boolean =
+        viewTile(lat, lon, zoom).let { (z, x, y) -> packs.osmFor(z, x, y).let { it != null && it !== packs.world } }
 
     /** T341: the view's vector tile at the map's zoom (512-px tiles), clamped to the world. */
     private fun viewTile(lat: Double, lon: Double, zoom: Double): Triple<Int, Int, Int> {
@@ -694,6 +729,13 @@ class OnlineTiles(
         const val WIDER = OnlineService.WIDER
         /** T264: the view draws from the built-in world overview ([io.github.jasondorjeshort.dystopo.app.PackSet.world]); the chip says "from the world overview". */
         const val WORLD = "world"
+        /**
+         * T368: the one rule for ranking the network by its stored depth (ahead of a coarser map) in what is read at a point:
+         * More detail from online on and a fetch allowed now ([member] `detail` and `allowed`; null: no source). `TerrainRead`
+         * and `GET /holdings` `readZoom` both ask it, so the lookup says what the sky views read.
+         */
+        fun aheadByDepth(member: Holdings.Online?): Boolean = member != null && member.detail && member.allowed
+
         /** T341: the vector tiles whose source [vectorSource] keeps. */
         const val VECTOR_KEEP = 256
 
@@ -724,9 +766,14 @@ class OnlineTiles(
 
 /**
  * T341 (ADR 0066): the per-device setting `onlineDetail`, "More detail from online" (Settings › Sources, `POST /settings
- * onlineDetail=1|0`), default on: where the network stores more detail than what the phone holds, it is fetched. Its reach
- * here is the world overview's zooms ([OnlineTiles.vectorAnswer]); over the maps it is ADR 0066's build task 2. Stored in
- * [DirectPrefs] (not synced: what one phone downloads is that phone's business); read once and kept.
+ * onlineDetail=1|0`), default on: where the network stores more detail than what the phone holds, it is fetched. T341 built
+ * its reach at the world overview's zooms ([OnlineTiles.vectorAnswer]); T368 over the maps (ADR 0066 build task 2): an
+ * elevation tile where the source's stored maximum ([DirectSources.maxZoom], a server's `demMaxZoom`) is deeper than the map
+ * answering it (the style's top elevation zoom up to the source's stored maximum), and the
+ * sky views' terrain read (`TerrainRead`: the network ranked by its stored depth). The phone's tile answers at once and the
+ * fetch runs behind it ([OnlineTiles.fetchBehind], [BehindRefresh]). It gates fetches only: a tile already kept answers
+ * whatever it says. Stored in [DirectPrefs] (not synced: what one phone downloads is that phone's business); read once and
+ * kept.
  */
 object OnlineDetail {
     const val DEFAULT = true

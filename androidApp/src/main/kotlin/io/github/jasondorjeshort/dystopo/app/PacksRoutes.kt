@@ -18,7 +18,8 @@ import kotlin.math.floor
  *   zoom the network would add, `ahead`: it would go ahead under More detail from online, not yet used by a tile path;
  *   `allowed`, `onlineDetail`, `notAllowedBecause`), `tilePathServes` (what the tile paths answer: the maps and the
  *   overview, or T356's area cell or cached tile deeper than the maps where its tile is on the phone); `overviewRule` (T341's answer for the vector tile, `GET /why`'s `online.vector`); `readZoom`
- *   (the zoom the sky views read the point at); `holdings` (every input: `name`, `kind`, `vector` and `dem` zooms and box,
+ *   (the zoom the sky views read the point at; T368: the network's stored zoom where it goes ahead under More detail from
+ *   online with a fetch allowed, as `TerrainRead` reads), `mapReadZoom` (T368: the maps' own); `holdings` (every input: `name`, `kind`, `vector` and `dem` zooms and box,
  *   `profile`, `chosen`, `off`); `online` (the online member: `vectorMaxZoom`, `demMaxZoom` stored, `allowed`,
  *   `onlineDetail`, `notAllowedBecause`; null with no source set). `GET /why`'s `maps` and `online.vector` read the same answer.
  * - `GET /packs`: every pack on the device (name, bounds, zooms, bytes, attribution, per-archive
@@ -68,8 +69,9 @@ object PacksRoutes {
      * ([vectorNow], [demNow]: what `PackSet.osmFor` and `demFor` answer; T356 moves the tile paths onto the whole lookup);
      * [overviewRule] T341's rule for the vector tile ([Holdings.vectorTile], the tile path's at the overview's zooms) read
      * from the same answer; [readZoom] the zoom the sky views read the point's terrain at ([Holdings.readZoom], capped at
-     * `ShadeTiles.POINT_ZOOM` as the Horizon view caps it; outside every map it names the online source's stored maximum,
-     * where the terrain read still uses the URL range until T368).
+     * `ShadeTiles.POINT_ZOOM` as the Horizon view caps it; T368: with More detail from online on and a fetch allowed, the
+     * online source's stored maximum counts beside the maps' and the deeper wins, as `TerrainRead` reads; [mapReadZoom] the
+     * maps' alone).
      */
     class HoldingsHere(
         val zoom: Double, val lat: Double, val lon: Double, val holdings: List<Holdings.Holding>, val online: Holdings.Online?,
@@ -77,12 +79,14 @@ object PacksRoutes {
         val overviewRule: Holdings.Answer, val readZoom: Int?,
         /** T356: what the tile paths serve, the held cells deeper than the maps included (`TileService.held`); null: [vectorNow]'s and [demNow]'s. */
         val vectorPath: String? = null, val demPath: String? = null,
+        /** T368: the zoom the maps alone would be read at (the map's own depth beside [readZoom], which counts the network ahead). */
+        val mapReadZoom: Int? = readZoom,
     ) {
         fun json(): Map<String, Any?> = linkedMapOf(
             "zoom" to zoom, "lat" to lat, "lon" to lon,
             "vector" to vector.json() + ("tilePathServes" to (vectorPath ?: vectorNow.serving?.holding?.name)),
             "dem" to dem.json() + ("tilePathServes" to (demPath ?: demNow.serving?.holding?.name)),
-            "overviewRule" to overviewRule.json(), "readZoom" to readZoom,
+            "overviewRule" to overviewRule.json(), "readZoom" to readZoom, "mapReadZoom" to mapReadZoom,
             "holdings" to holdings.map { it.json() }, "online" to online?.json(),
         )
     }
@@ -118,9 +122,10 @@ object PacksRoutes {
         val rule = Holdings.vectorTile(vz, vectorNow.serving?.holding?.kind == Holdings.Kind.MAP, overview, member, vector.members.any { it.holding.kind == Holdings.Kind.CACHE })
         return HoldingsHere(
             zoom, lat, lon, all, member, vector, Holdings.point(Holdings.Role.DEM, lat, lon, dz, all, member), vectorNow,
-            Holdings.point(Holdings.Role.DEM, lat, lon, dz, now, member), rule, Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM),
+            Holdings.point(Holdings.Role.DEM, lat, lon, dz, now, member), rule, Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM, onlineByDepth = io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.aheadByDepth(member)), // T368: TerrainRead's rule
             vector.let { h -> app.tiles.held.deeper(Holdings.Role.VECTOR, h.z, h.x, h.y)?.takeIf { app.tiles.held.tile(Holdings.Role.VECTOR, h.z, h.x, h.y) != null }?.holding?.name ?: "cache".takeIf { rule.serves == Holdings.Source.CACHE } }, // T356: and T341's kept tile at the overview's zooms
             Holdings.point(Holdings.Role.DEM, lat, lon, dz, all, member).let { h -> app.tiles.held.deeper(Holdings.Role.DEM, h.z, h.x, h.y)?.takeIf { app.tiles.held.tile(Holdings.Role.DEM, h.z, h.x, h.y) != null }?.holding?.name }, // T356
+            mapReadZoom = Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM), // T368: the maps' own
         )
     }
 

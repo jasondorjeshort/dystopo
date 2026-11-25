@@ -273,6 +273,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
         table["t341"] = t341_collect(dev, raw_dir)  # T341: GET /why and the chip at the overview's zooms (its block, below)
         table["t354"] = t354_collect(dev, wait_ms, raw_dir)  # T354: GET /holdings against /why and the sky views, each map chosen in turn (its block, below)
         table["t356"] = t356_collect(dev, raw_dir)  # T356: an area's z15 cells inside the coarse map, offline and with no source (its block, below)
+        table["t368"] = t368_collect(dev, raw_dir)  # T368: the network's deeper elevation fetched behind the coarse map, the setting on and off (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
     finally:
@@ -377,6 +378,7 @@ def assertions(table):
     # end T341
     out += t354_assertions(table)  # T354
     out += t356_assertions(table)  # T356
+    out += t368_assertions(table)  # T368
     return out
 
 
@@ -967,6 +969,129 @@ def t356_assertions(table):
         out.append({"what": "T356:phases", "phases": len(t.get("phases") or [])})
     return out
 # end T356
+
+
+# T368
+# The network where it is finer, behind what the phone holds (ADR 0066 decision 2). T356's stub (synthetic elevation to z15,
+# declaring demMaxZoom 15; no vector tiles) is set as the server, the online tile cache emptied and the app restarted, then
+# the camera put at z14 at `wide-only` (inside the coarse map, whose elevation stops at z11), with More detail from online on
+# and then off (each after a cold start). Asserted with it on: elevation tiles were fetched behind the map (`GET /online`
+# `behind.dem`: started, all landed or failed, none in flight at the end), at least one refresh was made and none ended
+# early or was skipped, `GET /holdings` names the cache as what serves the z14 point's elevation tile, and the request log
+# has z15 elevation tiles of the place answered from the map first and then from `cache` (the refresh). With it off: nothing
+# was fetched behind and the coarse map serves. Pinned: the cache emptied and a cold start per phase, the camera moved away
+# before each restart (the view kept at rest is not the one read); the settings it changes (server, direct reading,
+# onlineDetail) read first and put back. It reads the clock only in its waits (the refresh is held until the camera rests and
+# the batch settles: up to 60 s for `behind.dem` to show nothing in flight or waiting and no refresh running); it depends on
+# no earlier part, only on the fixture this part installed.
+def t368_behind(dev, max_s=60.0):
+    t0 = time.time()
+    b = None
+    while time.time() - t0 < max_s:
+        _, on, _ = dev.call("/online")
+        b = get(on, "behind") or {}
+        d = b.get("dem") or {}
+        if not d.get("inFlight") and not d.get("waiting") and not b.get("refreshing") and time.time() - t0 > 8.0:
+            break
+        time.sleep(1.0)
+    return b
+
+
+def t368_collect(dev, raw_dir):
+    out = {"phases": []}
+    place = next(p for p in fx.PLACES if p["id"] == "wide-only")
+    lat, lon = place["lat"], place["lon"]
+    _, s0, _ = dev.call("/settings")
+    _, d0, _ = dev.call("/firstrun/direct")
+    server0 = (s0 or {}).get("server") or ""
+    direct0 = bool((d0 or {}).get("enabled"))
+    detail0 = (s0 or {}).get("onlineDetail")
+    srv, port, log = t356_stub()
+    try:
+        fx.network(dev, True)
+        dev.call("/firstrun/direct?on=0", "POST")
+        dev.call("/settings?server=" + urllib.parse.quote(f"http://10.0.2.2:{port}", safe=""), "POST")
+        for detail in (1, 0):
+            dev.call(f"/settings?onlineDetail={detail}", "POST")
+            dev.call("/camera?lat=46.85&lon=-121.76&zoom=9&bearing=0", "POST")
+            time.sleep(2.0)
+            dev.call("/online/cache/clear", "POST", timeout=120)
+            dev.restart()
+            time.sleep(4.0)
+            _, b0, _ = dev.call("/online")
+            _, pre, _ = dev.call("/stats/requests?limit=1")
+            dev.call(f"/camera?lat={lat}&lon={lon}&zoom=14&bearing=0", "POST")
+            b = t368_behind(dev)
+            _, req, e1 = dev.call("/stats/requests?limit=1500")
+            _, h, e2 = dev.call(f"/holdings?z=14&lat={lat}&lon={lon}")
+            before = get(b0, "behind", "dem") or {}
+            d = (b or {}).get("dem") or {}
+            ph = {"onlineDetail": detail, "errors": [e for e in (e1, e2) if e],
+                  "started": (d.get("started") or 0) - (before.get("started") or 0), "landed": (d.get("landed") or 0) - (before.get("landed") or 0),
+                  "failed": (d.get("failed") or 0) - (before.get("failed") or 0), "inFlight": d.get("inFlight"), "waiting": d.get("waiting"),
+                  "refreshes": (d.get("refreshes") or 0) - (before.get("refreshes") or 0),
+                  "recent": [r for r in ((b or {}).get("recent") or []) if r.get("ended") or r.get("skipped")][-4:],
+                  "serves": get(h, "dem", "serves")}
+            req = req or {}
+            new = (req.get("lines") or [])[-max(0, req.get("total", 0) - (pre or {}).get("total", 0)):]
+            _, cx, cy = t356_tile(15, lat, lon)
+            seen = {}
+            for line in new:
+                parts = line.get("path", "").split("?")[0].split("/")
+                if len(parts) > 4 and parts[1] == "dem" and parts[2] == "15" and line.get("status") == 200:
+                    tx, ty = int(parts[3]), int(parts[4].split(".")[0])
+                    if abs(tx - cx) <= 2 and abs(ty - cy) <= 3:
+                        seen.setdefault(f"{tx}/{ty}", []).append(line.get("pack"))
+            ph["z15"] = seen
+            ph["upgraded"] = sum(1 for v in seen.values() if v and v[0] != "cache" and "cache" in v[1:])
+            if raw_dir:
+                with open(os.path.join(raw_dir, f"t368-detail{detail}.json"), "w", encoding="utf-8", newline="\n") as fh:
+                    json.dump({"behind": b, "holdings": h, "z15": seen}, fh, indent=1)
+            out["phases"].append(ph)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        try:
+            dev.call("/settings?server=" + urllib.parse.quote(server0, safe=""), "POST")
+            dev.call(f"/firstrun/direct?on={1 if direct0 else 0}", "POST")
+            dev.call(f"/settings?onlineDetail={0 if detail0 in (False, 0, '0') else 1}", "POST")
+        except Exception as e:
+            out["restoreError"] = f"{type(e).__name__}: {e}"[:300]
+        srv.shutdown()
+    return out
+
+
+def t368_assertions(table):
+    out = []
+    t = table.get("t368")
+    if not isinstance(t, dict):
+        return out  # not run: the phases failed before it, or a table from before T368
+    for k in ("error", "restoreError"):
+        if t.get(k):
+            out.append({"what": f"T368:{k}", "error": t[k]})
+    phases = {p.get("onlineDetail"): p for p in t.get("phases") or []}
+    if set(phases) != {0, 1} and not t.get("error"):
+        out.append({"what": "T368:phases", "phases": sorted(phases)})
+    on, off = phases.get(1), phases.get(0)
+    for p in (on, off):
+        if p and p.get("errors"):
+            out.append({"what": "T368:unread", "onlineDetail": p["onlineDetail"], "errors": p["errors"]})
+    if on:
+        if not on.get("started") or on.get("landed", 0) + on.get("failed", 0) != on.get("started") or on.get("inFlight") or on.get("waiting"):
+            out.append({"what": "T368:fetch-behind", "on": {k: on.get(k) for k in ("started", "landed", "failed", "inFlight", "waiting")}})
+        if not on.get("refreshes") or on.get("recent"):
+            out.append({"what": "T368:refresh", "refreshes": on.get("refreshes"), "endedOrSkipped": on.get("recent")})
+        if on.get("serves") != "cache":
+            out.append({"what": "T368:holdings-on", "serves": on.get("serves")})
+        if not on.get("upgraded"):
+            out.append({"what": "T368:upgraded", "z15": dict(list((on.get("z15") or {}).items())[:6])})
+    if off:
+        if off.get("started"):
+            out.append({"what": "T368:setting-off-fetched", "started": off.get("started")})
+        if off.get("serves") != "rainier-wide":
+            out.append({"what": "T368:holdings-off", "serves": off.get("serves")})
+    return out
+# end T368
 
 
 def main(argv=None):

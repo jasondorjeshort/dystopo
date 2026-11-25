@@ -359,6 +359,23 @@ style when only an area holds vector tiles. **Downloads skip only what a map sto
 own depth and whole (`HeldTiles.mapStores`); a map answers deeper elevation by overzoom, so before a z15 area inside a z11
 map skipped its z12 to z15 elevation. Vector tiles are skipped as before. The request log names the holding that answered
 in the maps' place (`area:<name>`, `cache`).
+T368 (ADR 0066 decision 2, build task 2's second half): **the network where it is finer, behind what the phone holds.**
+With More detail from online on and a source set, where the source's stored elevation maximum (a server's `demMaxZoom`,
+or the direct reader's `maxZoom`, z12 by default) is deeper than the map answering an elevation tile and the tile is past
+that map's depth, the map's tile (stored or synthesised) answers at once and the source's tile is fetched behind it
+(`OnlineTiles.fetchBehind` with the elevation role; for a contour tile, the four elevation tiles under it): a map view, in
+the views' lane (T355), under Mobile data and the session limit. The landed tiles sit in the cache, which `HeldTiles` ranks
+by the source's stored depth, so they answer from then on, offline too. They are announced by one refresh of the elevation
+source per settled batch (`online/DemSourceRefresh.kt` `BehindBatch`: none landed for 0.4 s and none in flight, or 8 s
+after the first), held until the camera rests and the view is loaded (proposal 0066's fallback, taken: a refresh asks
+again for every visible tile; during a launch the tiles are only noted and fetched once its first view is loaded), and made without a blank frame (`SeamlessDemRefresh`: the new sources load under copies of the hillshade and
+contour layers kept all but invisible, the copies then show while the originals are swapped, and the originals show again
+and the copies go once the originals are loaded; the plain swap left the hillshade and contours blank for about 1.5 s).
+The style's top elevation zoom reaches the source's stored maximum with the setting on. Vector tiles past a map's zooms
+keep the online path (the network asked at once, the map's tile cut to it only where the fetch fails, T254). Off: nothing
+is fetched behind a tile the phone holds; a tile already in the cache still answers. The sky views' terrain read
+(`terrain/TerrainRead.kt`) ranks the online source by its stored maximum under the setting (ahead of a coarser map) and
+reads each finished area's held cells as a member of its own. `GET /online` `behind`.
 T265: the map zooms out to z1 (`MapController.MIN_ZOOM`; z3 before), the whole world on one screen. The terrain layers
 start where their sources do (`MapLibreStyle`'s layer `minzoom`): the hillshade and the shade one map zoom below the DEM's
 lowest tile zoom (256-px tiles; online z6, so map z5; direct mode z8, so z7), the contours at theirs (online z8), so

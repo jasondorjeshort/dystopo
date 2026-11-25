@@ -1206,6 +1206,23 @@ def offline_step(server, exe, serial, step, first_wait_ms, wait_ms, shot):
 WORLD_VIEWS = [("pacific-z3", 3, 0.0, -150.0, ("water",)), ("europe-z5", 5, 47.0, 8.0, ("water", "admin-boundary", "countries"))]
 
 
+# T368
+def behind_wait(server, max_s=40.0):
+    """(seconds waited for the fetches behind the view and their refresh to finish (`GET /online` `behind`), 0 when none
+    ran; True when they were still going after max_s: the view is then not counted settled)."""
+    t0 = time.time()
+    while True:
+        b = (server.json("/online") or {}).get("behind") or {}
+        d = b.get("dem") or {}
+        if not (d.get("inFlight") or d.get("waiting") or b.get("refreshing") or b.get("deferred")):
+            waited = time.time() - t0
+            return (round(waited, 1) if waited >= 0.5 else 0), False
+        if time.time() - t0 >= max_s:
+            return round(time.time() - t0, 1), True
+        time.sleep(0.5)
+# end T368
+
+
 def world_views(server, wait_ms, shot):
     """T264: in airplane mode (the offline step's), the z3 view over the Pacific and the z5 view over Europe, where the
     online cache holds nothing: every vector tile request of the view answered 200 from the bundled world overview, none
@@ -2229,6 +2246,12 @@ def main():
             cam = server.json(f"/camera?lat={v['lat']}&lon={v['lon']}&zoom={v['z']}&bearing=0&tilt=0", method="POST")
             png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
             rep["idleSeconds"] = round(time.time() - t0, 1)  # T110
+            # T368: where a server stores deeper than the pack, the deeper elevation is fetched behind the view and drawn by one
+            # refresh at the rest: the view has settled once that is done (`GET /online` `behind`), then it is taken again.
+            rep["behindWaitS"], rep["behindTimedOut"] = behind_wait(server)
+            if rep["behindWaitS"]:
+                png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
+            # end T368
             rep["deviceCpu"] = cpu_between(cpu0, device_cpu(exe, serial))
             health = server.json("/health")
             try:
@@ -2345,7 +2368,10 @@ def main():
         if not c["tiles"]:
             rep["sourcesWithoutTiles"] = missing
         c["blank"] = "lumaStddev" in rep["image"] and rep["image"]["lumaStddev"] >= args.min_stddev
-        if settle_share is not None:
+        if rep.get("behindTimedOut"):  # T368: a fetch behind that never went quiet
+            c["settled"] = False
+            rep["settleProblem"] = f"the fetches behind the view were still running after {rep.get('behindWaitS')} s (GET /online behind)"
+        elif settle_share is not None:
             c["settled"] = settle_share <= args.max_settle_change
             if not c["settled"]:
                 rep["settleProblem"] = (f"{settle_share:.0%} of the screenshot changed after the map settled: /screenshot "

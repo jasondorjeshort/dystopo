@@ -32,6 +32,40 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
     /** The online DEM, when a source is set and the caller asks for it. */
     val online: OnlineTiles? = if (withOnline) tiles.online else null
 
+    // ---- T368: the areas' held cells, the setting and the network's stored range (ADR 0066 decisions 1 and 2) ----
+
+    /**
+     * T368: the online source ranked by its stored depth (`MergedTerrain`'s `onlineByDepth`, T354's input), ahead of a map only
+     * where it stores deeper, under "More detail from online" ([io.github.jasondorjeshort.dystopo.app.online.OnlineDetail]); its
+     * depth is the stored maximum (`DirectSources.maxZoom`, a server's `demMaxZoom`), not the URL range. Off, or no fetch
+     * allowed now (offline, Mobile data, the session limit): last, as before. `GET /holdings` `readZoom` follows the same rule.
+     */
+    val onlineByDepth: Boolean = runCatching { OnlineTiles.aheadByDepth(online?.onlineMember()) }.getOrDefault(false)
+
+    /**
+     * T368: each finished tile area as a member of its own (its box, its elevation zooms), read from its held cells only
+     * ([TileService.heldDem]: the cache and the area's own keys, never the network), so a Panorama inside a coarse map reads an
+     * area's deeper cells; cells it does not hold are NaN and the next source fills them.
+     */
+    private fun areaSources(): List<ElevationSource> = runCatching { tiles.heldAreas() }.getOrDefault(emptyList()).mapNotNull { a ->
+        val s = a.dem ?: return@mapNotNull null
+        val box = s.bounds ?: return@mapNotNull null
+        val cells = a.cells
+        val name = "area:${a.name}"
+        ElevationSource(name, s.maxZoom, box) { w ->
+            val p = synchronized(pyramids) {
+                pyramids.getOrPut(name) {
+                    DemPyramid(s.minZoom, s.maxZoom, TileService.demDecoder(), cacheTiles = 48) { z, x, y ->
+                        if (cells != null && !cells(io.github.jasondorjeshort.dystopo.packs.Holdings.Role.DEM, z, x, y)) null
+                        else tiles.heldDem(z, x, y)?.also { b -> synchronized(this) { tilesRead++; bytesRead += b.size } }
+                    }
+                }
+            }
+            p.window(w.zoom, w.x0, w.y0, w.width, w.height)
+        }
+    }
+    // end T368
+
     val sources: List<ElevationSource> = MergedTerrain.order(
         tiles.packs.demPacks.map { pk ->
             val h = pk.header
@@ -47,11 +81,14 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
                 }
                 p.window(w.zoom, w.x0, w.y0, w.width, w.height)
             }
-        } + listOfNotNull(online?.let { o -> ElevationSource(MergedTerrain.ONLINE, OnlineTiles.DEM_MAX_ZOOM, null) { w -> onlinePyramid(o).window(w.zoom, w.x0, w.y0, w.width, w.height) } }),
+        } + areaSources() + listOfNotNull(online?.let { o -> ElevationSource(MergedTerrain.ONLINE, tiles.networkDemStored ?: OnlineTiles.DEM_MAX_ZOOM, null) { w -> onlinePyramid(o).window(w.zoom, w.x0, w.y0, w.width, w.height) } }),
+        onlineByDepth,
     )
 
     @Volatile private var onlinePyramid: DemPyramid? = null
     @Volatile var onlineTiles = 0
+        private set
+    @Volatile var onlineBytes = 0L // T368
         private set
 
     /**
@@ -62,18 +99,18 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
     private fun onlinePyramid(o: OnlineTiles): DemPyramid = onlinePyramid ?: synchronized(this) {
         onlinePyramid ?: DemPyramid(o.demMinZoom, OnlineTiles.DEM_MAX_ZOOM, TileService.demDecoder(), cacheTiles = 48) { z, x, y ->
             if (z !in o.demMinZoom..OnlineTiles.DEM_MAX_ZOOM) null
-            else (o.fetcher.get("dem", "$z/$x/$y.png") as? io.github.jasondorjeshort.dystopo.app.online.Fetch.Hit)?.bytes?.also { synchronized(this) { onlineTiles++ } }
+            else (o.fetcher.get("dem", "$z/$x/$y.png") as? io.github.jasondorjeshort.dystopo.app.online.Fetch.Hit)?.bytes?.also { b -> synchronized(this) { onlineTiles++; onlineBytes += b.size } } // T368: and their bytes
         }.also { onlinePyramid = it }
     }
 
     /** [w] by the rule, counted in [tally]. */
-    fun read(w: MercatorWindow): ElevationGrid = MergedTerrain.read(w, sources, tally)
+    fun read(w: MercatorWindow): ElevationGrid = MergedTerrain.read(w, sources, tally, onlineByDepth) // T368: the setting
 
     /** The zoom to read ([lat], [lon]) at, at most [cap]; null when nothing answers there. */
-    fun pointZoom(lat: Double, lon: Double, cap: Int): Int? = MergedTerrain.pointZoom(sources, lat, lon, cap)
+    fun pointZoom(lat: Double, lon: Double, cap: Int): Int? = MergedTerrain.pointZoom(sources, lat, lon, cap, onlineByDepth) // T368
 
     /** What answered so far, in the views' words and as JSON. */
-    fun answered(): Answered = Answered(tally.maps, tally.online, tally.complete, tally.json() + linkedMapOf("tiles" to tilesRead, "bytes" to bytesRead, "onlineAsked" to (online != null), "onlineTiles" to onlineTiles, "epoch" to epoch.json()))
+    fun answered(): Answered = Answered(tally.maps, tally.online, tally.complete, tally.json() + linkedMapOf("tiles" to tilesRead, "bytes" to bytesRead, "onlineAsked" to (online != null), "onlineByDepth" to onlineByDepth, "onlineTiles" to onlineTiles, "onlineBytes" to onlineBytes, "epoch" to epoch.json()))
 
     /** The epoch the read was opened in. */
     val epoch: Epoch = Companion.epoch()

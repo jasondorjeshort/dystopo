@@ -595,6 +595,9 @@ class OnlineService private constructor(private val app: DystopoApp) {
     @Volatile var lastViewSource: String? = null
         private set
 
+    /** T368: a map on the phone answers the last view's vector tile: its online map credit is left out ([credits]). */
+    @Volatile private var lastViewVectorPack = false
+
     /**
      * The camera came to rest (main thread): negative-cached tiles older than a few seconds are tried again
      * ([OnlineFetcher.retryNegative]), and when the view is not all pack, the server is asked which sources
@@ -607,6 +610,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         prefetchPool.execute { // T144: the view's source is worked out here, not on the UI thread (the online tiles' records take locks)
             val view = cam.withSource(OnlineView.sourceFor(app, cam))
             lastViewSource = view.source
+            lastViewVectorPack = runCatching { app.tiles.online?.vectorFromPack(cam.lat, cam.lon, cam.zoom) == true }.getOrDefault(false) // T368
             f.retryNegative()
             if (view.source != OnlineTiles.PACK) runCatching { refreshSources(f, view) }
         }
@@ -670,7 +674,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         }
         if (lastViewSource == OnlineTiles.PACK) return emptyList() // the view is all pack: its own credits apply
         return creditsFor(
-            f.server, viewSourceIds, routes.getValue("dem").hits.get(), routes.getValue("osm").hits.get(),
+            f.server, viewSourceIds, routes.getValue("dem").hits.get(), if (lastViewVectorPack) 0L else routes.getValue("osm").hits.get(), // T368: only what the view draws
             info?.get("osmAttribution") as? String,
         )
     }
@@ -749,6 +753,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "assetsVersion" to assetsVersion,
         "unavailableServed" to unavailableServed.get(),
         "wider" to widerJson(), // T254: tiles cut from a wider zoom the phone holds
+        "behind" to BehindRefresh.json(), // T368: the fetches behind what the phone holds and their batched refreshes
         "stalledOsm" to stalledOsm.json() + osmRefresh.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138; T144: settleMs, refreshes
         "stalledDem" to stalledDem.json() + demRefresh.json() + linkedMapOf( // T155
             "sourceRefreshes" to demSourceRefreshes.get(), "lastSourceRefresh" to lastDemRefresh, "retrying" to demRetrying.get(),
