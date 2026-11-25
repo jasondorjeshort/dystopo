@@ -355,10 +355,16 @@ class ShadeService(
         return ShadeTiles.pointAnswer(p, lat, lon, epochMs).takeUnless { it.horizon.groundM.isNaN() }
     }
 
-    /** T194: the DEM pyramid under [lat], [lon] (the pack's, deepest first, else the online DEM's), or null; terrain shade along a route reads it. */
+    // ---- T358 (ADR 0066 build task 4): the long-press card, the turn-back clock and the route tools read the one point read ----
+    /**
+     * T194: the DEM pyramid under [lat], [lon], or null; terrain shade along a route reads it. T358: what the phone holds there
+     * composed by the map's rule ([io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt], held now with the
+     * point's tile fetched behind where the network is deeper), else, where nothing is held, the online DEM's as before.
+     */
     fun pyramidAt(lat: Double, lon: Double): DemPyramid? =
-        POINT_ZOOMS.firstNotNullOfOrNull { z -> pyramidFor(z, WebMercator.lonToX(lon, z).toInt(), WebMercator.latToY(lat, z).toInt())?.first }
+        runCatching { io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt(lat, lon, io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND) }.getOrNull()
             ?: online?.pyramid()
+    // end T358
 
     /** T193: a turn-back clock's terrain day at a point: [day] when the sweep answered, [noData] without elevation there. */
     class TerrainAt(val day: io.github.jasondorjeshort.dystopo.nav.Sun.TerrainDay?, val noData: Boolean, val sweepMs: Double?, val totalMs: Double, val error: String? = null)
@@ -445,8 +451,6 @@ class ShadeService(
         /** T193: the terrain sunset's sweeps, one at a time, off the UI thread and the tile permits. */
         private val terrainWorker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-terrain-sunset").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
 
-        /** T188: the DEM zooms a point answer looks for a pack at, deepest first. */
-        private val POINT_ZOOMS = listOf(ShadeTiles.POINT_ZOOM, 12, 10, 8)
 
         /** [FastPng]: Bitmap.compress took most of a tile's time. */
         private fun encode(argb: IntArray, size: Int): ByteArray = FastPng.encode(argb, size, size)

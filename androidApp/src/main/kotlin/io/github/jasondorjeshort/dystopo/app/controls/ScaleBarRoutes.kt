@@ -129,6 +129,13 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * for a plain figure: a dimmed value its dim's, the course held from the last movement `still`) and `mark` (the bar's small
  * "?": missing or stale data, never a value at rest nor one that reads "?" already); `drawn` adds `reason`, `mark` and
  * `note` (the glance view's sentence, `app/help/ReasonText.kt`).
+ * T358, the ground height's read (ADR 0066 build task 4, `app/terrain/TerrainRead.kt` `PointRead`): `GET /readout` adds `ground`:
+ *   `here` (the point read at the last fix, read held: `elevationM`, `source` a map's name, `cache` or `area`, `zoom`,
+ *   `heldZoom` where a held cell is deeper than the maps, `ms`), `reads` per mode and reader (`behind.readout`,
+ *   `behind.pressure`, `held.estimate`, `held.trips`, `behind.area`, ...), `readMs` per mode (`reads`, `avg`, `max`),
+ *   `tilesAsked` (tiles the point reads fetched behind) and `generations`. `GET /readout/ground?lat=&lon=[&mode=held|behind]`
+ *   reads one point (`held` by default, nothing started; `behind` asks the fetch behind as the readout does, and `behind`
+ *   says what was done: `asked z/x/y`, `held`, `off`, `notAllowed`, `noSource`, `launch`), with `counters` as `ground`.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
  * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).
@@ -138,13 +145,34 @@ object ScaleBarRoutes {
         "GET" to "/scalebar" -> Response.json(state(app))
         "POST" to "/scalebar" -> set(app, r)
         // T161: the live readout's strip on the bar's line (readout/LiveReadout)
-        "GET" to "/readout" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
+        "GET" to "/readout" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json() + ("ground" to ground())) // T358: the ground height's read
+        "GET" to "/readout/ground" -> groundAt(r) // T358
         "POST" to "/readout/reset" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.reset() + io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
         "POST" to "/readout/stations" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.PressureSource.configure(r.query["url"])) // T173
         "POST" to "/readout/trend" -> trend(app, r) // T178
         "POST" to "/readout/calibrate" -> calibrate(app, r) // T197
         else -> null
     }
+
+    // ---- T358: the one point read behind the readout's ground height (ADR 0066 build task 4) ----
+    private val pointRead = io.github.jasondorjeshort.dystopo.app.terrain.PointRead
+
+    /** `GET /readout` › `ground`: the point read's counters, and what answers at the last fix now (read held: nothing started). */
+    private fun ground(): Map<String, Any?> =
+        runCatching { pointRead.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.lastFix?.let { it.lat to it.lon }) }.getOrElse { mapOf("error" to it.toString()) }
+
+    /** `GET /readout/ground?lat=&lon=[&mode=held|behind]`: one point read (`behind` starts the fetch behind as the readout's would). */
+    private fun groundAt(r: Request): Response {
+        val lat = r.query["lat"]?.toDoubleOrNull()?.takeIf { it in -85.0..85.0 } ?: return Response.json(mapOf("error" to "lat is required, -85 to 85"), 400)
+        val lon = r.query["lon"]?.toDoubleOrNull()?.takeIf { it in -180.0..180.0 } ?: return Response.json(mapOf("error" to "lon is required, -180 to 180"), 400)
+        val mode = when (r.query["mode"]?.trim()?.lowercase()) {
+            null, "", "held" -> io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.HELD
+            "behind" -> io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND
+            else -> return Response.json(mapOf("error" to "mode is held or behind"), 400)
+        }
+        return Response.json(linkedMapOf<String, Any?>("lat" to lat, "lon" to lon, "mode" to mode.code) + pointRead.at(lat, lon, mode, "route").json() + ("counters" to pointRead.json()))
+    }
+    // end T358
 
     /** T197: `POST /readout/calibrate`. */
     private fun calibrate(app: DystopoApp, r: Request): Response {
