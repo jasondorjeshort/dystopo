@@ -56,7 +56,6 @@ import io.github.jasondorjeshort.dystopo.app.areas.MapRow
 import io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList
 import io.github.jasondorjeshort.dystopo.app.areas.PickerButton
 import io.github.jasondorjeshort.dystopo.app.areas.offlineMapInputs
-import io.github.jasondorjeshort.dystopo.app.areas.packBoxes
 import io.github.jasondorjeshort.dystopo.app.areas.rowAction
 import io.github.jasondorjeshort.dystopo.app.control
 import io.github.jasondorjeshort.dystopo.app.firstrun.ImportPicker
@@ -245,7 +244,7 @@ private fun OfflineMapsScreen(manager: PackManager, close: () -> Unit) {
             val i = withContext(Dispatchers.IO) { offlineMapInputs(app) }
             inputs = i
             val now = OfflineMapList.rows(i.copy(records = Areas.list, removals = Areas.removals))
-            AreaOutlines.show(Areas.list, packBoxes(now)) // T235: every row's outline, a pack with no record by its bounds
+            AreaOutlines.show(Areas.list, now) // T235: every row's outline, a pack with no record by its bounds; T366: each by its row's level and off state
             io.github.jasondorjeshort.dystopo.app.Foreground.delay(if (now.any { it.tone == OfflineMapList.Tone.BUSY }) 700 else 1500) // T150: paused in the background
         }
     }
@@ -333,8 +332,12 @@ private fun OfflineMapsScreen(manager: PackManager, close: () -> Unit) {
             }
             if (empty) item(key = "empty") { BasicText(PacksUi.EMPTY, style = TextStyle(color = Ink, fontSize = 14.sp)) }
             val helpRow = rows.firstOrNull { it.off != null }?.id // T342: the switch's help icon on the first row that has one
+            // T366 (T361's follow-up): Start here's help icon on the first open row that shows Start here or the chosen map's line
+            val startHelpRow = rows.firstOrNull { r ->
+                r.detailKey in Areas.detailOpen && (OfflineMapList.START_HERE in r.actions || OfflineMapList.STARTS_HERE in r.detail)
+            }?.id
             items(rows, key = { it.id }) { row ->
-                MapRow(row, row.detailKey in Areas.detailOpen, help = row.id == helpRow) { action ->
+                MapRow(row, row.detailKey in Areas.detailOpen, help = row.id == helpRow, startHelp = row.id == startHelpRow) { action ->
                     rowAction(row, action, base, { id, on -> removing = if (on) removing + id else removing - id }) { refresh++ }
                 }
             }

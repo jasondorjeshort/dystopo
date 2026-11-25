@@ -37,6 +37,8 @@ object OfflineMapList {
         val name: String, val bytes: Long, val usable: Boolean, val hasDem: Boolean, val hasVector: Boolean,
         val bounds: List<Double>? = null, val minZoom: Int? = null, val maxZoom: Int? = null, val attribution: String = "",
         val modifiedAt: Long = 0L, val errors: List<String> = emptyList(),
+        /** T366: the deepest zooms of its map and its elevation archives (null: it has none), for its level ([DetailOutline.levelOf]). */
+        val vectorMaxZoom: Int? = null, val demMaxZoom: Int? = null,
     )
 
     /** A pack download ([io.github.jasondorjeshort.dystopo.app.packs.PackDownloader.Job.json]), with T222's word and controls. */
@@ -126,13 +128,20 @@ object OfflineMapList {
         val bounds: List<Double>?, val pack: String?, val recordId: String?, val sortAt: Long,
         /** T342: the row's "Use on this phone" switch: true when the map is off, false on, null for a row without one. */
         val off: Boolean? = null,
+        /**
+         * T366: the detail its outline and swatch show ([DetailOutline.levelOf]: a pack by its archives' zooms, else by its newest
+         * record's; [DetailOutline.Level.OFF] while [off]); null for a row with nothing to say it by.
+         */
+        val level: DetailOutline.Level? = null,
     ) {
         /** The key a tap toggles in [Areas.detailOpen]: the record id for an area row (as T221's `POST /areas/ui?detail=`), else [id]. */
         val detailKey: String get() = if (id.startsWith(AREA)) recordId ?: id else id
 
-        fun json(open: Boolean = false): Map<String, Any?> = linkedMapOf(
+        fun json(open: Boolean = false, night: Boolean = false): Map<String, Any?> = linkedMapOf(
             "id" to id, "name" to name, "bytes" to bytes, "state" to state, "tone" to tone.name.lowercase(), "detail" to detail, "actions" to actions,
             "pack" to pack, "recordId" to recordId, "bounds" to bounds, "detailOpen" to open, "off" to off,
+            // T366: the level's key and its outline in the palette shown ([night]: the map's night style)
+            "level" to level?.key, "outline" to level?.let { DetailOutline.look(it, night).json() + ("night" to night) },
         )
     }
 
@@ -261,7 +270,13 @@ object OfflineMapList {
         val sortAt = listOfNotNull(newest?.createdAt, pack?.modifiedAt, job?.createdAt, region?.startedAt, removal?.record?.createdAt).maxOrNull() ?: 0L
         val bytes = pack?.bytes ?: job?.let { it.bytesTotal ?: it.bytesDone } ?: newest?.bytes ?: removal?.record?.bytes ?: 0L
         val off = if (usable && removal == null) p in i.off else null // T342: a switch on a map on the phone that opens
-        return Row(PACK + p, newest?.name ?: removal?.record?.name ?: p, bytes, state, tone, detail, actions, bounds, p, newest?.id, sortAt, off)
+        // T366: a pack by its archives (its metadata), else by the newest record naming it; off as its switch says
+        val level = when {
+            pack != null && (pack.vectorMaxZoom != null || pack.demMaxZoom != null) -> DetailOutline.levelOf(pack.vectorMaxZoom, pack.demMaxZoom, off == true)
+            newest != null -> recordLevel(newest).let { if (off == true) DetailOutline.Level.OFF else it }
+            else -> null
+        }
+        return Row(PACK + p, newest?.name ?: removal?.record?.name ?: p, bytes, state, tone, detail, actions, bounds, p, newest?.id, sortAt, off, level)
     }
 
     private fun areaRow(r: Areas.Record, i: Inputs): Row {
@@ -308,11 +323,14 @@ object OfflineMapList {
             }
             actions += REMOVE
         }
-        return Row(AREA + r.id, r.name, r.bytes, state, tone, detail, actions, r.area.bounds.toList(), null, r.id, r.createdAt)
+        return Row(AREA + r.id, r.name, r.bytes, state, tone, detail, actions, r.area.bounds.toList(), null, r.id, r.createdAt, level = recordLevel(r))
     }
 
+    /** T366: a record's level by its area's zooms (the elevation to its own cap, else to the map's). */
+    fun recordLevel(r: Areas.Record): DetailOutline.Level = DetailOutline.levelOf(r.area.maxZoom, r.area.demMaxZoom ?: r.area.maxZoom)
+
     private fun removingAreaRow(x: Areas.Removal, i: Inputs): Row =
-        Row(AREA + x.record.id, x.record.name, x.record.bytes, removingWord(x), Tone.BUSY, listOf(removingLine(x.done, x.total)), emptyList(), x.record.area.bounds.toList(), null, x.record.id, x.record.createdAt)
+        Row(AREA + x.record.id, x.record.name, x.record.bytes, removingWord(x), Tone.BUSY, listOf(removingLine(x.done, x.total)), emptyList(), x.record.area.bounds.toList(), null, x.record.id, x.record.createdAt, level = recordLevel(x.record))
 
     /** "Removing", or "Removing 30%" once the tiles are counted (T221). */
     fun removingWord(x: Areas.Removal): String = x.total?.takeIf { it > 0 }?.let { percentWord(REMOVING, x.done * 100.0 / it) } ?: REMOVING
