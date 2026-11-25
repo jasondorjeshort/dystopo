@@ -297,12 +297,12 @@ for net in ("off", "on"):
             m = "rainier-fine" if place != "outside" else None
             vec = m if z >= 8 else None
             if place == "outside":
-                src = "from your server" if net == "on" else "no data here"
+                src = "from your server" if net == "on" else ("no data here" if z >= 8 else "from a wider zoom")
             elif vec is None and net == "on":
                 src = "from your server"
             else:
                 src = "on this phone"
-            t359_rows.append(t359_row(net, place, z, src, vec, m, msg="outside" if (net == "off" and place == "outside") else "none"))
+            t359_rows.append(t359_row(net, place, z, src, vec, m, msg="outside" if (net == "off" and place == "outside" and z >= 8) else "none"))
 t359_search = [{"network": n, "place": "wide-only", "reason": "found", "coverage": "vector", "hits": [part.T359_SEARCH]} for n in ("off", "on")] + \
               [{"network": n, "place": "outside", "reason": "no-map", "coverage": "no-map", "sentence": "Search needs an offline map here"} for n in ("off", "on")]
 t359_off = [dict(t359_row("all-off", "inside-both", 12, "a map here is off", None, None, network=False)), dict(t359_row("all-off", "outside", 12, "no data here", None, None, msg="outside", network=False))]

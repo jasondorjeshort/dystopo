@@ -1107,7 +1107,7 @@ def t368_assertions(table):
 # "on this phone"; online, where nothing on the phone serves the vector tile, the chip names the network (T341's z7.5 and
 # T339's outside), and offline outside both maps it says "no data here"; the button is shown only online, and reads "Already
 # on this phone" only where the chip says "on this phone"; the first-run card shows nowhere, and the map's message is
-# "outside" only offline outside both maps (`none` elsewhere). The chip's word while a deeper tile is fetched behind a map:
+# "outside" only offline outside both maps at z12 (`none` elsewhere; at z7.5 the view reaches the maps). The chip's word while a deeper tile is fetched behind a map:
 # the map serves now, so the map's (`OnlineView.sourceOf`). Then search (`GET /search`, the index built first) for a name in
 # the coarse map from a point inside it only (found, `vector`) and from outside both (a sentence, no `vector`), each phase.
 # Last, offline with no server and the phone's own reading of the sources on (T342's and T332's follow-up): both maps off,
@@ -1226,13 +1226,14 @@ def t359_assertions(table):
             out.append({"what": "T359:on-phone-not-served", "row": row, "chip": r.get("chip"), "holdings": r.get("holdings")})
         if on and hv.get("tilePathServes") is None and src not in T359_NETWORK:
             out.append({"what": "T359:network-not-named", "row": row, "chip": r.get("chip"), "holdings": r.get("holdings")})
-        if not on and r["place"] == "outside" and src != "no data here":
+        outside = r["place"] == "outside" and r["zoom"] >= 8  # at z7.5 the view reaches the maps (the message says nothing then)
+        if not on and outside and src != "no data here":
             out.append({"what": "T359:outside-offline", "row": row, "chip": r.get("chip")})
         if btn.get("shown") and not on:
             out.append({"what": "T359:button-offline", "row": row, "button": btn})
         if str(btn.get("text") or "").startswith("Already") and btn.get("shown") and src not in T359_PHONE:
             out.append({"what": "T359:already-not-on-phone", "row": row, "chip": r.get("chip"), "button": btn, "holdings": r.get("holdings")})
-        want = "outside" if (not on and r["place"] == "outside") else "none"
+        want = "outside" if (not on and outside) else "none"
         if r.get("cardVisible") or r.get("noPack") or r.get("mapMessage") != want:
             out.append({"what": "T359:map-message", "row": row, "mapMessage": r.get("mapMessage"), "want": want, "card": r.get("cardVisible")})
     for s in t.get("search") or []:
