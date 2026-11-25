@@ -125,19 +125,15 @@ object MergedTerrain {
     fun read(w: MercatorWindow, sources: List<ElevationSource>, tally: Tally? = null, onlineByDepth: Boolean = false, bandM: Double = EdgeBlend.BAND_M): ElevationGrid {
         val ordered = order(sources, onlineByDepth)
         val n = w.width * w.height
-        val acc = FloatArray(n) // the weighted sum so far
-        val rem = FloatArray(n) { 1f } // the weight still to give: 1 nothing yet, 0 done
-        val owner = if (tally != null) IntArray(n) { -1 } else null // the source that gave the largest share, and that share
-        val share = if (tally != null) FloatArray(n) else null
         val lons = DoubleArray(w.width) { w.lonAt(it) }
         val lats = DoubleArray(w.height) { w.latAt(it) }
-        for ((si, s) in ordered.withIndex()) blend(w, acc, rem, owner, share, lons, lats, s, si, bandM, tally)
-        val values = FloatArray(n) { k -> if (rem[k] >= 1f) Float.NaN else if (rem[k] <= 0f) acc[k] else acc[k] / (1f - rem[k]) }
-        if (tally != null) {
-            val counts = LongArray(ordered.size)
-            for (k in 0 until n) if (owner!![k] >= 0) counts[owner[k]]++
-            for ((si, s) in ordered.withIndex()) tally.add(if (s.online) ONLINE else s.name, counts[si])
-        }
+        // A window no box's band reaches (no cell centre on a box's edge or within bandM inside it) reads every cell whole:
+        // the same answer, with no weight to work out and no state beyond the values.
+        val band = if (bandM > 0 && ordered.any { s -> s.bounds?.let { reachesBand(it, lons, lats, bandM) } == true }) bandM else 0.0
+        val st = Blend(n, band > 0, tally != null, ordered.size)
+        for ((si, s) in ordered.withIndex()) blend(w, st, lons, lats, s, si, band, tally)
+        val values = st.finish()
+        tally?.let { t -> for ((si, s) in ordered.withIndex()) t.add(if (s.online) ONLINE else s.name, st.counts!![si]) }
         val maps = ordered.filter { !it.online }
         for (s in maps) if (s.reach != null && s.reach != s.bounds) fill(w, values, lons, lats, s, s.reach, tally)
         tally?.let { t ->
@@ -148,62 +144,224 @@ object MergedTerrain {
     }
 
     /**
-     * T357: gives [s] (index [si] in the order) its share of the cells still open inside its box: each takes [s]'s value at
-     * its [EdgeBlend.weight] of the weight still to give ([rem]); only the rectangle of those cells is read.
+     * T357: a read's state. [values] holds each cell's weighted sum so far, NaN while no source has given it anything. A cell
+     * given only part of its weight gets a slot (where a band can be reached: [slot] holds the slot plus one, 0 for none)
+     * keeping the weight still to give ([rem]) and, for the tally, the largest part it was given and by which source
+     * ([share], [owner]: the source's index plus one); a cell is open while its value is NaN or its slot's [rem] is above 0.
+     * A cell given all of its weight at once by one source takes no slot and is counted at once in [counts]. Only the band's
+     * cells take slots, so the state beyond the values is one integer per cell.
      */
-    private fun blend(
-        w: MercatorWindow, acc: FloatArray, rem: FloatArray, owner: IntArray?, share: FloatArray?, lons: DoubleArray, lats: DoubleArray,
-        s: ElevationSource, si: Int, bandM: Double, tally: Tally?,
-    ) {
+    private class Blend(n: Int, banded: Boolean, private val tallied: Boolean, sources: Int) {
+        val values = FloatArray(n).also { it.fill(Float.NaN) }
+        val slot: IntArray? = if (banded) IntArray(n) else null
+        private var cells = IntArray(if (banded) 1024 else 0)
+        private var rem = FloatArray(cells.size)
+        private var share = FloatArray(if (tallied) cells.size else 0)
+        private var owner = IntArray(if (tallied) cells.size else 0)
+        private var used = 0
+        val counts: LongArray? = if (tallied) LongArray(sources) else null
+
+        /** A cell some source has given a value is still open: part of its weight is left. */
+        fun touchedOpen(k: Int): Boolean {
+            val q = if (slot != null) slot[k] - 1 else -1
+            return q >= 0 && rem[q] > 0f
+        }
+
+        fun open(k: Int): Boolean = values[k].isNaN() || touchedOpen(k)
+
+        /** Gives cell [k] source [si]'s value [v] at weight [a] (above 0) of what is left. */
+        fun give(k: Int, si: Int, v: Float, a: Float) {
+            val acc = values[k]
+            val untouched = acc.isNaN()
+            var q = if (slot != null) slot[k] - 1 else -1
+            val r = if (untouched) 1f else if (q >= 0) rem[q] else 0f
+            if (r <= 0f) return
+            val part = r * a
+            values[k] = (if (untouched) 0f else acc) + part * v
+            val left = if (a >= 1f) 0f else r - part
+            if (untouched && left == 0f) {
+                counts?.let { it[si]++ }
+                return
+            }
+            if (q < 0) {
+                if (used == cells.size) {
+                    val size = cells.size * 2
+                    cells = cells.copyOf(size)
+                    rem = rem.copyOf(size)
+                    if (tallied) {
+                        share = share.copyOf(size)
+                        owner = owner.copyOf(size)
+                    }
+                }
+                q = used++
+                cells[q] = k
+                slot!![k] = q + 1
+            }
+            rem[q] = left
+            if (tallied && part > share[q]) {
+                share[q] = part
+                owner[q] = si + 1
+            }
+        }
+
+        /** The read's values: a cell given part of its weight is its sum over the weight given; a cell given none is NaN. */
+        fun finish(): FloatArray {
+            for (q in 0 until used) {
+                val k = cells[q]
+                val r = rem[q]
+                if (r > 0f) values[k] = if (r >= 1f) Float.NaN else values[k] / (1f - r)
+                if (tallied && owner[q] > 0) counts!![owner[q] - 1]++
+            }
+            return values
+        }
+    }
+
+    /** T357: whether a cell centre of the window ([lons] west to east, [lats] north to south) may lie on [b] or within [bandM] inside it. */
+    private fun reachesBand(b: PackBounds, lons: DoubleArray, lats: DoubleArray, bandM: Double): Boolean {
+        val w0 = lons.first()
+        val w1 = lons.last()
+        val n0 = lats.first()
+        val s0 = lats.last()
+        if (w1 < b.minLon || w0 > b.maxLon || n0 < b.minLat || s0 > b.maxLat) return false // the window misses the box
+        val i = EdgeBlend.inner(b, bandM) ?: return true
+        return !(w0 > i.minLon && w1 < i.maxLon && s0 > i.minLat && n0 < i.maxLat) // not wholly inside the inner box
+    }
+
+    /** T357: the first index of ascending [a] whose value is at or above [x] ([inclusive]) or above it, else [a]'s size. */
+    private fun firstFrom(a: DoubleArray, x: Double, inclusive: Boolean): Int {
+        var lo = 0
+        var hi = a.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (if (inclusive) a[mid] >= x else a[mid] > x) hi = mid else lo = mid + 1
+        }
+        return lo
+    }
+
+    /**
+     * T357: gives [s] (index [si] in the order) its share of the cells still open inside its box: each takes [s]'s value at
+     * its [EdgeBlend.weight] of the weight still to give; only the rectangle of those cells is read. The box is a run of the
+     * window's columns and rows; in each row the cells past the band (weight 1) are one run, and the weight is worked out
+     * only for the band's cells, from the row's and the column's distances to the sides ([EdgeBlend.weightOfM], the same
+     * number [EdgeBlend.weight] gives).
+     */
+    private fun blend(w: MercatorWindow, st: Blend, lons: DoubleArray, lats: DoubleArray, s: ElevationSource, si: Int, bandM: Double, tally: Tally?) {
         val box = s.bounds
-        val whole = box == null || bandM <= 0 // the online source, or the read before T357: every cell it holds at weight 1
-        // A cell inside the box (on its edge too when whole; its weight is 0 there otherwise) and the row's and column's
-        // distances to the box's sides for the weight ([EdgeBlend.weightOf]).
-        val cols = BooleanArray(w.width) { box == null || (if (whole) lons[it] >= box.minLon && lons[it] <= box.maxLon else lons[it] > box.minLon && lons[it] < box.maxLon) }
-        val rows = BooleanArray(w.height) { box == null || (if (whole) lats[it] >= box.minLat && lats[it] <= box.maxLat else lats[it] > box.minLat && lats[it] < box.maxLat) }
-        var c0 = Int.MAX_VALUE
-        var c1 = -1
-        var r0 = Int.MAX_VALUE
-        var r1 = -1
-        for (j in 0 until w.height) {
-            if (!rows[j]) continue
-            val base = j * w.width
-            for (i in 0 until w.width) {
-                if (cols[i] && rem[base + i] > 0f) {
-                    if (i < c0) c0 = i
-                    if (i > c1) c1 = i
+        val whole = box == null || bandM <= 0 // the online source, or no band in the window: every cell it holds at weight 1
+        val width = w.width
+        // The box's columns and rows (its edge included when whole; a cell on the edge has weight 0 otherwise).
+        var ci0 = 0
+        var ci1 = width - 1
+        var rj0 = 0
+        var rj1 = w.height - 1
+        if (box != null) {
+            ci0 = firstFrom(lons, box.minLon, inclusive = whole)
+            ci1 = firstFrom(lons, box.maxLon, inclusive = !whole) - 1
+            // Latitudes fall from row to row.
+            while (rj0 <= rj1 && (if (whole) lats[rj0] > box.maxLat else lats[rj0] >= box.maxLat)) rj0++
+            while (rj1 >= rj0 && (if (whole) lats[rj1] < box.minLat else lats[rj1] <= box.minLat)) rj1--
+        }
+        if (ci0 > ci1 || rj0 > rj1) return
+        if (si == 0) {
+            tally?.let { it.reads++ }
+            return blendRect(w, st, lats, s, si, bandM, whole, ci0, ci1, rj0, rj1) // every cell is open
+        }
+        var any = false
+        // The cells still open, read block by block: the rectangle of each block's open cells (a band's thin ring is read as
+        // its strips, not as the whole window it surrounds). A source gives a cell the same value from any window.
+        for (bj in rj0..rj1 step BLOCK) {
+            val bj1 = minOf(bj + BLOCK - 1, rj1)
+            for (bi in ci0..ci1 step BLOCK) {
+                val bi1 = minOf(bi + BLOCK - 1, ci1)
+                var c0 = Int.MAX_VALUE
+                var c1 = -1
+                var r0 = Int.MAX_VALUE
+                var r1 = -1
+                for (j in bj..bj1) {
+                    val base = j * width
+                    var first = -1
+                    for (i in bi..bi1) {
+                        if (st.open(base + i)) {
+                            first = i
+                            break
+                        }
+                    }
+                    if (first < 0) continue
+                    var last = first
+                    for (i in bi1 downTo first) {
+                        if (st.open(base + i)) {
+                            last = i
+                            break
+                        }
+                    }
+                    if (first < c0) c0 = first
+                    if (last > c1) c1 = last
                     if (j < r0) r0 = j
-                    if (j > r1) r1 = j
+                    r1 = j
+                }
+                if (c1 >= 0) {
+                    any = true
+                    blendRect(w, st, lats, s, si, bandM, whole, c0, c1, r0, r1)
                 }
             }
         }
-        if (c1 < 0) return
+        if (any) tally?.let { it.reads++ } // one read of the source, as before, however many blocks it took
+    }
+
+    /** T357: the cells of [s]'s box are read and given by blocks of at most this many columns and rows ([blend]). */
+    private const val BLOCK = 128
+
+    /** T357: [blend] over the window's columns [c0]..[c1] and rows [r0]..[r1], all inside [s]'s box: one read of [s]. */
+    private fun blendRect(w: MercatorWindow, st: Blend, lats: DoubleArray, s: ElevationSource, si: Int, bandM: Double, whole: Boolean, c0: Int, c1: Int, r0: Int, r1: Int) {
+        val box = s.bounds
+        val width = w.width
         val sw = c1 - c0 + 1
         val sh = r1 - r0 + 1
-        tally?.let { it.reads++ }
         val g = s.read(MercatorWindow(w.zoom, w.x0 + c0, w.y0 + r0, sw, sh, w.tileSize)) ?: return
         require(g.width == sw && g.height == sh) { "${s.name} answered ${g.width}x${g.height} for ${sw}x$sh" }
-        val lonDeg = DoubleArray(sw) { if (whole) 0.0 else EdgeBlend.lonInsideDeg(box!!, lons[c0 + it]) }
+        val gv = g.values
+        val values = st.values
+        var took = 0L
+        val lonM = if (whole) DoubleArray(0) else DoubleArray(sw) { EdgeBlend.lonInsideDeg(box!!, w.lonAt(c0 + it)) * EdgeBlend.M_PER_DEG }
         for (j in r0..r1) {
-            if (!rows[j]) continue
-            val latM = if (whole) 0.0 else EdgeBlend.latInsideM(box!!, lats[j])
-            val cosLat = if (whole) 0.0 else EdgeBlend.cosLat(lats[j])
+            val base = j * width
+            val gBase = (j - r0) * sw - c0
+            // The run of columns at weight 1 in this row: ia..ib (none when ia > ib).
+            var ia = c0
+            var ib = c1
+            var latM = 0.0
+            var cosLat = 0.0
+            if (!whole) {
+                latM = EdgeBlend.latInsideM(box!!, lats[j])
+                cosLat = EdgeBlend.cosLat(lats[j])
+                if (latM < bandM) {
+                    ia = c1 + 1
+                } else {
+                    while (ia <= c1 && lonM[ia - c0] * cosLat < bandM) ia++
+                    while (ib >= ia && lonM[ib - c0] * cosLat < bandM) ib--
+                }
+            }
             for (i in c0..c1) {
-                val k = j * w.width + i
-                if (!cols[i] || rem[k] <= 0f) continue
-                val v = g.values[(j - r0) * sw + (i - c0)]
+                val k = base + i
+                val untouched = values[k].isNaN()
+                if (!untouched && !st.touchedOpen(k)) continue // done
+                val v = gv[gBase + i]
                 if (v.isNaN()) continue
-                val a = if (whole) 1f else EdgeBlend.weightOf(latM, lonDeg[i - c0], cosLat, bandM).toFloat()
-                if (a <= 0f) continue
-                val part = rem[k] * a
-                acc[k] += part * v
-                rem[k] = if (a >= 1f) 0f else rem[k] - part
-                if (owner != null && part > share!![k]) {
-                    share[k] = part
-                    owner[k] = si
+                if (i in ia..ib) {
+                    // Weight 1 on a cell no source has touched: its value whole (0f + 1f * 1f * v, as [Blend.give] makes it).
+                    if (untouched) {
+                        values[k] = 0f + v
+                        took++
+                    } else {
+                        st.give(k, si, v, 1f)
+                    }
+                } else {
+                    val a = EdgeBlend.weightOfM(latM, lonM[i - c0], cosLat, bandM).toFloat()
+                    if (a > 0f) st.give(k, si, v, a)
                 }
             }
         }
+        st.counts?.let { it[si] += took }
     }
 
     /** Fills the missing cells of [values] inside [box] (anywhere when null) from [s], reading only their rectangle. */

@@ -1271,7 +1271,7 @@ class TileService(
         const val MAX_PYRAMIDS = 2
 
         /** T357: decoded tiles kept per set of maps meeting at an edge (256 KB each). */
-        const val EDGE_CACHE_TILES = 32 // end T357
+        const val EDGE_CACHE_TILES = 64 // end T357
 
         /** T356: the areas' holdings are read again at most this often ([HeldTiles]). */
         const val AREAS_MS = 2_000L

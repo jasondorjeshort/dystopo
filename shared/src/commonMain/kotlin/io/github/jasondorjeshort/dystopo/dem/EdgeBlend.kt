@@ -40,9 +40,12 @@ object EdgeBlend {
      * latitude whose cosine is [cosLat]. [weight] and [MergedTerrain.read] (which keeps the row's and the column's parts) both
      * come here, so they give the same number at the same place.
      */
-    fun weightOf(latM: Double, lonDeg: Double, cosLat: Double, bandM: Double): Double {
+    fun weightOf(latM: Double, lonDeg: Double, cosLat: Double, bandM: Double): Double = weightOfM(latM, lonDeg * M_PER_DEG, cosLat, bandM)
+
+    /** [weightOf] with the east-west distance in metres at the equator ([lonM], lonDeg * M_PER_DEG, kept per column): the same number. */
+    fun weightOfM(latM: Double, lonM: Double, cosLat: Double, bandM: Double): Double {
         if (bandM <= 0) return 1.0
-        val d = min(latM, lonDeg * M_PER_DEG * cosLat)
+        val d = min(latM, lonM * cosLat)
         if (d >= bandM) return 1.0
         return smooth(d / bandM)
     }

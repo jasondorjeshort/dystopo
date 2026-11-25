@@ -6,6 +6,7 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.tiles.ArgbImage
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import io.github.jasondorjeshort.dystopo.tiles.ElevationImageDecoder
+import kotlin.jvm.Synchronized
 
 /**
  * T357 (ADR 0066 decision 4, proposal 0066 C2): the elevation, shade and contour tiles across a map's edge, composed cell by
@@ -33,6 +34,9 @@ class MergedTile(val sources: List<Source>, val bandM: Double = EdgeBlend.BAND_M
 
     private val byName = sources.associateBy { it.name }
 
+    /** Hands [pyramid] the composed values as they are: no encoding, no copy ([Handoff]). */
+    private val handoff = Handoff()
+
     /** The maps as the terrain read's sources (a map's whole tiles reach past its box, as `TerrainRead` gives them). */
     private val elevation: List<ElevationSource> = MergedTerrain.order(
         sources.map { s ->
@@ -54,8 +58,8 @@ class MergedTile(val sources: List<Source>, val bandM: Double = EdgeBlend.BAND_M
     fun tile(z: Int, x: Int, y: Int): ElevationGrid? = window(z, x * TILE, y * TILE, TILE, TILE).takeUnless { g -> g.values.all { it.isNaN() } }
 
     /** A pyramid over the composed tiles, from the shallowest map's first zoom to the deepest map's last (deeper overzooms). */
-    val pyramid: DemPyramid = DemPyramid(sources.minOf { it.minZoom }, sources.maxOf { it.maxZoom }, RawElevations, cacheTiles) { z, x, y ->
-        tile(z, x, y)?.let { RawElevations.encode(it.values) }
+    val pyramid: DemPyramid = DemPyramid(sources.minOf { it.minZoom }, sources.maxOf { it.maxZoom }, handoff, cacheTiles) { z, x, y ->
+        tile(z, x, y)?.let { handoff.put(it.values) }
     }
 
     /**
@@ -68,13 +72,22 @@ class MergedTile(val sources: List<Source>, val bandM: Double = EdgeBlend.BAND_M
     fun shares(z: Int, x: Int, y: Int, size: Int): List<FloatArray> {
         val ordered = names.map { byName.getValue(it) }
         val out = ordered.map { FloatArray(size * size) }
+        // [EdgeBlend.weight] from each column's and each row's parts, worked out once (the same numbers).
+        val lons = DoubleArray(size) { WebMercator.xToLon(x + (it + 0.5) / size, z) }
+        val lonM = ordered.map { s -> DoubleArray(size) { EdgeBlend.lonInsideDeg(s.bounds, lons[it]) * EdgeBlend.M_PER_DEG } }
         for (j in 0 until size) {
             val lat = WebMercator.yToLat(y + (j + 0.5) / size, z)
+            val cosLat = EdgeBlend.cosLat(lat)
             for (i in 0 until size) {
-                val lon = WebMercator.xToLon(x + (i + 0.5) / size, z)
+                val lon = lons[i]
                 var rem = 1.0
                 for ((k, s) in ordered.withIndex()) {
-                    val w = if (k == ordered.lastIndex) 1.0 else EdgeBlend.weight(s.bounds, lon, lat, bandM)
+                    val b = s.bounds
+                    val w = when {
+                        k == ordered.lastIndex -> 1.0
+                        lon <= b.minLon || lon >= b.maxLon || lat <= b.minLat || lat >= b.maxLat -> 0.0
+                        else -> EdgeBlend.weightOfM(EdgeBlend.latInsideM(b, lat), lonM[k][i], cosLat, bandM)
+                    }
                     val part = rem * w
                     out[k][j * size + i] = part.toFloat()
                     rem -= part
@@ -137,6 +150,34 @@ class MergedTile(val sources: List<Source>, val bandM: Double = EdgeBlend.BAND_M
             return over.dropLast(1).any { EdgeBlend.reachesBand(it, extent, bandM) }
         }
     }
+}
+
+/**
+ * T357: the composed values of [MergedTile.pyramid]'s tiles passed to it as they are. The pyramid's fetch puts a tile's
+ * values here and hands over an 8-byte ticket; its decode, on the same load, takes them back by the ticket. No encoding, no
+ * copy: the values the pyramid keeps are the ones [MergedTerrain.read] made.
+ */
+internal class Handoff : ElevationImageDecoder {
+    private val waiting = HashMap<Long, FloatArray>()
+    private var next = 0L
+
+    @Synchronized
+    fun put(values: FloatArray): ByteArray {
+        val t = next++
+        waiting[t] = values
+        return ByteArray(8) { (t ushr (8 * it)).toByte() }
+    }
+
+    @Synchronized
+    override fun elevations(bytes: ByteArray, width: Int, height: Int): FloatArray {
+        var t = 0L
+        for (i in 0 until 8) t = t or ((bytes[i].toLong() and 0xff) shl (8 * i))
+        val v = waiting.remove(t) ?: error("no composed tile for ticket $t")
+        require(v.size == width * height) { "composed tile of ${v.size} cells for ${width}x$height" }
+        return v
+    }
+
+    override fun decode(bytes: ByteArray): ArgbImage = throw UnsupportedOperationException("composed elevations have no image")
 }
 
 /**
