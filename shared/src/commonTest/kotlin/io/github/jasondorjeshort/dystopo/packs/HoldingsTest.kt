@@ -230,4 +230,26 @@ class HoldingsTest {
         assertEquals(12, Holdings.readZoom(h, on, wideOnly.first, wideOnly.second, 14, onlineByDepth = true))
         assertEquals(11, Holdings.readZoom(h.map { if (it.name == "fine") Holding("fine", Kind.MAP, it.vector, it.dem, off = true) else it }, on, summit.first, summit.second, 14), "an off map is not read")
     }
+
+    // T360
+    @Test
+    fun pastAMapsDeepestVectorZoomTheMapIsListedAsShallowerNotAsAMember() {
+        val h = pair(chosenWide = true)
+        // Inside the wide map only, at z14: the wide map stores vector to z13, so no member serves; it is the one shallower.
+        val here = Holdings.point(Role.VECTOR, wideOnly.first, wideOnly.second, 14, h, null)
+        assertEquals(emptyList(), here.members.map { it.holding.name })
+        assertEquals(listOf("wide"), here.shallower.map { it.holding.name })
+        assertEquals(listOf(13), here.shallower.map { it.depth })
+        assertEquals(false, here.shallower.single().serves)
+        // At its own zooms it is a member, and nothing is shallower.
+        assertEquals(emptyList(), Holdings.point(Role.VECTOR, wideOnly.first, wideOnly.second, 13, h, null).shallower)
+        // Inside both at z15: the fine map (z14) and the wide one (z13), deepest first.
+        assertEquals(listOf("fine", "wide"), Holdings.point(Role.VECTOR, summit.first, summit.second, 15, h, null).shallower.map { it.holding.name })
+        // A map that is off is not listed; elevation never lists any (a map past its depth is a member).
+        assertEquals(emptyList(), Holdings.point(Role.VECTOR, wideOnly.first, wideOnly.second, 14, listOf(map("wide", wideBox, 13, 11, off = true)), null).shallower)
+        assertEquals(emptyList(), Holdings.point(Role.DEM, wideOnly.first, wideOnly.second, 14, h, null).shallower)
+        // Who serves is unchanged.
+        assertEquals(null, here.serving)
+    }
+    // end T360
 }

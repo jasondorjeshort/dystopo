@@ -148,6 +148,9 @@ class OnlineUi(
 
     private val fromNetwork: Boolean get() = row == Row.ONLINE && column in NETWORK
 
+    /** T360: the coverage panel's lines, from the lookup's answer the chip's source was read from ([OnlineView.here]); null without one. */
+    val coverage: List<String>? get() = view?.here?.let { runCatching { CoveragePanel.lines(it) }.getOrNull() }
+
     /** The chip's second part: where this view's map is. */
     val sourceText: String get() = when (column) {
         Column.PACK, Column.CACHE_KEPT -> ON_PHONE
@@ -222,6 +225,7 @@ class OnlineUi(
             "cramped" to OnlineChip.cramped,
         ),
         "held" to held?.json(),
+        "coverage" to CoveragePanel.json(coverage), // T360: the panel's lines, shown in the open card
     )
 
     /** The progress line while a download runs, else null. */
@@ -457,6 +461,16 @@ fun OnlineOverlay() {
     } }
 }
 
+/**
+ * T360: the coverage section's greatest height: [COVERAGE_SHARE] of the window's height (upright at font 1.0, five lines and
+ * the heading fit whole; on its side at a large font the section scrolls).
+ */
+@Composable
+private fun coverageMaxDp(): Int = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * COVERAGE_SHARE).toInt()
+
+private const val COVERAGE_SHARE = 0.3f
+// end T360
+
 /** T343: the font scale from which a window on its side is [OnlineChip.cramped]. */
 private const val CRAMPED_FONT_SCALE = 1.5f
 
@@ -473,6 +487,10 @@ private fun ChipCard(u: OnlineUi) {
         BasicText(u.stateSentence, style = TextStyle(color = if (u.row == OnlineUi.Row.PAUSED) Red else Ink, fontSize = 12.sp))
         BasicText(u.sourceSentence, style = TextStyle(color = Ink, fontSize = 12.sp))
         u.cacheLine?.let { BasicText(it, style = TextStyle(color = Grey, fontSize = 12.sp)) }
+        // T360: the coverage panel, always shown in the open card; held to a share of the window's height and scrolled past it,
+        // so the card shortens before the layout rule hides the column.
+        u.coverage?.let { CoverageSection(it, coverageMaxDp()) }
+        // end T360
         u.link?.let { l ->
             BasicText(
                 l.text, style = TextStyle(color = LinkBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold),

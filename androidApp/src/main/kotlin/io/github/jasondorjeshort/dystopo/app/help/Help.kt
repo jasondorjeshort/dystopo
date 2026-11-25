@@ -96,8 +96,11 @@ object HelpRegistry {
             io.github.jasondorjeshort.dystopo.app.areas.USE_ON_PHONE_HELP +
             // end T342
             // T344: the List view, and the three sections' texts that moved there from the Panorama's pane.
-            io.github.jasondorjeshort.dystopo.app.skylist.SKY_LIST_HELP
+            io.github.jasondorjeshort.dystopo.app.skylist.SKY_LIST_HELP +
             // end T344
+            // T360: the coverage panel in the status chip's card.
+            io.github.jasondorjeshort.dystopo.app.online.CoveragePanel.COVERAGE_HELP
+            // end T360
     }
 
     fun byKey(key: String): HelpText? = all.firstOrNull { it.key == key }

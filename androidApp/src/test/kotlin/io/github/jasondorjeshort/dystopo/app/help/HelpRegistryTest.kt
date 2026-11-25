@@ -226,6 +226,9 @@ class HelpRegistryTest {
             // T369: the public map source's cap on a download.
             "direct.downloadCap",
             // end T369
+            // T360: the coverage panel.
+            "online.coverage",
+            // end T360
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
