@@ -680,12 +680,26 @@ class StaleSrv(WeakSrv):
         return {}
 
 
-_sleep = a11y.time.sleep
+_sleep, _stale_feed = a11y.time.sleep, a11y.FixFeed
 a11y.time.sleep = lambda s: None
+stale_feeds = []
+
+
+class StaleFeed:  # T373: the screen runs a fix feed from its setup to its end
+    def __init__(self, srv):
+        stale_feeds.append(1)
+        self.thread = type("T", (), {"start": lambda s: None})()
+
+    def stop(self):
+        stale_feeds.append(-1)
+
+
+a11y.FixFeed = StaleFeed
 try:
     ssrv = StaleSrv()
-    ctx = type("C", (), {"srv": ssrv, "recorded": None})()
+    ctx = type("C", (), {"srv": ssrv, "recorded": None, "fix_feed": None})()
     rs[0][1](ctx)
+    assert stale_feeds == [1] and ctx.fix_feed is not None, stale_feeds
     paths = [p for _m, p in ssrv.calls]
     assert paths[1] == "/tracks/record?source=injected&activity=foot" and ctx.recorded == "t-2", paths
     assert paths[3:6] == [f"/tracks/stale?lastFixAgeH={a11y.STALE_AGE_H}&hold=1", "/tracks/wayback?on=1", "/tracks/ui?bar=1"], paths
@@ -693,9 +707,9 @@ try:
     ssrv.calls.clear()
     rs[0][2](ctx)
     assert [p for _m, p in ssrv.calls] == ["/tracks/stop", "/tracks/t-2"], ssrv.calls
-    assert ctx.recorded is None
+    assert ctx.recorded is None and stale_feeds == [1, -1] and ctx.fix_feed is None, stale_feeds
 finally:
-    a11y.time.sleep = _sleep
+    a11y.time.sleep, a11y.FixFeed = _sleep, _stale_feed
 # end T348
 
 # T373: the frame is kept only between two semantics reads that agree. The track bar's "Hide" read 200 px away in the

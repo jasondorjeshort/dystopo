@@ -790,6 +790,7 @@ def scr_recording(c):
     c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
     j = c.srv.ok("POST", "/tracks/record?activity=foot")
     c.recorded = ((j or {}).get("recording") or {}).get("id") or (j or {}).get("id")
+    c.srv.ok("POST", "/tracks/ui?bar=1")  # T373: the panel unfolded (it was the Activity picker's, left by close_all)
 
 
 def end_recording(c):
@@ -1182,7 +1183,16 @@ def scr_recording_stale(c):
     card at the bottom ("This recording stopped getting location updates 3 days ago. ...", Finish it, Keep recording) and
     the recording panel unfolded with the turn-back chip on, whose card says "No turn-back time" and how old the last
     location update is. State it leaves, put back by end_recording_stale (also after a failed step): the recording
-    (stopped and deleted; its end forgets the debug age)."""
+    (stopped and deleted; its end forgets the debug age).
+
+    T373: a fix every second for the whole screen (T360's FixFeed, stopped by the end). At font 2.0 the strip's caption
+    turning from "elevation" to "no fix N s" a few seconds after snapshot()'s one fix narrows the strip, and the layout
+    rule then lays the screen out another way (the online column shown, the track bar a row under it, against the column
+    hidden and the bar a column at the right); the display followed the layout up to a second late, so in three sweeps
+    the frame showed one arrangement and the semantics the other: "Hide" and "Waypoint" were read on the map (2.42 to
+    2.69) and a caption's box held none of its text ("ft/h"). With the feed the caption stays "elevation" and the
+    arrangement is the second one in every run."""
+    fix_feed_start(c)
     c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
     j = c.srv.ok("POST", "/tracks/record?source=injected&activity=foot")
     c.recorded = ((j or {}).get("started") or {}).get("id")
@@ -1202,6 +1212,7 @@ def scr_recording_stale(c):
 
 
 def end_recording_stale(c):
+    fix_feed_stop(c)
     code, j = c.srv.call("POST", "/tracks/stop")
     tid = c.recorded or ((j or {}).get("track") or {}).get("id") or (j or {}).get("id")
     if tid:
@@ -1705,14 +1716,13 @@ def tap_profile_close(c, sem):
 TAPS = {"map": [tap_settings, tap_activity], "route": [tap_trip_details], "profile": [tap_profile_close]}
 
 
-# T373: the frame is taken between two reads of the semantics that agree. The fresh fix just before the frame changes the
-# readout strip, and the layout rule then moves what stands beside it (at font 2.0 the track bar's panel and the
-# recording card): in the sweeps of 2026-11-25 the frame showed the bar where the semantics did not, so "Hide" and
-# "Waypoint" were read on the map beside it (contrast 2.66 on a grey slope) and a caption's box held none of its text
-# (textOutside "ft/h"). Every labelled node's place is compared by its key (key_label), the live readout's own nodes left
-# out (their words change by design); a pair of reads that differs by more than STEADY_PX at an edge, or a node that came
-# or went, takes the frame again, up to FRAME_TRIES times. The screen's entry has `frameTries`, and `unsteady` (the keys
-# that still moved) when the last try did not hold.
+# T373: the frame is taken between two reads of the semantics that agree, so a layout that moves while the frame is
+# taken (the readout strip's caption changing and the layout rule moving what stands beside it) is caught and taken
+# again rather than read as text on the map. Every labelled node's place is compared by its key (key_label), the live
+# readout's own nodes left out (their words change by design); a pair of reads that differs by more than STEADY_PX at an
+# edge, or a node that came or went, takes the frame again (after a settle), up to FRAME_TRIES times. The screen's entry
+# has `frameTries`, and `unsteady` (the keys that still moved) when the last try did not hold. It does not catch a display
+# that lags a layout that already holds (recording-stale's case, pinned in its own setup: see scr_recording_stale).
 FRAME_TRIES = 4
 STEADY_PX = 4
 
@@ -1748,11 +1758,12 @@ def snapshot(c, name, scale, layer, tags=frozenset()):
     settle(dev)
     c.frame_tries, c.unsteady = 0, []
     for _try in range(FRAME_TRIES):
+        if _try:
+            settle(dev, timeout=4.0)
         # A fresh fix at the same place just before the frame: the readout strip dims its words a few seconds after the
         # last fix ("no fix 8 s"), which made a slow screen's strip a contrast finding in one sweep and not the next.
         srv.call("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
         time.sleep(0.5)
-        settle(dev, timeout=4.0)
         before = srv.ok("GET", "/semantics")
         _, raster = dev.frame()
         t = time.time()
