@@ -9,8 +9,8 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
  * the first thing on the page; the first-run card's Settings link opens [DATA] at once.
  */
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
-    DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage"), // T115: titles from Screens
-    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, position button, north up, view range, print, trail disagreements, flight tracking"), // T223: names what the page holds; T311: flight tracking
+    DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage, flight tracking"), // T115: titles from Screens; T370: flight tracking
+    MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, flights, position button, north up, view range, print, trail disagreements"), // T223: names what the page holds; T370: Flight tracking's rows moved to DATA, "flights" is Show flights (T364)
     DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, pressure units, text size"), // T337: pressure units
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning, Horizon view, sky range, Panorama steering"), // T223: names what the page holds; T308: Horizon view; T312: sky range; T330: Panorama steering
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
@@ -117,13 +117,14 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     // T213: the trail disagreements' layer switch (the Map page, last)
     SHOW_DIVERGENCE(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_SHOW_DIVERGENCE, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.routing.DivergenceText.SETTING, "SettingsPages", "T213"),
     // end T213
-    // T311: the Flights layer: Flight tracking, its refresh interval and airport names (the Map page, last)
-    AIRCRAFT(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT, SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING, "SettingsPages", "T311"),
-    AIRCRAFT_REFRESH(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_REFRESH, SettingsGroup.MAP, "Flight tracking: Refresh", "SettingsPages", "T311"),
-    AIRCRAFT_AIRPORTS(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_AIRPORTS, SettingsGroup.MAP, "Flight tracking: Airport names", "SettingsPages", "T311"),
+    // T311: the Flights layer: Flight tracking, its refresh interval and airport names
+    // T370: on the Data and storage page, last (after Sources, Storage and Offline maps; the owner, 2026-11-23); keys unchanged
+    AIRCRAFT(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT, SettingsGroup.DATA, io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING, "SettingsPages", "T311"),
+    AIRCRAFT_REFRESH(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_REFRESH, SettingsGroup.DATA, "Flight tracking: Refresh", "SettingsPages", "T311"),
+    AIRCRAFT_AIRPORTS(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_AIRPORTS, SettingsGroup.DATA, "Flight tracking: Airport names", "SettingsPages", "T311"),
     // end T311
-    // T314: which flights show route lines (the Map page, last, after the Flights rows)
-    AIRCRAFT_ROUTE_LINES(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_ROUTE_LINES, SettingsGroup.MAP, "Flight tracking: Route lines", "SettingsPages", "T314"),
+    // T314: which flights show route lines (after the Flights rows; T370: on the Data and storage page with them)
+    AIRCRAFT_ROUTE_LINES(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_AIRCRAFT_ROUTE_LINES, SettingsGroup.DATA, "Flight tracking: Route lines", "SettingsPages", "T314"),
     // end T314
 }
 
@@ -136,12 +137,14 @@ object SettingsLayout {
 
     /**
      * T115 (T112's follow-up): a group's line under its title in the list. Data and storage's names the cache budget's
-     * total ([cacheBudgetMb]), the one number on its page a user is most likely to look for.
+     * total ([cacheBudgetMb]), the one number on its page a user is most likely to look for, right after "storage"
+     * (T370: flight tracking, the page's last rows, follows it).
      */
     fun summary(group: SettingsGroup, cacheBudgetMb: Long): String =
         if (group == SettingsGroup.DATA) {
             // A no-break space inside the size, so "1 GB" never splits across two lines.
-            "${group.summary} with a ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(cacheBudgetMb).replace(' ', '\u00A0')} cache budget"
+            val budget = "storage with a ${io.github.jasondorjeshort.dystopo.app.storage.Storage.sizeLabel(cacheBudgetMb).replace(' ', '\u00A0')} cache budget"
+            group.summary.replace(", storage,", ", $budget,")
         } else group.summary
 
     /** `GET /settings/layout`: the groups in list order, each with its rows in page order, and what is open now. */

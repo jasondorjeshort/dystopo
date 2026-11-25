@@ -487,7 +487,7 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
         }
         // end T213
         // T311: the Flights layer (ADR 0044: off by default as a new data flow; the refresh and the names are settings
-        // because the surveyed apps split; the research finding of 2026-11-20).
+        // because the surveyed apps split; the research finding of 2026-11-20). T370: drawn on the Data and storage page.
         SettingsRow.AIRCRAFT -> {
             @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
             val on = AppSettings.AIRCRAFT.value
@@ -961,25 +961,26 @@ internal val SETTINGS_HELP: List<HelpText> = run {
                 "dismiss it. It is worked out on this phone and sends nothing."
         },
         // end T213
-        // T311: the Flights layer's three rows.
-        HelpText("settings.aircraft", io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING, at(SettingsGroup.MAP, io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING), show = page(SettingsGroup.MAP)) { units ->
-            "Shows aircraft near the map you are viewing; tap one for its card. While it is on, the map's centre, rounded to " +
+        // T311: the Flights layer's three rows (T370: on the Data and storage page; the first reworded for ADR 0068's split).
+        HelpText("settings.aircraft", io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING, at(SettingsGroup.DATA, io.github.jasondorjeshort.dystopo.aircraft.AircraftText.SETTING), show = page(SettingsGroup.DATA)) { units ->
+            "Gets live aircraft near the map; where they show is chosen by Show flights in Map options and the sky views' " +
+                "Flights button. While shown, the map's centre, rounded to " +
                 "about ${io.github.jasondorjeshort.dystopo.render.UnitFormat.distance(11_000.0, units)}, goes to the flight data source named in the credits; in the Horizon view, your position rounded the " +
-                "same way. Nothing is asked while the app is in the background."
+                "same way. Nothing is asked in the background."
         },
-        HelpText("settings.aircraftRefresh", "Flight tracking: Refresh", at(SettingsGroup.MAP, "Flight tracking: Refresh"), show = page(SettingsGroup.MAP)) {
+        HelpText("settings.aircraftRefresh", "Flight tracking: Refresh", at(SettingsGroup.DATA, "Flight tracking: Refresh"), show = page(SettingsGroup.DATA)) {
             // T316: how long the day's requests last at each choice.
             "How often flight positions are asked for while the map shows. The source allows about 500 requests a UTC day " +
                 "from one internet address; the line under the title counts this phone's. They last about " +
                 io.github.jasondorjeshort.dystopo.aircraft.AircraftText.lastsList() + "."
         },
-        HelpText("settings.aircraftAirports", "Flight tracking: Airport names", at(SettingsGroup.MAP, "Flight tracking: Airport names"), show = page(SettingsGroup.MAP)) {
+        HelpText("settings.aircraftAirports", "Flight tracking: Airport names", at(SettingsGroup.DATA, "Flight tracking: Airport names"), show = page(SettingsGroup.DATA)) {
             "How airports read. Codes and cities puts codes on the map's labels (SEA > DEN) and both on the flight card " +
                 "(SEA Seattle > DEN Denver). Codes puts codes on both; Cities, city names on both."
         },
         // end T311
         // T314: which flights show route lines.
-        HelpText("settings.aircraftRouteLines", "Flight tracking: Route lines", at(SettingsGroup.MAP, "Flight tracking: Route lines"), show = page(SettingsGroup.MAP)) {
+        HelpText("settings.aircraftRouteLines", "Flight tracking: Route lines", at(SettingsGroup.DATA, "Flight tracking: Route lines"), show = page(SettingsGroup.DATA)) {
             "Selected flight: route lines only for the flight you tap. All flights: also a faint line from origin through the " +
                 "aircraft to destination on every other flight whose route fits, for the " +
                 "${io.github.jasondorjeshort.dystopo.aircraft.RouteLines.CAP} nearest the map's centre. Worked out on this " +
