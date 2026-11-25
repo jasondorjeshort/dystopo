@@ -500,7 +500,17 @@ class TileService(
         val depth = packs.demFor(z, x, y)?.header?.maxZoom ?: return
         if (!NetworkAhead.fetches(z, depth, networkStored(Holdings.Role.DEM), detail = true, allowed = true)) return // cheap first
         val m = o.onlineMember()
-        if (NetworkAhead.fetches(z, depth, m.demMaxZoom, m.detail, m.allowed)) o.fetchBehind(z, x, y, Holdings.Role.DEM)
+        if (!NetworkAhead.fetches(z, depth, m.demMaxZoom, m.detail, m.allowed)) return
+        val refresh = io.github.jasondorjeshort.dystopo.app.online.BehindRefresh
+        if (!refresh.launchLoaded && !DystopoApp.instance.map.fullyLoaded) return refresh.defer(z, x, y) // after the launch's first view
+        refresh.launchLoaded = true
+        o.fetchBehind(z, x, y, Holdings.Role.DEM)
+    }
+
+    /** T368: the elevation tiles noted during the launch ([demBehind]), fetched behind now that its first view is loaded. */
+    fun startDeferredBehind(tiles: List<Triple<Int, Int, Int>>) {
+        val o = online ?: return
+        for ((z, x, y) in tiles) o.fetchBehind(z, x, y, Holdings.Role.DEM)
     }
 
     /** T368: [demBehind] for the elevation tiles contour tile z/x/y reads (512 px: one zoom deeper, at most z15). */

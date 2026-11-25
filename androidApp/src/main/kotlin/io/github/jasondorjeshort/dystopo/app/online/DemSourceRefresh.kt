@@ -201,6 +201,20 @@ object BehindRefresh {
     }
     private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
+    /**
+     * Whether the map has been fully loaded once since the app started. Until then the elevation tiles to fetch behind are
+     * only noted ([defer]) and started once it is ([TileService.startDeferredBehind]): fetched during the launch they held its
+     * fully-loaded figure back by about 1.5 to 2.5 s on the emulator (a saved view at z14 inside a map a server stores deeper).
+     */
+    @Volatile var launchLoaded = false
+    private val deferred = java.util.concurrent.ConcurrentLinkedQueue<Triple<Int, Int, Int>>()
+
+    /** Elevation tile z/x/y to fetch behind once the launch's first view is loaded. */
+    fun defer(z: Int, x: Int, y: Int) {
+        if (deferred.size < MAX_DEFERRED) deferred.add(Triple(z, x, y))
+        poke()
+    }
+
     /** A fetch started or landed: the ticker looks until nothing is pending. */
     fun poke() {
         if (ticking.compareAndSet(false, true)) ticker.schedule(::tick, TICK_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -210,12 +224,19 @@ object BehindRefresh {
         try {
             val app = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance
             val now = System.currentTimeMillis()
-            if (!SeamlessDemRefresh.running) dem.take(now, app.map.animating).takeIf { it > 0 }?.let { swap(app, it) }
+            if (!deferred.isEmpty() && app.map.fullyLoaded) {
+                launchLoaded = true
+                val tiles = generateSequence { deferred.poll() }.toList()
+                app.tiles.startDeferredBehind(tiles)
+            }
+            // At rest: the camera still and the view it shows loaded (a refresh started while the first view loads held the
+            // launch's fully-loaded figure back by about 2.6 s on the emulator).
+            if (!SeamlessDemRefresh.running) dem.take(now, app.map.animating || !app.map.fullyLoaded).takeIf { it > 0 }?.let { swap(app, it) }
         } catch (e: Throwable) {
             android.util.Log.w("BehindRefresh", "refresh after fetches behind failed", e)
         } finally {
             ticking.set(false)
-            if (dem.pending || SeamlessDemRefresh.running) poke()
+            if (dem.pending || SeamlessDemRefresh.running || !deferred.isEmpty()) poke()
         }
     }
 
@@ -240,10 +261,11 @@ object BehindRefresh {
         while (recent.size > KEEP) recent.removeFirst()
     }
 
-    fun json(): Map<String, Any?> = linkedMapOf("dem" to dem.json(), "refreshing" to SeamlessDemRefresh.running, "recent" to synchronized(recent) { recent.toList() })
+    fun json(): Map<String, Any?> = linkedMapOf("dem" to dem.json(), "refreshing" to SeamlessDemRefresh.running, "launchLoaded" to launchLoaded, "deferred" to deferred.size, "recent" to synchronized(recent) { recent.toList() })
 
     const val TICK_MS = 250L
     private const val KEEP = 12
+    private const val MAX_DEFERRED = 512
 }
 
 /**
