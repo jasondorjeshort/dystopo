@@ -365,8 +365,8 @@ that map's depth, the map's tile (stored or synthesised) answers at once and the
 the views' lane (T355), under Mobile data and the session limit. The landed tiles sit in the cache, which `HeldTiles` ranks
 by the source's stored depth, so they answer from then on, offline too. They are announced by one refresh of the elevation
 source per settled batch (`online/DemSourceRefresh.kt` `BehindBatch`: none landed for 0.4 s and none in flight, or 8 s
-after the first), held until the camera rests (proposal 0066's fallback, taken: a refresh asks again for every visible
-tile), and made without a blank frame (`SeamlessDemRefresh`: the new sources load under copies of the hillshade and
+after the first), held until the camera rests and the view is loaded (proposal 0066's fallback, taken: a refresh asks
+again for every visible tile; during a launch the tiles are only noted and fetched once its first view is loaded), and made without a blank frame (`SeamlessDemRefresh`: the new sources load under copies of the hillshade and
 contour layers kept all but invisible, the copies then show while the originals are swapped, and the originals show again
 and the copies go once the originals are loaded; the plain swap left the hillshade and contours blank for about 1.5 s).
 The style's top elevation zoom reaches the source's stored maximum with the setting on. Vector tiles past a map's zooms
