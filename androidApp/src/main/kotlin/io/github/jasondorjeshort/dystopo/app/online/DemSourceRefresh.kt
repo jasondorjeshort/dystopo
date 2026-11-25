@@ -352,6 +352,13 @@ object SeamlessDemRefresh {
         val record = linkedMapOf<String, Any?>("copies" to copies.size)
         fun prop(id: String): String? = style.getLayer(id)?.let { typeOf(it) }?.let { fade[it]?.first }
         fun end(why: String?) {
+            // However it ends (a style load in between included, the same Style object still loading): the originals are shown
+            // again, as the style JSON has them, before the copies go; on a newer Style object these layers are gone anyway.
+            for ((_, lid, shown) in copies) runCatching {
+                val layer = style.getLayer(lid) ?: return@runCatching
+                fade[typeOf(layer)]?.first?.let { p -> layer.setProperties(org.maplibre.android.style.layers.PaintPropertyValue(p, shown)) }
+                hideLabels(layer, false, json[lid])
+            }
             for ((cid, _, _) in copies) runCatching { style.getLayer(cid)?.let { style.removeLayer(it) } }
             for (s in made) runCatching { style.getSource(s.id)?.let { style.removeSource(it) } }
             running = false
@@ -362,27 +369,21 @@ object SeamlessDemRefresh {
         whenIdle(app, style) { ok1 ->
             if (!ok1) return@whenIdle end("style changed")
             record["loadMs"] = android.os.SystemClock.elapsedRealtime() - t0
-            // (2) the copies show, the originals hide.
-            for ((cid, lid, shown) in copies) {
+            // (2) the copies show, the originals hide (a failure here ends the refresh, the originals shown again).
+            val shownStep = runCatching { for ((cid, lid, shown) in copies) {
                 val p = prop(cid) ?: continue
                 style.getLayer(cid)?.setProperties(org.maplibre.android.style.layers.PaintPropertyValue(p, shown))
                 hideLabels(style.getLayer(cid), false, json[lid])
                 style.getLayer(lid)?.setProperties(org.maplibre.android.style.layers.PaintPropertyValue(p, hiddenOf(p)))
                 hideLabels(style.getLayer(lid), true, json[lid])
-            }
+            } }
+            if (shownStep.isFailure) return@whenIdle end("error: ${shownStep.exceptionOrNull()?.message}")
             // (3) the originals' sources swapped while hidden (their layers keep what hides them).
             val swapped = runCatching { DemSourceRefresh.refresh(style, styleJson) }.getOrElse { mapOf("skipped" to "error: ${it.message}") }
             record["swap"] = swapped.filterKeys { it != "url" }
             whenIdle(app, style) { ok2 ->
-                if (ok2) {
-                    record["reloadMs"] = android.os.SystemClock.elapsedRealtime() - t0
-                    // (4) the originals show again, the copies go.
-                    for ((_, lid, shown) in copies) {
-                        val p = prop(lid) ?: continue
-                        style.getLayer(lid)?.setProperties(org.maplibre.android.style.layers.PaintPropertyValue(p, shown))
-                        hideLabels(style.getLayer(lid), false, json[lid])
-                    }
-                }
+                if (ok2) record["reloadMs"] = android.os.SystemClock.elapsedRealtime() - t0
+                // (4) the originals show again and the copies go ([end] does both, whichever way the refresh ends).
                 end(if (ok2) null else "style changed")
             }
         }

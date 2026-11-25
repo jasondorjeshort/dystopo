@@ -37,9 +37,10 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
     /**
      * T368: the online source ranked by its stored depth (`MergedTerrain`'s `onlineByDepth`, T354's input), ahead of a map only
      * where it stores deeper, under "More detail from online" ([io.github.jasondorjeshort.dystopo.app.online.OnlineDetail]); its
-     * depth is the stored maximum (`DirectSources.maxZoom`, a server's `demMaxZoom`), not the URL range. Off: last, as before.
+     * depth is the stored maximum (`DirectSources.maxZoom`, a server's `demMaxZoom`), not the URL range. Off, or no fetch
+     * allowed now (offline, Mobile data, the session limit): last, as before. `GET /holdings` `readZoom` follows the same rule.
      */
-    val onlineByDepth: Boolean = online != null && io.github.jasondorjeshort.dystopo.app.online.OnlineDetail.on
+    val onlineByDepth: Boolean = online != null && io.github.jasondorjeshort.dystopo.app.online.OnlineDetail.on && runCatching { online?.onlineMember()?.allowed == true }.getOrDefault(false)
 
     /**
      * T368: each finished tile area as a member of its own (its box, its elevation zooms), read from its held cells only

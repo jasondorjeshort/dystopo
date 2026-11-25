@@ -1208,15 +1208,18 @@ WORLD_VIEWS = [("pacific-z3", 3, 0.0, -150.0, ("water",)), ("europe-z5", 5, 47.0
 
 # T368
 def behind_wait(server, max_s=40.0):
-    """Seconds waited for the fetches behind the view and their refresh (`GET /online` `behind`) to finish; 0 when none ran."""
+    """(seconds waited for the fetches behind the view and their refresh to finish (`GET /online` `behind`), 0 when none
+    ran; True when they were still going after max_s: the view is then not counted settled)."""
     t0 = time.time()
-    while time.time() - t0 < max_s:
+    while True:
         b = (server.json("/online") or {}).get("behind") or {}
         d = b.get("dem") or {}
         if not (d.get("inFlight") or d.get("waiting") or b.get("refreshing") or b.get("deferred")):
-            break
+            waited = time.time() - t0
+            return (round(waited, 1) if waited >= 0.5 else 0), False
+        if time.time() - t0 >= max_s:
+            return round(time.time() - t0, 1), True
         time.sleep(0.5)
-    return round(time.time() - t0, 1) if time.time() - t0 >= 0.5 else 0
 # end T368
 
 
@@ -2245,7 +2248,7 @@ def main():
             rep["idleSeconds"] = round(time.time() - t0, 1)  # T110
             # T368: where a server stores deeper than the pack, the deeper elevation is fetched behind the view and drawn by one
             # refresh at the rest: the view has settled once that is done (`GET /online` `behind`), then it is taken again.
-            rep["behindWaitS"] = behind_wait(server)
+            rep["behindWaitS"], rep["behindTimedOut"] = behind_wait(server)
             if rep["behindWaitS"]:
                 png = server.get(f"/screenshot?wait={wait_ms}", timeout=wait_ms / 1000 + 60)
             # end T368
@@ -2365,7 +2368,10 @@ def main():
         if not c["tiles"]:
             rep["sourcesWithoutTiles"] = missing
         c["blank"] = "lumaStddev" in rep["image"] and rep["image"]["lumaStddev"] >= args.min_stddev
-        if settle_share is not None:
+        if rep.get("behindTimedOut"):  # T368: a fetch behind that never went quiet
+            c["settled"] = False
+            rep["settleProblem"] = f"the fetches behind the view were still running after {rep.get('behindWaitS')} s (GET /online behind)"
+        elif settle_share is not None:
             c["settled"] = settle_share <= args.max_settle_change
             if not c["settled"]:
                 rep["settleProblem"] = (f"{settle_share:.0%} of the screenshot changed after the map settled: /screenshot "
