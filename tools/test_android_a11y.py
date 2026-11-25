@@ -680,36 +680,23 @@ class StaleSrv(WeakSrv):
         return {}
 
 
-_sleep, _stale_feed = a11y.time.sleep, a11y.FixFeed
+_sleep = a11y.time.sleep
 a11y.time.sleep = lambda s: None
-stale_feeds = []
-
-
-class StaleFeed:  # T373: the screen runs a fix feed from its setup to its end
-    def __init__(self, srv):
-        stale_feeds.append(1)
-        self.thread = type("T", (), {"start": lambda s: None})()
-
-    def stop(self):
-        stale_feeds.append(-1)
-
-
-a11y.FixFeed = StaleFeed
 try:
     ssrv = StaleSrv()
-    ctx = type("C", (), {"srv": ssrv, "recorded": None, "fix_feed": None})()
+    ctx = type("C", (), {"srv": ssrv, "recorded": None, "drawn_check": None})()
     rs[0][1](ctx)
-    assert stale_feeds == [1] and ctx.fix_feed is not None, stale_feeds
+    assert ctx.drawn_check is a11y.stale_drawn, ctx.drawn_check  # T373: the frame checked against the semantics
     paths = [p for _m, p in ssrv.calls]
     assert paths[1] == "/tracks/record?source=injected&activity=foot" and ctx.recorded == "t-2", paths
-    assert paths[3:6] == [f"/tracks/stale?lastFixAgeH={a11y.STALE_AGE_H}&hold=1", "/tracks/wayback?on=1", "/tracks/ui?bar=1"], paths
+    assert paths[3:6] == [f"/tracks/stale?lastFixAgeH={a11y.STALE_AGE_H}&hold=1", "/tracks/wayback?on=1", "/tracks/ui?bar=0"], paths
     assert paths[-1] == "/tracks/stale" and ssrv.polls == 2, paths
     ssrv.calls.clear()
     rs[0][2](ctx)
     assert [p for _m, p in ssrv.calls] == ["/tracks/stop", "/tracks/t-2"], ssrv.calls
-    assert ctx.recorded is None and stale_feeds == [1, -1] and ctx.fix_feed is None, stale_feeds
+    assert ctx.recorded is None
 finally:
-    a11y.time.sleep, a11y.FixFeed = _sleep, _stale_feed
+    a11y.time.sleep = _sleep
 # end T348
 
 # T373: the frame is kept only between two semantics reads that agree. The track bar's "Hide" read 200 px away in the
@@ -770,8 +757,23 @@ try:
     never = type("C", (), {"dev": SnapDev(), "srv": SnapSrv([moved, held] * a11y.FRAME_TRIES)})()
     a11y.snapshot(never, "x:1.0", 1.0, "screen")
     assert never.frame_tries == a11y.FRAME_TRIES and never.unsteady == ["Hide"], never.unsteady
+    # A screen's drawn check: a frame it answers with a reason is taken again (the semantics agreeing is not enough).
+    answers = ["drawn away from its semantics: Hide", None]
+    dctx = type("C", (), {"dev": SnapDev(), "srv": SnapSrv([held]), "drawn_check": staticmethod(lambda r, s: answers.pop(0))})()
+    a11y.snapshot(dctx, "recording-stale:2.0", 2.0, "screen")
+    assert dctx.frame_tries == 2 and dctx.unsteady == [] and answers == [], (dctx.frame_tries, dctx.unsteady)
+
 finally:
     a11y.settle, a11y.time.sleep = _settle, _sleep
+
+# stale_drawn: the bar's chips dark where the semantics put them, or which are not.
+dr = check.Raster(1080, 1200)
+check.fill(dr, 0, 0, 1080, 1200, (200, 205, 190))  # the map
+check.fill(dr, 920, 717, 102, 58, (43, 36, 32))  # Hide drawn in the column arrangement
+sem_b = {"screenPx": [1080, 1200], "windows": [{"unmerged": [node(50, [920, 717, 1022, 775], text="Hide"), node(51, [0, 0, 10, 10], text="x")]}]}
+sem_a = {"screenPx": [1080, 1200], "windows": [{"unmerged": [node(50, [243, 946, 345, 1004], text="Hide")]}]}
+assert a11y.stale_drawn(dr, sem_b) is None
+assert a11y.stale_drawn(dr, sem_a) == "drawn away from its semantics: Hide"
 
 # close_all folds the track bar's panel (opening Tracks and routes unfolds it and its close leaves it so).
 csrv = SnapSrv([sem_of()])

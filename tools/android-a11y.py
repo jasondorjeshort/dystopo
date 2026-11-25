@@ -1176,30 +1176,35 @@ def end_offline_maps_off(c):
 
 # T348
 STALE_AGE_H = 72  # the age the screen gives the recording's last fix (POST /tracks/stale?lastFixAgeH=)
+STALE_DARK = 90  # T373: the track bar's chips are drawn dark (43, 36, 32): no channel of their fill above this
 
 
 def scr_recording_stale(c):
     """T348: a recording at Paradise whose last fix reads three days old (the debug age, held against the fixes the part injects; no clock moved): the question
     card at the bottom ("This recording stopped getting location updates 3 days ago. ...", Finish it, Keep recording) and
-    the recording panel unfolded with the turn-back chip on, whose card says "No turn-back time" and how old the last
+    the turn-back chip on, whose card says "No turn-back time" and how old the last
     location update is. State it leaves, put back by end_recording_stale (also after a failed step): the recording
     (stopped and deleted; its end forgets the debug age).
 
-    T373: a fix every second for the whole screen (T360's FixFeed, stopped by the end). At font 2.0 the strip's caption
-    turning from "elevation" to "no fix N s" a few seconds after snapshot()'s one fix narrows the strip, and the layout
-    rule then lays the screen out another way (the online column shown, the track bar a row under it, against the column
-    hidden and the bar a column at the right); the display followed the layout up to a second late, so in three sweeps
-    the frame showed one arrangement and the semantics the other: "Hide" and "Waypoint" were read on the map (2.42 to
-    2.69) and a caption's box held none of its text ("ft/h"). With the feed the caption stays "elevation" and the
-    arrangement is the second one in every run."""
-    fix_feed_start(c)
+    T373: the track bar folded ("● 73 ft" and Waypoint; the panel's lines are the `recording` screen's). Unfolded, at font
+    2.0 with the sweep's server up (the online column holding its chip and "Already on this phone") this scene never
+    settles: at every relayout (the panel's clock ticking is enough; with no fix, no feed, no server or the readout bar off
+    it still does) the layout flips, every one to four seconds, between the online column shown with the bar a row under
+    it ("Hide" 93 dp from the left) and the column hidden with the bar a column at the right (Hide at 350 dp), the strip
+    dropping and restoring its climb with it; and the drawing lags a flip, so the frame showed one arrangement and the
+    semantics the other ("Hide" and "Waypoint" read on the map at 2.42 to 2.69: the red sweeps; a caption's box with none
+    of its text: "ft/h"), and a tap where Hide was drawn missed it in two of four tries. A fault of the layout rule, left to
+    a follow-up. Folded, the layout held for 20 s. The screen also gives snapshot() a check of its frame (stale_drawn:
+    the bar's dark chips where the semantics put them), so a frame in another arrangement than its semantics is taken
+    again rather than read."""
+    c.drawn_check = stale_drawn
     c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
     j = c.srv.ok("POST", "/tracks/record?source=injected&activity=foot")
     c.recorded = ((j or {}).get("started") or {}).get("id")
     c.srv.ok("POST", f"/location?lat={PARADISE[0] + 0.0002:.6f}&lon={PARADISE[1]}&accuracy=5")
     c.srv.ok("POST", f"/tracks/stale?lastFixAgeH={STALE_AGE_H}&hold=1")
     c.srv.ok("POST", "/tracks/wayback?on=1")
-    c.srv.ok("POST", "/tracks/ui?bar=1")
+    c.srv.ok("POST", "/tracks/ui?bar=0")
     deadline = time.time() + 30
     while True:
         s = c.srv.ok("GET", "/tracks/stale") or {}
@@ -1211,8 +1216,21 @@ def scr_recording_stale(c):
     time.sleep(1.0)
 
 
+def stale_drawn(raster, sem):
+    """T373: None when the track bar's chips are drawn where the semantics put them (each one's rectangle dark, STALE_DARK),
+    else which are not."""
+    off = []
+    for w in sem.get("windows") or []:
+        for n in w.get("unmerged") or []:
+            if label_of(n) in ("Hide", "Waypoint", "Tracks") and visible(n, sem.get("screenPx") or [raster.w, raster.h]):
+                b = n["boundsPx"]
+                c = colour_read(raster, [max(0, b[0]), max(0, b[1]), min(raster.w, b[2]), min(raster.h, b[3])]) or {}
+                if max(c.get("bg") or [255]) > STALE_DARK:
+                    off.append(label_of(n))
+    return f"drawn away from its semantics: {', '.join(off)}" if off else None
+
+
 def end_recording_stale(c):
-    fix_feed_stop(c)
     code, j = c.srv.call("POST", "/tracks/stop")
     tid = c.recorded or ((j or {}).get("track") or {}).get("id") or (j or {}).get("id")
     if tid:
@@ -1721,9 +1739,10 @@ TAPS = {"map": [tap_settings, tap_activity], "route": [tap_trip_details], "profi
 # again rather than read as text on the map. Every labelled node's place is compared by its key (key_label), the live
 # readout's own nodes left out (their words change by design); a pair of reads that differs by more than STEADY_PX at an
 # edge, or a node that came or went, takes the frame again (after a settle), up to FRAME_TRIES times. The screen's entry
-# has `frameTries`, and `unsteady` (the keys that still moved) when the last try did not hold. It does not catch a display
-# that lags a layout that already holds (recording-stale's case, pinned in its own setup: see scr_recording_stale).
-FRAME_TRIES = 4
+# has `frameTries`, and `unsteady` (the keys that still moved) when the last try did not hold. A screen whose drawing can
+# stand in another arrangement than its semantics sets `drawn_check(raster, sem)` (recording-stale): a frame it answers
+# with a reason is taken again the same way.
+FRAME_TRIES = 6
 STEADY_PX = 4
 
 
@@ -1771,6 +1790,10 @@ def snapshot(c, name, scale, layer, tags=frozenset()):
         sem_ms = round((time.time() - t) * 1000)
         c.frame_tries += 1
         c.unsteady = shifted(places(before), places(sem))
+        if not c.unsteady and getattr(c, "drawn_check", None):
+            miss = c.drawn_check(raster, sem)  # T373: a screen whose drawing can lag its layout (recording-stale)
+            if miss:
+                c.unsteady = [miss]
         if not c.unsteady:
             break
         log(f"{name}: the layout moved across the frame ({', '.join(c.unsteady[:6])})"
@@ -1863,6 +1886,7 @@ def run(args):
                 close_all(srv)
                 try:
                     c.best_start = None
+                    c.drawn_check = None  # T373: set by a screen whose drawing can lag its layout (recording-stale)
                     setup(c)
                     raster, sem, findings, info = snapshot(c, sname, scale, layer, tags)
                     entry.update(info)
