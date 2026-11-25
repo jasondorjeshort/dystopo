@@ -1340,6 +1340,83 @@ def end_map_flights_hidden(c):
 # end T364
 
 
+# T369
+OVER_CAP_BOX = "-122.26,46.35,-121.26,47.35"  # a 1 degree box at Mount Rainier (public): about 4,700 vector tiles at z8 to z14
+
+
+def direct_mode(c):
+    """T369: the phone reads the public sources itself (no server set, its own reading on), as found put back by
+    direct_mode_back. The cap is direct mode's only."""
+    s = c.srv.ok("GET", "/settings") or {}
+    d = c.srv.ok("GET", "/firstrun/direct") or {}
+    c.cap_online_before = (s.get("server") or "", bool(d.get("enabled", True)))
+    c.srv.ok("POST", "/settings?server=")
+    c.srv.ok("POST", "/firstrun/direct?on=1")
+
+
+def direct_mode_back(c):
+    server, direct = getattr(c, "cap_online_before", ("", True))
+    c.srv.call("POST", "/settings?server=" + urllib.parse.quote(server, safe=""))
+    c.srv.call("POST", f"/firstrun/direct?on={1 if direct else 0}")
+
+
+def scr_download_card_over(c):
+    """T369: the Download card in direct mode over a 1 degree box at Mount Rainier at z10 (`POST /areas/region?bbox=`): full
+    detail, the pack path, over the public map source's 3,000 tiles a download: the cap's sentence in the refusal's slot and
+    no Download (checked: `GET /areas/picker` `overCap`). Planned only, nothing fetched. Pinned as download-card's: the
+    readout reset and a fresh fix at Paradise (no climb left by an earlier screen's fixes); the server and the phone's own
+    reading as found are put back by end_download_card_over."""
+    direct_mode(c)
+    c.srv.ok("POST", "/readout/reset")
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+    j = c.srv.ok("POST", f"/areas/region?bbox={OVER_CAP_BOX}&zoom=10&wait=60000", timeout=120.0) or {}
+    if not j.get("overCap") or j.get("canDownload"):
+        raise RuntimeError(f"the card is not over the cap: overCap {j.get('overCap')}, refusal {j.get('refusal')}, cap {json.dumps(j.get('cap'))}")
+    time.sleep(1.5)
+
+
+def end_download_card_over(c):
+    c.srv.call("POST", "/areas/picker/close")
+    direct_mode_back(c)
+    c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
+
+
+def scr_trip_offer(c):
+    """T369: a trip planned in direct mode (Paradise to Panorama Point as the crow flies, `POST /routes?mode=crow`, no graph
+    needed), open in the editor: its corridor line reads "Ready to download, ... about N MB" over "Download for offline"
+    (checked: `GET /areas/trips` `offers`), nothing downloaded. The clock is pinned (pin_clock, as the route screens); the
+    trip's name is fixed. Its end deletes the trip and puts the server and the phone's own reading back."""
+    direct_mode(c)
+    pin_clock(c)
+    c.srv.ok("POST", "/readout/reset")
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+    p = c.srv.ok("POST", f"/routes?points={PARADISE[0]},{PARADISE[1]};{PANORAMA[0]},{PANORAMA[1]}&mode=crow&name=a11y%20trip&wait=60000", timeout=120.0) or {}
+    c.offer_trip = p.get("id")
+    if not c.offer_trip:
+        raise RuntimeError(f"no trip: {json.dumps(p)[:200]}")
+    deadline = time.time() + 60
+    while True:
+        t = c.srv.ok("POST", "/areas/trips?wait=30000", timeout=60.0) or {}
+        if c.offer_trip in (t.get("offers") or {}):
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"no offer: offers {json.dumps(t.get('offers'))}, notes {json.dumps(t.get('notes'))}, lastRun {json.dumps(t.get('lastRun'))[:300]}")
+        time.sleep(1.0)
+    if any(x.get("tripId") == c.offer_trip for x in t.get("corridors") or []):
+        raise RuntimeError(f"the corridor was recorded without the tap: {json.dumps(t.get('corridors'))[:300]}")
+    time.sleep(2.0)
+
+
+def end_trip_offer(c):
+    tid = getattr(c, "offer_trip", None)
+    if tid:
+        c.srv.call("DELETE", f"/routes/{tid}")
+    c.offer_trip = None
+    unpin_clock(c)
+    direct_mode_back(c)
+# end T369
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1405,6 +1482,10 @@ SCREENS = [
     # T364
     ("map-flights-hidden", scr_map_flights_hidden, end_map_flights_hidden, "map"),
     # end T364
+    # T369
+    ("download-card-over", scr_download_card_over, end_download_card_over, "map"),
+    ("trip-offer", scr_trip_offer, end_trip_offer, "map"),
+    # end T369
 ]
 
 

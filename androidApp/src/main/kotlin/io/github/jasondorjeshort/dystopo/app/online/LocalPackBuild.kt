@@ -1,5 +1,6 @@
 package io.github.jasondorjeshort.dystopo.app.online
 
+import io.github.jasondorjeshort.dystopo.areas.AreaLimit
 import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.packs.OsmPackMetadata
 import io.github.jasondorjeshort.dystopo.packs.OsmPackWriter
@@ -31,6 +32,10 @@ import kotlin.math.floor
  * with the provenance and attribution of what went in; [RegionDownload] installs them like imported files, so
  * the area is pinned (packs are never evicted) and works offline. This is the box case of an area of
  * interest (design principle 4) until T75's manifests land.
+ *
+ * T369: the vector tiles it fetches from the public source (not those found in the cache) are counted; at the source's 50 MB a
+ * download ([AreaLimit.DIRECT_MAX_BYTES]) it fetches no more and the build fails with the cap's sentence ([CapReached]): the
+ * tiles fetched stay in the online cache, no archive of part of the box is written. The 3,000 tiles are [RegionDownload.start]'s.
  */
 class LocalPackBuild(
     private val direct: DirectSources,
@@ -53,6 +58,15 @@ class LocalPackBuild(
     private var demWritten = 0
     private var osmWritten = 0
     private val bytesAtStart = direct.http.bytes.get()
+    // T369
+    /** T369: the vector bytes this build fetched from the public source, against its 50 MB a download ([AreaLimit.DIRECT_MAX_BYTES]). */
+    private val vectorBytes = java.util.concurrent.atomic.AtomicLong()
+    private val largestTile = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var capReached = false
+
+    /** T369: the build stopped at the public vector source's 50 MB a download; its message is the cap's sentence. */
+    class CapReached(message: String) : IOException(message)
+    // end T369
 
     private fun tiles(z: Int): List<Triple<Int, Int, Int>> {
         val n = 1 shl z
@@ -101,6 +115,7 @@ class LocalPackBuild(
                 if (osmWriter.add(z, x, y, bytes)) osmWritten++
             }
             if (cancelled()) return json()
+            if (capReached) throw CapReached(io.github.jasondorjeshort.dystopo.app.areas.CAP_STOPPED) // T369: no pack of part of the box
             if (osmWriter.tiles > 0) {
                 val registry = SourceRegistry.builtIn
                 val osmIds = registry.ordered(DirectSources.OSM_IDS)
@@ -125,11 +140,14 @@ class LocalPackBuild(
     ) {
         val futures = tiles.map { t ->
             pool.submit(Callable {
-                if (cancelled()) null else {
+                if (cancelled() || (route == "osm" && capReached)) null else { // T369: nothing past the cap's 50 MB
                     val f = DirectSources.download { fetcher.get(route, "${t.first}/${t.second}/${t.third}$ext", if (route == "osm") OnlineFetcher::gunzipIfNeeded else { b -> b }) } // T355: a download
                     done.incrementAndGet()
                     when (f) {
-                        is Fetch.Hit -> f.bytes
+                        is Fetch.Hit -> f.bytes.also {
+                            // T369: the vector bytes fetched from the public source (not those found cached), against its 50 MB.
+                            if (route == "osm" && !f.cached && AreaLimit.directBytesReached(vectorBytes.addAndGet(it.size.toLong()), largestTile.accumulateAndGet(it.size.toLong(), ::maxOf), DirectSources.MAX_TILES_IN_FLIGHT)) capReached = true
+                        }
                         Fetch.Missing -> null
                         is Fetch.Unavailable -> {
                             failed.incrementAndGet()
@@ -183,6 +201,7 @@ class LocalPackBuild(
             "dem" to mapOf("zooms" to listOf(demZooms.first, demZooms.last), "tiles" to demTiles.size, "written" to demWritten),
             "osm" to mapOf("zooms" to listOf(osmZooms.first, osmZooms.last), "tiles" to osmTiles.size, "written" to osmWritten),
             "failedTiles" to failed.get(), "sourceBytes" to direct.http.bytes.get() - bytesAtStart,
+            "cap" to linkedMapOf("vectorBytes" to vectorBytes.get(), "maxBytes" to AreaLimit.DIRECT_MAX_BYTES, "stopped" to capReached), // T369
             "osmProfile" to OsmPackWriter.PROFILE_OPENMAPTILES, "osmSource" to "openfreemap",
         )
     }

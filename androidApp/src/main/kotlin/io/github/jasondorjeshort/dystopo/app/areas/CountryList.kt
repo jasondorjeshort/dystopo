@@ -321,7 +321,11 @@ internal class CoverCounts(val key: String) {
  * T142: a country's tiles and estimated bytes at one detail, or [tooLarge] when no area can hold it (T152: never the heap);
  * [topTiles] is the cover's count at the deepest zoom. T157: [estimated] when not filled at every zoom ([estimateFull]).
  */
-class CountryMeasure(val bytes: Long, val tiles: Int, val tooLarge: Boolean, val topTiles: Int = 0, val estimated: Boolean = false)
+class CountryMeasure(
+    val bytes: Long, val tiles: Int, val tooLarge: Boolean, val topTiles: Int = 0, val estimated: Boolean = false,
+    /** T369: the vector tiles alone, what the public vector source's cap counts. */
+    val vectorTiles: Long = 0L,
+)
 
 /**
  * T157: the full detail from the medium detail's measure [medium] and its z14 cover's count [z14]: the medium detail plus the
@@ -331,7 +335,7 @@ class CountryMeasure(val bytes: Long, val tiles: Int, val tooLarge: Boolean, val
 internal fun estimateFull(medium: CountryMeasure, z14: Int): CountryMeasure {
     val z15 = 4L * z14
     val bytes = medium.bytes + z14 * AreaManifest.estimate(AreaManifest.ROUTE_DEM, 14) + z15 * AreaManifest.estimate(AreaManifest.ROUTE_DEM, 15)
-    return CountryMeasure(bytes, (medium.tiles + z14 + z15).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), false, z15.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), estimated = true)
+    return CountryMeasure(bytes, (medium.tiles + z14 + z15).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), false, z15.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), estimated = true, vectorTiles = medium.vectorTiles)
 }
 
 /**
@@ -369,37 +373,41 @@ internal fun measureCounts(dem: IntRange?, osm: IntRange?, count: (Int) -> Int):
     var bytes = 0L
     var tiles = 0
     var top = 0
+    var vector = 0L // T369
     for (z in (listOfNotNull(dem, osm).flatMap { it.toList() }).toSortedSet()) {
         val n = count(z)
         if (dem != null && z in dem) { tiles += n; bytes += n * AreaManifest.estimate(AreaManifest.ROUTE_DEM, z) }
-        if (osm != null && z in osm) { tiles += n; bytes += n * AreaManifest.estimate(AreaManifest.ROUTE_OSM, z) }
+        if (osm != null && z in osm) { tiles += n; bytes += n * AreaManifest.estimate(AreaManifest.ROUTE_OSM, z); vector += n }
         top = n
     }
-    return CountryMeasure(bytes, tiles, false, top)
+    return CountryMeasure(bytes, tiles, false, top, vectorTiles = vector)
 }
 
 /** T142: a country row's state: being measured, downloadable, over the pinned budget, or too large for the heap. */
-enum class RowState { MEASURING, FITS, OVER_BUDGET, TOO_LARGE }
+enum class RowState { MEASURING, FITS, OVER_BUDGET, TOO_LARGE, /** T369: over the public vector source's cap at every detail (no server set). */ OVER_CAP }
 
 /**
  * T142: what a country row shows: the detail it opens at, its size line, and the sentence of a greyed row. T157: [sizeText]
  * is the three details' sizes ([rowSizes]) once measured.
  */
 class CountryRow(val detail: String, val bytes: Long?, val tiles: Int?, val state: RowState, val sizeText: String, val sentence: String?) {
-    val greyed: Boolean get() = state == RowState.OVER_BUDGET || state == RowState.TOO_LARGE
+    val greyed: Boolean get() = state == RowState.OVER_BUDGET || state == RowState.TOO_LARGE || state == RowState.OVER_CAP
 }
 
 /**
  * T142: the row of a country measured as [e] (null: not yet) with [pinnedBytes] pinned, [alreadyBytes] of them its own
  * (downloaded before), and a budget of [budgetMb]: full detail when it fits the budget, else (T157) medium detail when it
  * does, else less detail; over the budget at less detail greyed with ADR 0041 §5's sentence; no area can hold it greyed
- * with [TOO_LARGE_ROW]. T157: the size text gives every detail measured ([rowSizes]). Pure, tested.
+ * with [TOO_LARGE_ROW]. T157: the size text gives every detail measured ([rowSizes]). T369: with [direct] (no server set) a
+ * detail over the public vector source's 3,000 tiles a download does not fit either, and a country over it even at less
+ * detail is greyed with [OVER_CAP_ROW] (nearly every country). Pure, tested.
  */
-internal fun countryRow(e: CountrySizes.Entry?, pinnedBytes: Long, alreadyBytes: Long, budgetMb: Long): CountryRow {
+internal fun countryRow(e: CountrySizes.Entry?, pinnedBytes: Long, alreadyBytes: Long, budgetMb: Long, direct: Boolean = false): CountryRow {
     if (e == null) return CountryRow(DETAIL_LESS, null, null, RowState.MEASURING, MEASURING, null)
     if (e.less.tooLarge) return CountryRow(DETAIL_LESS, null, null, RowState.TOO_LARGE, "", TOO_LARGE_ROW)
     val text = rowSizes(e.less.bytes, e.medium?.takeIf { !it.tooLarge }?.bytes, e.full?.takeIf { !it.tooLarge }?.bytes)
-    fun fits(m: CountryMeasure?) = m?.takeIf { !it.tooLarge && areaBudgetError(pinnedBytes, it.bytes, alreadyBytes, budgetMb) == null }
+    if (direct && io.github.jasondorjeshort.dystopo.areas.AreaLimit.overDirectCap(e.less.vectorTiles)) return CountryRow(DETAIL_LESS, e.less.bytes, e.less.tiles, RowState.OVER_CAP, text, OVER_CAP_ROW) // T369
+    fun fits(m: CountryMeasure?) = m?.takeIf { !it.tooLarge && areaBudgetError(pinnedBytes, it.bytes, alreadyBytes, budgetMb) == null && !(direct && io.github.jasondorjeshort.dystopo.areas.AreaLimit.overDirectCap(it.vectorTiles)) }
     fits(e.full)?.let { return CountryRow(DETAIL_FULL, it.bytes, it.tiles, RowState.FITS, text, null) }
     fits(e.medium)?.let { return CountryRow(DETAIL_MEDIUM, it.bytes, it.tiles, RowState.FITS, text, null) }
     val over = areaBudgetError(pinnedBytes, e.less.bytes, alreadyBytes, budgetMb)
@@ -439,6 +447,9 @@ internal const val CHOOSE_COUNTRY = "Choose a country"
 internal const val FILTER_HINT = "Filter by name or code"
 /** T142: a row no area can hold (the owner's words in T142; T152: no longer the heap's limit). */
 internal const val TOO_LARGE_ROW = "Too large to download whole at this detail; draw an area instead"
+
+/** T369 (ADR 0031: the coordinator's words): a country over the public vector source's cap even at less detail, no server set. */
+internal val OVER_CAP_ROW = "More than the public map source's 3,000 map tiles a download: draw a smaller area, or set a server in $CAP_SERVER_PLACE"
 /** T142: a row or a summary still being measured. */
 internal const val MEASURING = "Measuring…"
 /** T142: a row's mark for a country on this phone, and one downloading now. */
@@ -476,6 +487,7 @@ internal fun CountryListPane(pinnedBytes: Long, modifier: Modifier = Modifier) {
     @Suppress("UNUSED_VARIABLE") val rev = CountrySizes.revision // recompose as sizes arrive
     val sizes = CountrySizes.entries
     val records = Areas.list
+    val direct = AreaDownload.direct() // T369: the cap's rows while no server is set
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 9.dp)) {
             if (filter.isEmpty()) BasicText(FILTER_HINT, style = TextStyle(color = Muted, fontSize = 15.sp))
@@ -490,7 +502,7 @@ internal fun CountryListPane(pinnedBytes: Long, modifier: Modifier = Modifier) {
                 items(countries, key = { it.code }) { c ->
                     val e = sizes[c.code]
                     val rec = records.firstOrNull { r -> e != null && r.id in e.ids }
-                    CountryRowView(c, countryRow(e, pinnedBytes, rec?.takeIf { it.pinned }?.bytes ?: 0L, AppSettings.pinnedCacheMb), rec)
+                    CountryRowView(c, countryRow(e, pinnedBytes, rec?.takeIf { it.pinned }?.bytes ?: 0L, AppSettings.pinnedCacheMb, direct), rec)
                 }
             }
         }

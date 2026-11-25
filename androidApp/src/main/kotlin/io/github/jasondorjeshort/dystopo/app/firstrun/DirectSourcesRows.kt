@@ -66,8 +66,32 @@ fun DirectSourcesRows() {
             }
         }
         OnlineDetailRow() // T341
+        DownloadCapRow() // T369
     }
 }
+
+// T369
+/**
+ * T369: the public vector source's cap on one download, said where the phone's own source reading is set (the rule of its
+ * terms, not a setting, ADR 0044): one line with its help ([DOWNLOAD_CAP_HELP]).
+ */
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun DownloadCapRow() {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+        BasicText(DOWNLOAD_CAP_LINE, Modifier.align(Alignment.CenterVertically), style = TextStyle(color = Muted, fontSize = 12.sp))
+        HelpIcon("direct.downloadCap", Modifier.align(Alignment.CenterVertically))
+    }
+}
+
+/** T369: the row's line and its help text (ADR 0031: the coordinator's words, listed for the owner). */
+internal const val DOWNLOAD_CAP_TITLE = "Downloads for offline"
+internal const val DOWNLOAD_CAP_LINE = "Downloads for offline: at most 3,000 map tiles and 50 MB each"
+internal const val DOWNLOAD_CAP_HELP =
+    "With no server set, each download for offline use takes at most 3,000 map tiles and 50 MB from the public map " +
+        "source, as its terms ask. A larger area is refused: make it smaller, choose less detail, or set a server. A " +
+        "trip waits for a tap on Download for offline; the tiles ahead while you navigate are saved by themselves."
+// end T369
 
 // T341
 /**
@@ -119,6 +143,7 @@ internal val DIRECT_SOURCES_HELP: List<HelpText> = run {
                 "download the area for offline use, or raise the limit."
         },
         HelpText("direct.onlineDetail", ONLINE_DETAIL_LABEL, "$place › $ONLINE_DETAIL_LABEL", show = show) { ONLINE_DETAIL_HELP }, // T341
+        HelpText("direct.downloadCap", DOWNLOAD_CAP_TITLE, "$place › $DOWNLOAD_CAP_TITLE", needs = "no server set", show = show) { DOWNLOAD_CAP_HELP }, // T369
     )
 }
 

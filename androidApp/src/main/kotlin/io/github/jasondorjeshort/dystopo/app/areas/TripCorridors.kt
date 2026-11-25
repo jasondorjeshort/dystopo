@@ -49,6 +49,14 @@ import java.util.concurrent.atomic.AtomicInteger
  * The benchmark survey of 2026-10-23 (ADR 0039; the PR cites it) found no established app that keeps a corridor without
  * being asked, and none with a designed budget message; the card's line, Stop keeping and the refusal follow its
  * recommendation, the release on delete follows the task (the survey suggested asking).
+ *
+ * T369 (the owner's answer of 2026-11-23): with no server set the corridor no longer downloads by itself. [make] is the one
+ * place a corridor starts, and every path that asks for one (the app's start, a trip saved or synced, the budget and width
+ * settings, Pin) goes through it: there a trip not tapped ([tap]: Download for offline or Pin; the trip's Offline download
+ * starts its own, `Trips.downloadOffline`)
+ * is planned and offered ([offers]: the card's "Ready to download" with its size and Download for offline), nothing
+ * fetched or recorded; over the public vector source's cap the plan's refusal is the note, as the budget's. The tap starts it
+ * once ([corridorMayStart]); an edit or a new width is a new corridor and is offered again. With a server set, as before.
  */
 object TripCorridors {
     private const val TAG = "DystopoCorridors"
@@ -71,6 +79,20 @@ object TripCorridors {
     /** Trips waiting for their corridor's download behind another one, and the one downloading now (Compose state). */
     var queued by mutableStateOf<Set<String>>(emptySet())
         private set
+
+    // T369
+    /** T369: trips whose corridor the user asked for by a tap while no server is set; [make] takes one away when it starts. */
+    private val tapped: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** T369: the corridors offered and not tapped, by trip: the area id and its estimated bytes (Compose state). */
+    var offers by mutableStateOf<Map<String, Pair<String, Long>>>(emptyMap())
+        private set
+
+    /** T369: the user's tap for trip [tripId]'s corridor (any thread). */
+    fun tap(tripId: String) {
+        tapped += tripId
+    }
+    // end T369
 
     /** A refusal by the budget: the area refused, with the budget and the pinned bytes then (tried again when either drops or the area changes). */
     private data class Refusal(val areaId: String, val budgetMb: Long, val pinnedBytes: Long)
@@ -106,6 +128,7 @@ object TripCorridors {
         load()
         setNotKept(tripId, !on)
         if (on) {
+            tap(tripId) // T369: Download for offline is the tap a corridor waits for with no server set
             refusals.remove(tripId)
             setNote(tripId, null)
             if (AppSettings.tripCorridorM > 0) request("keep $tripId")
@@ -129,7 +152,7 @@ object TripCorridors {
     /** Pin or Unpin on an area card (`POST /areas/{id}/pin`): on a trip's corridor it is also Keep offline or Stop keeping for that trip. */
     fun userPin(id: String, on: Boolean): Areas.Record {
         val r = Areas.pin(id, on)
-        r.tripId?.let { load(); setNotKept(it, !on); if (on) request("pin") }
+        r.tripId?.let { load(); setNotKept(it, !on); if (on) { tap(it); request("pin") } } // T369: Pin is a tap
         return r
     }
 
@@ -151,6 +174,8 @@ object TripCorridors {
         refusals.remove(tripId)
         setNote(tripId, null)
         setQueued(tripId, false)
+        tapped -= tripId // T369
+        setOffer(tripId, null)
         if (tripId in notKept) setNotKept(tripId, false)
         return n
     }
@@ -185,6 +210,7 @@ object TripCorridors {
         val made = ArrayList<String>()
         val refused = ArrayList<String>()
         val cancelled = ArrayList<String>()
+        val offered = ArrayList<String>() // T369
         var current = 0
         if (width > 0) {
             val wants = plans.filter { it.id !in notKept }.map { it to areaOf(it, width.toDouble()) }
@@ -193,7 +219,7 @@ object TripCorridors {
                 // T136: an old corridor left unpinned by an edit is not current (an edit back to its shape makes it again).
                 // T151: "downloading" counts only while its job runs (a record left so by an ended process is repaired at start
                 // to partial, and the resume check carries it on from its cursor).
-                mine.none { it.id == want.id && (it.pinned || (it.state == "downloading" && AreaDownload.job?.let { j -> j.id == it.id && j.running } == true)) }.also { if (!it) current++ }
+                mine.none { it.id == want.id && (it.pinned || (it.state == "downloading" && AreaDownload.job?.let { j -> j.id == it.id && j.running } == true)) }.also { if (!it) { current++; tapped -= p.id } } // T369: a current corridor spends a tap left over (Pin)
             }
             // T136: a trip whose corridor is current but was left downloading by a superseded run ([make]) drops its old ones once that is done.
             for ((p, want) in wants) {
@@ -209,7 +235,7 @@ object TripCorridors {
                 if (pending.get()) break // a newer ask: start over with what is true now
                 when (val r = make(p, want, cancelled)) {
                     null, "superseded" -> made += p.id
-                    else -> if (r.startsWith("refused")) refused += p.id
+                    else -> if (r.startsWith("refused")) refused += p.id else if (r.startsWith("offered")) offered += p.id // T369
                 }
                 setQueued(p.id, false)
             }
@@ -217,15 +243,19 @@ object TripCorridors {
         }
         return linkedMapOf(
             "why" to why, "run" to runs.incrementAndGet(), "widthM" to width, "trips" to plans.size, "current" to current,
-            "made" to made, "refused" to refused, "cancelled" to cancelled, "released" to released, "ms" to System.currentTimeMillis() - t0,
+            "made" to made, "refused" to refused, "cancelled" to cancelled, "released" to released, "offered" to offered, "direct" to AreaDownload.direct(), // T369
+            "ms" to System.currentTimeMillis() - t0,
         ).also { // T140 (T136's follow-up): a run that did nothing leaves the last one that did, until the next job starts
-            if (made.isNotEmpty() || refused.isNotEmpty() || cancelled.isNotEmpty() || released > 0 || lastRun == null) lastRun = it
+            if (made.isNotEmpty() || refused.isNotEmpty() || cancelled.isNotEmpty() || released > 0 || offered.isNotEmpty() || lastRun == null) lastRun = it
             Log.i(TAG, "reconcile: $it")
         }
     }
 
     /** Makes [want] the corridor of [p]: null when it downloaded (or is downloading), else why not. */
     private fun make(p: RoutePlan, want: AreaOfInterest, cancelled: MutableList<String> = ArrayList()): String? {
+        // T369: no server set, a corridor starts only on the user's tap; until then it is offered, nothing else touched.
+        if (!corridorMayStart(AreaDownload.direct(), p.id in tapped)) return offer(p, want)
+        // end T369
         val stale = Areas.all().filter { it.tripId == p.id && it.id != want.id && it.pack == null }
         refusals[p.id]?.let { f ->
             val cache = OnlineService.get(app).cache
@@ -255,10 +285,12 @@ object TripCorridors {
         while (true) {
             try {
                 AreaDownload.start(want, want.name, p.id, manifest = plan.manifest)
+                tapped -= p.id // T369: the tap is spent; an edit or a new width is offered again
+                setOffer(p.id, null)
                 break
             } catch (e: IllegalStateException) {
                 // T151: the resume check may have started an interrupted download since [waitIdle]: wait for it and try again.
-                if (e !is AreaDownload.BudgetRefused && AreaDownload.job?.running == true && tries++ < 3) { waitIdle(); continue }
+                if (e !is AreaDownload.BudgetRefused && e !is AreaDownload.CapRefused && AreaDownload.job?.running == true && tries++ < 3) { waitIdle(); continue }
                 setNote(p.id, e.message ?: "could not start")
                 return "not started: ${e.message}"
             }
@@ -274,6 +306,37 @@ object TripCorridors {
         for (s in stale) runCatching { Areas.remove(s.id) }
         return null
     }
+
+    // T369
+    /**
+     * T369: [want], [p]'s corridor, offered and not started: planned once per corridor (the plan is the phone's own, nothing
+     * fetched), its size kept for the card ([offers]); over the cap or the budget the plan's refusal is the note instead.
+     */
+    private fun offer(p: RoutePlan, want: AreaOfInterest): String {
+        if (offers[p.id]?.first == want.id) return "offered (unchanged)"
+        refusals[p.id]?.let { f -> // as [make]'s: tried again when the budget or the pinned bytes drop, or the corridor changes
+            if (f.areaId == want.id && f.budgetMb == AppSettings.pinnedCacheMb && OnlineService.get(app).cache.pinnedBytes >= f.pinnedBytes) return "refused (unchanged)"
+        }
+        val plan = try {
+            AreaDownload.plan(want)
+        } catch (e: Exception) {
+            val why = e.message ?: e.javaClass.simpleName
+            setNote(p.id, why)
+            return "no plan: $why"
+        }
+        plan.refusal?.let { why ->
+            refusals[p.id] = Refusal(want.id, AppSettings.pinnedCacheMb, OnlineService.get(app).cache.pinnedBytes)
+            setOffer(p.id, null)
+            setNote(p.id, why)
+            return "refused: $why"
+        }
+        setNote(p.id, null)
+        setOffer(p.id, want.id to plan.bytes)
+        return "offered"
+    }
+
+    private fun setOffer(tripId: String, offer: Pair<String, Long>?) = ui.publish(2_000) { offers = if (offer == null) offers - tripId else offers + (tripId to offer) }
+    // end T369
 
     private val watching = AtomicBoolean(false)
 
@@ -317,6 +380,7 @@ object TripCorridors {
             width, tripId in notKept, tripId in queued, notes[tripId],
             r?.let { RecordView(it.state, it.pinned, it.bytes, it.estimateBytes, it.error, TripCorridor.widthOf((it.area.shape as? AreaShape.Corridor)?.bufferM ?: 0.0)) },
             job?.let { it.done.get() to it.planned.get() }, units,
+            offerBytes = offers[tripId]?.takeIf { it.first == want }?.second, // T369
         )
     }
 
@@ -324,6 +388,7 @@ object TripCorridors {
         "widthM" to AppSettings.tripCorridorM, "notKept" to notKept.toList(), "notes" to notes, "queued" to queued.toList(),
         "refusals" to refusals.mapValues { (_, f) -> mapOf("area" to f.areaId, "budgetMb" to f.budgetMb, "pinnedBytes" to f.pinnedBytes) },
         "pending" to pending.get(), "lastRun" to lastRun,
+        "offers" to offers.mapValues { (_, o) -> mapOf("area" to o.first, "bytes" to o.second) }, "tapped" to tapped.toList(), "direct" to AreaDownload.direct(), // T369
         "corridors" to Areas.all().filter { it.tripId != null }.map { mapOf("id" to it.id, "tripId" to it.tripId, "state" to it.state, "pinned" to it.pinned, "bytes" to it.bytes, "widthM" to TripCorridor.widthOf((it.area.shape as? AreaShape.Corridor)?.bufferM ?: 0.0)) },
     )
 
@@ -409,7 +474,7 @@ data class CorridorStatus(val state: String, val text: String, val actions: List
  * ([notKept]), whether it waits for another download ([queued]), why it has none ([note]), its area [r] and the running
  * download's tiles done and planned ([progress]). Pure, tested.
  */
-internal fun corridorStatus(widthM: Int, notKept: Boolean, queued: Boolean, note: String?, r: RecordView?, progress: Pair<Int, Int>?, units: ContourUnits): CorridorStatus {
+internal fun corridorStatus(widthM: Int, notKept: Boolean, queued: Boolean, note: String?, r: RecordView?, progress: Pair<Int, Int>?, units: ContourUnits, offerBytes: Long? = null): CorridorStatus {
     fun side(m: Int) = UnitFormat.distance(m.toDouble(), units) + " each side"
     val kept = r != null && r.pinned
     return when {
@@ -418,6 +483,7 @@ internal fun corridorStatus(widthM: Int, notKept: Boolean, queued: Boolean, note
             CorridorStatus("downloading", "Downloading, ${side(r.widthM)}: " + (progress?.let { (d, p) -> "$d of $p tiles" } ?: "starting"), listOf("stop"))
         r != null && kept && r.state == "done" -> CorridorStatus("kept", "Downloaded, ${side(r.widthM)}: ${aboutMb(r.bytes)}", listOf("stop"))
         r != null && kept -> CorridorStatus("partial", "Downloaded in part, ${side(r.widthM)}" + (r.error?.let { ": $it" } ?: ""), listOf("retry", "stop"))
+        offerBytes != null && widthM > 0 && note == null -> CorridorStatus("offer", "$CORRIDOR_OFFER, ${side(widthM)}: about ${aboutMb(offerBytes)}", listOf("keep")) // T369
         queued && widthM > 0 -> CorridorStatus("queued", "Waiting to download, ${side(widthM)}", listOf("stop"))
         note != null -> CorridorStatus("refused", "Not downloaded: $note", listOf("areas", "keep"))
         widthM == 0 -> CorridorStatus("off", CORRIDOR_OFF, listOf("keep", "areas"))
@@ -430,6 +496,17 @@ internal const val CORRIDOR_NOT_KEPT = "Not downloaded."
 
 /** T130: the trip card when the width setting is off. */
 internal const val CORRIDOR_OFF = "Trips are not downloaded automatically (Offline maps)."
+
+// T369
+/**
+ * T369 (ADR 0031: the coordinator's words): the trip card while no server is set and its corridor waits for the tap, as
+ * "Ready to download, 1.00 km each side: about 14 MB" over Download for offline.
+ */
+internal const val CORRIDOR_OFFER = "Ready to download"
+
+/** T369: whether a corridor may start: with a server set always; with none ([direct]) only after the user's tap. Pure, tested. */
+internal fun corridorMayStart(direct: Boolean, tapped: Boolean): Boolean = !direct || tapped
+// end T369
 
 /** T130: the trip card before its corridor is planned (a moment after a save). */
 internal const val CORRIDOR_NONE = "Not downloaded yet."

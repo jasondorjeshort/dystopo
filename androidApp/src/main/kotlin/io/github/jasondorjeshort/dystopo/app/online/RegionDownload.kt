@@ -58,6 +58,11 @@ import kotlin.math.floor
  * and for a pack built on the phone the finished archives before they are copied in. Nothing is refused before a build: the only
  * figure then is [AreaManifest.estimate]'s, an upper end for the DEM, which would refuse a box that fits; a disk that fills during
  * a build reads Not enough space too ([DownloadStatus.classify]).
+ *
+ * T369: with no server set (the phone's own build, [LocalPackBuild]) a box over the public vector source's 3,000 tiles a download
+ * is refused at [start] with the cap's sentence ([vectorTileCount], `AreaDownload.CapRefused`), and a build that fetches 50 MB of
+ * vector tiles stops there ([LocalPackBuild.CapReached]: the job fails with the cap's sentence; the tiles fetched stay in the
+ * online cache, no pack is written).
  */
 class RegionDownload(private val service: OnlineService, private val app: DystopoApp) {
     init {
@@ -119,6 +124,10 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         var hi = (maxZoom ?: DEFAULT_MAX_ZOOM).coerceIn(maxOf(lo, OnlineTiles.DEM_MIN_ZOOM), OnlineTiles.DEM_MAX_ZOOM)
         while (hi > maxOf(lo, OnlineTiles.DEM_MIN_ZOOM) && tileCount(box, lo..hi) > TILE_LIMIT) hi--
         require(tileCount(box, lo..hi) <= TILE_LIMIT) { "the view needs too many tiles even at z$lo-$hi; zoom in" }
+        // T369: no server set, the phone builds the pack from the public vector source: at most its 3,000 tiles a download.
+        if (server == DirectSources.SERVER) io.github.jasondorjeshort.dystopo.app.areas.capRefusalLine(vectorTileCount(box, lo..hi).toLong(), minOf(hi, OnlineTiles.OSM_MAX_ZOOM) > io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.LESS_DETAIL_MAX_ZOOM)
+            ?.let { throw io.github.jasondorjeshort.dystopo.app.areas.AreaDownload.CapRefused(it) }
+        // end T369
         val packName = name ?: nameFor(System.currentTimeMillis(), takenNames())
         require(PackNames.isValidName(packName)) { "invalid pack name '$packName'" }
         this.name = packName
@@ -254,7 +263,7 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
         failure = f
         shortBytes = (e as? PackDownloader.NotEnoughSpace)?.shortBytes
         errorDetail = e.message ?: e.javaClass.simpleName
-        error = reasonOf(f, shortBytes)
+        error = if (e is LocalPackBuild.CapReached) e.message else reasonOf(f, shortBytes) // T369: the cap's own sentence
         state = "failed"
     }
 
@@ -586,8 +595,17 @@ class RegionDownload(private val service: OnlineService, private val app: Dystop
                 return (x1 - x0 + 1) * (y1 - y0 + 1)
             }
             val dem = zooms.filter { it in OnlineTiles.DEM_MIN_ZOOM..OnlineTiles.DEM_MAX_ZOOM }.sumOf(::count)
-            val osm = zooms.filter { it <= OnlineTiles.OSM_MAX_ZOOM }.sumOf(::count)
-            return dem + osm
+            return dem + vectorTileCount(box, zooms)
+        }
+
+        /** T369: the vector tiles alone of a build of [box] at [zooms] (to z14), what the public vector source's cap counts. Pure, tested. */
+        fun vectorTileCount(box: PackBounds, zooms: IntRange): Int = zooms.filter { it <= OnlineTiles.OSM_MAX_ZOOM }.sumOf { z ->
+            val n = 1 shl z
+            val x0 = floor(WebMercator.lonToX(box.minLon, z)).toInt().coerceIn(0, n - 1)
+            val x1 = floor(WebMercator.lonToX(box.maxLon, z)).toInt().coerceIn(0, n - 1)
+            val y0 = floor(WebMercator.latToY(box.maxLat, z)).toInt().coerceIn(0, n - 1)
+            val y1 = floor(WebMercator.latToY(box.minLat, z)).toInt().coerceIn(0, n - 1)
+            (x1 - x0 + 1) * (y1 - y0 + 1)
         }
 
         /**

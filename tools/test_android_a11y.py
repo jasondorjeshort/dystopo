@@ -835,4 +835,65 @@ except RuntimeError as e:
     assert "still shows flights" in str(e), e
 # end T364
 
+# T369: the Download card over the public map source's cap and a trip's corridor offered, both in direct mode (the server and
+# the phone's own reading as found put back by their ends); each checks what it shows and fails when the app does not.
+class CapSrv:
+    def __init__(self, over=True, offered=True, recorded=False):
+        self.calls, self.over, self.offered, self.recorded = [], over, offered, recorded
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/settings":
+            return {"server": "http://10.0.2.2:8765"}
+        if path == "/firstrun/direct":
+            return {"enabled": False}
+        if path.startswith("/areas/region"):
+            return {"overCap": self.over, "canDownload": not self.over, "refusal": "This area needs about 4,700 map tiles" if self.over else None}
+        if path.startswith("/routes?"):
+            return {"id": "r-1"}
+        if path.startswith("/areas/trips"):
+            return {"offers": {"r-1": {"area": "a1", "bytes": 1}} if self.offered else {}, "corridors": [{"tripId": "r-1"}] if self.recorded else []}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+cap = {s[0]: s for s in a11y.SCREENS if s[0] in ("download-card-over", "trip-offer")}
+assert set(cap) == {"download-card-over", "trip-offer"} and all(s[3] == "map" and s[2] is not None for s in cap.values()), cap
+a11y.time.sleep = lambda s: None
+try:
+    cs = CapSrv()
+    cctx = type("C", (), {"srv": cs})()
+    cap["download-card-over"][1](cctx)
+    paths = [p for _m, p in cs.calls]
+    assert paths[2:4] == ["/settings?server=", "/firstrun/direct?on=1"], paths
+    assert any(p.startswith("/areas/region?bbox=-122.26,46.35,-121.26,47.35&zoom=10") for p in paths), paths
+    cs.calls.clear()
+    cap["download-card-over"][2](cctx)
+    assert cs.calls[0] == ("POST", "/areas/picker/close") and ("POST", "/settings?server=http%3A%2F%2F10.0.2.2%3A8765") in cs.calls \
+        and ("POST", "/firstrun/direct?on=0") in cs.calls, cs.calls
+    try:
+        cap["download-card-over"][1](type("C", (), {"srv": CapSrv(over=False)})())
+        raise AssertionError("a card within the cap passed")
+    except RuntimeError as e:
+        assert "not over the cap" in str(e), e
+    ts = CapSrv()
+    tctx = type("C", (), {"srv": ts})()
+    cap["trip-offer"][1](tctx)
+    paths = [p for _m, p in ts.calls]
+    assert "/settings?server=" in paths and any(p.startswith("/routes?points=") and "mode=crow" in p for p in paths) and any(p.startswith("/nav/shade?at=") for p in paths), paths
+    ts.calls.clear()
+    cap["trip-offer"][2](tctx)
+    assert ts.calls[0] == ("DELETE", "/routes/r-1") and ("POST", "/firstrun/direct?on=0") in ts.calls, ts.calls
+    try:
+        cap["trip-offer"][1](type("C", (), {"srv": CapSrv(recorded=True)})())
+        raise AssertionError("a corridor recorded without the tap passed")
+    except RuntimeError as e:
+        assert "without the tap" in str(e), e
+finally:
+    a11y.time.sleep = _sleep
+# end T369
+
 print("test_android_a11y: ok")

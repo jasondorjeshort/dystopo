@@ -92,6 +92,10 @@ import kotlin.concurrent.thread
  * only", or "Part of this area is ..."; where everything a detail would take is held at that detail or finer it offers no
  * Download of it and says so ([nothingNewOf]), so no row is made for nothing; the other details stay offered.
  *
+ * T369: with no server set, a plan over the public vector source's 3,000 tiles a download is refused in the refusal's slot,
+ * Download not offered, with the cap's sentence ([AreaDownload.Plan.capRefusal]; the pack path included, which the budget does
+ * not refuse); the other details stay offered as choices (less detail cuts the vector tiles by about four).
+ *
  * Plans are made on one worker thread, newest request first (a stale one is skipped), and published to the UI thread.
  */
 object AreaPicker {
@@ -353,7 +357,10 @@ object AreaPicker {
      * T153: the refusal of the plan shown: the pinned budget's, except on the pack path (a pack is not pinned tiles). T343: and
      * [nothingNewOf], so Download is not offered (and `POST /areas/picker/download` makes no row) where nothing would be new.
      */
-    fun refusalOf(s: Summary?): String? = nothingNewOf(s) ?: if (packPath(s)) null else planOf(s)?.refusal
+    fun refusalOf(s: Summary?): String? = nothingNewOf(s) ?: if (packPath(s)) planOf(s)?.capRefusal else planOf(s)?.refusal // T369: the cap on the pack path too
+
+    /** T369: true when the refusal shown is the public vector source's cap ([AreaDownload.Plan.capRefusal]; `GET /areas/picker` `overCap`). */
+    fun capRefusalOf(s: Summary?): Boolean = planOf(s)?.capRefusal.let { it != null && it == refusalOf(s) }
 
     /** T343: [HeldHere]'s answer for the detail shown; null outside a region's card or before it is worked out. */
     fun heldOf(s: Summary?): HeldHere.Held? = s?.held?.get(detailOf(s))
@@ -424,6 +431,7 @@ object AreaPicker {
             // T157: every detail not shown, as the card lists them (`detail`, `line`), and the medium detail's hint.
             "alternatives" to s?.let { alternativeLines(detailOf(it), it).map { (d, l) -> linkedMapOf("detail" to d, "line" to l) } }, "hint" to hintOf(s),
             "refusal" to refusalOf(s), "refused" to (refusalOf(s) != null), "canDownload" to (p != null && refusalOf(s) == null),
+            "overCap" to capRefusalOf(s), "cap" to p?.json()?.get("cap"), // T369: the public vector source's cap, for the plan shown
             // T343: what the phone holds here (the card's first line), the line in place of Download, and the rule's answer per detail.
             "heldLine" to heldLineOf(s), "nothingNew" to nothingNewOf(s), "held" to s?.held?.mapValues { it.value.json() },
             "pastHeapLimit" to p?.pastHeapLimit, "heapTiles" to p?.heapTiles, // T152: said, never a refusal
