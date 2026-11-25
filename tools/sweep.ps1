@@ -315,6 +315,10 @@ $releaseBuildS = 1800
 # card's two restarts about 25 s); 1200 s leaves room for a loaded emulator and the routing graph's first build (about 125 s).
 $ceilings['a11y'] = 1200
 # end T270
+# T360: 43 screens at two scales took 1,181 s of screens alone in a sweep after the device tour (a rebooted emulator, 86
+# screens at 6 to 18 s), and the part timed out at 1200 s on its last screen: 1800 s.
+$ceilings['a11y'] = 1800
+# end T360
 # T339: two-maps took 86 to 154 s in six runs on the implementer's emulator with the fixture already built (each view
 # waits up to 30 s; the online horizon outside both maps took 15 to 47 s), and a build of the four archives adds about
 # 140 s; 1500 s leaves room for a first build in a fresh checkout and a loaded emulator.
