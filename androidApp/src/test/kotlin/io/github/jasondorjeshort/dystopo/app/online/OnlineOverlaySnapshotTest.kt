@@ -197,15 +197,15 @@ class OnlineOverlaySnapshotTest {
 
     // T343: the chip, the button and the Download card follow one rule (HeldHere over the view's box at the button's detail).
     private val box = io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.78, 46.83, -121.74, 46.87) // near Mount Rainier's summit
-    private fun rainier(source: String) = OnlineView(46.85, -121.76, 13.0, box, source)
+    private fun rainier(source: String, offAhead: Boolean = false) = OnlineView(46.85, -121.76, 13.0, box, source, offAhead = offAhead)
     private fun map(name: String, vector: Int?, dem: Int?, off: Boolean = false) = io.github.jasondorjeshort.dystopo.packs.HeldHere.Holding(
         name, io.github.jasondorjeshort.dystopo.packs.HeldHere.Kind.MAP, io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.95, 46.68, -121.45, 46.98),
         vector, dem, routing = vector != null, off = off,
     )
     private fun held(vararg h: io.github.jasondorjeshort.dystopo.packs.HeldHere.Holding, detail: String = "full", routing: Boolean = true) =
         io.github.jasondorjeshort.dystopo.packs.HeldHere.held(box, io.github.jasondorjeshort.dystopo.packs.HeldHere.Want(detail, routing), h.toList())
-    private fun ui(source: String, held: io.github.jasondorjeshort.dystopo.packs.HeldHere.Held?) =
-        OnlineUi("online", rainier(source), mapOf("state" to "idle"), false, direct = true, held = held)
+    private fun ui(source: String, held: io.github.jasondorjeshort.dystopo.packs.HeldHere.Held?, offAhead: Boolean = false) =
+        OnlineUi("online", rainier(source, offAhead), mapOf("state" to "idle"), false, direct = true, held = held)
 
     @Test
     fun theButtonIsOfferedOverACoarserMapAndSaysAlreadyWhereNothingIsNew() {
@@ -217,8 +217,8 @@ class OnlineOverlaySnapshotTest {
         assertEquals("Online · on this phone", coarse.text)
         assertEquals("On this phone at medium detail, with routing and place search", io.github.jasondorjeshort.dystopo.app.areas.heldLine(coarse.held))
         assertNull(io.github.jasondorjeshort.dystopo.app.areas.nothingNewLine(coarse.held))
-        // A full-detail map: nothing new. The button names it and is disabled; the chip says on this phone whatever tile matched.
-        val fine = ui(OnlineService.CACHED, held(map("rainier-fine", 14, 14)))
+        // A full-detail map: nothing new. The button names it and is disabled; the chip says on this phone.
+        val fine = ui(OnlineTiles.PACK, held(map("rainier-fine", 14, 14)))
         assertTrue(fine.offerDownload)
         assertFalse(fine.downloadEnabled)
         assertEquals("Already on this phone", fine.downloadText)
@@ -226,6 +226,12 @@ class OnlineOverlaySnapshotTest {
         assertEquals("Online · on this phone", fine.text)
         assertEquals(OnlineUi.SAVED_OFFLINE_MAP, fine.sourceSentence)
         assertEquals("Already on this phone in rainier-fine: nothing new at this detail", io.github.jasondorjeshort.dystopo.app.areas.nothingNewLine(fine.held))
+        // T359: the chip names what serves by the lookup: a tile the cache serves (fetched behind the map) is not the map's, so
+        // the button's "nothing new" (the phone holds the view at the detail) no longer makes the chip say on this phone.
+        assertEquals("Online · viewed earlier", ui(OnlineService.CACHED, held(map("rainier-fine", 14, 14))).text)
+        // Kept tiles served by the phone where a map holds the view at the detail: the map's column.
+        assertEquals(OnlineUi.Column.PACK, OnlineUi("online", OnlineView(46.85, -121.76, 13.0, box, OnlineService.CACHED, kept = true), mapOf("state" to "idle"), false,
+            direct = true, held = held(map("rainier-fine", 14, 14))).column)
         // Nothing held: the plain button, no card line.
         val none = ui(OnlineService.ONLINE, held())
         assertTrue(none.downloadEnabled && none.offerDownload)
@@ -236,16 +242,20 @@ class OnlineOverlaySnapshotTest {
     }
 
     @Test
-    fun theChipSaysAMapHereIsOffWhereTheViewIsNotDrawnFromThePhone() {
-        val off = ui(OnlineService.ONLINE, held(map("rainier-fine", 14, 14, off = true)))
+    fun theChipSaysAMapHereIsOffWhereTheMapWouldServeAhead() {
+        // T359: the lookup's answer ([OnlineView.offAhead]: an off map deeper than what serves), not the box's held list.
+        val off = ui(OnlineService.ONLINE, held(map("rainier-fine", 14, 14, off = true)), offAhead = true)
         assertEquals(OnlineUi.Column.OFF, off.column)
         assertEquals("Online · a map here is off", off.text)
         assertEquals("A map here is off. Turn it on in Offline maps to use it.", off.sourceSentence)
         assertEquals(OnlineUi.Link.OFFLINE_MAPS, off.link)
         assertTrue(off.downloadEnabled, "an off map holds nothing: the download is offered")
-        // Drawn from another map on the phone: that map is what the chip names.
-        val onWide = ui(OnlineTiles.PACK, held(map("rainier-wide", 13, 11), map("rainier-fine", 14, 14, off = true)))
-        assertEquals("Online · on this phone", onWide.text)
+        // T359 (T343's follow-up): drawn from a coarser map while a finer one is off, the chip still says the finer one is off.
+        val onWide = ui(OnlineTiles.PACK, held(map("rainier-wide", 13, 11), map("rainier-fine", 14, 14, off = true)), offAhead = true)
+        assertEquals("Online · a map here is off", onWide.text)
+        // An off map coarser than the one that serves would not serve: the chip names the map that does.
+        val offCoarse = ui(OnlineTiles.PACK, held(map("rainier-wide", 13, 11, off = true), map("rainier-fine", 14, 14)), offAhead = false)
+        assertEquals("Online · on this phone", offCoarse.text)
     }
 
     @Test

@@ -138,6 +138,34 @@ class HeldHereTest {
     }
 
     @Test
+    fun aCellIsHeldWhereTheLookupHasTheHoldingAnswerIt() {
+        // T359: the verdict's holders are the lookup's members ([Holdings.tile]) for the cells: at the summit's z14 tile the
+        // wide map answers the elevation by its z11 (synthesised) and the fine one stores it.
+        val z = 14
+        val n = 1 shl z
+        val x = kotlin.math.floor(io.github.jasondorjeshort.dystopo.geo.WebMercator.lonToX(-121.7604, z)).toInt().coerceIn(0, n - 1)
+        val y = kotlin.math.floor(io.github.jasondorjeshort.dystopo.geo.WebMercator.latToY(46.8529, z)).toInt().coerceIn(0, n - 1)
+        val members = Holdings.tile(Holdings.Role.DEM, z, x, y, listOf(HeldHere.lookup(wide), HeldHere.lookup(fine)), null).members
+        assertEquals(listOf("rainier-fine", "rainier-wide"), members.map { it.holding.name })
+        assertEquals(listOf(Holdings.How.STORES, Holdings.How.SYNTHESISES), members.map { it.how })
+        val h = HeldHere.held(view, Want("full", routing = true), listOf(wide, fine))
+        assertEquals(listOf("rainier-fine", "rainier-wide"), h.holders.map { it.name })
+        assertEquals(Verdict.ALL, h.verdict)
+    }
+
+    @Test
+    fun aHoldingShallowerThanTheCellsHoldsThemByItsOwnDepth() {
+        // A less-detail area (z13) under a full request (cells at z14): held, coarser, by its z13 cells.
+        val a = HeldHere.held(view, Want("full", routing = false), listOf(area("less", wideBox, 13)))
+        assertEquals(Verdict.COARSER, a.verdict)
+        assertEquals(1.0, a.share)
+        // A map with no elevation and its map to z13: held by its vector archive at its own depth.
+        val m = HeldHere.held(view, Want("full", routing = true), listOf(map("vector-only", wideBox, 13, null)))
+        assertEquals(Verdict.COARSER, m.verdict)
+        assertEquals(1.0, m.share)
+    }
+
+    @Test
     fun aWideBoxIsCutCoarser() {
         val h = HeldHere.held(PackBounds(-125.0, 42.0, -117.0, 49.0), Want("full", routing = false), listOf(wide), maxCells = 4096)
         assertTrue(h.cells <= 4096 && h.zoom < 14, "${h.cells} cells at z${h.zoom}")
