@@ -58,6 +58,8 @@ and about 60 percent sideways; the owner's own frame of the pane under a nearly 
 a row tap returns to the lens turned to the item).
 
 Use: 2026-11-22, coordinator (claude-opus-5-5): the viewshed's list of places to go (the answered viewpoint-finder idea, `2026-11-21-a-viewpoint-finder-where-a-peak-can-be-seen-from.md`) belongs in the same fourth list view: what is in sight, and where to go to see it (accepted by the owner).
+Came up again: 2026-11-24, the owner, having used step one on v0.1.43-alpha (the trigger step two waited for): the Panorama's "List view" button "is now obsolete as it just takes you to the list view which is already a button" (the switch's fourth segment); the Horizon view's list, "at least of flights", "is also obsolete. That list is in the list view, and clicking on the flight pops it up at the bottom anyway"; the Panorama's Layers button is good ("lets us control the layers from there"); the owner called these observations on work in progress, "probably not currently relevant until other things get cleaned up".
+New: 2026-11-24, the owner: "I tend to think the bottom area of horizon mode should contain that flight info (or whatever else you click on) rather than them being popups." So step two: the Horizon view's pane goes to the List as ADR 0067 says, the Panorama's "List view" button goes, and the space under the Horizon's round plot becomes the selection's detail (a flight's card, a peak's, the sun's or a satellite's), replacing the pop-up cards there.
 
 Question: does the fourth view replace the pane under the Panorama (the lens always full screen, the list a segment of
 the switch), and does it carry the Horizon view's pane as well? Recommended: yes to both, in two steps: first the
@@ -67,14 +69,3 @@ Horizon view's pane moved to the same list when the owner has seen it.
 Answer: yes, in two steps: the Panorama's lens full screen with the pane's content as the list view first, then the Horizon view's pane moved to the same list once the owner has seen it (the owner, 2026-11-22, by multiple choice at triage).
 
 2026-11-23, T351 (step one's second half built): the Panorama's plot is the whole window inside the system bars (kept), upright and on its side, behind the switch, with no pane; its overlays (the tape, Layers and List view at the upper right, the place line with Back to here at a chosen point, a picked peak's line and the weak-compass line at the upper left, the zoom buttons and Follow phone at the lower right, the correction's line and the flights' credit beside or above the switch, the edge arrow) are boxes placed by one rule (`PanoramaOverlays`) that the names keep off. One control, Layers, opens the four layers' switches with the view's heading and help. Step one (T344 and T351) is built; step two, the Horizon view's pane moved into the List, waits for the owner to see step one (the Answer above). Full screen without the system bars was not built (the survey: a setting, default off, only if ever wanted).
-
-Came up again: 2026-11-24, the owner, having used step one on v0.1.43-alpha (the trigger step two waited for). Their
-words: the Panorama's "List view" button "is now obsolete as it just takes you to the list view which is already a
-button" (the switch's fourth segment); the Horizon view's list, "at least of flights", "is also obsolete. That list is
-in the list view, and clicking on the flight pops it up at the bottom anyway"; the Panorama's Layers button is good
-("lets us control the layers from there"). New: "I tend to think the bottom area of horizon mode should contain that
-flight info (or whatever else you click on) rather than them being popups." So step two: the Horizon view's pane goes
-to the List as ADR 0067 says, the Panorama's "List view" button goes, and the space under the Horizon's round plot
-becomes the selection's detail (a flight's card, a peak's, the sun's or a satellite's), replacing the pop-up cards there.
-The owner called these observations on work in progress, "probably not currently relevant until other things get
-cleaned up".

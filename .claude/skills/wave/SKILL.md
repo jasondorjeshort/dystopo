@@ -199,10 +199,10 @@ and the caches are regenerable; the only files on the machine that are not are t
    `## Later`, one line per task naming it; read that list, strike what is done or taken, then
    commit the board, the record and the index together and push with `bash tools/push-verified.sh`.
    A failed check in the recipe stops the chore; relaunch it Sonnet-class.
-6. Offer the brainstorm (ADR 0065): after the release, and after a push of triaged ideas, the
-   `triage` skill's step 9 (at most nine lines, the header, record only what the owner accepts).
-   Every third wave close, recorded in the wave record, also offer the rest review: the resting
-   ideas only (`grep -l "^Waits: at rest" docs/ideas/*.md`), sorted by distinct recurrences, one
-   line each; the owner decides each line: keep, wake or delete. It is an offered list, not a
-   sitting an agent runs. The first review also lists every `Waits:` with no trigger and every one
-   written on a blanket leave (ADR 0065, Context), for the owner to restate or convert.
+6. Offer the brainstorm (`brainstorm` skill; ADR 0065 as ADR 0069 amends it): after the release,
+   and after a push of triaged ideas; one prompted offer per session, its answers by multiple
+   choice, its record line as the skill gives it. A release also prompts the rest review (the
+   skill's step 7: the `rest` rows of the listing, at most once in seven days; the owner decides
+   each line: keep, wake or delete). It is an offered list, not a sitting an agent runs. The first
+   review also lists every `Waits:` with no trigger and every one written on a blanket leave
+   (ADR 0065, Context), for the owner to restate or convert.

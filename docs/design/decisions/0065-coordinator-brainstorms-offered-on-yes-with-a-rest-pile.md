@@ -1,7 +1,7 @@
 # 0065. The coordinator's brainstorms: offered on yes, recurrence as updates, a rest pile on the owner's word
 
 Date: 2026-11-22
-Status: accepted
+Status: accepted; superseded in part by 0069 (items 1, 4, 7, 8, 9 and 10, and the sibling's formats)
 
 Record: proposal `../proposals/0065-coordinator-brainstorms-and-the-ideas-queue.md` (option B,
 carrier B1, as revised) and `../proposals/0065-critic-review.md` (0 blocking, 6 serious, 7 minor;
