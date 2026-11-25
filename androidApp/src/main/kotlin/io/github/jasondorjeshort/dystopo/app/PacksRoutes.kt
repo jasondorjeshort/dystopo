@@ -122,7 +122,7 @@ object PacksRoutes {
         val rule = Holdings.vectorTile(vz, vectorNow.serving?.holding?.kind == Holdings.Kind.MAP, overview, member, vector.members.any { it.holding.kind == Holdings.Kind.CACHE })
         return HoldingsHere(
             zoom, lat, lon, all, member, vector, Holdings.point(Holdings.Role.DEM, lat, lon, dz, all, member), vectorNow,
-            Holdings.point(Holdings.Role.DEM, lat, lon, dz, now, member), rule, Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM, onlineByDepth = member?.let { it.detail && it.allowed } == true), // T368: as TerrainRead
+            Holdings.point(Holdings.Role.DEM, lat, lon, dz, now, member), rule, Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM, onlineByDepth = io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.aheadByDepth(member)), // T368: TerrainRead's rule
             vector.let { h -> app.tiles.held.deeper(Holdings.Role.VECTOR, h.z, h.x, h.y)?.takeIf { app.tiles.held.tile(Holdings.Role.VECTOR, h.z, h.x, h.y) != null }?.holding?.name ?: "cache".takeIf { rule.serves == Holdings.Source.CACHE } }, // T356: and T341's kept tile at the overview's zooms
             Holdings.point(Holdings.Role.DEM, lat, lon, dz, all, member).let { h -> app.tiles.held.deeper(Holdings.Role.DEM, h.z, h.x, h.y)?.takeIf { app.tiles.held.tile(Holdings.Role.DEM, h.z, h.x, h.y) != null }?.holding?.name }, // T356
             mapReadZoom = Holdings.readZoom(all, member, lat, lon, ShadeTiles.POINT_ZOOM), // T368: the maps' own

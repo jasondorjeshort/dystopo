@@ -585,8 +585,10 @@ class OnlineTiles(
         fun tile(z: Int) = Triple(z, WebMercator.lonToX(lon, z).toInt().coerceIn(0, (1 shl z) - 1), WebMercator.latToY(lat, z).toInt().coerceIn(0, (1 shl z) - 1))
         val (z0, x0, y0) = tile(zt)
         if (packCoversDem(z0, x0, y0)) {
-            // T368: inside a map, the network's deeper tile held in the cache answers ahead of it (fetched behind it this session, or kept).
-            if (held?.deeper(Holdings.Role.DEM, z0, x0, y0)?.holding?.kind == Holdings.Kind.CACHE) return (service.demSource(z0, x0, y0) ?: OnlineService.CACHED) to Triple(z0, x0, y0)
+            // T368: inside a map, a cached tile past the map's own depth answers ahead of it (fetched behind it, or kept): only
+            // then is the view's elevation the network's. A cached tile at a zoom the map stores is not finer than the map's.
+            val mapDepth = packs.demFor(z0, x0, y0)?.header?.maxZoom ?: DEM_MAX_ZOOM
+            if (z0 > mapDepth && held?.deeper(Holdings.Role.DEM, z0, x0, y0)?.holding?.kind == Holdings.Kind.CACHE) return (service.demSource(z0, x0, y0) ?: OnlineService.CACHED) to Triple(z0, x0, y0)
             return PACK to null
         }
         for (z in listOf(zt, zt - 1, zt + 1, zt - 2).filter { it in 0..DEM_MAX_ZOOM }) {
@@ -600,6 +602,13 @@ class OnlineTiles(
         viewTile(lat, lon, zoom).let { (z, x, y) -> vectorSource("$z/$x/$y.pbf") }?.let { return it to null }
         return (if (worldDraws(lat, lon, zoom)) WORLD else NONE) to null
     }
+
+    /**
+     * T368: an offline map (not the world overview) answers the view's vector tile at the map's zoom, so the map drawn there is
+     * the phone's: the online map credit is left out though the elevation came from the network ([OnlineService.credits]).
+     */
+    fun vectorFromPack(lat: Double, lon: Double, zoom: Double): Boolean =
+        viewTile(lat, lon, zoom).let { (z, x, y) -> packs.osmFor(z, x, y).let { it != null && it !== packs.world } }
 
     /** T341: the view's vector tile at the map's zoom (512-px tiles), clamped to the world. */
     private fun viewTile(lat: Double, lon: Double, zoom: Double): Triple<Int, Int, Int> {
@@ -720,6 +729,13 @@ class OnlineTiles(
         const val WIDER = OnlineService.WIDER
         /** T264: the view draws from the built-in world overview ([io.github.jasondorjeshort.dystopo.app.PackSet.world]); the chip says "from the world overview". */
         const val WORLD = "world"
+        /**
+         * T368: the one rule for ranking the network by its stored depth (ahead of a coarser map) in what is read at a point:
+         * More detail from online on and a fetch allowed now ([member] `detail` and `allowed`; null: no source). `TerrainRead`
+         * and `GET /holdings` `readZoom` both ask it, so the lookup says what the sky views read.
+         */
+        fun aheadByDepth(member: Holdings.Online?): Boolean = member != null && member.detail && member.allowed
+
         /** T341: the vector tiles whose source [vectorSource] keeps. */
         const val VECTOR_KEEP = 256
 
