@@ -625,8 +625,11 @@ def set_font_scale(dev, srv, scale, timeout=20.0):
 
 def close_all(srv):
     """Every overlay the screens open, closed (each call may answer an error when there is nothing to close), and a fresh
-    fix at Paradise, so the readout strip never reads a stale fix's age."""
+    fix at Paradise, so the readout strip never reads a stale fix's age. T373: the track bar's panel folded (`bar=0`, as its
+    Hide does): opening the Tracks and routes screen unfolds it and closing the screen leaves it so, which gave every screen
+    after `tracks-routes:1.0` (and all of the 2.0 pass) another layout than a hand run of the same screen."""
     for method, path in (("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8"), ("POST", "/settings/ui?open=0"), ("POST", "/packs/ui?show=false"), ("POST", "/tracks/ui?open=0"),
+                         ("POST", "/tracks/ui?bar=0"),
                          ("POST", "/tracks/picker?open=close"), ("POST", "/tracks/close"), ("POST", "/map/longpress/cancel"),
                          ("POST", "/nav/stop"), ("POST", "/route/details?open=0"), ("POST", "/route/clear"),
                          ("POST", "/online/chip?open=0"), ("POST", "/help/close"), ("POST", "/gnss/ui?open=0")):
@@ -1702,19 +1705,65 @@ def tap_profile_close(c, sem):
 TAPS = {"map": [tap_settings, tap_activity], "route": [tap_trip_details], "profile": [tap_profile_close]}
 
 
+# T373: the frame is taken between two reads of the semantics that agree. The fresh fix just before the frame changes the
+# readout strip, and the layout rule then moves what stands beside it (at font 2.0 the track bar's panel and the
+# recording card): in the sweeps of 2026-11-25 the frame showed the bar where the semantics did not, so "Hide" and
+# "Waypoint" were read on the map beside it (contrast 2.66 on a grey slope) and a caption's box held none of its text
+# (textOutside "ft/h"). Every labelled node's place is compared by its key (key_label), the live readout's own nodes left
+# out (their words change by design); a pair of reads that differs by more than STEADY_PX at an edge, or a node that came
+# or went, takes the frame again, up to FRAME_TRIES times. The screen's entry has `frameTries`, and `unsteady` (the keys
+# that still moved) when the last try did not hold.
+FRAME_TRIES = 4
+STEADY_PX = 4
+
+
+def places(sem):
+    """{(window, label key): sorted bounds} of the unmerged trees' labelled nodes outside the live readout."""
+    out = {}
+    for wi, w in enumerate(sem.get("windows") or []):
+        nodes = w.get("unmerged") or []
+        live = in_layer(nodes, DYNAMIC_TAGS)
+        for n in nodes:
+            lab = label_of(n)
+            if not lab or n["id"] in live or not n.get("boundsPx"):
+                continue
+            out.setdefault((wi, key_label(lab)), []).append(tuple(n["boundsPx"]))
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def shifted(a, b, tol=STEADY_PX):
+    """The label keys whose places differ between two reads (a node that came or went, or an edge past `tol` px)."""
+    out = []
+    for k in sorted(set(a) | set(b), key=str):
+        pa, pb = a.get(k) or [], b.get(k) or []
+        if len(pa) != len(pb) or any(abs(x - y) > tol for ra, rb in zip(pa, pb) for x, y in zip(ra, rb)):
+            out.append(k[1])
+    return out
+
+
 def snapshot(c, name, scale, layer, tags=frozenset()):
     """One screen: settled frame, semantics, dump, layout; the findings. On a screen opened over the map (`layer` "screen")
     the map's own controls (`tags`) are left out of the checks and listed as one `covered` finding where they lie under it."""
     dev, srv = c.dev, c.srv
     settle(dev)
-    # A fresh fix at the same place just before the frame: the readout strip dims its words a few seconds after the last
-    # fix ("no fix 8 s"), which made a slow screen's strip a contrast finding in one sweep and not the next.
-    srv.call("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
-    time.sleep(0.5)
-    _, raster = dev.frame()
-    t = time.time()
-    sem = srv.ok("GET", "/semantics")
-    sem_ms = round((time.time() - t) * 1000)
+    c.frame_tries, c.unsteady = 0, []
+    for _try in range(FRAME_TRIES):
+        # A fresh fix at the same place just before the frame: the readout strip dims its words a few seconds after the
+        # last fix ("no fix 8 s"), which made a slow screen's strip a contrast finding in one sweep and not the next.
+        srv.call("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+        time.sleep(0.5)
+        settle(dev, timeout=4.0)
+        before = srv.ok("GET", "/semantics")
+        _, raster = dev.frame()
+        t = time.time()
+        sem = srv.ok("GET", "/semantics")
+        sem_ms = round((time.time() - t) * 1000)
+        c.frame_tries += 1
+        c.unsteady = shifted(places(before), places(sem))
+        if not c.unsteady:
+            break
+        log(f"{name}: the layout moved across the frame ({', '.join(c.unsteady[:6])})"
+            f"{'; taken again' if _try < FRAME_TRIES - 1 else '; kept, listed as unsteady'}")
     density = sem.get("density") or 1.0
     screen = sem.get("screenPx") or [raster.w, raster.h]
     nodes = dev.nodes()
@@ -1806,6 +1855,9 @@ def run(args):
                     setup(c)
                     raster, sem, findings, info = snapshot(c, sname, scale, layer, tags)
                     entry.update(info)
+                    entry["frameTries"] = c.frame_tries  # T373
+                    if c.unsteady:
+                        entry["unsteady"] = c.unsteady[:12]
                     if c.best_start is not None:  # T280: the start-time line the frame was taken with
                         entry["bestStart"] = c.best_start
                         log(f"{sname}: start-time line {json.dumps(c.best_start)}")

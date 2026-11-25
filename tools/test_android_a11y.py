@@ -698,6 +698,73 @@ finally:
     a11y.time.sleep = _sleep
 # end T348
 
+# T373: the frame is kept only between two semantics reads that agree. The track bar's "Hide" read 200 px away in the
+# second read is a move; the live readout's own words changing are not; a node that came is.
+def sem_of(*windows):
+    return {"windows": [{"unmerged": list(w)} for w in windows]}
+
+
+strip = node(40, [0, 900, 400, 1000], testTag="readoutStrip")
+hide_a = node(41, [920, 717, 1021, 774], text="Hide")
+hide_b = node(41, [150, 930, 380, 1020], text="Hide")
+v1 = node(42, [10, 910, 100, 960], parent=40, text="5268 ft")
+v2 = node(42, [10, 910, 130, 960], parent=40, text="no fix 6 s")
+clock = node(43, [500, 500, 620, 540], text="0:00:06")
+clock2 = node(43, [500, 500, 622, 540], text="0:00:07")  # within STEADY_PX
+a = a11y.places(sem_of([strip, v1, hide_a, clock]))
+assert a11y.shifted(a, a11y.places(sem_of([strip, v2, hide_a, clock2]))) == [], "the readout's words and a tick are no move"
+assert a11y.shifted(a, a11y.places(sem_of([strip, v1, hide_b, clock]))) == ["Hide"]
+assert a11y.shifted(a, a11y.places(sem_of([strip, v1, hide_a, clock, node(44, [0, 0, 10, 10], text="Waypoint")]))) == ["Waypoint"]
+assert a11y.shifted(a, a11y.places(sem_of([strip, v1, hide_a, clock], [hide_a]))) == ["Hide"], "a window's node keys apart"
+
+
+class SnapSrv:
+    """The semantics reads in turn from `pairs` (two a try); every other call recorded."""
+    def __init__(self, pairs):
+        self.reads, self.pairs, self.calls = 0, pairs, []
+
+    def ok(self, method, path, **kw):
+        if path == "/semantics":
+            s = self.pairs[min(self.reads, len(self.pairs) - 1)]
+            self.reads += 1
+            return dict(s, density=D, screenPx=SCREEN)
+        self.calls.append(path)
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append(path)
+        return 200, {}
+
+
+class SnapDev:
+    def frame(self):
+        return None, check.Raster(4, 4)
+
+    def nodes(self):
+        return []
+
+
+_settle, _sleep = a11y.settle, a11y.time.sleep
+a11y.settle, a11y.time.sleep = (lambda dev, **kw: None), (lambda s: None)
+try:
+    moved, held = sem_of([hide_a]), sem_of([hide_b])
+    fix_path = f"/location?lat={a11y.PARADISE[0]}&lon={a11y.PARADISE[1]}&accuracy=8"
+    sctx = type("C", (), {"dev": SnapDev(), "srv": SnapSrv([moved, held, held, held])})()
+    a11y.snapshot(sctx, "recording-stale:2.0", 2.0, "screen")
+    assert sctx.frame_tries == 2 and sctx.unsteady == [] and sctx.srv.reads == 4, (sctx.frame_tries, sctx.unsteady)
+    assert sctx.srv.calls.count(fix_path) == 2, sctx.srv.calls
+    never = type("C", (), {"dev": SnapDev(), "srv": SnapSrv([moved, held] * a11y.FRAME_TRIES)})()
+    a11y.snapshot(never, "x:1.0", 1.0, "screen")
+    assert never.frame_tries == a11y.FRAME_TRIES and never.unsteady == ["Hide"], never.unsteady
+finally:
+    a11y.settle, a11y.time.sleep = _settle, _sleep
+
+# close_all folds the track bar's panel (opening Tracks and routes unfolds it and its close leaves it so).
+csrv = SnapSrv([sem_of()])
+a11y.close_all(csrv)
+assert csrv.calls.index("/tracks/ui?open=0") < csrv.calls.index("/tracks/ui?bar=0"), csrv.calls
+# end T373
+
 # T343: the Download card at Mount Rainier's summit (z13), opened as the map's button does; its end closes it and puts the
 # camera back on the view the screens start from.
 dc = [s for s in a11y.SCREENS if s[0] == "download-card"]
