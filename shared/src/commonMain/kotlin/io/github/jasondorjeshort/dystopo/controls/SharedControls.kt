@@ -45,27 +45,28 @@ object SharedControls {
         "scaleBar.both", ControlKind.SETTING, syncKey = "app.scaleBar.both",
         placements = mapOf(onAndroid("map", 14, "settings", row = "mapOptions")),
     )
+    // T370: the phone's Map page orders from 15 moved up two (Map options' "Show zoom level" and "Show flights")
     val PRINT = ControlItem(
         "printSheet", ControlKind.ACTION,
-        placements = mapOf(onAndroid("map", 19, "settings", row = "printSheet"), onWeb("map", 14, "panel")),
+        placements = mapOf(onAndroid("map", 21, "settings", row = "printSheet"), onWeb("map", 14, "panel")),
     )
 
     /** The scale bar takes no input: the page's is its own control (`ScaleBarControl`), so it names no element. */
     val SCALE_BAR = ControlItem(
         layout(OverlayIds.SCALE_BAR), ControlKind.DISPLAY,
-        placements = mapOf(onAndroid("map", 26, "map-lower-left", inventory = inventory(OverlayIds.SCALE_BAR)), onWeb("map", 17, "map-corner")),
+        placements = mapOf(onAndroid("map", 28, "map-lower-left", inventory = inventory(OverlayIds.SCALE_BAR)), onWeb("map", 17, "map-corner")),
     )
     val POSITION = ControlItem(
         layout(OverlayIds.POSITION), ControlKind.ACTION,
         placements = mapOf(
-            onAndroid("map", 23, "map-lower-right", inventory = inventory(OverlayIds.POSITION)),
+            onAndroid("map", 25, "map-lower-right", inventory = inventory(OverlayIds.POSITION)),
             onWeb("map", 16, "map-corner", "maplibregl.GeolocateControl"),
         ),
     )
     val ORIENTATION = ControlItem(
         layout(OverlayIds.ORIENTATION), ControlKind.ACTION,
         placements = mapOf(
-            onAndroid("map", 24, "map-lower-right", inventory = inventory(OverlayIds.ORIENTATION)),
+            onAndroid("map", 26, "map-lower-right", inventory = inventory(OverlayIds.ORIENTATION)),
             onWeb("map", 15, "map-corner", "maplibregl.NavigationControl"),
         ),
     )

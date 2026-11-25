@@ -48,14 +48,14 @@ class SettingsLayoutTest {
         assertEquals(listOf("Offline maps", "Sync status", "Share", "Credits"), added) // T235: the Offline areas row is "Offline maps"
         assertEquals(
             listOf(
+                // T311 (T370: the Data and storage page, last, so first in list order)
+                "Flight tracking", "Flight tracking: Refresh", "Flight tracking: Airport names",
+                // end T311
+                "Flight tracking: Route lines", // T314 (after the Flights rows)
                 "Position button", "Position button: Close zoom", "Keep north up", // T176 (the Map page, second in list order)
                 "View range", // T182 (the Map page, after the position button)
                 "Print a map sheet", // T183 (the Map page, after T182's row)
                 "Show trail disagreements", // T213 (the Map page, last)
-                // T311 (the Map page, after T213's row)
-                "Flight tracking", "Flight tracking: Refresh", "Flight tracking: Airport names",
-                // end T311
-                "Flight tracking: Route lines", // T314 (after the Flights rows)
                 "Pressure units", // T337 (Units and display, right under Units)
                 "Navigation: Spoken directions",
                 "Route times", // T164
@@ -97,10 +97,11 @@ class SettingsLayoutTest {
     @Test
     fun dataAndStorageNamesTheCacheBudget() {
         // T115 (T112's follow-up): the group's line in the list says the total; the other groups' lines are as they were.
-        assertEquals("Sources (server, mobile data), offline maps, storage with a 1\u00A0GB cache budget", SettingsLayout.summary(SettingsGroup.DATA, 1024))
-        assertEquals("Sources (server, mobile data), offline maps, storage with a 128\u00A0GB cache budget", SettingsLayout.summary(SettingsGroup.DATA, 131072))
+        // T370: flight tracking, the page's last rows, after the budget.
+        assertEquals("Sources (server, mobile data), offline maps, storage with a 1\u00A0GB cache budget, flight tracking", SettingsLayout.summary(SettingsGroup.DATA, 1024))
+        assertEquals("Sources (server, mobile data), offline maps, storage with a 128\u00A0GB cache budget, flight tracking", SettingsLayout.summary(SettingsGroup.DATA, 131072))
         assertEquals(SettingsGroup.MAP.summary, SettingsLayout.summary(SettingsGroup.MAP, 1024))
-        assertTrue((groups().first()["summary"] as String).endsWith("cache budget"), "GET /settings/layout reports the line as drawn")
+        assertTrue((groups().first()["summary"] as String).endsWith("cache budget, flight tracking"), "GET /settings/layout reports the line as drawn")
     }
 
     @Test
@@ -135,6 +136,61 @@ class SettingsLayoutTest {
         assertTrue("pressure" in SettingsGroup.DISPLAY.summary, SettingsGroup.DISPLAY.summary)
     }
     // end T337
+
+    // T370
+    /**
+     * T370: Flight tracking's four rows are the Data and storage page's last, after Sources, Storage and Offline maps
+     * (the owner, 2026-11-23), their keys unchanged; the Map page keeps "Show flights" (T364) and names it in its line,
+     * and the help texts open on the rows' page.
+     */
+    @Test
+    fun flightTrackingIsOnTheDataPage() {
+        assertEquals(
+            listOf(SettingsRow.SOURCES, SettingsRow.STORAGE, SettingsRow.OFFLINE_AREAS, SettingsRow.AIRCRAFT, SettingsRow.AIRCRAFT_REFRESH, SettingsRow.AIRCRAFT_AIRPORTS, SettingsRow.AIRCRAFT_ROUTE_LINES),
+            SettingsLayout.rows(SettingsGroup.DATA),
+        )
+        assertEquals(listOf("aircraft", "aircraftRefreshS", "aircraftAirports", "aircraftRouteLines"), SettingsLayout.rows(SettingsGroup.DATA).drop(3).map { it.id }, "the keys are unchanged")
+        assertTrue(SettingsLayout.rows(SettingsGroup.MAP).none { it.id.startsWith("aircraft") })
+        assertTrue("flight tracking" in SettingsGroup.DATA.summary && "flight tracking" !in SettingsGroup.MAP.summary)
+        assertTrue("flights" in SettingsGroup.MAP.summary, SettingsGroup.MAP.summary)
+        val pages = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/settings/SettingsPages.kt").readText()
+        for (key in listOf("aircraft", "aircraftRefresh", "aircraftAirports", "aircraftRouteLines")) {
+            val line = pages.lines().first { "HelpText(\"settings.$key\"" in it }
+            assertTrue("at(SettingsGroup.DATA," in line && "page(SettingsGroup.DATA)" in line, "settings.$key opens on the Data and storage page: $line")
+        }
+    }
+
+    /**
+     * T370: the controls manifest's items drawn inside Map options (settings row `mapOptions`) follow the section's rows:
+     * by order, each item's help key comes no earlier in `MapOptionsSection.kt` than the one before it. `ControlIdsTest`
+     * holds the orders to the sheet's rows, which keeps them all before Position button's; inside the one row
+     * `mapOptions` this test holds T346's zoom label and T364's Show flights (orders 15 and 16) after the scale bar.
+     */
+    @Test
+    fun theMapOptionsItemsFollowTheSection() {
+        val help = mapOf(
+            "hillshade" to "map.hillshade", "hillshadeIntensity" to "map.intensity", "slope" to "map.slope",
+            "contourInterval" to "map.contours", "contourLabels" to "map.contourLabels",
+            "trails" to "map.layers", "water" to "map.layers", "landcover" to "map.layers", "pois" to "map.layers", "boundaries" to "map.layers",
+            "drainage" to "map.drainage", "airportGates" to "map.airportGates", "night" to "map.night",
+            "scaleBar.both" to "map.scaleBar", "scaleBar.zoom" to "map.zoomLabel", "mapFlights" to "map.flights",
+        )
+        val android = io.github.jasondorjeshort.dystopo.controls.Platform.ANDROID
+        val items = io.github.jasondorjeshort.dystopo.controls.Controls.placedOn(android)
+            .filter { it.placements.getValue(android).row == SettingsRow.MAP_OPTIONS.id && it.id != SettingsRow.MAP_OPTIONS.id }
+            .sortedBy { it.placements.getValue(android).order }
+        assertEquals(help.keys, items.map { it.id }.toSet(), "every item drawn in Map options has its help key here")
+        assertEquals(listOf("scaleBar.both", "scaleBar.zoom", "mapFlights"), items.takeLast(3).map { it.id })
+        val section = File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/options/MapOptionsSection.kt").readText()
+        var last = -1
+        for (item in items) {
+            val at = section.indexOf("help = \"${help.getValue(item.id)}\"")
+            assertTrue(at >= 0, "${item.id}: no row with help ${help.getValue(item.id)} in MapOptionsSection.kt")
+            assertTrue(at >= last, "${item.id} (order ${item.placements.getValue(android).order}) is drawn above the item before it in MapOptionsSection.kt")
+            last = at
+        }
+    }
+    // end T370
 
     @Test
     fun groupsAndIds() {

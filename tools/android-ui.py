@@ -25,8 +25,8 @@ Parts:
                least-fuel card's fuel line shows; rainier without it); T307, T308: the `horizon` step (horizon_step, `gps`
                before T308): T309: the map's "Map | Horizon" switch opens the Horizon view (Settings > Navigation and
                tracking > Horizon view before; frames `horizon` and `horizon-scrolled`, `gps` and `gps-plot` before T308),
-               the view's "Map" segment takes it away; no crash. T311: the `flights` step (flights_step): Settings > Map
-               options at Flight tracking (frame `flights-row`, the refresh row's "about N requests left today (UTC)";
+               the view's "Map" segment takes it away; no crash. T311: the `flights` step (flights_step): Settings > Data
+               and storage at Flight tracking (T370; Map options before) (frame `flights-row`, the refresh row's "about N requests left today (UTC)";
                T316: its six choices with 2 min and 3 min, ", about N h at this rate", and the refresh help pop-up
                naming how long each choice lasts, frame `flights-refresh-help`),
                its help pop-up (frame `flights-help`), then with airplane mode on, Flight tracking On and the map's
@@ -2697,6 +2697,8 @@ def panorama_list_step(dev):
 # T311
 
 FLIGHTS_ROW = "^Flight tracking$"
+# T370: Flight tracking's rows are on Settings > Data and storage, last (Map options before; its anchor the Sources heading).
+FLIGHTS_PAGE = ("Data and storage", "^Sources$")
 FLIGHTS_OFFLINE = "^Flights: No flight data: offline$"
 # T316: with how long the requests last at this rate ("about 3 h", "about 40 min" or "enough for the rest of the day").
 FLIGHTS_QUOTA = r"^about \d+ requests left today \(UTC\)(, (about \d+ (h|min)|enough for the rest of the day) at this rate)?$"
@@ -2732,7 +2734,7 @@ def row_on(dev, row, nodes, below_pattern):
 
 
 def flights_step(dev):
-    """T311, in the release build by taps: Settings > Map options scrolled to Flight tracking (the frame `flights-row`,
+    """T311, in the release build by taps: Settings > Data and storage (T370; Map options before) scrolled to Flight tracking (the frame `flights-row`,
     with the refresh row's requests-left line), its help pop-up (`flights-help`), then airplane mode on before Flight
     tracking is turned On, so no request leaves, and the map's status line "Flights: No flight data: offline"
     (`flights-offline`). Airplane mode off and Flight tracking Off again in a `finally`."""
@@ -2742,10 +2744,10 @@ def flights_step(dev):
     turned_on = False
     try:
         close_sheet(dev)
-        open_settings(dev, "Map options", "^Hillshade$")
+        open_settings(dev, *FLIGHTS_PAGE)
         row, nodes = scroll_row(dev, FLIGHTS_ROW)
         if not row:
-            raise RuntimeError(f"no Flight tracking row on Map options (texts: {dev.texts(nodes)[-20:]})")
+            raise RuntimeError(f"no Flight tracking row on {FLIGHTS_PAGE[0]} (texts: {dev.texts(nodes)[-20:]})")
         _q, nodes = scroll_row(dev, FLIGHTS_QUOTA, swipes=3)
         out["quotaLine"] = next((t for t in dev.texts(nodes) if re.match(FLIGHTS_QUOTA, t)), None)
         # T316: the refresh row's six choices in the frame, 2 min and 3 min the new ones.
@@ -2831,7 +2833,7 @@ def flights_step(dev):
                 dev.shell("input", "swipe", str(w // 2), str(h * 2 // 5), str(w // 2), str(h * 4 // 5), "600")
                 time.sleep(1)
         else:
-            errors.append(f"no Route lines row on Map options (texts: {dev.texts(nodes)[-20:]})")
+            errors.append(f"no Route lines row on {FLIGHTS_PAGE[0]} (texts: {dev.texts(nodes)[-20:]})")
         airplane(dev, True)
         row, nodes = scroll_row(dev, FLIGHTS_ROW)
         on = row_on(dev, row, nodes, "^Flight tracking: Refresh$") if row else None
@@ -2851,7 +2853,7 @@ def flights_step(dev):
         airplane(dev, False)
         if turned_on:
             try:
-                open_settings(dev, "Map options", "^Hillshade$")
+                open_settings(dev, *FLIGHTS_PAGE)
                 row, nodes = scroll_row(dev, FLIGHTS_ROW)
                 off = None
                 if row:
@@ -3113,7 +3115,7 @@ FLIGHTS_TOGGLE = "^(✓ )?Flights$"
 
 def horizon_flights_step(dev):
     """T312, in the release build by taps: Settings > Navigation and tracking scrolled to Sky range (the frame
-    `sky-range-row`); then airplane mode on (no request leaves) and Settings > Map options > Flight tracking On; the
+    `sky-range-row`); then airplane mode on (no request leaves) and Settings > Data and storage > Flight tracking On (T370); the
     map's "Horizon" segment opens the Horizon view, whose toggles now include Flights (the frame `horizon-flights`) and
     whose Flights section says "No flight data: offline" (`horizon-flights-offline`, scrolled to it); the view's "Map"
     segment closes it. Flight tracking Off and airplane mode off again in a `finally`."""
@@ -3131,7 +3133,7 @@ def horizon_flights_step(dev):
         out["frames"]["skyRange"] = dev.screencap("sky-range-row")[0]
         close_sheet(dev)
         airplane(dev, True)
-        open_settings(dev, "Map options", "^Hillshade$")
+        open_settings(dev, *FLIGHTS_PAGE)
         row, nodes = scroll_row(dev, FLIGHTS_ROW)
         on = row_on(dev, row, nodes, "^Flight tracking: Refresh$") if row else None
         if not on:
@@ -3175,7 +3177,7 @@ def horizon_flights_step(dev):
         if turned_on:
             try:
                 close_sheet(dev)
-                open_settings(dev, "Map options", "^Hillshade$")
+                open_settings(dev, *FLIGHTS_PAGE)
                 row, nodes = scroll_row(dev, FLIGHTS_ROW)
                 stop = dev.find("^Flight tracking: Refresh$", nodes) if row else None
                 offs = [x for x in nodes if row and x["text"] == "Off" and x["bounds"] and row["bounds"][1] < x["bounds"][1] < (stop["bounds"][1] if stop else 10 ** 6)]

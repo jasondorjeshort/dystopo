@@ -32,11 +32,11 @@ object AndroidControls {
         row("sources", "data", 1),
         row("storage", "data", 2, ControlKind.LINK),
         row("offlineAreas", "data", 3, ControlKind.LINK),
-        row("mapControls", "map", 15),
-        row("recenterZoom", "map", 16),
-        row("orientationLock", "map", 17),
-        row("viewRange", "map", 18),
-        row("showDivergence", "map", 20),
+        row("mapControls", "map", 17), // T370: the Map page renumbered once, 15 and 16 are Map options' last two items (MAP_OPTION_ROWS)
+        row("recenterZoom", "map", 18),
+        row("orientationLock", "map", 19),
+        row("viewRange", "map", 20),
+        row("showDivergence", "map", 22),
         row("routeSnap", "navigation", 1),
         row("navSpeech", "navigation", 2),
         row("navStale", "navigation", 3),
@@ -85,13 +85,13 @@ object AndroidControls {
         row("reports", "about", 3, ControlKind.LINK),
         row("warmup", "about", 4, ControlKind.ACTION),
         row("credits", "about", 5, ControlKind.LINK),
-        // T311: Flight tracking, its refresh and airport names (the Map page, last)
-        row("aircraft", "map", 28),
-        row("aircraftRefreshS", "map", 29),
-        row("aircraftAirports", "map", 30),
+        // T311: Flight tracking, its refresh and airport names (T370: the Data page's last rows, its next free orders)
+        row("aircraft", "data", 8),
+        row("aircraftRefreshS", "data", 9),
+        row("aircraftAirports", "data", 10),
         // end T311
-        // T314: Flight tracking: Route lines (the Map page, after the Flights rows)
-        row("aircraftRouteLines", "map", 33), // 31 and 32 are T311's card and status line
+        // T314: Flight tracking: Route lines (after the Flights rows; T370: on the Data page with them)
+        row("aircraftRouteLines", "data", 11),
         // end T314
     )
 
@@ -105,22 +105,35 @@ object AndroidControls {
         element(OverlayIds.ONLINE, ControlKind.ACTION, "data", 5, "map-top"),
         element("onlineCard", ControlKind.DISPLAY, "data", 6, "card", emptyList()), // T236: under the Online chip
         element("firstRunCard", ControlKind.DISPLAY, "data", 7, "card", (102..107).map { "M$it" }),
-        element(OverlayIds.SEARCH, ControlKind.ACTION, "map", 21, "map-top"),
-        element(OverlayIds.COMPASS, ControlKind.DISPLAY, "map", 22, "map-right"),
-        element(OverlayIds.LOCK, ControlKind.ACTION, "map", 25, "map-lower-right"),
+        element(OverlayIds.SEARCH, ControlKind.ACTION, "map", 23, "map-top"), // T370: the Map page's elements renumbered after its rows
+        element(OverlayIds.COMPASS, ControlKind.DISPLAY, "map", 24, "map-right"),
+        element(OverlayIds.LOCK, ControlKind.ACTION, "map", 27, "map-lower-right"),
         element(OverlayIds.TRACK_BAR, ControlKind.ACTION, "navigation", 36, "map-right"), // T263: 28 before; that order is a row now
         element(OverlayIds.ACTIVITY, ControlKind.ACTION, "navigation", 37, "map-right"), // T263: the activity chip, under the Routes chip
         element(OverlayIds.TRIP_CARD, ControlKind.DISPLAY, "navigation", 30, "card"),
         element(OverlayIds.NAV_CARD, ControlKind.DISPLAY, "navigation", 32, "card"),
         element(OverlayIds.WARNING_CARD, ControlKind.DISPLAY, "navigation", 33, "card"),
         element(OverlayIds.STRIP, ControlKind.DISPLAY, "navigation", 34, "map-lower-left"),
-        element(OverlayIds.HORIZON_SWITCH, ControlKind.ACTION, "map", 27, "map-lower-left"), // T309: "Map | Horizon", over the scale bar's line
+        element(OverlayIds.HORIZON_SWITCH, ControlKind.ACTION, "map", 29, "map-lower-left"), // T309: "Map | Horizon", over the scale bar's line
         element(OverlayIds.UPDATE_CARD, ControlKind.DISPLAY, "about", 7, "card"),
         // T311: a tapped aircraft's card, and the Flights layer's status line under Search
-        element(OverlayIds.AIRCRAFT_CARD, ControlKind.DISPLAY, "map", 31, "card"),
-        element("flightsStatus", ControlKind.DISPLAY, "map", 32, "map-top", emptyList()),
+        element(OverlayIds.AIRCRAFT_CARD, ControlKind.DISPLAY, "map", 30, "card"),
+        element("flightsStatus", ControlKind.DISPLAY, "map", 31, "map-top", emptyList()),
         // end T311
     )
 
-    val items: List<ControlItem> = ROWS + ELEMENTS
+    // T370
+    /**
+     * Phone-only rows drawn inside Map options (`MapOptionsSection`, settings row `mapOptions`), after the shared
+     * `scaleBar.both` (14), in the section's order: T346's "Show zoom level" and T364's "Show flights". Not in [ROWS],
+     * whose items are placed by their own row id; like them, an item of one client records only its id, kind and placement
+     * (both keys are synced by `SettingsSync`). `SettingsLayoutTest` holds their order to the section's.
+     */
+    val MAP_OPTION_ROWS: List<ControlItem> = listOf(
+        ControlItem("scaleBar.zoom", ControlKind.SETTING, placements = mapOf(onAndroid("map", 15, "settings", row = "mapOptions"))),
+        ControlItem("mapFlights", ControlKind.SETTING, placements = mapOf(onAndroid("map", 16, "settings", row = "mapOptions"))),
+    )
+    // end T370
+
+    val items: List<ControlItem> = ROWS + ELEMENTS + MAP_OPTION_ROWS
 }
