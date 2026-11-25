@@ -510,29 +510,6 @@ class TileService(
         for (i in 0..3) demBehind(z + 1, 2 * x + i % 2, 2 * y + i / 2)
     }
 
-    /**
-     * T368: vector tile z/x/y past every map's zooms where a map holds an ancestor and the network stores deeper: the tile kept
-     * in the cache (whatever the setting says, ADR 0066 decision 2), else the map's ancestor cut to it at once ([packWider]) with
-     * the network's tile fetched behind it under the setting. Null where no map holds an ancestor (the online path, as before),
-     * where the network adds nothing, or where the cut fails.
-     */
-    private fun vectorBehind(z: Int, x: Int, y: Int): TileResult? {
-        val o = online ?: return null
-        if (z > OnlineTiles.OSM_MAX_ZOOM || packs.osmFor(z, x, y) != null) return null
-        val up = (1..io.github.jasondorjeshort.dystopo.app.online.WiderZoom.MAX_DEPTH).firstOrNull { d ->
-            z - d >= 0 && packs.osmFor(z - d, x shr d, y shr d).let { it != null && it !== packs.world }
-        } ?: return null
-        val stored = networkStored(Holdings.Role.VECTOR) ?: return null
-        if (stored <= z - up || z > stored) return null
-        o.fetcher.cachedOnly("osm", "$z/$x/$y.pbf")?.let { return ok(osm, "application/x-protobuf", io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher.gunzipIfNeeded(it)) }
-        val m = o.onlineMember()
-        if (NetworkAhead.fetches(z, z - up, stored, m.detail, m.allowed)) o.fetchBehind(z, x, y)
-        val c = packWider.vector(z, x, y) ?: return null
-        osm.served.incrementAndGet()
-        osm.bytes.addAndGet(c.bytes.size.toLong())
-        return TileResult(200, "application/x-protobuf", c.bytes, widerZoom = c.fromZoom)
-    }
-
     /** T368: the finished tile areas as the lookup's holdings (their held cells), for the sky views' terrain read (`TerrainRead`). */
     fun heldAreas(): List<Holdings.Holding> = areasNow().holdings
 
@@ -830,7 +807,6 @@ class TileService(
         // setting "More detail from online" (Holdings.vectorTile).
         // T356: an area's cell deeper than the maps (or, with no source set, wherever it serves) answers first.
         held.tile(Holdings.Role.VECTOR, z, x, y)?.let { b -> return ok(osm, "application/x-protobuf", io.github.jasondorjeshort.dystopo.app.online.OnlineFetcher.gunzipIfNeeded(b)) }
-        vectorBehind(z, x, y)?.let { return it } // T368: past a map's zooms, the map's tile cut to it at once and the network's fetched behind
         online?.let { o ->
             val a = o.vectorAnswer(z, x, y)
             when (a.serves) {

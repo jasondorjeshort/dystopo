@@ -273,6 +273,17 @@ whats = sorted(f["what"] for f in part.t356_assertions({"t356": t356_bad}))
 assert whats == sorted(["T356:download-skip", "T356:holdings", "T356:request-log", "T356:z15-404"]), whats
 # end T356
 
+# T368's block: the network's deeper elevation fetched behind the coarse map, the setting on and off.
+ph = lambda detail, **k: dict({"onlineDetail": detail, "errors": [], "started": 0, "landed": 0, "failed": 0, "inFlight": 0, "waiting": 0, "refreshes": 0,
+                               "recent": [], "serves": "rainier-wide", "z15": {}, "upgraded": 0}, **k)
+t368_good = {"phases": [ph(1, started=24, landed=24, refreshes=1, serves="cache", upgraded=6), ph(0)]}
+assert part.t368_assertions({"t368": t368_good}) == [], part.t368_assertions({"t368": t368_good})
+assert part.t368_assertions({}) == []
+t368_bad = {"phases": [ph(1, started=24, landed=20, inFlight=4, recent=[{"ended": "style changed"}], refreshes=1, serves="rainier-wide"), ph(0, started=3)]}
+whats = sorted(f["what"] for f in part.t368_assertions({"t368": t368_bad}))
+assert whats == sorted(["T368:fetch-behind", "T368:refresh", "T368:holdings-on", "T368:upgraded", "T368:setting-off-fetched"]), whats
+# end T368
+
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:
     sweep = fh.read()

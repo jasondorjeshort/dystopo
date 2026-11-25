@@ -187,20 +187,19 @@ class OnlineTiles(
     /**
      * T341: fetches vector tile z/x/y behind the overview tile answered for it now, on the prefetch pool, once per tile while
      * it is in flight or landed. A failed fetch may be tried again on the next ask; a tile the source does not have is not.
-     * T368 (ADR 0066 decision 2): also behind a map ([role] [Holdings.Role.DEM]: an elevation tile where the network stores
-     * deeper than the map answering it; vector: a tile past a map's zooms, answered now cut from the map's), the elevation on
-     * the direct reader's own threads with the phone's own sources (a render), else the prefetch pool. A landed tile joins its
-     * role's batch ([BehindRefresh]): one refresh of the map's source per settled batch at a camera rest, after which MapLibre
-     * asks again and the tile held in the cache answers (`TileService`'s held tiles rank the cache by the source's stored depth).
-     * These are map views (T355: the views' lane, never a download's four); Mobile data and the session limit apply in the fetcher.
+     * T368 (ADR 0066 decision 2): also an elevation tile behind a map ([role] [Holdings.Role.DEM]), where the network stores
+     * deeper than the map answering it: on the direct reader's own threads with the phone's own sources (a render), else the
+     * prefetch pool. A landed elevation tile joins [BehindRefresh]'s batch: one refresh of the elevation source per settled
+     * batch at a camera rest, made without a blank frame ([SeamlessDemRefresh]), after which MapLibre asks again and the tile
+     * held in the cache answers (`TileService`'s held tiles rank the cache by the source's stored depth). Vector tiles keep
+     * T341's refresh. These are map views (T355: the views' lane, never a download's four); Mobile data and the session limit
+     * apply in the fetcher.
      */
     fun fetchBehind(z: Int, x: Int, y: Int, role: Holdings.Role = Holdings.Role.VECTOR) {
         val dem = role == Holdings.Role.DEM
         val path = if (dem) "$z/$x/$y.png" else "$z/$x/$y.pbf"
         if (!behind.add(path)) return
-        val batch = if (dem) BehindRefresh.dem else BehindRefresh.vector
-        if (!dem) behindStarted.incrementAndGet()
-        batch.started()
+        if (dem) BehindRefresh.dem.started() else behindStarted.incrementAndGet()
         val work: () -> Fetch = {
             val f = try {
                 if (dem) fetcher.get("dem", path) else fetcher.get("osm", path, OnlineFetcher::gunzipIfNeeded)
@@ -215,25 +214,24 @@ class OnlineTiles(
                         behindLanded.incrementAndGet()
                         behindBytes.addAndGet(f.bytes.size.toLong())
                     }
-                    batch.landed(System.currentTimeMillis(), f.bytes.size)
+                    // T341's vector tiles: one refresh of the vector source, coalesced with the stall recovery's; T368's elevation: its own.
+                    if (dem) BehindRefresh.dem.landed(System.currentTimeMillis(), f.bytes.size) else service.osmRefresh.recovered(System.currentTimeMillis(), 1)
                 }
                 is Fetch.Unavailable -> {
-                    if (!dem) behindFailed.incrementAndGet()
-                    batch.failed()
+                    if (dem) BehindRefresh.dem.failed() else behindFailed.incrementAndGet()
                     behind.remove(path)
                 }
                 Fetch.Missing -> {
-                    if (!dem) behindFailed.incrementAndGet()
-                    batch.failed()
+                    if (dem) BehindRefresh.dem.failed() else behindFailed.incrementAndGet()
                 }
             }
-            BehindRefresh.poke()
+            if (dem) BehindRefresh.poke()
             f
         }
         try {
             if (dem && fetcher.server == DirectSources.SERVER) service.direct.request(work) else service.prefetch(work)
         } catch (e: java.util.concurrent.RejectedExecutionException) {
-            batch.failed()
+            if (dem) BehindRefresh.dem.failed()
             behind.remove(path)
         }
     }
@@ -755,7 +753,7 @@ class OnlineTiles(
  * onlineDetail=1|0`), default on: where the network stores more detail than what the phone holds, it is fetched. T341 built
  * its reach at the world overview's zooms ([OnlineTiles.vectorAnswer]); T368 over the maps (ADR 0066 build task 2): an
  * elevation tile where the source's stored maximum ([DirectSources.maxZoom], a server's `demMaxZoom`) is deeper than the map
- * answering it, a vector tile past a map's zooms up to the source's (`osmMaxZoom`), the style's top elevation zoom, and the
+ * answering it (the style's top elevation zoom up to the source's stored maximum), and the
  * sky views' terrain read (`TerrainRead`: the network ranked by its stored depth). The phone's tile answers at once and the
  * fetch runs behind it ([OnlineTiles.fetchBehind], [BehindRefresh]). It gates fetches only: a tile already kept answers
  * whatever it says. Stored in [DirectPrefs] (not synced: what one phone downloads is that phone's business); read once and
