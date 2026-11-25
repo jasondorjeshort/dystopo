@@ -174,6 +174,13 @@ object ScaleBarRoutes {
             else -> return Response.json(mapOf("error" to "mode is held or behind"), 400)
         }
         r.query["bench"]?.toIntOrNull()?.coerceIn(1, 200_000)?.let { n -> return Response.json(bench(lat, lon, n)) }
+        // `&pyramid=<z>`: the point as the area readers read it, through the composed pyramid at zoom z (at most its own top).
+        r.query["pyramid"]?.toIntOrNull()?.let { z ->
+            val p = pointRead.pyramidAt(lat, lon, io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.HELD, "route")
+            val zz = p?.let { minOf(z, it.maxZoom) }
+            return Response.json(linkedMapOf("lat" to lat, "lon" to lon, "pyramidTop" to p?.maxZoom, "zoom" to zz,
+                "elevationM" to p?.let { io.github.jasondorjeshort.dystopo.routing.DemElevation(it, zz!!).elevation(lat, lon) }?.takeIf { it.isFinite() }?.let { Math.round(it * 10) / 10.0 }))
+        }
         return Response.json(linkedMapOf<String, Any?>("lat" to lat, "lon" to lon, "mode" to mode.code) + pointRead.at(lat, lon, mode, "route").json() + ("counters" to pointRead.json()))
     }
 

@@ -33,6 +33,13 @@ class PointRuleTest {
     }
 
     @Test
+    fun theComposedPyramidHoldsEveryDepthPastTheShallowestMap() {
+        assertEquals(12..15, PointRule.heldDepths(listOf(11, 14))) // the fixture's two maps
+        assertEquals(8..15, PointRule.heldDepths(emptyList()))
+        assertEquals(15..15, PointRule.heldDepths(listOf(15)))
+    }
+
+    @Test
     fun insideABoxInMetres() {
         val box = io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.82, 46.80, -121.68, 46.90) // the fixture's fine map
         // 0.0025 deg north of the south edge: about 278 m, inside T357's 300 m band (the merged read blends there).

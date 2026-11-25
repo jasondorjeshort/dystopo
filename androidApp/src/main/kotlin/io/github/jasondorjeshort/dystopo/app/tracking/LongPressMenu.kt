@@ -227,7 +227,7 @@ object LongPressMenu {
                     SightLine.of(kept.profile, kept.terrain, fix.lat, fix.lon, pLat, pLon, peak?.eleM)
                 } else {
                     val d = TrackStats.distanceM(fix.lat, fix.lon, pLat, pLon)
-                    val terrain = if (d < HorizonPlace.HERE_M || d > Horizon.DEFAULT_RANGE_M) null else terrainTo(fix.lat, fix.lon, d)
+                    val terrain = if (d < HorizonPlace.HERE_M || d > Horizon.DEFAULT_RANGE_M) null else terrainTo(fix.lat, fix.lon, d, pLat, pLon)
                     SightLine.of(null, terrain, fix.lat, fix.lon, pLat, pLon, peak?.eleM)
                 }
                 linkedMapOf<String, Any?>("state" to "done") + s.json(units) + linkedMapOf(
@@ -248,9 +248,14 @@ object LongPressMenu {
         }, "dystopo-sight-line").apply { isDaemon = true }.start()
     }
 
-    /** The terrain from the fix out to [distanceM] and a little past (the offline map's elevation, as the fix's sweep reads it), or null with none. */
-    private fun terrainTo(lat: Double, lon: Double, distanceM: Double): io.github.jasondorjeshort.dystopo.dem.Terrain? {
-        val p = DystopoApp.instance.tiles.shade.pyramidAt(lat, lon) ?: return null
+    /**
+     * The terrain from the fix out to [distanceM] and a little past (the offline map's elevation, as the fix's sweep reads it), or
+     * null with none. T358: what the phone holds by the map's rule ([io.github.jasondorjeshort.dystopo.app.options.ShadeService.pyramidAt]),
+     * read at the deeper of the fix's and the place's ([pLat], [pLon]) zoom, so the place's height is the readout's there.
+     */
+    private fun terrainTo(lat: Double, lon: Double, distanceM: Double, pLat: Double, pLon: Double): io.github.jasondorjeshort.dystopo.dem.Terrain? {
+        val shade = DystopoApp.instance.tiles.shade
+        val p = listOfNotNull(shade.pyramidAt(lat, lon), shade.pyramidAt(pLat, pLon)).maxByOrNull { it.maxZoom } ?: return null
         val zoom = minOf(p.maxZoom, io.github.jasondorjeshort.dystopo.tiles.ShadeTiles.POINT_ZOOM)
         val range = minOf(Horizon.DEFAULT_RANGE_M, distanceM + SIGHT_MARGIN_M)
         return Horizon.terrainAround(lat, lon, zoom, range, tileSize = p.tileSize) { w -> p.window(w.zoom, w.x0, w.y0, w.width, w.height) }

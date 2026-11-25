@@ -314,9 +314,14 @@ object PointRead {
         return synchronized(this) { current(gen, tiles, landed, now) ?: Gen(tiles, tiles.packs, landed, now).also { gen = it; gens++ } }
     }
 
-    private fun heldPyramid(g: Gen, floor: Int): DemPyramid = synchronized(g.held) {
-        g.held.getOrPut(floor) {
-            DemPyramid(floor, PointRule.MAX_ZOOM, TileService.demDecoder(), cacheTiles = 16) { z, x, y -> runCatching { g.tiles.heldDem(z, x, y) }.getOrNull() }
+    /**
+     * The held cells at zoom [depth] alone: a window at a shallower zoom is the mean of the [depth] cells under it (a reader
+     * sweeping at z13 or z14 reads the z15 cells the readout reads, where they are held; the maps fill the rest), a deeper one
+     * overzooms them.
+     */
+    private fun heldPyramid(g: Gen, depth: Int): DemPyramid = synchronized(g.held) {
+        g.held.getOrPut(depth) {
+            DemPyramid(depth, depth, TileService.demDecoder(), cacheTiles = 16) { z, x, y -> runCatching { g.tiles.heldDem(z, x, y) }.getOrNull() }
         }
     }
 
@@ -337,13 +342,14 @@ object PointRead {
                 break
             }
         }
-        val sources = if (held == null) g.maps else g.maps + ElevationSource(MergedTerrain.ONLINE, held, null) { w ->
-            if (w.zoom < floor) null else heldPyramid(g, floor).window(w.zoom, w.x0, w.y0, w.width, w.height)
+        val depth = held
+        val sources = if (depth == null) g.maps else g.maps + ElevationSource(MergedTerrain.ONLINE, depth, null) { w ->
+            if (w.zoom < floor) null else heldPyramid(g, depth).window(w.zoom, w.x0, w.y0, w.width, w.height)
         }
         val zoom = MergedTerrain.pointZoom(sources, lat, lon, PointRule.MAX_ZOOM, onlineByDepth = true)
         val first = g.ordered.firstOrNull { m -> m.bounds!!.let { lon >= it.minLon && lon <= it.maxLon && lat >= it.minLat && lat <= it.maxLat } }
         val h = when {
-            held != null && zoom == held -> Here(sources, zoom, held, floor, label, heldPyramid(g, floor), label, null)
+            depth != null && zoom == depth -> Here(sources, zoom, depth, floor, label, heldPyramid(g, depth), label, null)
             held == null && first != null && first.maxZoom == zoom -> Here(sources, zoom, held, floor, label, g.pyramidOf[first.name], first.name, first.bounds)
             else -> Here(sources, zoom, held, floor, label, null, null, null)
         }
@@ -352,11 +358,11 @@ object PointRead {
     }
 
     /** ([lat], [lon])'s elevation by the rule; [tag] names the reader in the counters. Never waits for the network. */
-    fun at(lat: Double, lon: Double, mode: Mode, tag: String = "other"): Answer = at(lat, lon, mode, tag, counter("${mode.code}.$tag"))
+    fun at(lat: Double, lon: Double, mode: Mode, tag: String = "other"): Answer = at(lat, lon, mode, tag, counter("${mode.code}.$tag"), timeIt = true)
 
-    private fun at(lat: Double, lon: Double, mode: Mode, tag: String, count: java.util.concurrent.atomic.AtomicLong): Answer {
+    private fun at(lat: Double, lon: Double, mode: Mode, tag: String, count: java.util.concurrent.atomic.AtomicLong, timeIt: Boolean = false): Answer {
         count.incrementAndGet()
-        val timed = mode == Mode.BEHIND || ++sinceTimed >= TIME_EVERY
+        val timed = timeIt || mode == Mode.BEHIND || ++sinceTimed >= TIME_EVERY
         if (!timed) return try { read(lat, lon, mode, null) } catch (e: Exception) { Answer(Double.NaN, null, null, null, "error: ${e.javaClass.simpleName}", 0.0) }
         if (mode != Mode.BEHIND) sinceTimed = 0
         val t0 = System.nanoTime()
@@ -430,9 +436,11 @@ object PointRead {
     }
 
     /**
-     * The sources at ([lat], [lon]) composed into one pyramid (the maps with T357's blend, the held cells ahead where deeper),
-     * up to the zoom read there, for the readers that sweep an area around the point; null where nothing is held at the
-     * point. [Mode.BEHIND] fetches the point's tile behind as [at] does.
+     * What the phone holds composed into one pyramid by the map's rule, for the readers that sweep an area around a point (a sun
+     * or a sight line over kilometres): the maps with T357's blend, and the held cells as one member per depth (each answers
+     * the cells whose tile it holds at that depth, ranked by it, a shallower window the mean of its cells), so every cell takes
+     * the deepest held there wherever the reader stands; up to the zoom read at ([lat], [lon]), null where nothing is held
+     * there. [Mode.BEHIND] fetches the point's tile behind as [at] does.
      */
     fun pyramidAt(lat: Double, lon: Double, mode: Mode, tag: String = "area"): DemPyramid? {
         val g = gen()
@@ -440,12 +448,14 @@ object PointRead {
         bump("${mode.code}.$tag")
         if (mode == Mode.BEHIND) runCatching { behind(g, lat, lon, h) }
         val top = h.zoom ?: return null
-        val key = "${h.floor}/${h.held}/$top"
         return synchronized(g.composed) {
-            g.composed.getOrPut(key) {
-                val low = minOf(g.minZoom ?: h.floor, h.floor, top)
+            g.composed.getOrPut("$top") {
+                val low = minOf(g.minZoom ?: top, top)
+                val sources = g.maps + PointRule.heldDepths(g.maps.map { it.maxZoom }).map { d ->
+                    ElevationSource(MergedTerrain.ONLINE, d, null) { w -> if (w.zoom < d - PointRule.MEAN_ZOOMS) null else heldPyramid(g, d).window(w.zoom, w.x0, w.y0, w.width, w.height) }
+                }
                 DemPyramid(low, top, io.github.jasondorjeshort.dystopo.dem.RawElevations, cacheTiles = 16) { z, x, y ->
-                    MergedTerrain.read(MercatorWindow(z, x * 256, y * 256, 256, 256), h.sources, onlineByDepth = true).values
+                    MergedTerrain.read(MercatorWindow(z, x * 256, y * 256, 256, 256), sources, onlineByDepth = true).values
                         .takeUnless { v -> v.all { it.isNaN() } }?.let(io.github.jasondorjeshort.dystopo.dem.RawElevations::encode)
                 }
             }
@@ -471,7 +481,7 @@ object PointRead {
     private const val AGE_EVERY = 1024
     private const val TIME_EVERY = 64
     private const val HERE_KEEP = 256
-    private const val COMPOSED_KEEP = 2
+    private const val COMPOSED_KEEP = 3
     private const val ASKED_KEEP = 4096
 }
 
@@ -479,6 +489,16 @@ object PointRead {
 object PointRule {
     /** The deepest elevation zoom a point is read at (`OnlineTiles.DEM_MAX_ZOOM`, `HeldTiles.MAX_DEM`). */
     const val MAX_ZOOM = 15
+
+    /** How many zooms shallower than its own a held member of the composed pyramid still answers (the mean of 8 x 8 of its tiles at most). */
+    const val MEAN_ZOOMS = 3
+
+    /**
+     * The depths of the composed pyramid's held members: every zoom deeper than the shallowest map's depth ([mapDepths]; z8 and
+     * up without a map) to [MAX_ZOOM]. A held cell no deeper than every map at it ranks after them and fills only where they
+     * have nothing.
+     */
+    fun heldDepths(mapDepths: List<Int>): IntRange = ((mapDepths.minOrNull() ?: 7) + 1).coerceAtMost(MAX_ZOOM)..MAX_ZOOM
 
     /** The shallowest zoom a held cell must be at to rank ahead of the maps at a point they read at [mapsZoom] (null: none there). */
     fun floor(mapsZoom: Int?): Int = mapsZoom?.plus(1) ?: 0
