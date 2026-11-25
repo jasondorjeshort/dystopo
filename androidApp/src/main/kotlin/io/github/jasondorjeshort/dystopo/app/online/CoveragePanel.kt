@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.PacksRoutes
 import io.github.jasondorjeshort.dystopo.app.areas.DetailOutline
-import io.github.jasondorjeshort.dystopo.app.control
+import androidx.compose.ui.platform.testTag
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.packs.Holdings
@@ -215,7 +215,7 @@ private val SectionInk = Color(0xFF2B2420)
 internal fun CoverageSection(lines: List<String>, maxHeightDp: Int, heading: Boolean = true) {
     val (shown, rest) = CoveragePanel.fit(lines)
     Column(
-        Modifier.control("coveragePanel").heightIn(max = maxHeightDp.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+        Modifier.testTag("coveragePanel").heightIn(max = maxHeightDp.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         if (heading) Row(verticalAlignment = Alignment.CenterVertically) {
