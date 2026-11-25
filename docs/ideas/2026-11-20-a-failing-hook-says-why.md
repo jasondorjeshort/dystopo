@@ -13,6 +13,8 @@ The same day a chore saw git-guard refuse an awk line that contained backticks i
 
 The owner, 2026-11-20: "Record them all. We'll triage and sanity check later."
 
+Came up again: 2026-11-25, coordinator (claude-fable-5-2), during the update from the base: conflict markers in two scripts the guard loads made every call fail with "git-guard: internal error (Unexpected token '<<')", which named no file, so the broken script had to be guessed; the Plan's item (3) takes it in.
+
 Plan: the first half is already in the tree: `git-guard.js` installs an `uncaughtException` handler before any
 `require` and exits 2 with "git-guard: internal error (...)" on stderr, and `test-hooks.js` (line ~229) tests that
 path. So the morning's "no stderr" means node never ran the script (process start failing, the memory guess), which
@@ -20,5 +22,7 @@ no hook code can report; the sweep's memory floor idea is the prevention. What i
 of an awk line with backticks inside single quotes in the same call as a git command; if the guard refuses it, teach
 `shell-parse.js` that backticks inside single quotes are not a substitution (POSIX), keeping the refusal for double
 quotes and heredocs, and correct `docs/reference/windows-and-shells.md`'s line; (2) the handler adds the free physical
-memory (`os.freemem()`) to its message. Verify: `node .claude/hooks/test-hooks.js` green with the new cases. These are
+memory (`os.freemem()`) to its message; (3) the message names the script that failed to load (the first
+`.claude/hooks/` frame of the error's stack, or each `require` wrapped so a `SyntaxError` carries its path), with a
+hook test that loads a copy of the hooks whose `policy.js` holds a conflict marker. Verify: `node .claude/hooks/test-hooks.js` green with the new cases. These are
 base-owned hook files: a departure row in ADR 0038 and a carry-back, as the agreement says.

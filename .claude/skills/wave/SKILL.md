@@ -206,3 +206,10 @@ and the caches are regenerable; the only files on the machine that are not are t
    each line: keep, wake or delete). It is an offered list, not a sitting an agent runs. The first
    review also lists every `Waits:` with no trigger and every one written on a blanket leave
    (ADR 0065, Context), for the owner to restate or convert.
+7. Update from the base (owner, 2026-11-25). A Haiku chore runs `git fetch hatchery` and reports
+   `git log --oneline <base line>..hatchery/main` (the base line is the `Hatchery base:` line of
+   ADR 0038). When that lists commits, an Opus-class implementer runs the `update-from-hatchery` skill on
+   a branch `task/hatchery-<sha7>` in its own worktree, with `node .claude/hooks/test-hooks.js` as
+   its check, and a verifier repeats the check before the merge sequence. A base change wanted
+   sooner is taken the same way, by the whole update: never by copying one base commit, which
+   leaves the base line behind and makes the next update conflict on text both sides already hold.

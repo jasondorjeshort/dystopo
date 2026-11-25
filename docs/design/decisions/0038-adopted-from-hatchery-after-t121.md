@@ -62,8 +62,8 @@ here).
   `claude.ai` link passes only in a commit message's trailer block, and the link anywhere else stays
   a `session` hit; GitHub's web-flow identity passes as committer, never as author or tagger, and its
   service address passes in text. Their carry-back landed as Hatchery PR #2 (its ADR 0020, merged
-  2026-10-21) after the base line above, so the two rows stay until an update moves the line past
-  that merge; then base wins and the rows go.
+  2026-10-21); the update of 2026-11-25 moved the base line past that merge, so the base's text
+  holds both rules now and the two rows are gone.
 - **The scan runs from the guard and from the terminal.** The guard's rule 20 scans every push from
   a session commit by commit, with the main checkout's copy of the scan (so a change to the scan's
   own contract is pushed from a terminal until it is on `main`, T120). `privacy.allow` is the
@@ -82,7 +82,9 @@ here).
   new lines folded in by hand, both sides kept (T121: keeping HEAD whole on the scan would have
   dropped the base's range fix); any other conflict is base wins; the line is bumped last, only when
   every failed path has a disposition. A row whose change the base has taken is deleted in the same
-  update.
+  update. The update runs at every wave close (`wave` skill, Close step 7; owner, 2026-11-25), and a
+  base change wanted sooner is taken by the whole update, never by copying one base commit: three
+  commits taken by hand made five of the eleven conflicts of the update of 2026-11-25.
 
 ## Departures
 
