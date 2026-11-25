@@ -61,6 +61,7 @@ class LocalPackBuild(
     // T369
     /** T369: the vector bytes this build fetched from the public source, against its 50 MB a download ([AreaLimit.DIRECT_MAX_BYTES]). */
     private val vectorBytes = java.util.concurrent.atomic.AtomicLong()
+    private val largestTile = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var capReached = false
 
     /** T369: the build stopped at the public vector source's 50 MB a download; its message is the cap's sentence. */
@@ -145,7 +146,7 @@ class LocalPackBuild(
                     when (f) {
                         is Fetch.Hit -> f.bytes.also {
                             // T369: the vector bytes fetched from the public source (not those found cached), against its 50 MB.
-                            if (route == "osm" && !f.cached && AreaLimit.directBytesReached(vectorBytes.addAndGet(it.size.toLong()))) capReached = true
+                            if (route == "osm" && !f.cached && AreaLimit.directBytesReached(vectorBytes.addAndGet(it.size.toLong()), largestTile.accumulateAndGet(it.size.toLong(), ::maxOf), DirectSources.MAX_TILES_IN_FLIGHT)) capReached = true
                         }
                         Fetch.Missing -> null
                         is Fetch.Unavailable -> {

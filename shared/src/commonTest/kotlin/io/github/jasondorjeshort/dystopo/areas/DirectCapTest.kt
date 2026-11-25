@@ -19,6 +19,9 @@ class DirectCapTest {
         assertFalse(AreaLimit.directBytesReached(49_999_999))
         assertTrue(AreaLimit.directBytesReached(50_000_000))
         assertTrue(AreaLimit.directBytesReached(50_000_001))
+        // Room for the six tiles on their way: with 200 kB tiles it stops at 48.8 MB fetched, so the last six land under 50 MB.
+        assertFalse(AreaLimit.directBytesReached(48_700_000, 200_000, 6))
+        assertTrue(AreaLimit.directBytesReached(48_800_000, 200_000, 6))
     }
 
     @Test

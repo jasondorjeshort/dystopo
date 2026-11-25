@@ -168,6 +168,8 @@ object AreaDownload {
         @Volatile var direct = false
         /** T369: the vector bytes this run fetched from the source (not those found cached), against [AreaLimit.DIRECT_MAX_BYTES]. */
         val vectorBytes = AtomicLong()
+        /** T369: the largest vector tile this run fetched (the room kept for the tiles in flight). */
+        val largestTile = AtomicLong()
         /** T369: the run reached [AreaLimit.DIRECT_MAX_BYTES] and stopped there. */
         @Volatile var capStopped = false
 
@@ -719,7 +721,10 @@ object AreaDownload {
                     j.fetched.incrementAndGet()
                     j.bytes.addAndGet(f.bytes.size.toLong())
                     // T369: the vector bytes fetched from the public source, against its 50 MB a download.
-                    if (j.direct && item.route == AreaManifest.ROUTE_OSM && AreaLimit.directBytesReached(j.vectorBytes.addAndGet(f.bytes.size.toLong()))) j.capStopped = true
+                    if (j.direct && item.route == AreaManifest.ROUTE_OSM) {
+                        val n = f.bytes.size.toLong()
+                        if (AreaLimit.directBytesReached(j.vectorBytes.addAndGet(n), j.largestTile.accumulateAndGet(n, ::maxOf), POOL)) j.capStopped = true
+                    }
                 }
                 j.unavailableRun.set(0)
                 true

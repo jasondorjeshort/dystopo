@@ -75,7 +75,13 @@ object AreaLimit {
     /** T369: true when a plan of [vectorTiles] passes [DIRECT_MAX_TILES] (3,000 is allowed, 3,001 is not). */
     fun overDirectCap(vectorTiles: Long): Boolean = vectorTiles > DIRECT_MAX_TILES
 
-    /** T369: true once a download has fetched [vectorBytes] of vector tiles that reach [DIRECT_MAX_BYTES]: it stops there. */
-    fun directBytesReached(vectorBytes: Long): Boolean = vectorBytes >= DIRECT_MAX_BYTES
+    /**
+     * T369: true once a download has fetched [vectorBytes] of vector tiles that reach [DIRECT_MAX_BYTES] less room for the
+     * tiles still on their way ([inFlight], the caller's fetching threads, each tile taken as [largestTile], the largest
+     * fetched so far): it stops there, so what is on its way lands at or under the 50 MB. Measured against a stub of 200 kB
+     * tiles: with no room 51,194,368 bytes (256 tiles); with room for the 4 permits 50,394,456 (252: the area download's 6
+     * threads were all inside a fetch, 4 holding a permit and 2 waiting for one).
+     */
+    fun directBytesReached(vectorBytes: Long, largestTile: Long = 0L, inFlight: Int = 0): Boolean = vectorBytes + inFlight * largestTile >= DIRECT_MAX_BYTES
     // end T369
 }
