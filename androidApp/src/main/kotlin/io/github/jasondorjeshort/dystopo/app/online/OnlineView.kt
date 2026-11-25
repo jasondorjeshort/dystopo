@@ -15,6 +15,8 @@ import io.github.jasondorjeshort.dystopo.packs.PackBounds
 class OnlineView(
     val lat: Double, val lon: Double, val zoom: Double, val bounds: PackBounds?, val source: String, val kept: Boolean = false,
     val served: Served? = null, val offAhead: Boolean = false,
+    /** T360: the lookup's answer [resolve] read the source from, which the coverage panel turns into words (not in [json]). */
+    val here: PacksRoutes.HoldingsHere? = null,
 ) {
     fun json(): Map<String, Any?> = linkedMapOf(
         "lat" to lat, "lon" to lon, "zoom" to zoom, "source" to source, "kept" to kept,
@@ -22,7 +24,7 @@ class OnlineView(
         "served" to served?.json(), "offAhead" to offAhead, // T359
     )
 
-    fun withSource(s: String, kept: Boolean = false) = OnlineView(lat, lon, zoom, bounds, s, kept, served, offAhead)
+    fun withSource(s: String, kept: Boolean = false) = OnlineView(lat, lon, zoom, bounds, s, kept, served, offAhead, here)
 
     /**
      * T359: what serves the view's tiles now, by ADR 0066's lookup (`GET /holdings`' `tilePathServes`, the tile paths' own
@@ -114,7 +116,7 @@ class OnlineView(
                 lastSource = word
                 lastKept = kept
             }
-            return OnlineView(view.lat, view.lon, view.zoom, view.bounds, word, kept, served, offAhead)
+            return OnlineView(view.lat, view.lon, view.zoom, view.bounds, word, kept, served, offAhead, here) // T360: here, the panel's
         }
 
         /**

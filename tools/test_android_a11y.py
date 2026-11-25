@@ -929,4 +929,81 @@ finally:
     a11y.time.sleep = _sleep
 # end T369
 
+
+# T360: the coverage panel's screen waits for the card's panel to read steady with an offline map shown first, fails when it
+# does not; download-card and coverage-panel keep a fix coming every second from their setup to their end.
+class CoverageSrv:
+    def __init__(self, first="rainier · Full detail · shown", open_=True):
+        self.calls, self.first, self.open = [], first, open_
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/online":
+            lines = [self.first, "Online · nothing finer here"]
+            return {"chip": {"open": self.open, "text": "Online · on this phone", "coverage": {"lines": lines, "shown": lines}}}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+cov = {s[0]: s for s in a11y.SCREENS if s[0] in ("coverage-panel", "download-card")}
+assert cov["coverage-panel"][3] == "map" and cov["coverage-panel"][2] is not None, cov
+assert a11y.coverage_scene({"open": True, "coverage": {"shown": ["rainier · Full detail · shown"]}}) is None
+assert "not an offline map" in a11y.coverage_scene({"open": True, "coverage": {"shown": ["Online · shown"]}})
+assert "not open" in a11y.coverage_scene({"open": False, "coverage": {"shown": ["rainier · Full detail · shown"]}})
+a11y.time.sleep = lambda s: None
+_feed = a11y.FixFeed
+try:
+    started = []
+
+    class StubFeed:
+        def __init__(self, srv):
+            self.thread = type("T", (), {"start": lambda _s: started.append(1)})()
+
+        def stop(self):
+            started.append(-1)
+
+    a11y.FixFeed = StubFeed
+    vs = CoverageSrv()
+    vctx = type("C", (), {"srv": vs})()
+    cov["coverage-panel"][1](vctx)
+    paths = [p for _m, p in vs.calls]
+    assert "/readout/reset" in paths and "/online/chip?open=1" in paths and any(p.startswith("/camera?lat=46.8529") for p in paths), paths
+    assert paths.index("/online/cache/clear") < paths.index("/online/chip?open=1"), paths  # the cache pinned before the card
+    assert started == [1], started
+    vs.calls.clear()
+    cov["coverage-panel"][2](vctx)
+    assert started == [1, -1] and ("POST", "/online/chip?open=0") in vs.calls and vctx.fix_feed is None, (started, vs.calls)
+    started.clear()
+    fctx = type("C", (), {"srv": CoverageSrv(first="Nothing on this phone here")})()
+    try:
+        cov["coverage-panel"][1](fctx)
+        raise AssertionError("a panel with no map shown passed")
+    except RuntimeError as e:
+        assert "not steady" in str(e) and "not an offline map" in str(e), e
+    # A setup that raised: the run's loop still calls the screen's end (in its finally), which stops the feed.
+    assert started == [1], started
+    cov["coverage-panel"][2](fctx)
+    assert started == [1, -1] and fctx.fix_feed is None, started
+    import inspect
+    loop = inspect.getsource(a11y.run)
+    assert loop.index("setup(c)") < loop.index("finally:", loop.index("setup(c)")) < loop.index("teardown(c)"), "teardown must run in the screen's finally"
+    # The real feed's thread ends on stop.
+    real = _feed(CoverageSrv())
+    real.thread.start()
+    real.stop()
+    assert not real.thread.is_alive()
+    started.clear()
+    dctx = type("C", (), {"srv": CoverageSrv()})()
+    cov["download-card"][1](dctx)
+    assert started == [1], started
+    cov["download-card"][2](dctx)
+    assert started == [1, -1], started
+finally:
+    a11y.time.sleep = _sleep
+    a11y.FixFeed = _feed
+# end T360
+
 print("test_android_a11y: ok")
