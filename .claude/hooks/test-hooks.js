@@ -45,7 +45,10 @@
 // group Q covers queue-list.js and post-edit's marker switch (ADR 0017), on scratch trees, with a
 // scratch copy of the hooks whose queue-list.js throws (Q13); group PV covers privacy-scan.js, rule
 // 20 and the pre-push hook (ADR 0018) on scratch repositories with bare remotes, every guard run
-// with HOME at an empty scratch dir (or the case's own, for the never and allow files); the line
+// with HOME at an empty scratch dir (or the case's own, for the never and allow files); group UF
+// and case S56 show that a set finish changes neither the gate nor the status line, whoever calls
+// (ADR 0027); group PS is the policy-schema
+// compatibility check (PS1 reads this repository's policy.schema.json, ADR 0013); the line
 // above the totals lists the groups that ran. Group AM (Dystopo T298) covers the launch line usage-gate.js appends and
 // agent-meter.js at SubagentStop, under a scratch HOME. Exit codes: 0 all pass (a
 // SKIP is not a failure), 1 any failure, 2 usage error.
@@ -72,8 +75,10 @@ for (let i = 0; i < argv.length; i++) {
   else { process.stderr.write(`test-hooks: unknown or incomplete argument: ${a}\n`); process.exit(2); }
 }
 
-function run(hook, stdin, env) {
-  const script = hook === 'statusline' ? path.join(HOOKS, '..', 'statusline.js') : path.join(HOOKS, `${hook}.js`);
+// hooksDir: run the hook from another copy of this directory (PV48's scratch workspace).
+function run(hook, stdin, env, hooksDir) {
+  const dir = hooksDir || HOOKS;
+  const script = hook === 'statusline' ? path.join(dir, '..', 'statusline.js') : path.join(dir, `${hook}.js`);
   const r = spawnSync(NODE, [script], {
     input: stdin, encoding: 'utf8', timeout: 30000, env: env || process.env,
   });
@@ -208,9 +213,10 @@ const NOTE_MARK = 'git-guard reads the command line, not what runs';
 const withNote = (d) => d.reason.includes(NOTE_MARK) || 'reason lacks the note about command text';
 const noNote = (d) => !d.reason.includes(NOTE_MARK) || 'reason carries the note, but git is the command here';
 
-// Runs git-guard once. o: { command, agent, tool, cwd, policy, raw, merged, home }. expect: 'allow',
+// Runs git-guard once. o: { command, agent, tool, cwd, policy, raw, merged, home, hooks }. expect: 'allow',
 // 'internal' (exit 2, reason on stderr), a rule number, or 'policy' (malformed policy deny). HOME
-// is o.home (a PV case's never and allow files) or the empty guardHome.
+// is o.home (a PV case's never and allow files) or the empty guardHome. o.hooks: run the guard
+// copied into that directory, under the policy.json beside it (HOOK_POLICY_FILE unset).
 function guardCase(id, o, expect, extra) {
   if (!selected(id)) return;
   const input = { hook_event_name: 'PreToolUse', tool_name: o.tool || 'Bash', cwd: o.cwd || repoMain, tool_input: { command: o.command } };
@@ -218,7 +224,7 @@ function guardCase(id, o, expect, extra) {
   const stdin = o.raw !== undefined && o.raw !== null ? o.raw : JSON.stringify(input);
   // task/T1 has a merged pull request, task/T2 does not (git-guard's GIT_GUARD_MERGED seam).
   const home = o.home || guardHome;
-  const r = run('git-guard', stdin, envWith({ HOOK_POLICY_FILE: o.policy || POLICIES.hatchery, GIT_GUARD_MERGED: 'task/T1', HOME: home, USERPROFILE: home }));
+  const r = run('git-guard', stdin, envWith({ HOOK_POLICY_FILE: o.hooks ? undefined : o.policy || POLICIES.hatchery, GIT_GUARD_MERGED: 'task/T1', HOME: home, USERPROFILE: home }), o.hooks);
   const shown = JSON.stringify(String(o.command).split(fwd(scratch)).join('<scratch>'));
   const where = `${o.tool === 'PowerShell' ? ' ps' : ''}${o.cwd === repoTask ? ' on task/T1' : ''}${o.policyName ? ` (${o.policyName})` : ''}`;
   const label = `${shown} [${o.agent == null ? '-' : JSON.stringify(o.agent)}]${where} -> ${typeof expect === 'number' ? `deny rule ${expect}` : expect}`;
@@ -719,7 +725,7 @@ for (const [n, command, agent, cwd, want] of GP) {
   const pv = (id, command, repo, expect, o) => {
     const x = o || {};
     guardCase(id, { command, agent: x.agent === undefined ? 'pusher' : x.agent, cwd: repo.dir, policy: x.policy || POL,
-      home: x.home, policyName: x.label }, expect, x.extra);
+      home: x.home, policyName: x.label, hooks: x.hooks }, expect, x.extra);
   };
   const cli = (repo, args, o) => {
     const x = o || {};
@@ -1024,7 +1030,7 @@ for (const [n, command, agent, cwd, want] of GP) {
     });
 
     // PV46: a Claude-Session trailer whose value is one claude.ai link passes in a commit message's
-    // trailer block (project departure, ADR 0037); the link anywhere else stays a session hit.
+    // trailer block (ADR 0020); the link anywhere else stays a session hit.
     const KEY = `${'Claude-'}Session:`;
     const LINK = `${'https://'}${'claude'}.ai/code/session_01AbC`;
     const COAUTH = `Co-Authored-By: Claude <noreply${AT}anthropic.com>`;
@@ -1053,6 +1059,124 @@ for (const [n, command, agent, cwd, want] of GP) {
     must(ghTag.dir, ['tag', '-a', 'v2', '-m', 'release'], GH);
     pv('PV47c', 'git push origin v2', ghTag, 20, { extra: says('tag v2 tagger (identity: ') });
     pv('PV47d', PUSH, pvRepo('gh-text', [{ msg: `change\n\nmerged by ${GH.email}`, files: { 'a.txt': `committer ${GH.email}\n` } }]), 'allow');
+
+    // PV48: a push in another repository than the guard's own is scanned with both policies: allow
+    // and identities the union of the lists the other file sets, that file malformed a refusal
+    // naming it. The guard runs from a copy of the hooks in a scratch workspace (its own policy.json,
+    // no HOOK_POLICY_FILE), so the workspace is the repository holding .claude/hooks/; the other
+    // repositories here sit inside it and are excluded there, as a workspace ignores the repos inside it.
+    const ws = pvRepo('ws');
+    const wsHooks = path.join(ws.dir, '.claude', 'hooks');
+    fs.mkdirSync(wsHooks, { recursive: true });
+    for (const f of ['git-guard.js', 'shell-parse.js', 'policy.js', 'privacy-scan.js']) fs.copyFileSync(path.join(HOOKS, f), path.join(wsHooks, f));
+    fs.writeFileSync(path.join(wsHooks, 'policy.json'), JSON.stringify(Object.assign({}, HATCHERY_POLICY, { privacy: { allow: [], identities: [PV_ID] } })));
+    fs.appendFileSync(path.join(ws.dir, '.git', 'info', 'exclude'), '.claude/\nallow/\nnone/\nbad/\nids/\nids-other/\nhit/\nextra/\nsubkey/\nsubish/\nno-privacy/\nempty-privacy/\n');
+    const OTHER2 = `${SEG}2${AT}corp.internal`;
+    const nestedPolicy = (privacy) => `${JSON.stringify({ privacy }, null, 2)}\n`;
+    // A nested repository with a bare origin; base: files in its pushed base commit; commits: outgoing.
+    const nested = (name, base, commits) => {
+      const dir = path.join(ws.dir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      must(scratch, ['init', '-q', '--bare', `${ws.dir}-${name}-origin.git`]);
+      must(dir, ['init', '-q']);
+      must(dir, ['checkout', '-q', '-b', 'main']);
+      pvCommit(dir, { msg: 'base', files: Object.assign({ 'base.txt': 'base\n' }, base) });
+      must(dir, ['remote', 'add', 'origin', `${ws.dir}-${name}-origin.git`]);
+      must(dir, ['push', '-q', 'origin', 'main']);
+      return { dir, shas: (commits || []).map((c) => pvCommit(dir, c)) };
+    };
+    const POLICY_REL = '.claude/hooks/policy.json';
+    nested('allow', { [POLICY_REL]: nestedPolicy({ allow: [OTHER] }) }, [line('a.txt', `mail ${OTHER}`)]);
+    nested('none', {}, [line('a.txt', `mail ${OTHER}`)]);
+    nested('bad', { [POLICY_REL]: '{ "privacy": { "allow": ["a*"] } }\n' }, [line('a.txt', 'nothing personal')]);
+    const withId = nestedPolicy({ identities: [PV_ID, { name: 'hooks-test', email: OTHER2 }] });
+    nested('ids', { [POLICY_REL]: nestedPolicy({ identities: [PV_ID] }) }, [{ files: { [POLICY_REL]: withId } }]);
+    nested('ids-other', { [POLICY_REL]: withId }, [line('a.txt', `mail ${OTHER2}`)]);
+    nested('hit', { [POLICY_REL]: nestedPolicy({ allow: [OTHER] }) }, [line('a.txt', `mail ${OTHER2}`)]);
+    // Only the privacy section of the other repository's file is read: a top-level key this base does
+    // not know is never seen (a newer base's), one inside privacy is still refused.
+    nested('extra', { [POLICY_REL]: `${JSON.stringify({ futureKey: { on: true }, privacy: { allow: [OTHER] } }, null, 2)}\n` },
+      [line('a.txt', `mail ${OTHER}`)]);
+    nested('subkey', { [POLICY_REL]: nestedPolicy({ allow: [OTHER], futureSub: true }) }, [line('a.txt', `mail ${OTHER}`)]);
+    // A policy file in a subdirectory of another repository, not at its top-level.
+    nested('subish', { [`deep/${POLICY_REL}`]: nestedPolicy({ allow: [OTHER] }) }, [line('a.txt', `mail ${OTHER}`)]);
+    // No privacy key, and an empty privacy section: no list is set, so nothing is unioned (never the
+    // default allow ["user"]); the workspace's allow is empty, so a user path is a hit.
+    const userPath = line('a.txt', 'path /home/user/y');
+    nested('no-privacy', { [POLICY_REL]: '{}\n' }, [userPath]);
+    nested('empty-privacy', { [POLICY_REL]: nestedPolicy({}) }, [userPath]);
+    pvCommit(ws.dir, line('a.txt', `mail ${OTHER}`));
+    const inWs = { dir: ws.dir };
+    const wsCase = (id, command, expect, label, extra) => pv(id, command, inWs, expect, { hooks: wsHooks, label, extra });
+    wsCase('PV48a', 'git -C allow push origin main', 'allow', 'nested allow lists the literal');
+    wsCase('PV48b', 'cd allow && git push origin main', 'allow', 'nested allow lists the literal');
+    wsCase('PV48c', PUSH, 20, 'the same literal in the workspace', says('a.txt:1 (email: '));
+    wsCase('PV48d', 'git -C none push origin main', 20, 'nested repository without a policy', says('a.txt:1 (email: '));
+    wsCase('PV48e', 'git -C bad push origin main', 20, 'nested policy malformed',
+      says('could not read what this push sends', 'pushed repository\'s own policy', `bad${path.sep}.claude${path.sep}hooks${path.sep}policy.json`));
+    wsCase('PV48f', 'git -C ids push origin main', 'allow', 'nested identity in its policy file');
+    wsCase('PV48g', 'git -C ids-other push origin main', 20, 'nested identity in another file', says('a.txt:1 (email: '));
+    // The workspace's own commits pushed with a nested work tree, or from inside a nested repo by
+    // --git-dir, keep the workspace's section: the repository is its git common dir, not its work tree.
+    const own = (id, command, label, dir) => pv(id, command, { dir: dir || ws.dir }, 20, { hooks: wsHooks, label, extra: says('a.txt:1 (email: ') });
+    own('PV48h', 'git --work-tree=allow push origin main', 'workspace commits, nested work tree');
+    own('PV48i', 'GIT_WORK_TREE=allow git push origin main', 'workspace commits, nested work tree');
+    own('PV48j', 'git -C allow --git-dir=../.git push origin main', 'workspace commits, nested work tree');
+    own('PV48k', 'git --git-dir=../.git push origin main', 'workspace commits, from the nested repo', path.join(ws.dir, 'allow'));
+    // A worktree of the workspace whose policy.json allows the literal: the same repository.
+    const wt = path.join(ws.dir, '.claude', 'worktrees', 'wt');
+    must(ws.dir, ['worktree', 'add', '-q', '-b', 'wt', wt]);
+    fs.mkdirSync(path.join(wt, '.claude', 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(wt, '.claude', 'hooks', 'policy.json'),
+      JSON.stringify(Object.assign({}, HATCHERY_POLICY, { privacy: { allow: [OTHER], identities: [PV_ID] } })));
+    own('PV48l', 'git push origin wt', 'worktree of the workspace, its policy edited', wt);
+    // The hit advice names the other repository's file whose privacy section was unioned, and only then.
+    const sep = path.sep;
+    const UNIONED = 'privacy section and ';
+    const both = (...checks) => (d) => { for (const c of checks) { const e = c(d); if (e !== true) return e; } return true; };
+    wsCase('PV48m', 'git -C hit push origin main', 20, 'nested hit names the unioned file',
+      says('a.txt:1 (email: ', UNIONED, `hit${sep}.claude${sep}hooks${sep}policy.json's, unioned`));
+    wsCase('PV48m2', PUSH, 20, 'workspace hit, nothing unioned', both(says('a.txt:1 (email: '), lacks(UNIONED)));
+    wsCase('PV48n', 'git -C extra push origin main', 'allow', 'nested policy: unknown top-level key, valid privacy');
+    wsCase('PV48o', 'git -C subkey push origin main', 20, 'nested policy: unknown key inside privacy',
+      says('pushed repository\'s own policy', `subkey${sep}.claude${sep}hooks${sep}policy.json`, 'unknown key privacy.futureSub'));
+    // A repository-locating prefix: GIT_DIR as --git-dir does; GIT_COMMON_DIR, which the scan's git is
+    // not given, keeps the workspace's section (fail safe).
+    own('PV48p', 'GIT_DIR=../.git git push origin main', 'workspace commits by GIT_DIR, from the nested repo', path.join(ws.dir, 'allow'));
+    own('PV48q', `GIT_COMMON_DIR=${fwd(ws.dir)}/.git git -C allow push origin main`, 'GIT_COMMON_DIR prefix, nested -C');
+    // The other repository's work tree given by --work-tree as a subdirectory holding a policy file:
+    // not that repository's top-level, so its section is not read.
+    wsCase('PV48s', 'git -C subish --work-tree=deep push origin main', 20, 'policy in a --work-tree subdirectory',
+      both(says('a.txt:1 (email: '), lacks(UNIONED)));
+    wsCase('PV48t', 'git -C no-privacy push origin main', 20, 'other policy without a privacy key', says('a.txt:1 (home: '));
+    wsCase('PV48u', 'git -C empty-privacy push origin main', 20, 'other policy with an empty privacy section', says('a.txt:1 (home: '));
+    // A repository variable set some way the reader does not follow refuses the push.
+    wsCase('PV48v', `set -a; GIT_COMMON_DIR=${fwd(ws.dir)}/.git; git -C allow push origin main`, 20, 'GIT_COMMON_DIR under set -a',
+      says('could not read what this push sends', 'another repository variable'));
+    // PV48r: a worktree of the workspace whose .git file names its gitdir through the UNC admin share
+    // (//localhost/<d>$/...) is still the workspace: directories compare by dev and inode, not by
+    // path. Windows only, where the share answers; git accepts the share's path only with
+    // safe.directory=*, which the case's own HOME gives.
+    const uncOf = (p) => `//localhost/${p[0]}$${fwd(p.slice(2))}`;
+    const uncReady = process.platform === 'win32' && /^[A-Za-z]:/.test(ws.dir) && fs.existsSync(uncOf(path.join(ws.dir, '.git')));
+    if (selected('PV48r') && !uncReady) {
+      skipped++; noteGroup('PV48r'); process.stdout.write('SKIP PV48r the UNC admin share of the scratch directory is not reachable (Windows only)\n');
+    } else if (uncReady) {
+      const wtu = path.join(ws.dir, '.claude', 'worktrees', 'wtu');
+      must(ws.dir, ['worktree', 'add', '-q', '-b', 'wtu', wtu]);
+      // r+ and a truncate: Windows refuses to open git's hidden .git file for "w".
+      const gitFile = fs.openSync(path.join(wtu, '.git'), 'r+');
+      fs.ftruncateSync(gitFile, 0);
+      fs.writeSync(gitFile, `gitdir: ${uncOf(path.join(ws.dir, '.git', 'worktrees', 'wtu'))}\n`, 0);
+      fs.closeSync(gitFile);
+      fs.mkdirSync(path.join(wtu, '.claude', 'hooks'), { recursive: true });
+      fs.writeFileSync(path.join(wtu, '.claude', 'hooks', 'policy.json'), nestedPolicy({ allow: [OTHER] }));
+      const uncHome = path.join(scratch, 'unc-home');
+      fs.mkdirSync(uncHome, { recursive: true });
+      fs.writeFileSync(path.join(uncHome, '.gitconfig'), '[safe]\n\tdirectory = *\n');
+      pv('PV48r', 'git push origin wtu', { dir: wtu }, 20,
+        { hooks: wsHooks, home: uncHome, label: 'worktree with a UNC gitdir, its policy edited', extra: both(says('a.txt:1 (email: '), lacks(UNIONED)) });
+    }
   }
 }
 
@@ -1211,6 +1335,76 @@ for (const [id, label, filePath, expect, rawOverride, fmt, policy, root] of P) {
   }
   report(id, `${label} -> ${expect === null ? 'no output' : 'message'}`, ok, detail, r.stdout);
   if (ok && !opt.verbose) process.stdout.write(`     exit ${r.code}, stdout: ${r.stdout || '(empty)'}\n`);
+}
+
+// ---------- post-edit: formatters through cmd.exe on Windows ----------
+// A .cmd shim in a directory whose name has a space runs a script that prints the arguments it
+// received (got.cmd, exit 3, so the hook reports them) or records them in a file (ok.cmd, exit 0).
+// Each case is [id, label, edited file (relative), formatter argv, expected message or null,
+// expected recorded arguments (ok.cmd) or undefined, extra env].
+const PW_IDS = ['PW01', 'PW02', 'PW03', 'PW04', 'PW05', 'PW06', 'PW07', 'PW08', 'PW09', 'PW10'];
+if (process.platform !== 'win32') {
+  if (PW_IDS.some(selected)) { skipped++; noteGroup('PW01'); process.stdout.write('SKIP PW formatters through cmd.exe run on Windows only\n'); }
+} else {
+  const fdir = path.join(scratch, 'fmt dir');
+  const record = path.join(fdir, 'ok-received.json');
+  fs.mkdirSync(fdir, { recursive: true });
+  fs.writeFileSync(path.join(fdir, 'got.js'), 'console.error("got: " + JSON.stringify(process.argv.slice(2))); process.exit(3);\n');
+  fs.writeFileSync(path.join(fdir, 'ok.js'), `require("fs").writeFileSync(${JSON.stringify(record)}, JSON.stringify(process.argv.slice(2)));\n`);
+  // %~dp0 as an npm shim uses it: the script sits beside the shim.
+  fs.writeFileSync(path.join(fdir, 'got.cmd'), `@"${NODE}" "%~dp0got.js" %*\r\n`);
+  fs.writeFileSync(path.join(fdir, 'fmtshim.cmd'), `@"${NODE}" "%~dp0got.js" %*\r\n`);
+  fs.writeFileSync(path.join(fdir, 'echo.cmd'), `@"${NODE}" "%~dp0got.js" %*\r\n`);
+  fs.writeFileSync(path.join(fdir, 'ok.cmd'), `@"${NODE}" "%~dp0ok.js" %*\r\n`);
+  const gotCmd = path.join(fdir, 'got.cmd');
+  const okCmd = path.join(fdir, 'ok.cmd');
+  const upperBat = path.join(fdir, 'UPPER.BAT');
+  fs.writeFileSync(upperBat, `@"${NODE}" "%~dp0got.js" %*\r\n`);
+  const odd = 'src/a b&c^d!x!(e).txt';
+  write(odd, 'x\n');
+  write('src/100%PATH%.txt', 'x\n');
+  const got = (rel, argv) => `post-edit: formatter ${argv[0]} failed on ${rel}: got: ${JSON.stringify([...argv.slice(1), absOf(rel)])}`;
+  const metaArgs = ['--x=a&b|c', 'c d\\', '^<>()', '!PATH!'];
+  // The environment copy is a plain object: set PATH under the spelling Windows gave it (Path).
+  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+  const PW = [
+    ['PW01', '.cmd formatter by path, metacharacters in the file name and the arguments', odd, [gotCmd, ...metaArgs],
+      got(odd, [gotCmd, ...metaArgs])],
+    ['PW02', '.cmd formatter that succeeds: no output, the whole path received', odd, [okCmd], null, [absOf(odd)]],
+    ['PW03', 'a bare name found on PATH (fmtshim.cmd, %~dp0 intact)', odd, ['fmtshim', '--check'],
+      got(odd, ['fmtshim', '--check']), undefined, { [pathKey]: `${fdir};${process.env.PATH}` }],
+    ['PW04', 'a bare name resolving to an .exe (findstr) spawns directly: % in the file name runs', 'src/100%PATH%.txt',
+      ['findstr', 'x'], null],
+    ['PW05', '% in the file name: refused, not run', 'src/100%PATH%.txt', [okCmd],
+      `post-edit: formatter ${okCmd} failed on src/100%PATH%.txt: not run: cmd.exe cannot be passed % safely`, null],
+    ['PW06', '" in an argument: refused, not run', odd, [okCmd, '--x="&calc"'],
+      `post-edit: formatter ${okCmd} failed on ${odd}: not run: cmd.exe cannot be passed " safely`, null],
+    ['PW07', 'an .exe formatter (node) is spawned directly: % in the file name runs', 'src/100%PATH%.txt', fmtBad['.txt'],
+      `post-edit: formatter ${NODE} failed on src/100%PATH%.txt: bad formatter output`],
+    ['PW08', 'an extension in upper case, .BAT', odd, [upperBat, 'x y'], got(odd, [upperBat, 'x y'])],
+    ['PW09', 'a cmd.exe builtin name found on no PATH directory (type) is not run: ENOENT as before', odd, ['type'],
+      `post-edit: formatter type failed on ${odd}: spawnSync type ENOENT`, undefined, { [pathKey]: fdir }],
+    ['PW10', 'echo.cmd on PATH runs, not the cmd.exe builtin echo', odd, ['echo', 'hi'],
+      got(odd, ['echo', 'hi']), undefined, { [pathKey]: `${fdir};${process.env.PATH}` }],
+  ];
+  for (const [id, label, rel, argv, expect, recorded, extra] of PW) {
+    if (!selected(id)) continue;
+    try { fs.unlinkSync(record); } catch (_) { /* absent */ }
+    const fmt = { [path.extname(rel).toLowerCase()]: argv };
+    const stdin = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Write', cwd: scratch, tool_input: { file_path: absOf(rel) } });
+    const r = run('post-edit', stdin, envWith(Object.assign({ HOOK_POLICY_FILE: POLICIES.hatchery, POST_EDIT_FORMATTERS_JSON: JSON.stringify(fmt) }, extra)));
+    let ok = false;
+    let detail = '';
+    if (r.code !== 0) detail = `exit ${r.code}, expected 0; stderr: ${r.stderr.trim()}`;
+    else if (expect === null ? r.stdout !== '' : !((d) => d && d.context === expect)(parseDecision(r.stdout))) {
+      detail = expect === null ? 'expected no stdout' : `expected additionalContext ${JSON.stringify(expect)}`;
+    } else if (recorded !== undefined) {
+      const seen = fs.existsSync(record) ? fs.readFileSync(record, 'utf8') : null;
+      ok = seen === (recorded === null ? null : JSON.stringify(recorded));
+      detail = `expected the formatter to record ${JSON.stringify(recorded)}, it recorded ${seen}`;
+    } else ok = true;
+    report(id, `${label} -> ${expect === null ? 'no output' : 'message'}`, ok, detail, r.stdout);
+  }
 }
 
 // ---------- post-edit: the handoff paths (ADR 0014) ----------
@@ -1430,7 +1624,7 @@ const stateFile = stateFileFor(SID);
 const gateInput = (extra) => JSON.stringify(Object.assign({ hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: {}, session_id: SID }, extra));
 // The scratch HOME, and no CLAUDE_CONFIG_DIR from the session running the suite, so the account
 // label is read from the scratch home (none there unless a case writes one).
-const gateEnv = (extra) => envWith(Object.assign({ HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: undefined }, extra));
+const gateEnv = (extra) => envWith(Object.assign({ HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: undefined, CLAUDE_CODE_SESSION_ID: undefined }, extra));
 const HOLD_MSG = 'Usage gate: 5h 55%, 7d 10%. 5h at or above 50%: Do not start new subagents. Let in-flight agents finish, run the handoff skill, commit from the main session, then report. Lifting this early is the user\'s decision (docs/hatchery/decisions/0006-hook-policy-file.md).';
 const STOP_MSG = 'Usage gate: 5h 85%, 7d 10%. 5h at or above 80%: Stop all work, run the handoff skill, commit WIP from the main session, end the turn.';
 const HOLD_85 = HOLD_MSG.replace('5h 55%', '5h 85%');
@@ -1766,6 +1960,68 @@ for (const [id, label, state, files, legacy, payload, expect, stderrHas, policy]
 fs.rmSync(grantDir, { recursive: true, force: true });
 fs.rmSync(ovFile, { force: true });
 
+// SendMessage and a subagent caller. A send that would resume or message an agent is gated like an
+// Agent launch; a report to "main" and a message-less notify start no work and always pass; a
+// subagent's call (agent_id, agent_type in the payload) is judged like the main session's.
+// [id, label, tool, tool_input, extra payload, five-hour %, override, expected deny reason or null]
+{
+  const SEND = ' No resuming or messaging agents (SendMessage).';
+  const sendHold = HOLD_MSG.replace('Do not start new subagents. Let in-flight agents finish, run the handoff skill, commit from the main session, then report.',
+    `Do not start new subagents. Let in-flight agents finish, run the handoff skill, commit from the main session, then report.${SEND}`);
+  const sendStop = STOP_MSG.replace('end the turn.', `end the turn.${SEND}`);
+  const lift = { until: nowSec + 3600, reason: 'test: override lifts a send' };
+  const SM = [
+    ['UM01', 'SendMessage to a subagent name at HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 55, undefined, sendHold],
+    ['UM02', 'SendMessage to "main" at HOLD', 'SendMessage', { to: 'main', message: 'done' }, {}, 55, undefined, null],
+    ['UM03', 'SendMessage with no message (notify only) at HOLD', 'SendMessage', { to: 'worker', notify_when_idle: true }, {}, 55, undefined, null],
+    ['UM04', 'SendMessage with an empty message at HOLD', 'SendMessage', { to: 'worker', message: '' }, {}, 55, undefined, null],
+    ['UM05', 'SendMessage to a subagent below HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 20, undefined, null],
+    ['UM06', 'override lifts the SendMessage deny at HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 55, lift, null],
+    ['UM07', 'SendMessage to a subagent at STOP, even with an override', 'SendMessage', { to: 'worker', message: 'continue' }, {}, 85, lift, sendStop],
+    ['UM08', 'SendMessage to "main" at STOP', 'SendMessage', { to: 'main', message: 'done' }, {}, 85, undefined, null],
+    ['UM09', 'Agent call from a subagent (agent_id) at HOLD', 'Agent', {}, { agent_id: 'a1b2', agent_type: 'coder' }, 55, undefined, HOLD_MSG],
+    ['UM10', 'SendMessage from a subagent (agent_id) at HOLD', 'SendMessage', { to: 'worker', message: 'continue' }, { agent_id: 'a1b2', agent_type: 'coder' }, 55, undefined, sendHold],
+    ['UM11', 'Agent call from a subagent with an override', 'Agent', {}, { agent_id: 'a1b2', agent_type: 'coder' }, 55, lift, null],
+    ['UM12', 'structured shutdown_request at HOLD', 'SendMessage', { to: 'worker', message: { type: 'shutdown_request' } }, {}, 55, undefined, null],
+    ['UM13', 'structured shutdown_response at HOLD', 'SendMessage', { to: 'worker', message: { type: 'shutdown_response', approve: true } }, {}, 55, undefined, null],
+    ['UM14', 'structured plan_approval_response at HOLD stays gated', 'SendMessage', { to: 'worker', message: { type: 'plan_approval_response', approve: true } }, {}, 55, undefined, sendHold],
+  ];
+  for (const [id, label, tool, input, extra, pct, override, expect] of SM) {
+    if (!selected(id)) continue;
+    fs.writeFileSync(stateFile, JSON.stringify(fresh(pct, 10)));
+    if (override === undefined) fs.rmSync(ovFile, { force: true }); else fs.writeFileSync(ovFile, JSON.stringify(override));
+    const policy = pct >= 80 ? deny80 : POLICIES.hatchery;
+    const r = run('usage-gate', gateInput(Object.assign({ tool_name: tool, tool_input: input }, extra)), gateEnv({ HOOK_POLICY_FILE: policy }));
+    let ok;
+    let detail;
+    if (expect === null) { ok = r.code === 0 && r.stdout === ''; detail = 'expected allow (exit 0, no stdout)'; }
+    else {
+      const d = parseDecision(r.stdout);
+      ok = r.code === 0 && !!d && d.decision === 'deny' && d.reason === expect;
+      detail = `expected reason ${JSON.stringify(expect)}`;
+    }
+    report(id, `${label} -> ${expect === null ? 'allow' : 'deny'}`, ok, detail, r.stdout);
+  }
+  // The payload's session has no file: the environment's CLAUDE_CODE_SESSION_ID is tried before failing open.
+  for (const [id, label, envSid, expect] of [
+    ['UM15', 'payload session has no file, the env session id has: HOLD denies', 'sess-env', sendHold],
+    ['UM16', 'payload session has no file, the env session id has none: fails open', 'sess-nofile', null],
+  ]) {
+    if (!selected(id)) continue;
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(stateFileFor('sess-env'), JSON.stringify(fresh(55, 10)));
+    fs.rmSync(ovFile, { force: true });
+    const r = run('usage-gate', gateInput({ tool_name: 'SendMessage', tool_input: { to: 'worker', message: 'go' }, session_id: 'sess-payload' }),
+      gateEnv({ HOOK_POLICY_FILE: POLICIES.hatchery, CLAUDE_CODE_SESSION_ID: envSid }));
+    let ok;
+    if (expect === null) ok = r.code === 0 && r.stdout === '';
+    else { const d = parseDecision(r.stdout); ok = r.code === 0 && !!d && d.decision === 'deny' && d.reason === expect; }
+    report(id, `${label} -> ${expect === null ? 'allow' : 'deny'}`, ok, 'expected ' + (expect === null ? 'allow' : 'the HOLD deny'), r.stdout);
+  }
+  fs.rmSync(ovFile, { force: true });
+}
+
 // The account pool (ADR 0011, usage.pool): asked only when the gate is about to deny at HOLD. The
 // command is [node, stub, fixture, ...flags] with the stub and fixtures in the scratch dir, never a
 // program on PATH; the missing-program case names one that does not exist. The session is a@ (file
@@ -1908,6 +2164,109 @@ fs.rmSync(ovFile, { force: true });
   }
 }
 
+// ---------- the finish keys, read by nothing (group UF; ADR 0027 item 5) ----------
+// Fixture finish-75.json: hold 50, fiveHour.finish 75, sevenDay.hold 97 and a pool stub (the UP
+// cases' stub, with a marker file that shows whether it ran; its list has no account, so a HOLD deny
+// ends in the no-room text). CLAUDE_PROJECT_DIR is a scratch tree whose .claude/settings.json carries
+// the gate's entry alone. The fields a lead's call once carried, agent_id "a1" and agent_type
+// "wave-lead", change nothing: the gate gives every caller today's HOLD text, byte for byte.
+const ufDir = path.join(scratch, 'uf');
+fs.mkdirSync(ufDir, { recursive: true });
+const UF_MARKER = path.join(ufDir, 'pool-ran');
+const UF_POOL = path.join(ufDir, 'pool-list.json');
+fs.writeFileSync(UF_POOL, JSON.stringify({ schemaVersion: 1, accounts: [] }));
+const F75_USAGE = { hold: 50, fiveHour: { finish: 75 }, sevenDay: { hold: 97 },
+  pool: { command: [NODE, path.join(scratch, 'pool-stub.js'), UF_POOL, '--marker', UF_MARKER] } };
+// finish-75.json, or a variant: each usage key given replaces the fixture's, a meter's object merged.
+function ufPolicy(name, usageExtra) {
+  const usage = Object.assign({}, HATCHERY_POLICY.usage, F75_USAGE);
+  for (const [k, val] of Object.entries(usageExtra || {})) {
+    const merge = val && typeof val === 'object' && !Array.isArray(val) && (k === 'fiveHour' || k === 'sevenDay');
+    usage[k] = merge ? Object.assign({}, usage[k], val) : val;
+  }
+  const f = path.join(ufDir, `${name}.json`);
+  fs.writeFileSync(f, JSON.stringify(Object.assign({}, HATCHERY_POLICY, { usage })));
+  return f;
+}
+const FINISH_75 = ufPolicy('finish-75');
+// The scratch tree: its settings.json carries the gate's entry alone.
+const ufTree = path.join(ufDir, 'tree');
+fs.mkdirSync(path.join(ufTree, '.claude'), { recursive: true });
+fs.writeFileSync(path.join(ufTree, '.claude', 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [
+  { matcher: 'Agent|Workflow|SendMessage', hooks: [{ type: 'command', command: 'node "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/usage-gate.js"' }] }] } }));
+{
+  const LEAD = { agent_id: 'a1', agent_type: 'wave-lead' };
+  const AGENT_IN = { tool_name: 'Agent', tool_input: { subagent_type: 'coder', prompt: 'Read the brief and do the work.' } };
+  const SEND_IN = { tool_name: 'SendMessage', tool_input: { to: 'w7', message: 'Fix round 1: read the review file and write the response file.' } };
+  const POOL_TEXT = ' No other account has room (no pool readings) (this session\'s account not excluded); an override grant is still the lift (ADR 0006).';
+  const HOLD_F = HOLD_MSG + POOL_TEXT; // today's HOLD deny at 5h 55, 7d 10 under finish-75.json
+  const HOLD_ADVICE = 'Do not start new subagents. Let in-flight agents finish, run the handoff skill, commit from the main session, then report.';
+  const SEND = ' No resuming or messaging agents (SendMessage).';
+  // One gate run. o: { five, seven, state, payload, policy }.
+  function ufRun(o) {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(stateFile, JSON.stringify(o.state || fresh(o.five, o.seven === undefined ? 10 : o.seven)));
+    fs.rmSync(grantDir, { recursive: true, force: true });
+    fs.rmSync(ovFile, { force: true });
+    fs.rmSync(UF_MARKER, { force: true });
+    const r = run('usage-gate', gateInput(Object.assign({}, AGENT_IN, o.payload)),
+      gateEnv({ HOOK_POLICY_FILE: o.policy || FINISH_75, CLAUDE_PROJECT_DIR: ufTree }));
+    const d = parseDecision(r.stdout);
+    return { code: r.code, stdout: r.stdout, stderr: r.stderr, reason: d && d.decision === 'deny' ? d.reason : null, pool: fs.existsSync(UF_MARKER) };
+  }
+  const allowedR = (r) => r.code === 0 && r.stdout === '';
+  const uf = (id, label, fn) => {
+    if (!selected(id)) return;
+    const p = [];
+    try { fn(p); } catch (e) { p.push(`threw: ${e.message}`); }
+    report(id, label, p.length === 0, p.join('; '));
+  };
+  const same = (p, got, want, what) => { if (JSON.stringify(got) !== JSON.stringify(want)) p.push(`${what}: ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`); };
+  const allows = (p, r, stderrHas, what) => {
+    if (!allowedR(r)) p.push(`${what}: expected allow, got exit ${r.code}, stdout ${r.stdout}`);
+    for (const s of [].concat(stderrHas || [])) if (!r.stderr.includes(s)) p.push(`${what}: stderr lacks ${JSON.stringify(s)}: ${r.stderr}`);
+  };
+
+  uf('UF01', 'agent_id "a1" and agent_type "wave-lead" on Agent and SendMessage at 5h 55 and 74 under finish 75: the deny the same call without them gets, pool advice included, no past HOLD on stderr', (p) => {
+    for (const [tool, input] of [['Agent', AGENT_IN], ['SendMessage', SEND_IN]]) {
+      for (const five of [55, 74]) {
+        const what = `${tool} at 5h ${five}`;
+        const want = `Usage gate: 5h ${five}%, 7d 10%. 5h at or above 50%: ${HOLD_ADVICE}${tool === 'SendMessage' ? SEND : ''} Lifting this early is the user's decision (docs/hatchery/decisions/0006-hook-policy-file.md).${POOL_TEXT}`;
+        const plain = ufRun({ five, payload: input });
+        const lead = ufRun({ five, payload: Object.assign({}, input, LEAD) });
+        same(p, [plain.reason, plain.pool], [want, true], `${what}, without the fields`);
+        same(p, [lead.reason, lead.pool], [want, true], `${what}, with them`);
+        if (lead.stderr.includes('past HOLD')) p.push(`${what}: stderr says past HOLD: ${lead.stderr}`);
+      }
+    }
+  });
+  uf('UF10', 'malformed: finish 40 under hold 50, finishAgents "any", a shared usage.finish: load() names it, the gate takes the base defaults (a lead gets HOLD at 55, stderr says so), git-guard denies git', (p) => {
+    const { load } = require('./policy');
+    for (const [name, extra, err] of [['uf10-below', { fiveHour: { finish: 40 } }, 'usage finish is below hold for the 5h meter'],
+      ['uf10-any', { finishAgents: 'any' }, 'usage.finishAgents has the wrong type or value ("any")'],
+      ['uf10-shared', { finish: 80 }, 'unknown key usage.finish']]) {
+      const f = ufPolicy(name, extra);
+      const l = load(f);
+      same(p, l.error, `${f}: ${err}`, `${name} load`);
+      const r = ufRun({ five: 55, payload: LEAD, policy: f });
+      same(p, r.reason, HOLD_MSG, `${name} gate`);
+      if (!r.stderr.includes(`${err}; using the base defaults.`)) p.push(`${name}: stderr ${r.stderr}`);
+      const g = run('git-guard', JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: repoMain, tool_input: { command: 'git status' } }),
+        envWith({ HOOK_POLICY_FILE: f, HOME: guardHome, USERPROFILE: guardHome }));
+      const d = parseDecision(g.stdout);
+      if (!(g.code === 0 && d && d.decision === 'deny' && d.reason.startsWith(`git-guard: ${PREFIX.policy}`))) p.push(`${name} git-guard: exit ${g.code}, ${g.stdout}`);
+    }
+  });
+  uf('UF14', 'the coordinator (no agent_id) at 5h 55: today\'s HOLD text; at 5h 80 and 20 as without the keys', (p) => {
+    same(p, ufRun({ five: 55 }).reason, HOLD_F, 'coordinator 55');
+    same(p, ufRun({ five: 80 }).reason, HOLD_F.replace('5h 55%', '5h 80%'), 'coordinator 80');
+    allows(p, ufRun({ five: 20 }), [], 'coordinator 20');
+  });
+  fs.rmSync(grantDir, { recursive: true, force: true });
+  fs.rmSync(ovFile, { force: true });
+}
+
 // ---------- statusline ----------
 // Runs .claude/statusline.js with a scratch HOME. The cache must merge per window and never lose
 // numbers to a refresh that carries no rate_limits.
@@ -2023,6 +2382,17 @@ for (const [id, label, stdin, policy, check] of S) {
     report(id, label, res === true, res, r.stdout);
   }
   fs.rmSync(slGrants, { recursive: true, force: true });
+}
+// A set finish shows nothing (ADR 0027): the meter reads "(hold 50)" or "(hold 50 stop 90)", never
+// " finish <n>", whether finish is above the hold or at it.
+if (selected('S56')) {
+  const a = statusline(rl(55, 10), FINISH_75).stdout;
+  const b = statusline(rl(55, 10), ufPolicy('finish-75-stop-90', { fiveHour: { deny: 90 } })).stdout;
+  const d = statusline(rl(55, 10), ufPolicy('finish-at-hold', { fiveHour: { finish: 50 } })).stdout;
+  report('S56', 'finish-75.json shows 5h 55% (hold 50) and 7d (hold 97); with a deny of 90 (hold 50 stop 90); with finish at the hold (hold 50); never finish',
+    a.includes('| 5h 55% (hold 50) ->') && a.includes('| 7d 10% (hold 97) ->') && b.includes('| 5h 55% (hold 50 stop 90) ->') &&
+    d.includes('| 5h 55% (hold 50) ->') && ![a, b, d].some((s) => s.includes('finish')),
+    [a, b, d].join(' / '), a);
 }
 // A cached window past its reset never shows its old number: a 5h window beside a live 7d one is
 // omitted (as on an account without a 5-hour limit), and with both past their reset both read n/a.
@@ -2976,9 +3346,12 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
   };
   const OPERATOR = {
     'docs/operator/README.md': '# Steps only the owner can take\n\nNo marker here.\n',
-    'docs/operator/2026-03-01-h1.md': '\n**Opening line.**\n\n# Run the thing\n',
+    'docs/operator/2026-03-01-h1.md': '\n# Run the thing\n\nMore.\n',
     'docs/operator/2026-03-02-first-line.md': '\n**Install the key.** It waits on the owner.\n\nMore.\n',
     'docs/operator/2026-03-03-empty.md': '',
+    'docs/operator/2026-03-04-fenced.md': '\n**Back up the tree.** Outside the working tree.\n\n```\n# check it took\ncp -r . ../backup\n```\n\n1. Backup, outside the working tree.\n2. Verify.\n',
+    'docs/operator/2026-03-05-plain.md': '\nJust words, no bold.\n\n# Later heading\n',
+    'docs/operator/2026-03-06-blank-bold.md': '\n**  **\n\n# Heading after blank bold\n',
   };
   const qRoot = path.join(scratch, 'queue');
   putQ(qRoot, Object.assign({}, FINDINGS, IDEAS, OPERATOR));
@@ -3004,7 +3377,10 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
     'queue-list: 2026-02-07-foreign.md: frontmatter is "status"; allowed: date, kind, related\n' +
     'queue-list: 2026-02-08-empty.md: title missing; allowed: a # heading or a first line\n' +
     'queue-list: 2026-02-08-empty.md: kind missing; allowed: bug, feature, question, chore\n';
-  const I_UNTRIAGED = '2026-02-05-untriaged.md\tbug\tuntriaged\tUntriaged one\n';
+  // The ideas columns after block (ADR 0026): rest, offered, recurrences, news, uses; none of the
+  // fixtures above carries an entry, a rest or an offer.
+  const NONE = 'false\tfalse\t0\t0\t0';
+  const I_UNTRIAGED = `2026-02-05-untriaged.md\tbug\tuntriaged\t${NONE}\tUntriaged one\n`;
   const O_ERR = 'queue-list: 2026-03-03-empty.md: title missing; allowed: a # heading or a first line\n';
 
   if (selected('Q01')) {
@@ -3031,14 +3407,14 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
   }
   if (selected('Q04')) {
     const r = ql(qRoot, ['ideas']);
-    const out = '2026-02-01-plan.md\tfeature\tplan\tPlan one\n' +
-      '2026-02-02-question.md\tquestion\tquestion\tQuestion one\n' +
-      '2026-02-03-answered.md\tquestion\tanswered\tAnswered one\n' +
-      '2026-02-04-waits.md\tchore\twaits\tWaits one\n' +
+    const out = `2026-02-01-plan.md\tfeature\tplan\t${NONE}\tPlan one\n` +
+      `2026-02-02-question.md\tquestion\tquestion\t${NONE}\tQuestion one\n` +
+      `2026-02-03-answered.md\tquestion\tanswered\t${NONE}\tAnswered one\n` +
+      `2026-02-04-waits.md\tchore\twaits\t${NONE}\tWaits one\n` +
       I_UNTRIAGED +
-      '2026-02-06-kind-idea.md\t?\tuntriaged\tKind idea\n' +
-      '2026-02-07-foreign.md\tfeature\t?\tForeign\n' +
-      '2026-02-08-empty.md\t?\tuntriaged\t?\n';
+      `2026-02-06-kind-idea.md\t?\tuntriaged\t${NONE}\tKind idea\n` +
+      `2026-02-07-foreign.md\tfeature\t?\t${NONE}\tForeign\n` +
+      `2026-02-08-empty.md\t?\tuntriaged\t${NONE}\t?\n`;
     qcase('Q04', 'ideas text: plan, question, answered, waits, untriaged (a fenced Plan: is no block); kind: idea is ?; a foreign key makes block ?; empty file ? in title and kind',
       expectRun(r, { code: 0, out, err: I_ERR }), r.out);
   }
@@ -3060,8 +3436,15 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
   }
   if (selected('Q07')) {
     const r = ql(qRoot, ['operator']);
-    const out = '2026-03-01-h1.md\tRun the thing\n2026-03-02-first-line.md\t**Install the key.** It waits on the owner.\n2026-03-03-empty.md\t?\n';
-    qcase('Q07', 'operator: the H1 title, the first-line title, ? for the empty file', expectRun(r, { code: 0, out, err: O_ERR }), r.out);
+    const out = '2026-03-01-h1.md\tRun the thing\n2026-03-02-first-line.md\tInstall the key.\n2026-03-03-empty.md\t?\n' +
+      '2026-03-04-fenced.md\tBack up the tree.\n2026-03-05-plain.md\tLater heading\n' +
+      '2026-03-06-blank-bold.md\tHeading after blank bold\n';
+    const lateRoot = path.join(scratch, 'queue-late-heading');
+    putQ(lateRoot, { 'docs/ideas/2026-02-09-late.md': `${fm('date: 2026-02-09\nkind: bug')}\n\nIntro words.\n\n# Late heading\n` });
+    const late = ql(lateRoot, ['ideas']);
+    qcase('Q07', 'operator: the first bold line unbolded (past a fenced # comment and a list); no bold line keeps the H1 or first-line title; ? for the empty file; an idea heading after a blank line still lists',
+      [...expectRun(r, { code: 0, out, err: O_ERR }, 'operator'),
+        ...expectRun(late, { code: 0, out: `2026-02-09-late.md\tbug\tuntriaged\t${NONE}\tLate heading\n`, err: '' }, 'idea')], r.out + late.out);
   }
   if (selected('Q08')) {
     const r = ql(qRoot, ['findings', '--markdown']);
@@ -3069,7 +3452,11 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
       '| `2026-01-01-open.md` | open | Open one |\n| `2026-01-02-resolved.md` | resolved | Resolved one |\n' +
       '| `2026-01-03-superseded.md` | superseded | Superseded one |\n| `2026-01-05-Nofm.md` | ? | No frontmatter |\n' +
       '| `2026-01-05-done.md` | ? | Done one |\n';
-    qcase('Q08', '--markdown: a header row and one | `<file>` | row per file', expectRun(r, { code: 0, out, err: F_ERR }), r.out);
+    const m = ql(qRoot, ['ideas', '--markdown', '--untriaged']);
+    const mOut = '| File | Kind | Block | Rest | Offered | Recurrences | News | Uses | Title |\n|---|---|---|---|---|---|---|---|---|\n' +
+      '| `2026-02-05-untriaged.md` | bug | untriaged | false | false | 0 | 0 | 0 | Untriaged one |\n';
+    qcase('Q08', '--markdown: a header row and one | `<file>` | row per file; ideas carry the ADR 0026 columns before the title',
+      [...expectRun(r, { code: 0, out, err: F_ERR }, 'findings'), ...expectRun(m, { code: 0, out: mOut, err: I_ERR }, 'ideas')], r.out + m.out);
   }
   if (selected('Q09')) {
     const p = [];
@@ -3149,7 +3536,115 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
       ...expectHook(qRoot, 'docs/operator/2026-03-01-h1.md', 'post-edit: docs/operator/2026-03-01-h1.md is not listed in operator/README.md. Add one line.', path.join(dir, 'post-edit.js')),
     ]);
   }
+  // ---------- the entry fields and placement warnings (ADR 0026, 0026-brainstorm-contract.md section 2) ----------
+  // Q14's files are clean (no warning); Q15 to Q17 each carry one misplaced entry, line numbers as in
+  // the file (frontmatter included). Both roots carry the marker, for the hook case Q18.
+  const ENTRY_ROOT = path.join(scratch, 'queue-entries');
+  const PLACE_ROOT = path.join(scratch, 'queue-placement');
+  const REST = 'Waits: at rest — "not now" (the owner, 2026-02-09)';
+  const OFFER_Q = 'Question: offered 2026-02-10 and not answered: record, record at rest, fold into a named file, or no?';
+  const SOURCE = 'Source: coordinator (claude-opus-5-5), a triage; offered 2026-02-10, not yet answered by the owner; not sanity-checked.';
+  putQ(ENTRY_ROOT, {
+    'docs/ideas/README.md': `# Ideas\n\n${MK('ideas')}\n`,
+    'docs/ideas/2026-02-09-rest.md': `${fm('date: 2026-02-09\nkind: feature')}\n# Rest one\n\n${REST}\n`,
+    'docs/ideas/2026-02-10-offer.md': `${fm('date: 2026-02-10\nkind: feature')}\n# Offer one\n\n${SOURCE}\n\n${OFFER_Q}\nAnswer:\n`,
+    'docs/ideas/2026-02-11-offer-answered.md': `${fm('date: 2026-02-11\nkind: feature')}\n# Offer answered\n\n${SOURCE}\n\n${OFFER_Q}\nAnswer: record.\n`,
+    'docs/ideas/2026-02-12-entries.md': `${fm('date: 2026-02-12\nkind: feature')}\n# Entries one\n\nBody.\n\n` +
+      'Came up again: 2026-02-12, the owner, a spark.\nCame up again: 2026-02-13, a report (claude-opus-5-5), a wave close.\n' +
+      'New: 2026-02-14, coordinator (claude-opus-5-5): a narrower scope.\nUse: 2026-02-15, coordinator (claude-opus-5-5): the listing.\n\n' +
+      'Plan: build it in one pass.\n',
+    'docs/ideas/2026-02-13-fenced.md': `${fm('date: 2026-02-13\nkind: chore')}\n# Fenced one\n\n\`\`\`\nCame up again: x\nNew: x\nUse: x\n\`\`\`\n`,
+  });
+  const W1 = 'entry below the block (move it above; a line under a blank Answer: reads as the answer)';
+  const W2 = 'entry not followed by a blank line or another entry (one physical line; a wrapped line that starts with a block word opens a block)';
+  const PLACE = {
+    q15: '2026-02-20-below-answer.md', // line 11: a New: under a blank Answer:
+    q16: '2026-02-21-wrapped.md', // line 10: a New: wrapping onto a Plan: line, no block before it
+    q17: '2026-02-22-rest-wrapped.md', // line 10: under Waits: at rest, a Use: wrapping onto a Plan: line
+  };
+  putQ(PLACE_ROOT, {
+    'docs/ideas/README.md': `# Ideas\n\n${MK('ideas')}\n`,
+    [`docs/ideas/${PLACE.q15}`]: `${fm('date: 2026-02-20\nkind: question')}\n# Below answer\n\nQuestion: which shape?\nAnswer:\n\nNew: 2026-02-21, coordinator (claude-opus-5-5): a later angle.\n`,
+    [`docs/ideas/${PLACE.q16}`]: `${fm('date: 2026-02-21\nkind: feature')}\n# Wrapped\n\nBody.\n\nNew: 2026-02-22, coordinator (claude-opus-5-5): a scope that runs long and wraps\nPlan: onto a second line that reads as a block.\n`,
+    [`docs/ideas/${PLACE.q17}`]: `${fm('date: 2026-02-22\nkind: feature')}\n# Rest wrapped\n\n${REST}\n\nUse: 2026-02-23, coordinator (claude-opus-5-5): a use that runs long and wraps\nPlan: onto a line that reads as a block.\n`,
+  });
+  const PLACE_WARN = {
+    q15: [[11, W1]],
+    q16: [[10, W2]],
+    q17: [[10, W1], [10, W2]],
+  };
+  const placeErr = (k) => PLACE_WARN[k].map(([n, t]) => `queue-list: ${PLACE[k]}: line ${n}: ${t}\n`).join('');
+  const jsonRows = (r, p) => { try { return JSON.parse(r.out); } catch (e) { p.push(`stdout is not JSON: ${e.message}`); return []; } };
+  // Compares the named fields of the row for file; a missing row is a problem.
+  const expectRow = (rows, file, want, p) => {
+    const row = rows.find((x) => x.file === file);
+    if (!row) { p.push(`${file}: no row`); return; }
+    for (const [k, v] of Object.entries(want)) if (row[k] !== v) p.push(`${file}: ${k} ${JSON.stringify(row[k])}, expected ${JSON.stringify(v)}`);
+  };
+  // The ADR 0026 run on the placement root: each case checks its file's row and its own stderr lines.
+  const placeCase = (k, want) => {
+    const r = ql(PLACE_ROOT, ['ideas', '--json']);
+    const p = expectRun(r, { code: 0 });
+    expectRow(jsonRows(r, p), PLACE[k], want, p);
+    const mine = r.err.split('\n').filter((l) => l.includes(`: ${PLACE[k]}: `)).map((l) => `${l}\n`).join('');
+    if (mine !== placeErr(k)) p.push(`stderr for ${PLACE[k]} ${JSON.stringify(mine)}, expected ${JSON.stringify(placeErr(k))}`);
+    return { r, p };
+  };
+
   if (selected('Q14')) {
+    const r = ql(ENTRY_ROOT, ['ideas', '--json']);
+    const p = expectRun(r, { code: 0, err: '' });
+    const rows = jsonRows(r, p);
+    const fields = ['file', 'kind', 'block', 'rest', 'offered', 'recurrences', 'news', 'uses', 'title'];
+    if (rows.length > 0 && JSON.stringify(Object.keys(rows[0])) !== JSON.stringify(fields)) p.push(`fields ${JSON.stringify(Object.keys(rows[0]))}, expected ${JSON.stringify(fields)}`);
+    expectRow(rows, '2026-02-09-rest.md', { block: 'waits', rest: true, offered: false }, p);
+    expectRow(rows, '2026-02-10-offer.md', { block: 'question', offered: true, rest: false }, p);
+    expectRow(rows, '2026-02-11-offer-answered.md', { block: 'answered', offered: true }, p);
+    expectRow(rows, '2026-02-12-entries.md', { block: 'plan', recurrences: 2, news: 1, uses: 1 }, p);
+    expectRow(rows, '2026-02-13-fenced.md', { block: 'untriaged', recurrences: 0, news: 0, uses: 0 }, p);
+    const old = ql(qRoot, ['ideas', '--json']);
+    const oldRows = jsonRows(old, p);
+    expectRow(oldRows, '2026-02-04-waits.md', { block: 'waits', rest: false }, p);
+    expectRow(oldRows, '2026-02-02-question.md', { block: 'question', offered: false }, p);
+    expectRow(oldRows, '2026-02-07-foreign.md', { block: '?', rest: false, offered: false }, p);
+    p.push(...expectRun(ql(ENTRY_ROOT, ['ideas', '--check']), { code: 0, err: '' }, 'clean --check'));
+    p.push(...expectRun(ql(qRoot, ['ideas', '--check']), { code: 1, err: I_ERR }, 'problem --check'));
+    qcase('Q14', 'ideas --json: rest, offered and the entry counts; a trigger Waits: and a plain Question: read false; fenced entries count 0; clean files warn nothing; --check as before', p, r.out);
+  }
+  if (selected('Q15')) {
+    const { r, p } = placeCase('q15', { block: 'answered', news: 1 });
+    p.push(...expectRun(ql(PLACE_ROOT, ['ideas', '--check']), { code: 0 }, '--check'));
+    // A filter hides rows, never warnings: --untriaged keeps no row here, every warning still prints.
+    p.push(...expectRun(ql(PLACE_ROOT, ['ideas', '--untriaged']), { code: 0, out: '', err: placeErr('q15') + placeErr('q16') + placeErr('q17') }, '--untriaged'));
+    // A problem and a warning in one file (its own root, so the --check above stays 0): exit 1 from
+    // the problem alone, the problem line before the warning.
+    const mixedRoot = path.join(scratch, 'queue-mixed');
+    const mixed = '2026-02-23-mixed.md';
+    putQ(mixedRoot, { [`docs/ideas/${mixed}`]: `${fm('date: 2026-02-23\nkind: idea')}\n# Mixed\n\nPlan: x\n\nNew: 2026-02-24, coordinator (claude-opus-5-5): below the block.\n` });
+    p.push(...expectRun(ql(mixedRoot, ['ideas', '--check']), { code: 1,
+      err: `queue-list: ${mixed}: kind is "idea"; allowed: bug, feature, question, chore\nqueue-list: ${mixed}: line 10: ${W1}\n` }, 'problem and warning'));
+    qcase('Q15', 'a New: below a blank Answer: warns W1 with its line; block still answered; --check exit unchanged (0, no problem in the tree); warnings print under --untriaged; beside a problem, the problem line first and --check 1', p, r.out);
+  }
+  if (selected('Q16')) {
+    const { r, p } = placeCase('q16', { block: 'plan', news: 1 });
+    qcase('Q16', 'a New: wrapping onto a Plan: line, no block before it: W2 only; block plan', p, r.out);
+  }
+  if (selected('Q17')) {
+    const { r, p } = placeCase('q17', { block: 'plan', rest: false, uses: 1 });
+    qcase('Q17', 'under Waits: at rest, a Use: wrapping onto a Plan: line: W1 and W2; block plan, rest false', p, r.out);
+  }
+  if (selected('Q18')) {
+    const hookLine = (k) => PLACE_WARN[k].map(([n, t]) => `post-edit: docs/ideas/${PLACE[k]} line ${n}: ${t}. See the brainstorm skill.`).join('\n');
+    qcase('Q18', 'hook, valid marker: the post-edit line per placement warning of the Q15 to Q17 files; the clean Q14 file prints none', [
+      ...expectHook(PLACE_ROOT, `docs/ideas/${PLACE.q15}`, hookLine('q15')),
+      ...expectHook(PLACE_ROOT, `docs/ideas/${PLACE.q16}`, hookLine('q16')),
+      ...expectHook(PLACE_ROOT, `docs/ideas/${PLACE.q17}`, hookLine('q17')),
+      ...expectHook(ENTRY_ROOT, 'docs/ideas/2026-02-12-entries.md', null),
+    ]);
+  }
+
+  // Q19 to Q22 were Q14 to Q17 before ADR 0026, whose contract names Q14 to Q18; same cases, new ids.
+  if (selected('Q19')) {
     // A directory cannot be made unreadable portably, so the wrapper stubs fs.readFileSync for one file.
     const root = path.join(scratch, 'queue-unreadable');
     putQ(root, {
@@ -3161,37 +3656,37 @@ function AG0(s) { return `## ${s}\n\nRule text.\n`; }
       "fs.readFileSync = function (p, ...a) {\n  if (String(p).endsWith('locked.md')) { const e = new Error('denied'); e.code = 'EACCES'; throw e; }\n  return real.call(this, p, ...a);\n};\n" +
       "process.argv.splice(1, 1, process.argv[2]);\nprocess.argv.splice(2, 1);\nrequire('module')._load(process.argv[1], null, true);\n");
     const s = spawnSync(NODE, [wrap, QL, 'findings'], { cwd: root, encoding: 'utf8', timeout: 30000 });
-    qcase('Q14', 'an unreadable file: the others still listed, one unreadable line on stderr, exit 2, no stack trace',
+    qcase('Q19', 'an unreadable file: the others still listed, one unreadable line on stderr, exit 2, no stack trace',
       expectRun({ code: s.status, out: s.stdout || '', err: s.stderr || '' }, { code: 2, out: '2026-01-01-open.md\topen\tOpen one\n', err: 'queue-list: 2026-01-02-locked.md: unreadable (EACCES)\n' }), s.stdout);
   }
-  if (selected('Q15')) {
+  if (selected('Q20')) {
     const root = path.join(scratch, 'queue-crlf');
     putQ(root, {
       'docs/findings/README.md': '# Findings\r\n\r\n' + MK('findings') + '\r\n',
       'docs/findings/2026-01-05-done.md': FINDINGS['docs/findings/2026-01-05-done.md'],
     });
     const rel = 'docs/findings/2026-01-05-done.md';
-    qcase('Q15', 'hook, CRLF marker README: the marker is valid, the ? warning shows and no index warning',
+    qcase('Q20', 'hook, CRLF marker README: the marker is valid, the ? warning shows and no index warning',
       expectHook(root, rel, wouldList(rel, 'status is "done"; allowed: open, resolved, superseded', 'findings')));
   }
-  if (selected('Q16')) {
+  if (selected('Q21')) {
     // A scratch copy of the hooks with no queue-list.js at all.
-    const dir = path.join(scratch, 'hooks-q16');
+    const dir = path.join(scratch, 'hooks-q21');
     fs.mkdirSync(dir, { recursive: true });
     for (const f of ['post-edit.js', 'policy.js', 'imports.js']) fs.copyFileSync(path.join(HOOKS, f), path.join(dir, f));
     const rel = 'docs/findings/2026-01-05-done.md';
-    qcase('Q16', 'hook, valid marker, queue-list.js deleted: the did-not-load line, no index warning',
+    qcase('Q21', 'hook, valid marker, queue-list.js deleted: the did-not-load line, no index warning',
       expectHook(qRoot, rel, "post-edit: queue-list.js did not load; " + rel + " was not checked.", path.join(dir, 'post-edit.js')));
   }
-  if (selected('Q17')) {
+  if (selected('Q22')) {
     const root = path.join(scratch, 'queue-answer');
     putQ(root, {
       'docs/ideas/2026-02-01-same-line.md': fm('date: 2026-02-01\nkind: question') + '\n# Same line\n\nQuestion: which? Answer: the first.\n',
       'docs/ideas/2026-02-02-no-answer.md': fm('date: 2026-02-02\nkind: question') + '\n# No answer\n\nQuestion: which shape?\n',
     });
     const r = ql(root, ['ideas']);
-    qcase('Q17', 'ideas: Answer: text on the Question: line is no answer, and a Question: with no Answer: line, both read question',
-      expectRun(r, { code: 0, out: '2026-02-01-same-line.md\tquestion\tquestion\tSame line\n2026-02-02-no-answer.md\tquestion\tquestion\tNo answer\n', err: '' }), r.out);
+    qcase('Q22', 'ideas: Answer: text on the Question: line is no answer, and a Question: with no Answer: line, both read question',
+      expectRun(r, { code: 0, out: `2026-02-01-same-line.md\tquestion\tquestion\t${NONE}\tSame line\n2026-02-02-no-answer.md\tquestion\tquestion\t${NONE}\tNo answer\n`, err: '' }), r.out);
   }
 }
 
@@ -3268,6 +3763,140 @@ if (selected('CB1')) {
     try { got = JSON.parse(r.stdout.slice(r.stdout.indexOf('\n') + 1)).git.integrate; } catch (_) { /* not printed */ }
     report(id, `policy.js prints git.integrate for ${id === 'LIVE05' ? 'an absent file' : 'policy.examples/task-branches.json'}`,
       r.status === 0 && JSON.stringify(got) === JSON.stringify(want), `exit ${r.status}, integrate ${JSON.stringify(got)}, want ${JSON.stringify(want)}`, r.stdout);
+  }
+}
+
+// ---------- the policy-schema compatibility check (group PS; ADR 0013, ADR 0025 item 12, 0025-lead-contract.md section 2) ----------
+// PS1 reads this repository's .claude/hooks/policy.schema.json against `policy.js --schema` and
+// prints the ADR 0013 line form, PASS PS1 schema or FAIL PS1 schema: <problems>; <lift>, after
+// checking the comparison itself on altered copies of the schema (a self-test failure is a FAIL).
+// PS2 loads every file in policy.examples/ and the fixture pre-0025.json (every key of the schema as
+// it stood before ADR 0025, none at its base value) and reads each value back; PS3 runs the gate
+// under that fixture, a lead's payload against the same payload without agent_id.
+{
+  const { load, schemaKeys } = require('./policy');
+  const LIFT = 'a promised key (ADR 0013); lift: an ADR with a Migration table, then regenerate policy.schema.json in that commit';
+  // recorded and current are { "<dotted key>": { type, default } }; one problem per key.
+  const schemaProblems = (recorded, current) => {
+    const out = [];
+    for (const k of Object.keys(recorded)) {
+      const c = current[k];
+      if (!c) out.push(`${k} removed`);
+      else if (c.type !== recorded[k].type) out.push(`${k} retyped`);
+      else if (c.type !== 'text' && JSON.stringify(c.default) !== JSON.stringify(recorded[k].default)) out.push(`${k} default changed`);
+    }
+    for (const k of Object.keys(current)) if (!Object.prototype.hasOwnProperty.call(recorded, k)) out.push(`${k} not recorded`);
+    return out;
+  };
+  const psLine = (problems) => (problems.length ? `FAIL PS1 schema: ${problems.join(', ')}; ${LIFT}` : 'PASS PS1 schema');
+  if (selected('PS1')) {
+    let got;
+    try {
+      const r = spawnSync(NODE, [path.join(HOOKS, 'policy.js'), '--schema'], { encoding: 'utf8', timeout: 30000 });
+      if (r.status !== 0) throw new Error(`policy.js --schema exited ${r.status} (${(r.stderr || '').trim()})`);
+      const current = JSON.parse(r.stdout);
+      // Each altered value is derived from the current one, so no change to a base value or a type can
+      // make an alteration equal the schema it tests.
+      const alt = (fn) => { const c = JSON.parse(JSON.stringify(current)); fn(c); return c; };
+      const hold = current['usage.hold'];
+      const otherType = hold.type === 'seconds' ? 'percent' : 'seconds';
+      const otherHold = hold.default === 1 ? 2 : 1;
+      const textKey = Object.keys(current).find((k) => current[k].type === 'text'); // a text default is not compared
+      const selfTest = [
+        [alt((c) => { c['usage.gone'] = { type: 'percent', default: 1 }; }), `FAIL PS1 schema: usage.gone removed; ${LIFT}`],
+        [alt((c) => { c['usage.hold'].type = otherType; }), `FAIL PS1 schema: usage.hold retyped; ${LIFT}`],
+        [alt((c) => { c['usage.hold'].default = otherHold; }), `FAIL PS1 schema: usage.hold default changed; ${LIFT}`],
+        ...(textKey ? [[alt((c) => { c[textKey].default = `${c[textKey].default} (reworded)`; }), 'PASS PS1 schema']] : []),
+        [alt((c) => { delete c['usage.finishAgents']; }), `FAIL PS1 schema: usage.finishAgents not recorded; ${LIFT}`],
+      ];
+      const wrong = selfTest.map(([rec, want]) => [psLine(schemaProblems(rec, current)), want]).find(([g, w]) => g !== w);
+      if (wrong) throw new Error(`the check's self-test gave ${JSON.stringify(wrong[0])}, expected ${JSON.stringify(wrong[1])}`);
+      let file;
+      try { file = JSON.parse(fs.readFileSync(path.join(HOOKS, 'policy.schema.json'), 'utf8')); } catch (e) { throw new Error(`.claude/hooks/policy.schema.json does not read (${e.code || e.message})`); }
+      if (!file || typeof file.keys !== 'object' || file.keys === null || Array.isArray(file.keys)) throw new Error('.claude/hooks/policy.schema.json has no "keys" object');
+      got = psLine(schemaProblems(file.keys, current));
+    } catch (e) { got = `FAIL PS1 schema: ${e.message}`; }
+    process.stdout.write(`${got}\n`);
+    if (got.startsWith('PASS')) pass++; else fail++;
+    noteGroup('PS1');
+  }
+
+  // Every key of the schema before ADR 0025, none at its base value (the gate's fiveHour hold of 52
+  // puts 55 at HOLD, 97 at its deny line; the pool runs node and exits 3, never a program on PATH).
+  const PRE_0025 = {
+    git: {
+      commit: { subagents: ['runner', 'tester'], protectedBranches: ['main'] },
+      integrate: { subagents: 'any', protectedBranches: [] },
+      push: { subagents: ['pusher', 'runner'], branches: ['main', 'task/*'], mainSession: false, forceWithLease: ['task/*'] },
+      branchDelete: { branches: ['task/*'], requireMergedPr: true },
+      hooksPath: '.githooks',
+    },
+    usage: {
+      hold: 40, deny: 98, fiveHour: { hold: 52, deny: 97 }, sevenDay: { hold: 45, deny: 96 },
+      staleSeconds: 3600, whenStale: 'deny', overrideEnv: 'PS_TEST_OVERRIDE',
+      pool: { command: [NODE, '-e', 'process.exit(3)'], timeoutSeconds: 20 },
+      holdAdvice: 'Hold: finish what runs, then report.', denyAdvice: 'Stop: commit and end the turn.',
+    },
+    edit: { capExempt: ['docs/legacy/*'], anchorExempt: ['docs/history/*'], formatters: { '.js': ['prettier', '--write'] } },
+    update: { exclude: ['README.md'] },
+    privacy: { allow: ['user', 'example'], identities: [{ name: 'Example Owner', email: 'owner@example.invalid' }] },
+    // Project departure (ADR 0038, the `emulators` row): this project's block, older than ADR 0025.
+    emulators: { max: 3, lockDir: '~/.ps-test/emulators', privateLimitGB: 9, freeFloorGB: 3, bootCostGB: 6 },
+  };
+  const ADDED_0025 = ['usage.fiveHour.finish', 'usage.sevenDay.finish', 'usage.finishAgents'];
+  const preFile = path.join(scratch, 'pre-0025.json');
+  fs.writeFileSync(preFile, JSON.stringify(PRE_0025));
+  // The leaves a file gives ("$" keys aside), dotted; a pool, an identity list or formatters are one leaf each.
+  const leaves = (o, at, out) => {
+    for (const k of Object.keys(o)) {
+      if (k.startsWith('$')) continue;
+      const where = at ? `${at}.${k}` : k;
+      if (o[k] && typeof o[k] === 'object' && !Array.isArray(o[k]) && !['usage.pool', 'edit.formatters'].includes(where)) leaves(o[k], where, out);
+      else out[where] = o[k];
+    }
+    return out;
+  };
+  const leafOf = (obj, key) => key.split('.').reduce((v, k) => (v && typeof v === 'object' ? v[k] : undefined), obj);
+  // A value read back: equal, but for the pool's timeoutSeconds, which the loader fills in.
+  const backAs = (key, given, loaded) => (key === 'usage.pool' && given && given.timeoutSeconds === undefined
+    ? JSON.stringify(given.command) === JSON.stringify(loaded && loaded.command) : JSON.stringify(given) === JSON.stringify(loaded));
+  if (selected('PS2')) {
+    const p = [];
+    const keys = schemaKeys();
+    const want = Object.keys(keys).filter((k) => !ADDED_0025.includes(k)).sort();
+    const given = leaves(PRE_0025, '', {});
+    if (JSON.stringify(Object.keys(given).sort()) !== JSON.stringify(want)) p.push(`pre-0025.json gives ${Object.keys(given).sort().join(' ')}, the schema before ADR 0025 has ${want.join(' ')}`);
+    for (const k of Object.keys(given)) if (JSON.stringify(given[k]) === JSON.stringify(keys[k] && keys[k].default)) p.push(`pre-0025.json: ${k} is its base value`);
+    const exDir = path.join(HOOKS, 'policy.examples');
+    const files = fs.readdirSync(exDir).filter((n) => n.endsWith('.json')).sort().map((n) => [`policy.examples/${n}`, path.join(exDir, n)]);
+    for (const [name, file] of [...files, ['pre-0025.json', preFile]]) {
+      const r = load(file);
+      if (r.error) { p.push(`${name}: ${r.error}`); continue; }
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      for (const [k, v] of Object.entries(leaves(raw, '', {}))) if (!backAs(k, v, leafOf(r.policy, k))) p.push(`${name}: ${k} read back as ${JSON.stringify(leafOf(r.policy, k))}`);
+    }
+    report('PS2', `every file in policy.examples/ and pre-0025.json (every pre-0025 key, none at its base value) loads with no error and reads each value back`, p.length === 0, p.join('; '));
+  }
+  if (selected('PS3')) {
+    const p = [];
+    fs.rmSync(grantDir, { recursive: true, force: true });
+    fs.rmSync(ovFile, { force: true });
+    const outcomes = [];
+    for (const five of [45, 55, 99]) {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(stateFile, JSON.stringify(fresh(five, 10)));
+      const env = gateEnv({ HOOK_POLICY_FILE: preFile, CLAUDE_PROJECT_DIR: ufTree, PS_TEST_OVERRIDE: undefined });
+      const base = { tool_name: 'Agent', tool_input: { subagent_type: 'coder', prompt: 'x' } };
+      const asLead = run('usage-gate', gateInput(Object.assign({ agent_id: 'a1', agent_type: 'wave-lead' }, base)), env);
+      const asOther = run('usage-gate', gateInput(Object.assign({ agent_type: 'wave-lead' }, base)), env);
+      const show = (r) => JSON.stringify([r.code, r.stdout, r.stderr]);
+      if (show(asLead) !== show(asOther)) p.push(`5h ${five}: lead ${show(asLead)}, without agent_id ${show(asOther)}`);
+      const d = parseDecision(asLead.stdout);
+      outcomes.push(!d ? 'allow' : d.reason.includes('Hold: finish what runs') ? 'hold' : d.reason.includes('Stop: commit') ? 'deny line' : 'other');
+    }
+    if (outcomes.join(',') !== 'allow,hold,deny line') p.push(`outcomes ${outcomes.join(',')}, expected allow,hold,deny line`);
+    report('PS3', 'under pre-0025.json the gate answers a lead as the same payload without agent_id, at 5h 45, 55 and 99 (allow, HOLD, the deny line)', p.length === 0, p.join('; '));
   }
 }
 

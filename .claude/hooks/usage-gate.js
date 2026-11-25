@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
-// PreToolUse hook for the Agent and Workflow tools, the only calls it sees.
-// Denies launching a subagent or workflow when plan usage (the higher of the 5-hour and 7-day
+// PreToolUse hook for the Agent, Workflow and SendMessage tools, the only calls it sees.
+// Denies launching a subagent or workflow, or a SendMessage that would resume or message an agent,
+// when plan usage (the higher of the 5-hour and 7-day
 // windows) is at or above usage.hold in .claude/hooks/policy.json, unless an override grant that
 // applies to this call lifts it, and at or above usage.deny, where a deny line is set, without
 // exception (null, the base, means none: HOLD is then the only line). Other tools are never gated.
+// A SendMessage to "main" (a report back) or without a message (a pure notify_when_idle
+// subscription) starts no work and is always allowed. The caller is not looked at: a subagent's own
+// Agent or SendMessage call carries the parent's session_id (plus agent_id and agent_type, ignored),
+// so it is judged on the same file, thresholds and grants as the main session's. That the payload
+// carries the parent's session_id is observed (a subagent's CLAUDE_CODE_SESSION_ID equals the
+// parent's), not documented; when the payload's file is missing the gate tries
+// CLAUDE_CODE_SESSION_ID before failing open. Structured shutdown_request and shutdown_response
+// messages also always pass.
 // Usage comes from this session's file, ~/.claude/usage-state/<session_id>.json, which
 // .claude/statusline.js writes; session_id is the one in the PreToolUse payload.
 // Spec: docs/hatchery/decisions/0002-hook-specs-usage.md (section 3); policy: ADR 0006; the per-session
@@ -49,7 +58,17 @@ function readPayload(raw) {
   try { p = JSON.parse(raw); } catch (_) { /* empty payload */ }
   if (!p || typeof p !== 'object') p = {};
   const str = (v) => (typeof v === 'string' && v !== '' ? v : null);
-  return { sessionId: str(p.session_id), cwd: str(p.cwd) };
+  const ti = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
+  return { sessionId: str(p.session_id), cwd: str(p.cwd), toolName: str(p.tool_name), to: str(ti.to), message: ti.message };
+}
+
+// A SendMessage that starts no work: a report to the coordinator ("main"), or no message at all.
+function harmlessSend(ctx) {
+  if (ctx.toolName !== 'SendMessage') return false;
+  if (ctx.to !== null && ctx.to.trim().toLowerCase() === 'main') return true;
+  const m = ctx.message;
+  if (m && typeof m === 'object' && (m.type === 'shutdown_request' || m.type === 'shutdown_response')) return true;
+  return m === undefined || m === null || (typeof m === 'string' && m.trim() === '');
 }
 
 const scopeText = (s) => (s.kind === 'user' ? 'user' : `${s.kind} ${s.value}`);
@@ -139,10 +158,18 @@ function main(raw) {
   const u = loaded.policy.usage;
   const now = Math.floor(Date.now() / 1000);
   const ctx = readPayload(raw);
+  if (harmlessSend(ctx)) return;
+  const sendNote = ctx.toolName === 'SendMessage' ? ' No resuming or messaging agents (SendMessage).' : '';
 
   const sid = ctx.sessionId && SESSION_ID.test(ctx.sessionId) ? ctx.sessionId : null;
-  let state = sid ? readJson(path.join(STATE_DIR, `${sid}.json`)) : null;
-  if (!state || typeof state !== 'object' || Array.isArray(state)) state = null;
+  const read = (id) => {
+    const j = id ? readJson(path.join(STATE_DIR, `${id}.json`)) : null;
+    return j && typeof j === 'object' && !Array.isArray(j) ? j : null;
+  };
+  let state = read(sid);
+  // Fallback: the environment's session id, which a subagent shares with its parent (observed).
+  const envSid = process.env.CLAUDE_CODE_SESSION_ID;
+  if (!state && envSid && SESSION_ID.test(envSid) && envSid !== sid) state = read(envSid);
   const fileLabel = state ? accountLabel(state.account) : null;
   const current = readAccount();
   const age = state && typeof state.updatedAt === 'number' ? now - state.updatedAt : null;
@@ -175,7 +202,7 @@ function main(raw) {
   const v = usageVerdict(u, { '5h': fiveH, '7d': sevenD });
   const tripped = v.hits.map((h) => `${h.label} at or above ${h.threshold}%`).join(', ');
 
-  if (v.level === 2) deny(`${head} ${detail}. ${tripped}: ${u.denyAdvice}`);
+  if (v.level === 2) deny(`${head} ${detail}. ${tripped}: ${u.denyAdvice}${sendNote}`);
   if (v.level === 1) {
     if (u.overrideEnv && process.env[u.overrideEnv] === '1') {
       note(`HOLD (${detail}) lifted for this session by ${u.overrideEnv}=1.`);
@@ -204,7 +231,7 @@ function main(raw) {
       const pick = (k) => (current && current[k]) || (fileLabel && fileLabel[k]) || null;
       try { pool = poolAdvice(u, { email: pick('email'), org: pick('organizationUuid') }); } catch (e) { pool = ` No pool reading (${e.message}).`; }
     }
-    deny(`${head} ${detail}. ${tripped}: ${u.holdAdvice}${partial}${unused} Lifting this early is the user's decision (${POLICY_DOC}).${pool}`);
+    deny(`${head} ${detail}. ${tripped}: ${u.holdAdvice}${sendNote}${partial}${unused} Lifting this early is the user's decision (${POLICY_DOC}).${pool}`);
   }
 }
 

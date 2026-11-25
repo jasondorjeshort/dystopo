@@ -68,12 +68,12 @@ case-insensitive, never patterns (`*` or `/` in an entry is malformed). `~` is `
 
 | Class | Matches | Passes when |
 |---|---|---|
-| `email` | `[\w.+-]+@[\w-]+(\.[\w-]+)+`, not preceded by `[\w.+-]` | the domain, lower-cased, is `example.com`, `example.org`, `example.net` or ends `.invalid`; the address is `noreply@anthropic.com` or ends `@noreply.anthropic.com`; the address is in `privacy.identities` and its domain is `users.noreply.github.com` (anywhere) or the field is author, committer or tagger (an identity's other address is a hit in a message or an added line); in an added line of `.claude/hooks/policy.json`, the file that declares it, a listed identity's address at any domain passes, and in no other file; its user part is `git`, `x-access-token` or `oauth2`; or it directly follows `http://`, `https://`, `ssh://` or `git://` (URL userinfo) |
+| `email` | `[\w.+-]+@[\w-]+(\.[\w-]+)+`, not preceded by `[\w.+-]` | the domain, lower-cased, is `example.com`, `example.org`, `example.net` or ends `.invalid`; the address is `noreply@anthropic.com` or ends `@noreply.anthropic.com`, or is GitHub's `noreply@github.com` (amended 2026-10-21, ADR 0020); the address is in `privacy.identities` and its domain is `users.noreply.github.com` (anywhere) or the field is author, committer or tagger (an identity's other address is a hit in a message or an added line); in an added line of `.claude/hooks/policy.json`, the file that declares it, a listed identity's address at any domain passes, and in no other file; its user part is `git`, `x-access-token` or `oauth2`; or it directly follows `http://`, `https://`, `ssh://` or `git://` (URL userinfo) |
 | `home` | a user segment `[A-Za-z0-9._-]+` in one of: the drive spelling `<d>:[\\/]+Users[\\/]+<seg>` anywhere, any case; the root spellings `/home/<seg>`, `/Users/<seg>`, `/cygdrive/<d>/Users/<seg>`, `/mnt/<d>/Users/<seg>` (and the Git Bash `/<d>/Users/<seg>`) with the path start preceded by line start, whitespace, a quote (`'`, `"`, backtick), `(`, `=`, `:`, `[`, `+`, `/`, `\`, `,` or `>`; the WSL share `\\wsl$\<distro>\home\<seg>` (or `wsl.localhost`, either slash) anywhere; the project-folder slug `<d>--Users-<seg>-` and `-home-<seg>-` (also `-Users-<seg>-`, the macOS slug), preceded by line start, whitespace, a quote (`'`, `"`, backtick), `(`, `=`, `:`, `/`, `\`, `,` or `>`, where the segment ends at the first `-` because `-` is the slug's separator (so `[A-Za-z0-9._]+` there); the slug's trailing `-` is required | the segment starts with `<`, `$`, `%` or `~` (a placeholder); is a Windows system profile (`Public`, `Default`, `Default User`, `All Users`, any case) or exactly `...` |
 | `host` | `<word>-Desktop` or `DESKTOP-<word>`, any case, a word character on the far side of the hyphen | never on its own; the lifts apply to the host word without the marker |
 | `word` | each literal in the never set as a whole word (`\b`, any case): `os.userInfo().username`, `os.hostname()`, and every non-empty, non-`#` line of `~/.claude/privacy-never.txt`, trimmed | a literal shorter than 3 characters is skipped with a notice |
-| `identity` | an author, committer or tagger whose `name` or `email` (email lower-cased, name exact after trim) is not one entry's pair in `privacy.identities` | the list is empty: class off, one notice on stderr |
-| `session` | a trailer line `^Claude-Session:`; a URL whose host is `claude.ai` or ends `.claude.ai` and whose path has at least one segment | never |
+| `identity` | an author, committer or tagger whose `name` or `email` (email lower-cased, name exact after trim) is not one entry's pair in `privacy.identities` | the list is empty: class off, one notice on stderr; a committer (never an author or tagger) that is exactly `GitHub` with `noreply@github.com` (amended 2026-10-21, ADR 0020) |
+| `session` | a trailer line `^Claude-Session:`; a URL whose host is `claude.ai` or ends `.claude.ai` and whose path has at least one segment | a line of a commit message's trailer block (its last paragraph, not the subject's, every line `Token: value` or a white-space continuation) that is exactly `Claude-Session:` and one `https://claude.ai/` link (amended 2026-10-21, ADR 0020); never elsewhere |
 | `transcript` | a line that parses as a JSON object with both `sessionId` and `parentUuid` keys (the Claude Code transcript shape; the coder verifies the key names against one real transcript line and records the check in the commit message) | never |
 | `secret` | full key shapes only: `-----BEGIN [A-Z ]*PRIVATE KEY-----`; `AKIA[A-Z0-9]{16}`; `ghp_[A-Za-z0-9]{36}`; `github_pat_[A-Za-z0-9_]{82}`; `sk-ant-[A-Za-z0-9_-]{80,}`; each bounded by non-key characters on both sides; and an added file named `.env` or ending `.pem` or `.key` | never: a bare prefix in prose, a `password=` phrase and the harness's pieced samples do not match, so no file is exempt |
 
@@ -135,6 +135,9 @@ prefix `personal data in the outgoing commits`. Three advice sentences:
 
 The scan result is cached per (repository, refs, remote) within one guard run.
 
+Amended 2026-11-18: a push in another repository is scanned with the lists its own policy's privacy
+section sets unioned with the guard's, the hit advice naming that file; when, rule 20's row in [the hook specs](0002-hook-specs.md).
+
 `.claude/hooks/git/pre-push`: POSIX sh, executable bit set in git (`git update-index
 --chmod=+x`); LF endings come from the existing `.gitattributes` (`* text=auto eol=lf`), no new
 line there:
@@ -184,7 +187,7 @@ one at another domain, denied; PV05 the repository `user.email` set to an addres
 PV06 `privacy.identities` empty: PV05's repository passes with the notice; PV07 a hit in the
 second of three outgoing commits, removed by the third: denied (the net-diff defect); PV08 a hit
 in a commit already on a second remote named `hatchery`: allowed; PV09 a `Claude-Session:` trailer
-in a message: denied; PV10 a `claude.ai` URL with a path in an added line: denied, the bare host
+whose value is not a `claude.ai` link: denied; PV10 a `claude.ai` URL with a path in an added line: denied, the bare host
 allowed; PV11 the never file holding a word that an added line carries as a whole word: denied,
 as part of a longer word: allowed; PV12 the OS user name of the running process as a bare word in
 a message: denied, and in the user allow file: allowed; PV13 a `DESKTOP-<word>` marker: denied;
@@ -221,7 +224,10 @@ PV41b the CLI with `hatchery` unreachable: exit 1 on the hit, the notice on stde
 prints PV38's every commit and PV39's new commit only, matching the scan's count; PV43
 `push.default=matching` and a branch the remote has but no local tracking ref names: that
 branch is sent and its hit denied; PV44 a remote tip not fetched here: the notice; PV45 a URL
-whose password holds an `@` loses its userinfo. One case in the guard's parse group:
+whose password holds an `@` loses its userinfo. Added 2026-10-21 (ADR 0020): PV46 the trailer,
+allowed in the trailer block, denied in an added line, a middle paragraph, after prose, as the
+subject, with text after the link; PV47 GitHub's web committer allowed, as author or tagger
+denied, its address in text allowed. One case in the guard's parse group:
 a line whose only `git` is an argument path ending `/git` (`cat <dir>/git`) is not a git
 invocation.
 Group `F` runs unchanged: F1 covers the new script's own requires; the guard's lazy require is

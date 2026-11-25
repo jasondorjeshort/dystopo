@@ -2,7 +2,21 @@
 
 Section 3 of the hook specs (`0002-hook-specs.md`), moved out on 2026-10-16 when that file reached the 300-line cap. Same conventions and sources; section numbering is unchanged.
 
-## 3. `usage-gate.js` (PreToolUse, matcher `Agent|Workflow`, no `onFailure`) and the status line
+## 3. `usage-gate.js` (PreToolUse, matcher `Agent|Workflow|SendMessage`, no `onFailure`) and the status line
+
+The gate also judges `SendMessage`, whose input is `{to, message, summary?, notify_when_idle?}`: a send
+to a finished subagent resumes it with new work. A send to `"main"` (a report back) and a send with
+no or an empty `message` (a pure `notify_when_idle` subscription) start no work and are allowed at
+every level; every other send is denied by the same verdicts, grants and pool advice as `Agent`, the
+reason carrying ` No resuming or messaging agents (SendMessage).` after the advice. A subagent's call
+carries the parent's `session_id` (plus `agent_id` and `agent_type`), so it reads the same usage file
+and grants as the main session. That is observed (a
+subagent's `CLAUDE_CODE_SESSION_ID` equals the parent's), not documented; when the payload's session
+has no file, the gate tries `CLAUDE_CODE_SESSION_ID` before failing open. The caller is not looked at: `agent_id` and `agent_type`
+are ignored, and the keys `finish` and `finishAgents` are read by nothing (ADR 0027). Structured
+`shutdown_request` and `shutdown_response` messages also always pass, since they wind work down.
+Known limits: a `plan_approval_response` and a nested subagent's reply to its launcher stay gated; at
+HOLD the coordinator cannot message a running agent, but TaskStop still works.
 
 Cache: one file per session, `~/.claude/usage-state/<session_id>.json` under the user's `~/.claude`
 (never `CLAUDE_CONFIG_DIR`); its shape and the merge's rule order are ADR 0011's. A `session_id`
@@ -102,5 +116,10 @@ out-of-scope file; several expired files in one clause; a `reason` that is not a
 without `session_id` and unparseable, which take the stale path, and without `cwd`), UX (staleness both
 ways, a reset window, the example policies, per-meter thresholds, a malformed policy including a
 string `deny`, a pre-merge cache file), UP (the pool, with per-meter holds and no spawn on an allow,
-a lift or a deny line), and S (the status line's merge, the untouched file without
-`rate_limits`, malformed stdin, the directory line from `current_dir`, from `cwd` alone, and absent, with a session name, a name alone, an empty, non-string or control-character-only name, and control characters inside a name, policy flags, no STOP without a deny line, the thresholds beside each meter, `HOLD lifted` for a grant for this session and `HOLD` for another session's, a partial lift or STOP, a failed rename).
+a lift or a deny line), UF (the finish keys read by nothing, ADR 0027, under the fixture
+`finish-75.json` with a scratch tree that runs the gate alone: a call carrying `agent_id` and
+`agent_type` `wave-lead`, `Agent` and `SendMessage` at HOLD below the `finish`, denied as the same call
+without them, pool advice included; the malformed keys; the coordinator), PS (the policy-schema check, its sibling section 2 in ADR 0025's record:
+`policy.js --schema` against the recorded `policy.schema.json`, the examples and a pre-0025 fixture
+loading, the gate under it), and S (the status line's merge, the untouched file without
+`rate_limits`, malformed stdin, the directory line from `current_dir`, from `cwd` alone, and absent, with a session name, a name alone, an empty, non-string or control-character-only name, and control characters inside a name, policy flags, no STOP without a deny line, the thresholds beside each meter, no finish beside a meter whatever the policy sets, `HOLD lifted` for a grant for this session and `HOLD` for another session's, a partial lift or STOP, a failed rename).

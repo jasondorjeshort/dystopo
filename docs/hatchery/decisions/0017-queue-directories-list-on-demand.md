@@ -2,6 +2,8 @@
 
 Date: 2026-10-17
 Status: accepted
+Amended by [0026](0026-brainstorm-offer-and-rest-pile.md), 2026-11-22, by additions only: five
+`ideas` fields in `--json`, two placement warnings on stderr and at the edit, cases Q14 to Q18.
 
 Record: proposal `../proposals/0017-queue-directories-list-on-demand.md` (recommendation A as
 revised; every objection answered in its last section) and `../proposals/0017-critic-review.md`

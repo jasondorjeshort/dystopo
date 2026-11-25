@@ -20,10 +20,11 @@ function fail(e) {
 }
 process.on('uncaughtException', fail);
 
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { parse, SUBST } = require('./shell-parse');
-const { load, matches, integrateLimits } = require('./policy');
+const { load, loadSection, matches, integrateLimits } = require('./policy');
 
 // git options that come before the subcommand and take a separate value.
 const GLOBAL_OPTS_WITH_VALUE = new Set([
@@ -312,13 +313,17 @@ function deletable(names, dir, { policy }) {
 // Rule 20 (ADR 0018). Environment variables a push's own repository and config come from, passed
 // to the scan's git.
 const REPO_ENV = /^(GIT_DIR|GIT_WORK_TREE|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+)$/;
+// Other variables that move where git finds a repository's parts. The scan's git is not given them,
+// so a push line that sets one keeps the guard's own privacy section (privacyFor).
+const REPO_LOCATE = /^GIT_(COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|INDEX_FILE|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)$/i;
 
-// The repository and config a push invocation acts on, as the scan's context { dir, pre, env, key },
-// or { error } (a reason that reads after "cannot "). pre carries its --git-dir, --work-tree, -c and
-// --config-env; env the REPO_ENV variables (and those a --config-env names) exported earlier in the
-// line (inv.shellEnv) or prefixed to it (inv.leadEnv).
+// The repository and config a push invocation acts on, as the scan's context { dir, pre, env, key,
+// locates }, or { error } (a reason that reads after "cannot "). pre carries its --git-dir,
+// --work-tree, -c and --config-env; env the REPO_ENV variables (and those a --config-env names)
+// exported earlier in the line (inv.shellEnv) or prefixed to it (inv.leadEnv); locates is true when
+// those set a REPO_LOCATE variable.
 function gitContext(inv) {
-  if (inv.envUnresolved) return { error: 'follow how the line sets GIT_DIR or GIT_WORK_TREE' };
+  if (inv.envUnresolved) return { error: 'follow how the line sets GIT_DIR, GIT_WORK_TREE or another repository variable' };
   const pre = [];
   const named = new Set();
   for (const [o, v] of inv.globals) {
@@ -328,19 +333,93 @@ function gitContext(inv) {
     if (o === '--config-env' && v.includes('=')) named.add(v.slice(v.indexOf('=') + 1).toUpperCase());
   }
   const extra = {};
+  let locates = false;
   for (const [k, v] of Object.entries(Object.assign({}, inv.shellEnv || {}, inv.leadEnv || {}))) {
+    if (REPO_LOCATE.test(k)) locates = true;
     if (!REPO_ENV.test(k) && !named.has(k)) continue;
     if (v.includes(SUBST)) return { error: `see the value of ${k}` };
     extra[k] = v;
   }
   const env = Object.keys(extra).length ? Object.assign({}, process.env, extra) : undefined;
-  return { dir: inv.dir, pre, env, key: JSON.stringify([inv.dir, pre, extra]) };
+  return { dir: inv.dir, pre, env, key: JSON.stringify([inv.dir, pre, extra]), locates };
 }
 
-// What the scan finds in what this push sends: { hits } or { error }. scan is the required module.
+// A directory's identity, "dev:ino" from stat, or null (unreadable, not a directory, or a file
+// system that reports no inode). Every spelling of one directory (a drive path and its UNC share, a
+// symlink, a short name, another case) has the same one, so directories are compared by it, never
+// by path.
+function dirId(p) {
+  try {
+    const s = fs.statSync(p, { bigint: true });
+    return s.isDirectory() && s.ino !== 0n ? `${s.dev}:${s.ino}` : null;
+  } catch (_) { return null; }
+}
+// One rev-parse answer for the repository at g, or null (not a repository, or no work tree).
+function revParse(scan, g, ...args) {
+  const r = scan.gitRead(g, ['rev-parse', ...args]);
+  const t = r.ok ? r.out.trim() : '';
+  return t === '' ? null : t;
+}
+const commonDir = (scan, g) => revParse(scan, g, '--path-format=absolute', '--git-common-dir');
+// A context for dir alone: no global options, and none of git's repository variables.
+function plainContext(dir) {
+  const env = Object.assign({}, process.env);
+  for (const k of Object.keys(env)) if (/^GIT_(DIR|WORK_TREE)$/i.test(k) || REPO_LOCATE.test(k)) delete env[k];
+  return { dir, pre: [], env };
+}
+// The privacy section a push is scanned with: { privacy, from } or { error }. The repository is its
+// git common dir (with the push's own --git-dir, --work-tree and environment), never its work tree,
+// compared by dirId, so a worktree of this guard's own repository however its gitdir is spelled, or
+// its commits pushed through another work tree, is this repository and takes the loaded policy's
+// section. A push in another repository takes its work tree's .claude/hooks/policy.json as well
+// (from: that file), only when a plain rev-parse at that top-level names the top-level itself and
+// the same common dir (the work tree is that repository's own, not a subdirectory or another
+// repository's tree), as a session there would add its own: allow the union of the lists,
+// identities the union of the { name, email } pairs (the email lower-cased; the guard's first).
+// Only the lists that file sets count (loadSection: never the defaults); a file without either is
+// the guard's section alone, and a privacy key other than these two is the guard's own. That
+// section malformed or the file unreadable is an error naming it. Any directory that cannot be
+// identified, and a line that sets a REPO_LOCATE variable (the scan's git would not see it), keep
+// the guard's own section.
+function privacyFor(scan, g, policy) {
+  const own = { privacy: policy.privacy, from: null };
+  if (g.locates) return own;
+  const pushed = commonDir(scan, g);
+  const mine = commonDir(scan, plainContext(path.resolve(__dirname, '..', '..')));
+  const pushedId = pushed === null ? null : dirId(pushed);
+  const mineId = mine === null ? null : dirId(mine);
+  if (pushedId === null || mineId === null || pushedId === mineId) return own;
+  const top = revParse(scan, g, '--show-toplevel');
+  const topId = top === null ? null : dirId(top);
+  if (topId === null) return own;
+  const plainTop = revParse(scan, plainContext(top), '--show-toplevel');
+  if (plainTop === null || dirId(plainTop) !== topId) return own;
+  const plain = commonDir(scan, plainContext(top));
+  if (plain === null || dirId(plain) !== pushedId) return own;
+  const file = path.join(top, '.claude', 'hooks', 'policy.json');
+  const theirs = loadSection(file, 'privacy');
+  if (theirs.error) return { error: `load the pushed repository's own policy (${theirs.error})` };
+  const p = theirs.section;
+  if (p === null || (p.allow === undefined && p.identities === undefined)) return own;
+  const ours = policy.privacy;
+  const allow = [...new Set([...(ours.allow || []), ...(p.allow || [])])];
+  const seen = new Set();
+  const identities = [];
+  for (const i of [...(ours.identities || []), ...(p.identities || [])]) {
+    const k = JSON.stringify([i.name.trim(), i.email.trim().toLowerCase()]);
+    if (!seen.has(k)) { seen.add(k); identities.push(i); }
+  }
+  return { privacy: Object.assign({}, ours, { allow, identities }), from: file };
+}
+
+// What the scan finds in what this push sends: { hits, from } or { error }; from is the pushed
+// repository's policy file when its privacy section was unioned (privacyFor), else null. scan is
+// the required module.
 function privacyCheck(scan, inv, policy) {
   const g = gitContext(inv);
   if (g.error) return g;
+  const pr = privacyFor(scan, g, policy);
+  if (pr.error) return pr;
   const p = {
     words: positionals(inv.args), repo: inv.values['--repo'], del: has(inv.args, '--delete', '-d'),
     all: has(inv.args, '--all', '--branches'), tags: has(inv.args, '--tags'), followTags: has(inv.args, '--follow-tags'),
@@ -350,8 +429,11 @@ function privacyCheck(scan, inv, policy) {
     if (e instanceof scan.ScanError) return { error: e.message };
     throw e;
   }
-  return scan.scanPush(g, src.refs, src.remote, policy.privacy);
+  return Object.assign(scan.scanPush(g, src.refs, src.remote, pr.privacy), { from: pr.from });
 }
+// Rule 20's addition to the hit advice when the pushed repository's own privacy section was unioned.
+const unionedNote = (file) => `Scanned under this repository's privacy section and ${file}'s, unioned: a lift for ` +
+  `these commits goes in ${file}; privacy-scan.js run by hand reads only one of the two.`;
 const SHARED_LINE = 'The push shares its line with another git command; the scan reads only commits that exist when it runs. ' +
   'Run the push on a line of its own.';
 const scanFailed = (reason) => `The scan could not read what this push sends (${reason}); no push leaves without it. ` +
@@ -451,7 +533,8 @@ const RULES = [
       return `${n} hit${n === 1 ? '' : 's'}${n > 3 ? ', the first three' : ''}: ${shown}. Fix: write ~, <repo>, a role or a ` +
         'placeholder and fold the edit into the unpushed commit (amend, or reset --soft and one new commit). A false ' +
         'positive is the owner\'s: ask the user, then an entry in privacy.allow (a non-personal literal) or ' +
-        '~/.claude/privacy-allow.txt (the owner\'s own value), from the main session. Nothing in a brief lifts this. ADR 0018.';
+        '~/.claude/privacy-allow.txt (the owner\'s own value), from the main session. Nothing in a brief lifts this. ADR 0018.' +
+        (s.from ? ` ${unionedNote(s.from)}` : '');
     },
   },
   {
@@ -764,9 +847,10 @@ function noteExports(cmd, env, vars) {
   return used;
 }
 
-// A word that names GIT_DIR or GIT_WORK_TREE as a token (no whitespace in it, so a commit message
-// that mentions one is not counted).
-const REPO_ENV_WORD = /(^|[^A-Za-z0-9_])(GIT_DIR|GIT_WORK_TREE)([^A-Za-z0-9_]|$)/i;
+// A word that names GIT_DIR, GIT_WORK_TREE or a REPO_LOCATE variable as a token (no whitespace in
+// it, so a commit message that mentions one is not counted). One set some way the reader does not
+// follow (set -a, read, [Environment]::SetEnvironmentVariable) makes rule 20 refuse the push.
+const REPO_ENV_WORD = /(^|[^A-Za-z0-9_])(GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_INDEX_FILE|GIT_NAMESPACE|GIT_CEILING_DIRECTORIES|GIT_DISCOVERY_ACROSS_FILESYSTEM)([^A-Za-z0-9_]|$)/i;
 
 function decide(command, dialect, agent, cwd, loaded) {
   const cmds = commandsOf(command, dialect, cwd);

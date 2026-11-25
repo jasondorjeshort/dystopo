@@ -29,10 +29,10 @@
 // else USERPROFILE, one literal per line, "#" comments, absent is empty, unreadable is exit 2:
 // privacy-never.txt (more literals for the word class) and privacy-allow.txt (literals that lift
 // word, host and home hits without entering the tracked policy).
-// Project departures (ADR 0037, owner 2026-10-21): a `Claude-Session:` trailer in a commit message's
-// trailer block passes when its value is one claude.ai link (the link stays a hit everywhere else);
-// GitHub's web-flow committer passes as committer, never as author or tagger, and its noreply
-// address passes in text like the Anthropic one.
+// Attribution (ADR 0020, superseding ADR 0018 item 10): a `Claude-Session:` line in a commit
+// message's trailer block passes when its value is one claude.ai link (the link stays a session hit
+// everywhere else); GitHub's web-flow committer passes as committer, never as author or tagger, and
+// its noreply address passes in text like the Anthropic one.
 // Module: scanPush, scanText, pushSources, pushRemote, gitRead, context (git-guard uses them);
 // listPush and shown.
 // Node built-ins only (ADR 0013). Harness: group PV in test-hooks.js.
@@ -167,10 +167,10 @@ const PROFILE = /^(?:public|default user|default|all users|\.\.\.)(?![A-Za-z0-9.
 const PROFILE_SLUG = /^(?:public|default-user|default|all-users|\.\.\.)-/i;
 const HOST = /(?<=\w)-desktop|desktop-(?=\w)/gi;
 const TRAILER = /^Claude-Session:/i;
-// The attribution trailer the owner allows: the key and one claude.ai link, nothing else on the line.
-const SESSION_TRAILER = /^Claude-Session:[ \t]*https:\/\/claude\.ai\/[^\s"'`<>]+[ \t]*$/i;
+// The attribution trailer that passes: the key and one claude.ai link, nothing else on the line.
+const SESSION_TRAILER = /^Claude-Session:[ 	]*https:\/\/claude\.ai\/[^\s"'`<>]+[ 	]*$/i;
 // A line of a trailer block: "<token>: <value>", or a continuation that starts with white space.
-const TRAILER_LINE = /^(?:[A-Za-z0-9][A-Za-z0-9-]*:[ \t]|[ \t]+\S)/;
+const TRAILER_LINE = /^(?:[A-Za-z0-9][A-Za-z0-9-]*:[ 	]|[ 	]+\S)/;
 // GitHub's committer on a web merge or edit: a service, not a person.
 const GITHUB_WEB = { name: 'GitHub', email: 'noreply@github.com' };
 const URL_RE = /\bhttps?:\/\/(?:[^\s/@"'`<>]*@)?([A-Za-z0-9.-]+)(?::\d+)?(\/[^\s"'`<>()[\]{}|\\^]*)?/gi;

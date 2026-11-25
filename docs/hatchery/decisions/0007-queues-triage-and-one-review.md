@@ -1,7 +1,7 @@
 # 0007. Ideas and operator queues, triage blocks, and one independent review per change
 
 Date: 2026-10-13
-Status: accepted, superseded in part by 0016 and 0017
+Status: accepted, superseded in part by 0016, 0017, 0021, 0025 and 0026
 Superseded in part by [0016](0016-base-owned-and-project-owned-files.md), 2026-10-17: the queue
 directories, their READMEs and `docs/design/README.md` are project-owned and never patched from
 the base; the grammar they share is recorded in base-owned `.claude/rules/docs.md` and here, and a
@@ -11,6 +11,16 @@ Superseded in part by [0017](0017-queue-directories-list-on-demand.md), 2026-10-
 READMEs carry no index table ("every idea costs a file and an index line", and the table the hook
 nags about, under Consequences); `queue-list.js` lists the files and reads the blocks the same way
 `triage` does. The grammar, the three blocks and the review rule stand.
+Superseded in part by [0021](0021-guardrails-bound-damage.md), 2026-10-21: the review rule holds
+for the full lane only; a light-lane change reaches `main` first and is read by the audit after.
+Superseded in part by [0026](0026-brainstorm-offer-and-rest-pile.md), 2026-11-22: `Waits:` is the
+owner's deferral to a named trigger or, as `Waits: at rest`, until the owner wakes it, and the
+session the owner answered writes it from their quoted words; a file with a `New:` line or an offer
+Question is not built, and a landed file with a `Use:` line is kept. The three blocks stand.
+Superseded in part by [0025](0025-wave-lead.md), 2026-11-23: a change run by a `wave-lead` gets the same one
+review, and each of its fix rounds is then checked by a fresh reviewer that reads only what the fix changed.
+One review per change stands.
+Withdrawn by [0027](0027-wave-lead-withdrawn.md), 2026-11-24: no check per fix round.
 
 Record: no proposal. Merged from the two downstream projects in one sitting with the owner, who
 holds all three repositories; see Context.
