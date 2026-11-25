@@ -22,7 +22,10 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   reason's part that overflows is `<kind>.reason` in `clipped`.
  * - `POST /readout/glance?open=1|0`: opens or closes the view, as a tap on the bar and the back gesture do, and answers
  *   like `GET` once it has laid out its lines or left (at most 3 s). Anything else for `open` is a 400; opening while the
- *   activity is not on screen is a 503 with the `reason`.
+ *   activity is not on screen is a 503 with the `reason`. T372: `&hold=1` with `open=1` makes the view keep what it drew
+ *   once the readout's refresh has come in (two refreshes, about 1 s), so a check's frame and its semantics read one scene
+ *   (the last minute's "ago" times, a caption's "no fix N s" and a line's state no longer move between them); it answers
+ *   once the view holds, and `GET` reports `hold` and `holding`. Closing the view ends the hold.
  */
 object GlanceRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
@@ -40,10 +43,16 @@ object GlanceRoutes {
         if (open) app.map.backgroundReason()?.let {
             return Response.json(mapOf("error" to "the activity is not on screen", "reason" to it, "route" to r.path), 503)
         }
-        app.map.onMain { if (open) Glance.show("route") else Glance.close("route") }
+        val hold = open && r.query["hold"]?.trim()?.lowercase() in setOf("1", "true", "on") // T372
+        app.map.onMain {
+            if (open) {
+                if (hold) Glance.hold = true
+                Glance.show("route")
+            } else Glance.close("route")
+        }
         val until = System.currentTimeMillis() + WAIT_MS
         while (System.currentTimeMillis() < until) {
-            val done = app.map.onMain { if (open) Glance.composed && Glance.laidOut else !Glance.composed }
+            val done = app.map.onMain { if (open) Glance.composed && Glance.laidOut && (!hold || Glance.holding) else !Glance.composed }
             if (done) break
             Thread.sleep(50)
         }

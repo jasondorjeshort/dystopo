@@ -766,16 +766,26 @@ assert 7 in a11y.in_layer([{"id": 7, "testTag": "flightsStatus"}, {"id": 9}], _m
 
 # T363: the readout's states (the bar dimmed in a gap, its values marked "?") and the glance view after a jump and a gap:
 # the barometer set to Never and put back as found, the glance view opened by its route and closed by the end.
+# T372: the pressure entry off for both screens and put back as found; the glance view opened held, its scene read back
+# and made again when it is not the one wanted.
+HELD = {"open": True, "holding": True,
+        "lines": [{"kind": "elevation", "reasonCode": "resuming"}, {"kind": "climb", "reasonCode": "resuming"}],
+        "notes": {"recent": ["GPS lost for 8 s, 1 s ago", "Position jumped 1.9 mi, 9 s ago", "Position jumped 1.9 mi, 10 s ago"]}}
+
+
 class ReadoutSrv:
-    def __init__(self):
+    def __init__(self, glances=None):
         self.calls = []
+        self.glances = list(glances or [HELD])
 
     def ok(self, method, path, **kw):
         self.calls.append((method, path))
         if path == "/settings":
-            return {"readoutBarometer": "always"}
+            return {"readoutBarometer": "always", "readout": {"pressure": "shown=0;pace=0;damping=medium"}}
         if path == "/readout":
             return {"bar": {"fields": [{"entry": "elevation", "mark": True}]}}
+        if path.startswith("/readout/glance?open=1"):
+            return self.glances.pop(0) if len(self.glances) > 1 else self.glances[0]
         return {}
 
     def call(self, method, path, **kw):
@@ -785,20 +795,43 @@ class ReadoutSrv:
 
 ry = {s[0]: s for s in a11y.SCREENS if s[0] in ("readout-states", "glance")}
 assert ry["readout-states"][3] == "map" and ry["glance"][3] == "screen", ry
+assert a11y.pressure_shown("shown=1;pace=0") == "1" and a11y.pressure_shown("pace=0;shown=0") == "0"
+assert a11y.pressure_shown(None) is None and a11y.pressure_shown("pace=0") is None
+assert a11y.glance_scene(HELD) is None
+assert "hold" in a11y.glance_scene(dict(HELD, holding=False))
+assert "climb" in a11y.glance_scene(dict(HELD, lines=[HELD["lines"][0], {"kind": "climb", "reasonCode": "filling"}]))
+two_gaps = dict(HELD, notes={"recent": ["GPS lost for 5 s, 0 s ago"] + HELD["notes"]["recent"]})
+assert "last minute" in a11y.glance_scene(two_gaps)
+assert "last minute" in a11y.glance_scene(dict(HELD, notes={"recent": HELD["notes"]["recent"] + ["1 late GPS fix skipped, 3 s ago"]}))
 a11y.time.sleep = lambda s: None
 try:
     rs = ReadoutSrv()
     rctx = type("C", (), {"srv": rs})()
     ry["readout-states"][1](rctx)
-    assert rs.calls[:3] == [("GET", "/settings"), ("POST", "/settings?readoutBarometer=never"), ("POST", "/readout/reset")], rs.calls
+    assert rs.calls[:4] == [("GET", "/settings"), ("POST", "/settings?readoutBarometer=never"),
+                            ("POST", "/settings?readout.pressure=shown=0"), ("POST", "/readout/reset")], rs.calls
     assert sum(1 for c in rs.calls if c[1].startswith("/location?")) == 4 and rs.calls[-1] == ("GET", "/readout"), rs.calls
     rs.calls.clear()
     ry["glance"][1](rctx)
-    assert any("provider=network" in c[1] for c in rs.calls) and rs.calls[-1] == ("POST", "/readout/glance?open=1"), rs.calls
+    assert any("provider=network" in c[1] for c in rs.calls) and rs.calls[-1] == ("POST", "/readout/glance?open=1&hold=1"), rs.calls
     assert rs.calls[-2][1].startswith("/location?"), "the gap ended before the view opens"
     rs.calls.clear()
     ry["glance"][2](rctx)
-    assert rs.calls == [("POST", "/readout/glance?open=0"), ("POST", "/settings?readoutBarometer=always")], rs.calls
+    assert rs.calls == [("POST", "/readout/glance?open=0"), ("POST", "/settings?readoutBarometer=always"),
+                        ("POST", "/settings?readout.pressure=shown=0")], rs.calls
+    # A scene with a second gap is closed and made again; three that miss fail the screen with the reason.
+    rs = ReadoutSrv([two_gaps, HELD])
+    rctx = type("C", (), {"srv": rs})()
+    ry["glance"][1](rctx)
+    assert rs.calls.count(("POST", "/readout/glance?open=1&hold=1")) == 2 and ("POST", "/readout/glance?open=0") in rs.calls, rs.calls
+    rs = ReadoutSrv([two_gaps])
+    rctx = type("C", (), {"srv": rs})()
+    try:
+        ry["glance"][1](rctx)
+        raise AssertionError("a scene never made should fail")
+    except RuntimeError as e:
+        assert "3 tries" in str(e) and "last minute" in str(e), e
+    assert rs.calls.count(("POST", "/readout/glance?open=1&hold=1")) == a11y.GLANCE_TRIES
 finally:
     a11y.time.sleep = _sleep
 # end T363
