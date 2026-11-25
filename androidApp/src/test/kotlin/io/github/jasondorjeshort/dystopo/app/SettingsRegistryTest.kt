@@ -442,7 +442,7 @@ class SettingsRegistryTest {
         val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(synced.params))
         assertEquals(false, back[AppSettings.AIRCRAFT])
         assertEquals(10, back[AppSettings.AIRCRAFT_REFRESH_S])
-        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.MAP)
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.DATA) // T370: on Data and storage
         assertEquals(listOf("Flight tracking", "Flight tracking: Refresh", "Flight tracking: Airport names"), rows.filter { it.since == "T311" }.map { it.label })
         assertEquals(rows.indexOfFirst { it.since == "T311" } + 3, rows.indexOf(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.AIRCRAFT_ROUTE_LINES), "T314's row right after them")
     }
@@ -465,7 +465,7 @@ class SettingsRegistryTest {
         assertTrue("aircraftRouteLines" in refused.message, refused.message)
         val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(SettingsSync.plan(mapOf("app.aircraftRouteLines" to "selected"), emptyMap(), SettingsRoutes.KEYS).params))
         assertEquals(io.github.jasondorjeshort.dystopo.aircraft.RouteLinesMode.SELECTED, back[AppSettings.AIRCRAFT_ROUTE_LINES])
-        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.MAP)
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.DATA) // T370: on Data and storage
         assertEquals("Flight tracking: Route lines", rows.last().label)
     }
     // end T311
@@ -576,7 +576,7 @@ class SettingsRegistryTest {
         assertTrue("if (AppSettings.AIRCRAFT.value) {" in options && "OptionRow(SHOW_FLIGHTS" in options, "the row is drawn in Map options while Flight tracking is on")
         assertEquals("Show flights", io.github.jasondorjeshort.dystopo.app.options.SHOW_FLIGHTS)
         val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.MAP)
-        assertEquals(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.AIRCRAFT_ROUTE_LINES, rows.last(), "T370 moves the Flight tracking rows, not this task")
+        assertEquals(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.SHOW_DIVERGENCE, rows.last(), "T370: the Flight tracking rows moved to Data and storage; Show flights stays in Map options")
     }
     // end T364
 }
