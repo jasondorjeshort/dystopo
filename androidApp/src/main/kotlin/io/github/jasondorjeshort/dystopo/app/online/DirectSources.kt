@@ -102,11 +102,7 @@ class DirectSources(private val context: android.content.Context, private val ca
     }.getOrDefault(false)
 
     /** T355: the phone has a network that offers the internet ([info]: the probe asks no source). */
-    fun hasNetwork(): Boolean = runCatching {
-        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
-        caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }.getOrDefault(true)
+    fun hasNetwork(): Boolean = OnlineUi.hasNetwork(context, orElse = true) // T359: the one rule
 
     /** Reading is held back now: on mobile data with mobile data turned off by the user (Settings › Sources). */
     fun blockedOnMobile(): Boolean = !onMobileData && onCellular()

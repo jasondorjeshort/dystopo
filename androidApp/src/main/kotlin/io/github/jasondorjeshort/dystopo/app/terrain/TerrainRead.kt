@@ -163,16 +163,8 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
             return Epoch(System.identityHashCode(app.tiles.packs), network, reachable)
         }
 
-        /**
-         * An active network with capabilities. Not `OnlineUi.hasNetwork`: in airplane mode on the API 35 emulator it read
-         * true (no active network, and its failure reads as a network), so a "none" made offline never went stale.
-         */
-        private fun hasNetwork(app: DystopoApp): Boolean = try {
-            val cm = app.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
-        } catch (e: RuntimeException) {
-            false
-        }
+        /** T359: the one rule ([io.github.jasondorjeshort.dystopo.app.online.OnlineUi.hasNetwork]); none to ask reads no network. */
+        private fun hasNetwork(app: DystopoApp): Boolean = io.github.jasondorjeshort.dystopo.app.online.OnlineUi.hasNetwork(app, orElse = false)
 
         @Volatile private var network = false
         @Volatile private var networkAt = Long.MIN_VALUE / 2

@@ -287,15 +287,17 @@ object PlaceSearch {
      * T255: what the offline maps hold at [lat], [lon] for search and routes ([MapCoverage]): an offline map's vector archive
      * covers it, or only map tiles draw there, or nothing on the phone does. [source] is the view's source as
      * [OnlineTiles.viewSource] names it (the online chip's, [OnlineView.currentOnMain], on the UI thread); null reads it now
-     * at [zoom], which takes the online tiles' locks, so never on the UI thread then. The boxes are the packs' own, in memory.
+     * at [zoom], which takes the online tiles' locks, so never on the UI thread then. T359 (ADR 0066 build task 5): the maps are
+     * the lookup's holdings ([io.github.jasondorjeshort.dystopo.app.PackSet.holdings], in memory: the maps that are on, each
+     * archive's box), and the source read here is the chip's, from the lookup ([OnlineView.resolve]).
      */
     fun coverage(app: DystopoApp, lat: Double, lon: Double, zoom: Double, source: String? = null): MapCoverage {
-        val packs = app.tiles.packs.regions
-        if (MapCoverage.inside(packs.mapNotNull { it.osmCoverage?.bounds }, lat, lon)) return MapCoverage.VECTOR
+        val maps = app.tiles.packs.holdings().filter { it.kind == io.github.jasondorjeshort.dystopo.packs.Holdings.Kind.MAP && !it.off }
+        if (MapCoverage.inside(maps.mapNotNull { it.vector?.bounds }, lat, lon)) return MapCoverage.VECTOR
         // T264: the world overview draws but holds nothing to search or route on: read as if it were not there.
-        val s = (source ?: runCatching { app.tiles.online?.viewSource(lat, lon, zoom)?.first }.getOrNull())?.takeUnless { it == OnlineTiles.WORLD }
-        // With no online tiles (or before the chip has read the view) the source says only that some pack exists: ask its box.
-        val pack = MapCoverage.inside(packs.mapNotNull { it.demCoverage?.bounds }, lat, lon)
+        val s = (source ?: runCatching { OnlineView.sourceAt(app, lat, lon, zoom) }.getOrNull())?.takeUnless { it == OnlineTiles.WORLD }
+        // With no online tiles (or before the chip has read the view) the source says only that some map exists: ask its box.
+        val pack = MapCoverage.inside(maps.mapNotNull { it.dem?.bounds }, lat, lon)
         return MapCoverage.of(false, if (s == null || s == OnlineTiles.PACK) (if (pack) OnlineTiles.PACK else OnlineTiles.NONE) else s)
     }
 

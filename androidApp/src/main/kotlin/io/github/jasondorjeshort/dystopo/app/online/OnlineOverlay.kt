@@ -123,15 +123,17 @@ class OnlineUi(
 
     /**
      * T236: the view's column (a cache hit inside an offline map on the list is "kept"; T80: a network tile names its source).
-     * T343, one rule with the button ([held]): a view the phone holds whole at the button's detail is on this phone (an offline
-     * map, or a tile area's kept tiles), whatever tile was matched; a view not drawn from the phone where a map that is off
-     * (T342) would hold part of it is [Column.OFF], "a map here is off".
+     * T359 (ADR 0066 build task 5): from the lookup, what serves the view's tiles ([OnlineView.source], [OnlineView.resolve]); a
+     * map that is off (T342) and would serve ahead of what serves now ([OnlineView.offAhead]) is [Column.OFF], "a map here is
+     * off", wherever another map serves. T343, one rule with the button ([held]): where the phone serves the view and holds it
+     * whole at the button's detail, a map among its holders makes it [Column.PACK], tile areas alone [Column.CACHE_KEPT].
      */
     val column: Column get() {
-        val h = held
-        if (h != null && h.verdict == HeldHere.Verdict.ALL) return if (h.holders.any { it.atDetail && it.kind == HeldHere.Kind.MAP }) Column.PACK else Column.CACHE_KEPT
+        if (view?.offAhead == true) return Column.OFF
         val c = tileColumn
-        return if (h != null && h.off.isNotEmpty() && c != Column.PACK && c != Column.CACHE_KEPT) Column.OFF else c
+        val h = held
+        if (h != null && h.verdict == HeldHere.Verdict.ALL && c in PHONE) return if (h.holders.any { it.atDetail && it.kind == HeldHere.Kind.MAP }) Column.PACK else Column.CACHE_KEPT
+        return c
     }
 
     /** The column of the tile matched at the view's centre ([OnlineView.source]). */
@@ -211,7 +213,8 @@ class OnlineUi(
     /** T236: `chip` in `GET /online`: the text and dot, whether the card is [open], its sentences, figure and link. */
     fun chipJson(open: Boolean): Map<String, Any?> = linkedMapOf(
         "text" to text, "word" to row.word, "source" to sourceText, "dot" to row.dot.name.lowercase(Locale.US), "row" to row.name.lowercase(Locale.US),
-        "column" to column.name.lowercase(Locale.US), "open" to open, "hidden" to hidden,
+        "column" to column.name.lowercase(Locale.US), "open" to open, "hidden" to hidden, "network" to network, // T359: the one network rule
+        "served" to view?.served?.json(), "offAhead" to view?.offAhead, // T359: the lookup's answer the column is read from
         "detail" to listOf(stateSentence, sourceSentence), "figure" to cacheLine, "link" to link?.text,
         // T343: the button beside it, by the same rule (shown, its words, whether a tap opens the card, the maps it names), and the rule's answer.
         "download" to linkedMapOf(
@@ -289,6 +292,8 @@ class OnlineUi(
          */
         const val OFF_SENTENCE = "A map here is off. Turn it on in ${Screens.OFFLINE_MAPS} to use it."
         private val NETWORK = setOf(Column.NETWORK_PUBLIC, Column.NETWORK_SERVER, Column.NETWORK_PEER)
+        /** T359: the columns of a view the phone serves itself, which [column] may refine by [held]. */
+        private val PHONE = setOf(Column.PACK, Column.CACHE_KEPT)
 
         /** The snapshot for camera [cam] (read on the UI thread, source unknown): everything else is read here, on a worker. */
         fun make(service: OnlineService, app: DystopoApp, cam: OnlineView?): OnlineUi {
@@ -299,7 +304,7 @@ class OnlineUi(
             return OnlineUi(
                 service.state(), view, service.region.json(), service.region.running, if (service.isDirect) service.direct.notice() else null, service.isDirect,
                 io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState.visible,
-                network = hasNetwork(app), serverSet = server.isNotEmpty() && service.fetcher != null, server = server.ifEmpty { null },
+                network = hasNetwork(app, orElse = true), serverSet = server.isNotEmpty() && service.fetcher != null, server = server.ifEmpty { null },
                 cache = CacheFigures(c.bytes, c.pinnedBytes, AppSettings.onlineCacheMb, c.partial), held = held,
             )
         }
@@ -316,14 +321,26 @@ class OnlineUi(
         const val CHIP_CELLS = 4096
 
         /**
-         * T236: the phone has a network now (an active one with capabilities, as [DirectSources.onCellular] reads it). T343 (T340's
-         * finding): no active network is no network; it asked for the capabilities of none, whose failure read as a network, so
-         * the chip said Online in airplane mode.
+         * T359: the one rule for "is there a network", read by the chip, the online member ([OnlineTiles.onlineMember], so
+         * [OnlineTiles.aheadByDepth], `GET /holdings` and the first-run rule), the terrain read's epoch
+         * ([io.github.jasondorjeshort.dystopo.app.terrain.TerrainRead]) and the phone's own source reader
+         * ([DirectSources.hasNetwork]): an active network that offers the internet ([networkOf]). T343 (T340's finding): no
+         * active network is no network. [context] defaults to the app's; [orElse] is the answer when there is none to ask (a
+         * JVM test), each caller's own.
          */
-        fun hasNetwork(context: android.content.Context): Boolean = runCatching {
-            val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
-        }.getOrDefault(true)
+        fun hasNetwork(context: android.content.Context? = null, orElse: Boolean = false): Boolean = try {
+            val cm = (context ?: DystopoApp.instance).getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+            networkOf(caps != null, caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true)
+        } catch (e: RuntimeException) {
+            orElse
+        }
+
+        /**
+         * T359: [hasNetwork]'s rule: an active network with [capabilities] that offers the [internet]. In airplane mode there is
+         * no active network (or one without the internet), so it reads false. Pure, tested.
+         */
+        fun networkOf(capabilities: Boolean, internet: Boolean): Boolean = capabilities && internet
     }
 }
 

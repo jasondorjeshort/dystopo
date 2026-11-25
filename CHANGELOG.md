@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-25
 
+- T359: The coverage readers take the lookup: the chip, the Download offer, search
 - T372: The glance screen's a11y finding that comes and goes
 - T366: Offline maps' outlines coloured by detail, with a second cue and a key
 - T368: The network where it is finer, behind what the phone holds
