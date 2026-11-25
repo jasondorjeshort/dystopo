@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-25
 
+- T358: The point readers take the lookup: the readout, the pressure card, the route tools
 - T360: The coverage panel under the status chip
 - T357: The join at a map's edge, cell by cell
 - T359: The coverage readers take the lookup: the chip, the Download offer, search
