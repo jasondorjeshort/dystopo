@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-25
 
+- T368: The network where it is finer, behind what the phone holds
 - T369: The cap on a direct-mode download, and a trip's corridor by a tap
 
 ### 2026-11-24

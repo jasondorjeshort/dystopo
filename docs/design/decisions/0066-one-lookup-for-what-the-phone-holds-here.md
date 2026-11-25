@@ -64,5 +64,9 @@ measured bytes or a flickering refresh (the setting then defaults off with the o
 wanting the chosen map to win everywhere.
 
 - Prediction, check when task 2 merges: a z14 view inside a medium map with a server set fetches under 10 MB, and a
-  pan reloads no tile the phone already showed at the same depth.
+  pan reloads no tile the phone already showed at the same depth. Outcome (T368's merge, 2026-11-25): the bytes
+  held, 4.1 MB for a cold z14 view inside the fixture's coarse map with the server set (3.5 MB by the direct reader at
+  its default depth). The pan held for the network and not for the phone's own server: no tile was fetched twice, but
+  each refresh after a batch of deeper tiles re-asks every visible tile from the loopback (43 of 64 tile paths in a
+  pan of 10 swipes, 57 contour tiles regenerated; at most one refresh per rest).
 - Prediction, check by 2027-02-28: no new owner report of two views disagreeing on what the phone holds at a point.
