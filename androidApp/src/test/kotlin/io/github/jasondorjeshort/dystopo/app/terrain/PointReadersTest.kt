@@ -70,7 +70,7 @@ class PointReadersTest {
         val delegates = mapOf(
             "Trips.elevationAt(" to setOf("aircraft/AircraftPoller.kt", "tracking/Tracking.kt"),
             "Trips.demSampler(" to setOf("routing/RoutePlanner.kt"),
-            "pyramidAt(" to setOf("options/ShadeService.kt", "readout/PressureCard.kt", "routing/RouteExposure.kt", "routing/RouteBestStart.kt", "nav/NavShade.kt", "tracking/LongPressMenu.kt", "terrain/TerrainRead.kt"),
+            "pyramidAt(" to setOf("options/ShadeService.kt", "readout/PressureCard.kt", "routing/RouteExposure.kt", "routing/RouteBestStart.kt", "nav/NavShade.kt", "tracking/LongPressMenu.kt", "terrain/TerrainRead.kt", "controls/ScaleBarRoutes.kt"),
             "PointRead." to named,
         )
         for ((call, allowed) in delegates) {
