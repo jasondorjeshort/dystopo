@@ -129,6 +129,16 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * for a plain figure: a dimmed value its dim's, the course held from the last movement `still`) and `mark` (the bar's small
  * "?": missing or stale data, never a value at rest nor one that reads "?" already); `drawn` adds `reason`, `mark` and
  * `note` (the glance view's sentence, `app/help/ReasonText.kt`).
+ * T358, the ground height's read (ADR 0066 build task 4, `app/terrain/TerrainRead.kt` `PointRead`): `GET /readout` adds `ground`:
+ *   `here` (the point read at the last fix, read held: `elevationM`, `source` a map's name, `cache` or `area`, `zoom`,
+ *   `heldZoom` where a held cell is deeper than the maps, `ms`), `reads` per mode and reader (`behind.readout`,
+ *   `behind.pressure`, `held.estimate`, `held.trips`, `behind.area`, ...), `readMs` per mode (`timed`, `avg`, `max`: every
+ *   `behind` read, one `held` read in 64), `tilesAsked` (tiles the point reads fetched behind), `generations`, `fastReads`
+ *   (reads of one source alone, away from every edge's blend) and `slowest` (its `ms` and parts: `hereMs`, `behindMs`,
+ *   `readMs`). `GET /readout/ground?lat=&lon=[&mode=held|behind]` reads one point (`held` by default, nothing started;
+ *   `behind` asks the fetch behind as the readout does, and `behind` says what was done: `asked z/x/y`, `held`, `off`,
+ *   `notAllowed`, `noSource`, `launch`), with `counters` as `ground`; `&bench=N` times N held reads within 200 m against
+ *   the chosen map's own pyramid as read before T358 (`pointReadUs`, `chosenMapPyramidUs`).
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
  * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).
@@ -138,13 +148,68 @@ object ScaleBarRoutes {
         "GET" to "/scalebar" -> Response.json(state(app))
         "POST" to "/scalebar" -> set(app, r)
         // T161: the live readout's strip on the bar's line (readout/LiveReadout)
-        "GET" to "/readout" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
+        "GET" to "/readout" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json() + ("ground" to ground())) // T358: the ground height's read
+        "GET" to "/readout/ground" -> groundAt(r) // T358
         "POST" to "/readout/reset" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.reset() + io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.json())
         "POST" to "/readout/stations" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.PressureSource.configure(r.query["url"])) // T173
         "POST" to "/readout/trend" -> trend(app, r) // T178
         "POST" to "/readout/calibrate" -> calibrate(app, r) // T197
         else -> null
     }
+
+    // ---- T358: the one point read behind the readout's ground height (ADR 0066 build task 4) ----
+    private val pointRead = io.github.jasondorjeshort.dystopo.app.terrain.PointRead
+
+    /** `GET /readout` › `ground`: the point read's counters, and what answers at the last fix now (read held: nothing started). */
+    private fun ground(): Map<String, Any?> =
+        runCatching { pointRead.json(io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.lastFix?.let { it.lat to it.lon }) }.getOrElse { mapOf("error" to it.toString()) }
+
+    /** `GET /readout/ground?lat=&lon=[&mode=held|behind]`: one point read (`behind` starts the fetch behind as the readout's would). */
+    private fun groundAt(r: Request): Response {
+        val lat = r.query["lat"]?.toDoubleOrNull()?.takeIf { it in -85.0..85.0 } ?: return Response.json(mapOf("error" to "lat is required, -85 to 85"), 400)
+        val lon = r.query["lon"]?.toDoubleOrNull()?.takeIf { it in -180.0..180.0 } ?: return Response.json(mapOf("error" to "lon is required, -180 to 180"), 400)
+        val mode = when (r.query["mode"]?.trim()?.lowercase()) {
+            null, "", "held" -> io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.HELD
+            "behind" -> io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND
+            else -> return Response.json(mapOf("error" to "mode is held or behind"), 400)
+        }
+        r.query["bench"]?.toIntOrNull()?.coerceIn(1, 200_000)?.let { n -> return Response.json(bench(lat, lon, n)) }
+        // `&pyramid=<z>`: the point as the area readers read it, through the composed pyramid at zoom z (at most its own top).
+        r.query["pyramid"]?.toIntOrNull()?.let { z ->
+            val p = pointRead.pyramidAt(lat, lon, io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.HELD, "route")
+            val zz = p?.let { minOf(z, it.maxZoom) }
+            return Response.json(linkedMapOf("lat" to lat, "lon" to lon, "pyramidTop" to p?.maxZoom, "zoom" to zz,
+                "elevationM" to p?.let { io.github.jasondorjeshort.dystopo.routing.DemElevation(it, zz!!).elevation(lat, lon) }?.takeIf { it.isFinite() }?.let { Math.round(it * 10) / 10.0 }))
+        }
+        return Response.json(linkedMapOf<String, Any?>("lat" to lat, "lon" to lon, "mode" to mode.code) + pointRead.at(lat, lon, mode, "route").json() + ("counters" to pointRead.json()))
+    }
+
+    /**
+     * `GET /readout/ground?lat=&lon=&bench=N`: N reads held within 200 m of the point, timed, against N reads of the chosen map's
+     * own pyramid as the readers read it before T358 (`DemElevation`, z13 at most); both warmed first. The position estimate's cost.
+     */
+    private fun bench(lat: Double, lon: Double, n: Int): Map<String, Any?> {
+        val app = DystopoApp.instance
+        val rnd = java.util.Random(358)
+        val pts = DoubleArray(2 * n) { i -> if (i % 2 == 0) lat + (rnd.nextDouble() - 0.5) * 0.0036 else lon + (rnd.nextDouble() - 0.5) * 0.0052 }
+        val sampler = pointRead.sampler(io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.HELD, "bench")
+        val pk = app.tiles.packs.dem
+        val old = pk?.let { p ->
+            val pyr = io.github.jasondorjeshort.dystopo.tiles.DemPyramid(p.header.minZoom, p.header.maxZoom, io.github.jasondorjeshort.dystopo.app.TileService.demDecoder(), cacheTiles = 16) { z, x, y -> p.tile(z, x, y) }
+            val s = io.github.jasondorjeshort.dystopo.routing.DemElevation(pyr)
+            val lock = Any()
+            io.github.jasondorjeshort.dystopo.routing.ElevationSampler { la, lo -> synchronized(lock) { s.elevation(la, lo) } }
+        }
+        fun time(s: io.github.jasondorjeshort.dystopo.routing.ElevationSampler): Double {
+            for (i in 0 until minOf(n, 200)) s.elevation(pts[2 * i], pts[2 * i + 1]) // warm: the decodes, the JIT
+            val t0 = System.nanoTime()
+            var sum = 0.0
+            for (i in 0 until n) sum += s.elevation(pts[2 * i], pts[2 * i + 1]).takeIf { it.isFinite() } ?: 0.0
+            return Math.round((System.nanoTime() - t0) / 10.0 / n) / 100.0
+        }
+        return linkedMapOf("reads" to n, "pointReadUs" to time(sampler), "chosenMap" to pk?.let { app.tiles.packs.packOf(it) }, "chosenMapPyramidUs" to old?.let { time(it) })
+    }
+    // end T358
 
     /** T197: `POST /readout/calibrate`. */
     private fun calibrate(app: DystopoApp, r: Request): Response {

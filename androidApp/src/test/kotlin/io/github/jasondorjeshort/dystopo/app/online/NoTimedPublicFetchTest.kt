@@ -62,7 +62,9 @@ class NoTimedPublicFetchTest {
     fun theFetchBehindIsStartedByTheViewOncePerTile() {
         val callers = main.walkTopDown().filter { it.isFile && it.extension == "kt" }
             .filter { f -> Regex("""\.fetchBehind\(""").containsMatchIn(f.readText()) }.map { it.name }.toList()
-        assertEquals(listOf("TileService.kt"), callers, "T341's fetch behind starts only from a view's tile request")
+        // T358: and from the point read (`terrain/TerrainRead.kt` `PointRead`): an elevation tile a reader asked for at its point
+        // (the readout at a fix, the long-press card), once per tile like the view's, never on a timer nor a vector tile.
+        assertEquals(listOf("TerrainRead.kt", "TileService.kt"), callers.sorted(), "T341's fetch behind starts only from a view's tile request or a point read")
         assertTrue("if (!behind.add(path)) return" in body(source("online/OnlineTiles.kt"), "fetchBehind"), "once per tile")
     }
 

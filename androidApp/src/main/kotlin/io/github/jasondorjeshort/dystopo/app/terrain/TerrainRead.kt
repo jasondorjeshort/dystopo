@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.dem.ElevationGrid
 import io.github.jasondorjeshort.dystopo.dem.ElevationSource
 import io.github.jasondorjeshort.dystopo.dem.MergedTerrain
 import io.github.jasondorjeshort.dystopo.geo.MercatorWindow
+import io.github.jasondorjeshort.dystopo.geo.WebMercator
 import io.github.jasondorjeshort.dystopo.packs.PackBounds
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 
@@ -159,7 +160,10 @@ class TerrainRead private constructor(private val lease: AutoCloseable, val tile
                 // "unavailable" for up to a minute, and that answer, made with a network, would be kept.
                 if (network && !was) runCatching { app.tiles.online?.fetcher?.retryNow() }
             }
-            val reachable = app.tiles.online?.fetcher?.state == "online"
+            // T358 (T352's follow-up): the source counts as reachable only with a network. Offline the fetcher's state moved to
+            // `online` on a local answer (a cached tile, an area's cell), so an incomplete answer made a moment before read as
+            // stale (`!reachable && now.reachable`) and the Panorama's place went stale between two reads offline.
+            val reachable = network && app.tiles.online?.fetcher?.state == "online"
             return Epoch(System.identityHashCode(app.tiles.packs), network, reachable)
         }
 
@@ -200,3 +204,337 @@ object TerrainText {
         }
     }
 }
+
+// ---- T358: one point's elevation, held only or held now with the fetch behind (ADR 0066 build task 4) ----
+
+/**
+ * T358 (ADR 0066 decision 3; proposal 0066's Question (a), the owner's answer): the one read of one point's elevation that
+ * every point reader takes, by the map's rule. Everything the phone holds is ranked by stored depth at the point, whatever
+ * any setting says: the offline maps (deepest first, the map chosen last the tie, T357's blend within
+ * [io.github.jasondorjeshort.dystopo.dem.EdgeBlend.BAND_M] inside a finer map's edge, as the map's edge tiles), and the held
+ * cells ([TileService.heldDem]: the tile cache and the downloaded areas' cells), ranked by the zoom a cell is held at and
+ * ahead of the maps only where that is deeper ([PointRule.floor]). Neither mode waits for the network:
+ * - [Mode.HELD]: what the phone holds; nothing is started. The terrain-aided position estimate, the ground under each
+ *   aircraft and a dropped waypoint (`Trips.elevationAt`, `Trips.elevation()`).
+ * - [Mode.BEHIND]: the held answer at once, and where the network stores deeper than what answered (under "More detail from
+ *   online", a fetch allowed now) or nothing is held there, the point's elevation tile at the network's stored depth is
+ *   fetched behind ([PointRule.behindZoom]) through T368's queue ([OnlineTiles.fetchBehind]: one fetch per tile while it is
+ *   in flight or landed, a failed one asked again by a later read), so a later read has it. The readout, the pressure card,
+ *   the long-press card and the route tools.
+ *
+ * What answers at a point is worked out once per z15 tile and kept until a fetch behind lands, the maps change, or
+ * [HERE_MS] passes. [pyramidAt] composes the same sources into a pyramid for the readers that sweep an area around a point
+ * (the long-press card's sun and sight line, the way down, the route's exposure, shade and start time).
+ */
+object PointRead {
+    enum class Mode(val code: String) { HELD("held"), BEHIND("behind") }
+
+    /**
+     * One read: [elevationM] (NaN for none), [source] the map's name, `cache` (the tile cache: fetched, viewed earlier or an
+     * area's pinned version) or `area` (an area's own cell), [zoom] the zoom read at, [heldZoom] the held cell's zoom where
+     * one is deeper than the maps, [behind] what was done about the network (`asked z/x/y`, or why not: `held` nothing
+     * deeper, `off` the setting, `notAllowed`, `noSource`, `launch`), null in [Mode.HELD]; [ms] the read's time.
+     */
+    class Answer(val elevationM: Double, val source: String?, val zoom: Int?, val heldZoom: Int?, val behind: String?, val ms: Double) {
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "elevationM" to elevationM.takeIf { it.isFinite() }?.let { Math.round(it * 10) / 10.0 }, "source" to source, "zoom" to zoom,
+            "heldZoom" to heldZoom, "behind" to behind, "ms" to Math.round(ms * 100) / 100.0,
+        )
+    }
+
+    /**
+     * What answers at one point: [sources] in any order, [zoom] the read's, [held] the held cells' zoom ([floor] and up), [label]
+     * theirs. [fast] is the one source that answers alone where no edge's blend reaches (the held cells, or the first map by
+     * the rule when the point is [FAST_INSIDE_M] inside its box, [fastBox]), read as `DemElevation` reads a pyramid: the same
+     * value as the merged read there, without its window (the position estimate reads thousands of points a step).
+     */
+    private class Here(val sources: List<ElevationSource>, val zoom: Int?, val held: Int?, val floor: Int, val label: String?, val fast: DemPyramid?, val fastName: String?, val fastBox: PackBounds?)
+
+    /** One state of what the phone holds: the tile service, its maps, the fetches landed; the held pyramids and the points worked out. */
+    private class Gen(val tiles: TileService, val packs: Any, val landed: Long, val at: Long) {
+        val pyramidOf = HashMap<String, DemPyramid>()
+        val maps: List<ElevationSource> = tiles.packs.demPacks.map { pk ->
+            val h = pk.header
+            val box = PackBounds(h.minLon, h.minLat, h.maxLon, h.maxLat)
+            val p = synchronized(mapPyramids) {
+                mapPyramids.getOrPut(pk) { DemPyramid(h.minZoom, h.maxZoom, TileService.demDecoder(), cacheTiles = 16) { z, x, y -> pk.tile(z, x, y) } }
+            }
+            val name = tiles.packs.packOf(pk) ?: pk.name
+            pyramidOf[name] = p
+            ElevationSource(name, h.maxZoom, box, MergedTerrain.wholeTileReach(box, h.minZoom), chosen = tiles.packs.dem === pk) { w ->
+                p.window(w.zoom, w.x0, w.y0, w.width, w.height)
+            }
+        }
+        val ordered: List<ElevationSource> = MergedTerrain.order(maps, onlineByDepth = true)
+        val minZoom: Int? = tiles.packs.demPacks.minOfOrNull { it.header.minZoom }
+        val held = HashMap<Int, DemPyramid>()
+        val here = object : LinkedHashMap<Long, Here>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Here>?) = size > HERE_KEEP
+        }
+        val composed = object : LinkedHashMap<String, DemPyramid>(4, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DemPyramid>?) = size > COMPOSED_KEEP
+        }
+    }
+
+    private val mapPyramids = java.util.WeakHashMap<io.github.jasondorjeshort.dystopo.app.Pack, DemPyramid>()
+    @Volatile private var gen: Gen? = null
+
+    // Counters for `GET /readout` › `ground` and `GET /readout/ground`.
+    private val reads = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+    private val asked: MutableSet<String> = java.util.Collections.newSetFromMap(object : LinkedHashMap<String, Boolean>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > ASKED_KEEP
+    })
+    private val askedTotal = java.util.concurrent.atomic.AtomicLong()
+    private val readNs = java.util.concurrent.ConcurrentHashMap<String, LongArray>() // per mode: reads, total ns, max ns
+    @Volatile private var gens = 0L
+    private val fastReads = java.util.concurrent.atomic.AtomicLong()
+    /** The slowest read so far and its parts (working out what answers, the fetch behind's decision, the read itself). */
+    @Volatile private var slowest: Map<String, Any?>? = null
+
+    private fun ms(ns: Long) = Math.round(ns / 1e4) / 100.0
+
+    private fun counter(k: String): java.util.concurrent.atomic.AtomicLong = reads.getOrPut(k) { java.util.concurrent.atomic.AtomicLong() }
+    private fun bump(k: String) = counter(k).incrementAndGet()
+
+    /** Reads since the generation's age was last looked at: the clock is read once in [AGE_EVERY] reads (a clock read costs a few microseconds). */
+    private var sinceAge = 0
+    /** Reads counted since the last timed one: a [Mode.HELD] read is timed once in [TIME_EVERY]; a [Mode.BEHIND] read (one a fix) always. */
+    private var sinceTimed = 0
+
+    private fun current(g: Gen?, tiles: TileService, landed: Long, now: Long): Gen? =
+        g?.takeIf { it.tiles === tiles && it.packs === tiles.packs && it.landed == landed && now - it.at < HERE_MS }
+
+    private fun gen(): Gen {
+        val tiles = DystopoApp.instance.tiles
+        val landed = io.github.jasondorjeshort.dystopo.app.online.BehindRefresh.dem.landedTotal
+        gen?.takeIf { it.tiles === tiles && it.packs === tiles.packs && it.landed == landed && ++sinceAge < AGE_EVERY }?.let { return it }
+        sinceAge = 0
+        val now = android.os.SystemClock.elapsedRealtime()
+        current(gen, tiles, landed, now)?.let { return it }
+        return synchronized(this) { current(gen, tiles, landed, now) ?: Gen(tiles, tiles.packs, landed, now).also { gen = it; gens++ } }
+    }
+
+    /**
+     * The held cells at zoom [depth] alone: a window at a shallower zoom is the mean of the [depth] cells under it (a reader
+     * sweeping at z13 or z14 reads the z15 cells the readout reads, where they are held; the maps fill the rest), a deeper one
+     * overzooms them.
+     */
+    private fun heldPyramid(g: Gen, depth: Int): DemPyramid = synchronized(g.held) {
+        g.held.getOrPut(depth) {
+            DemPyramid(depth, depth, TileService.demDecoder(), cacheTiles = 16) { z, x, y -> runCatching { g.tiles.heldDem(z, x, y) }.getOrNull() }
+        }
+    }
+
+    /** What answers at ([lat], [lon]) in [g]: worked out once per z15 tile. */
+    private fun here(g: Gen, lat: Double, lon: Double): Here {
+        val tz = PointRule.MAX_ZOOM
+        val key = (WebMercator.lonToX(lon, tz).toLong() shl 32) or (WebMercator.latToY(lat, tz).toLong() and 0xffffffffL)
+        synchronized(g.here) { g.here[key] }?.let { return it }
+        val floor = PointRule.floor(MergedTerrain.pointZoom(g.maps, lat, lon, PointRule.MAX_ZOOM))
+        var held: Int? = null
+        var label: String? = null
+        for (hz in PointRule.MAX_ZOOM downTo floor) {
+            val x = WebMercator.lonToX(lon, hz).toInt()
+            val y = WebMercator.latToY(lat, hz).toInt()
+            if (runCatching { g.tiles.heldDem(hz, x, y) }.getOrNull() != null) {
+                held = hz
+                label = if (g.tiles.online?.fetcher?.hasCached("dem", "$hz/$x/$y.png") == true) "cache" else "area"
+                break
+            }
+        }
+        val depth = held
+        val sources = if (depth == null) g.maps else g.maps + ElevationSource(MergedTerrain.ONLINE, depth, null) { w ->
+            if (w.zoom < floor) null else heldPyramid(g, depth).window(w.zoom, w.x0, w.y0, w.width, w.height)
+        }
+        val zoom = MergedTerrain.pointZoom(sources, lat, lon, PointRule.MAX_ZOOM, onlineByDepth = true)
+        val first = g.ordered.firstOrNull { m -> m.bounds!!.let { lon >= it.minLon && lon <= it.maxLon && lat >= it.minLat && lat <= it.maxLat } }
+        val h = when {
+            depth != null && zoom == depth -> Here(sources, zoom, depth, floor, label, heldPyramid(g, depth), label, null)
+            held == null && first != null && first.maxZoom == zoom -> Here(sources, zoom, held, floor, label, g.pyramidOf[first.name], first.name, first.bounds)
+            else -> Here(sources, zoom, held, floor, label, null, null, null)
+        }
+        synchronized(g.here) { g.here[key] = h }
+        return h
+    }
+
+    /** ([lat], [lon])'s elevation by the rule; [tag] names the reader in the counters. Never waits for the network. */
+    fun at(lat: Double, lon: Double, mode: Mode, tag: String = "other"): Answer = at(lat, lon, mode, tag, counter("${mode.code}.$tag"), timeIt = true)
+
+    private fun at(lat: Double, lon: Double, mode: Mode, tag: String, count: java.util.concurrent.atomic.AtomicLong, timeIt: Boolean = false): Answer {
+        count.incrementAndGet()
+        val timed = timeIt || mode == Mode.BEHIND || ++sinceTimed >= TIME_EVERY
+        if (!timed) return try { read(lat, lon, mode, null) } catch (e: Exception) { Answer(Double.NaN, null, null, null, "error: ${e.javaClass.simpleName}", 0.0) }
+        if (mode != Mode.BEHIND) sinceTimed = 0
+        val t0 = System.nanoTime()
+        val st = LongArray(3)
+        val a = try {
+            read(lat, lon, mode, st)
+        } catch (e: Exception) {
+            Answer(Double.NaN, null, null, null, "error: ${e.javaClass.simpleName}", 0.0)
+        }
+        val ns = System.nanoTime() - t0
+        readNs.compute(mode.code) { _, v -> (v ?: LongArray(3)).also { it[0]++; it[1] += ns; if (ns > it[2]) it[2] = ns } }
+        if (ns > (slowest?.get("ns") as? Long ?: 0L)) slowest = linkedMapOf("ns" to ns, "ms" to ms(ns), "mode" to mode.code, "tag" to tag, "hereMs" to ms(st[0]), "behindMs" to ms(st[1]), "readMs" to ms(st[2]), "behind" to a.behind)
+        return Answer(a.elevationM, a.source, a.zoom, a.heldZoom, a.behind, ns / 1e6)
+    }
+
+    private fun read(lat: Double, lon: Double, mode: Mode, st: LongArray? = null): Answer {
+        var t = if (st != null) System.nanoTime() else 0L
+        val g = gen()
+        val h = here(g, lat, lon)
+        if (st != null) { st[0] = System.nanoTime() - t; t = System.nanoTime() }
+        val behind = if (mode == Mode.BEHIND) behind(g, lat, lon, h) else null
+        if (st != null) { st[1] = System.nanoTime() - t; t = System.nanoTime() }
+        val z = h.zoom ?: return Answer(Double.NaN, null, null, h.held, behind, 0.0)
+        val fx = WebMercator.lonToX(lon, z) * 256 - 0.5
+        val fy = WebMercator.latToY(lat, z) * 256 - 0.5
+        val x0 = kotlin.math.floor(fx).toInt()
+        val y0 = kotlin.math.floor(fy).toInt()
+        val p = h.fast
+        if (p != null && (h.fastBox == null || PointRule.insideM(h.fastBox, lat, lon) >= FAST_INSIDE_M)) {
+            val e = PointRule.bilinear(p.elevation(z, x0, y0), p.elevation(z, x0 + 1, y0), p.elevation(z, x0, y0 + 1), p.elevation(z, x0 + 1, y0 + 1), fx - x0, fy - y0)
+            if (!e.isNaN()) {
+                if (st != null) st[2] = System.nanoTime() - t
+                fastReads.incrementAndGet()
+                return Answer(e, h.fastName, z, h.held, behind, 0.0)
+            }
+        }
+        val tally = MergedTerrain.Tally()
+        val v = MergedTerrain.read(MercatorWindow(z, x0, y0, 2, 2), h.sources, tally, onlineByDepth = true).values
+        val e = PointRule.bilinear(v[0], v[1], v[2], v[3], fx - x0, fy - y0)
+        val top = tally.cells.maxByOrNull { it.value }?.key
+        if (st != null) st[2] = System.nanoTime() - t
+        return Answer(e, if (top == MergedTerrain.ONLINE) h.label else top, z, h.held, behind, 0.0)
+    }
+
+    /** [Mode.BEHIND]: starts the fetch behind the point's tile where [PointRule.behindZoom] says so; what was done. */
+    private fun behind(g: Gen, lat: Double, lon: Double, h: Here): String {
+        val o = g.tiles.online ?: return "noSource"
+        val m = o.onlineMember()
+        val z = PointRule.behindZoom(h.zoom, m.demMaxZoom, m.detail, m.allowed)
+            ?: return when { !m.allowed -> "notAllowed"; h.zoom != null && !m.detail -> "off"; else -> "held" }
+        val refresh = io.github.jasondorjeshort.dystopo.app.online.BehindRefresh
+        if (!refresh.launchLoaded && !DystopoApp.instance.map.fullyLoaded) return "launch" // the next read asks again
+        val x = WebMercator.lonToX(lon, z).toInt()
+        val y = WebMercator.latToY(lat, z).toInt()
+        val path = "$z/$x/$y"
+        if (synchronized(asked) { asked.add(path) }) askedTotal.incrementAndGet()
+        o.fetchBehind(z, x, y, io.github.jasondorjeshort.dystopo.packs.Holdings.Role.DEM) // once per tile while in flight or landed
+        return "asked $path"
+    }
+
+    /** A sampler over [at] in [mode] ([tag] in the counters): NaN where nothing answers. */
+    fun sampler(mode: Mode, tag: String): io.github.jasondorjeshort.dystopo.routing.ElevationSampler {
+        val count = counter("${mode.code}.$tag")
+        return io.github.jasondorjeshort.dystopo.routing.ElevationSampler { lat, lon -> at(lat, lon, mode, tag, count).elevationM }
+    }
+
+    /** Whether anything could answer a point read: a map with elevation, a source set, or a finished tile area. */
+    fun anything(): Boolean {
+        val t = DystopoApp.instance.tiles
+        return t.packs.demPacks.isNotEmpty() || t.online != null || runCatching { t.heldAreas() }.getOrDefault(emptyList()).isNotEmpty()
+    }
+
+    /**
+     * What the phone holds composed into one pyramid by the map's rule, for the readers that sweep an area around a point (a sun
+     * or a sight line over kilometres): the maps with T357's blend, and the held cells as one member per depth (each answers
+     * the cells whose tile it holds at that depth, ranked by it, a shallower window the mean of its cells), so every cell takes
+     * the deepest held there wherever the reader stands; up to the zoom read at ([lat], [lon]), null where nothing is held
+     * there. [Mode.BEHIND] fetches the point's tile behind as [at] does.
+     */
+    fun pyramidAt(lat: Double, lon: Double, mode: Mode, tag: String = "area"): DemPyramid? {
+        val g = gen()
+        val h = here(g, lat, lon)
+        bump("${mode.code}.$tag")
+        if (mode == Mode.BEHIND) runCatching { behind(g, lat, lon, h) }
+        val top = h.zoom ?: return null
+        return synchronized(g.composed) {
+            g.composed.getOrPut("$top") {
+                val low = minOf(g.minZoom ?: top, top)
+                val sources = g.maps + PointRule.heldDepths(g.maps.map { it.maxZoom }).map { d ->
+                    ElevationSource(MergedTerrain.ONLINE, d, null) { w -> if (w.zoom < d - PointRule.MEAN_ZOOMS) null else heldPyramid(g, d).window(w.zoom, w.x0, w.y0, w.width, w.height) }
+                }
+                DemPyramid(low, top, io.github.jasondorjeshort.dystopo.dem.RawElevations, cacheTiles = 16) { z, x, y ->
+                    MergedTerrain.read(MercatorWindow(z, x * 256, y * 256, 256, 256), sources, onlineByDepth = true).values
+                        .takeUnless { v -> v.all { it.isNaN() } }?.let(io.github.jasondorjeshort.dystopo.dem.RawElevations::encode)
+                }
+            }
+        }
+    }
+
+    /** The source at ([lat], [lon]) as [at] names it, read held (nothing started, not counted as a reader). */
+    fun sourceAt(lat: Double, lon: Double): String? = runCatching { read(lat, lon, Mode.HELD).source }.getOrNull()
+
+    /** `GET /readout` › `ground` and `GET /readout/ground`: the counters, and [here] read held (nothing started) when given. */
+    fun json(here: Pair<Double, Double>? = null): Map<String, Any?> = linkedMapOf(
+        "here" to here?.let { (la, lo) -> at(la, lo, Mode.HELD, "peek").json() },
+        "reads" to reads.toSortedMap().mapValues { it.value.get() },
+        "readMs" to readNs.mapValues { (_, v) -> linkedMapOf("timed" to v[0], "avg" to if (v[0] > 0) Math.round(v[1] / 1e4 / v[0]) / 100.0 else null, "max" to Math.round(v[2] / 1e4) / 100.0) },
+        "tilesAsked" to askedTotal.get(), "generations" to gens, "fastReads" to fastReads.get(), "slowest" to slowest?.minus("ns"),
+    )
+
+    /** How long what answers at a point is kept (a cell the cache gained since from the map's own fetches is seen after it). */
+    const val HERE_MS = 30_000L
+
+    /** How far inside the first map's box a point reads it alone: past T357's band ([io.github.jasondorjeshort.dystopo.dem.EdgeBlend.BAND_M], 300 m) and two cells. */
+    const val FAST_INSIDE_M = 400.0
+    private const val AGE_EVERY = 1024
+    private const val TIME_EVERY = 64
+    private const val HERE_KEEP = 256
+    private const val COMPOSED_KEEP = 3
+    private const val ASKED_KEEP = 4096
+}
+
+/** T358: the point read's pure rules (tested, `PointRuleTest`). */
+object PointRule {
+    /** The deepest elevation zoom a point is read at (`OnlineTiles.DEM_MAX_ZOOM`, `HeldTiles.MAX_DEM`). */
+    const val MAX_ZOOM = 15
+
+    /** How many zooms shallower than its own a held member of the composed pyramid still answers (the mean of 8 x 8 of its tiles at most). */
+    const val MEAN_ZOOMS = 3
+
+    /**
+     * The depths of the composed pyramid's held members: every zoom deeper than the shallowest map's depth ([mapDepths]; z8 and
+     * up without a map) to [MAX_ZOOM]. A held cell no deeper than every map at it ranks after them and fills only where they
+     * have nothing.
+     */
+    fun heldDepths(mapDepths: List<Int>): IntRange = ((mapDepths.minOrNull() ?: 7) + 1).coerceAtMost(MAX_ZOOM)..MAX_ZOOM
+
+    /** The shallowest zoom a held cell must be at to rank ahead of the maps at a point they read at [mapsZoom] (null: none there). */
+    fun floor(mapsZoom: Int?): Int = mapsZoom?.plus(1) ?: 0
+
+    /**
+     * The zoom of the point's tile to fetch behind a read that answered at [heldZoom] (null: nothing held there), or null:
+     * none when no fetch may run now ([allowed]) or the source stores nothing ([networkStored]); where nothing is held, the
+     * network's tile, as the map's tiles ask the network there whatever the setting; where something is, only under the
+     * setting ([detail]) and where the network stores deeper (T368's `NetworkAhead`).
+     */
+    fun behindZoom(heldZoom: Int?, networkStored: Int?, detail: Boolean, allowed: Boolean): Int? {
+        if (!allowed || networkStored == null) return null
+        val z = minOf(networkStored, MAX_ZOOM)
+        if (heldZoom == null) return z
+        return z.takeIf { detail && it > heldZoom }
+    }
+
+    /** How far ([lat], [lon]) lies inside [box], in metres (negative outside); a rough measure, for the band's margin. */
+    fun insideM(box: PackBounds, lat: Double, lon: Double): Double {
+        val m = 111_320.0
+        val dLat = minOf(lat - box.minLat, box.maxLat - lat) * m
+        val dLon = minOf(lon - box.minLon, box.maxLon - lon) * m * kotlin.math.cos(Math.toRadians(lat))
+        return minOf(dLat, dLon)
+    }
+
+    /** `DemElevation`'s bilinear sample of four cells ([tx], [ty] the fractions), the nearest one where any is missing. */
+    fun bilinear(a: Float, b: Float, c: Float, d: Float, tx: Double, ty: Double): Double {
+        if (a.isNaN() || b.isNaN() || c.isNaN() || d.isNaN()) {
+            return when {
+                tx < 0.5 && ty < 0.5 -> a
+                tx >= 0.5 && ty < 0.5 -> b
+                tx < 0.5 -> c
+                else -> d
+            }.toDouble()
+        }
+        return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty
+    }
+}
+// end T358
