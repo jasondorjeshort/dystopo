@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-24
 
+- T370: Flight tracking's rows move from Map options to Data and storage
 - T371: The bar's measure never settles at font 2.0: the interface freezes
 - T364: Flights: "Show flights" for the map, and nothing runs while nothing shows them
 - T356: Everything the phone holds, ranked by depth: the tile paths and the downloads
