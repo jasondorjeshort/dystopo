@@ -316,6 +316,8 @@ t359_bad_rows[9] = dict(t359_rows[9], source="on this phone")  # on/inside-both/
 t359_bad_rows[12] = dict(t359_rows[12], source="no data here")  # on/outside/z12: T339's follow-up
 t359_bad_rows[13] = dict(t359_rows[13], button={"shown": True, "text": "Already on this phone"})  # on/outside/z7.5: already where the chip is not on the phone
 t359_bad_rows[4] = dict(t359_rows[4], mapMessage="none")  # off/outside/z12: no message offline outside both maps
+t359_same = dict(t359_rows[8], holdings={"vector": {"tilePathServes": "rainier-fine"}, "dem": {"tilePathServes": "cache"}}, served={"demSameDepth": True})
+assert part.t359_assertions({"t359": dict(t359_good, rows=[t359_same] + t359_rows[1:])}) == [], "a cached tile at the map's own zoom is the map's to the chip"
 t359_bad = {"rows": t359_bad_rows, "search": [dict(t359_search[0], reason="tiles-only")] + t359_search[1:],
             "allOff": [dict(t359_off[0], source="on this phone"), t359_off[1]]}
 whats = sorted(f["what"] for f in part.t359_assertions({"t359": t359_bad}))

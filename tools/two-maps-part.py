@@ -1108,7 +1108,8 @@ def t368_assertions(table):
 # T339's outside), and offline outside both maps it says "no data here"; the button is shown only online, and reads "Already
 # on this phone" only where the chip says "on this phone"; the first-run card shows nowhere, and the map's message is
 # "outside" only offline outside both maps at z12 (`none` elsewhere; at z7.5 the view reaches the maps). The chip's word while a deeper tile is fetched behind a map:
-# the map serves now, so the map's (`OnlineView.sourceOf`). Then search (`GET /search`, the index built first) for a name in
+# the map serves now, so the map's (`OnlineView.sourceOf`); a cached elevation tile at a zoom a map stores is the map's too
+# (T368's rule; `GET /holdings` names the cache there, ranking it by the source's depth: T368's follow-up). Then search (`GET /search`, the index built first) for a name in
 # the coarse map from a point inside it only (found, `vector`) and from outside both (a sentence, no `vector`), each phase.
 # Last, offline with no server and the phone's own reading of the sources on (T342's and T332's follow-up): both maps off,
 # the map says "No offline map covers this view" outside them and the chip "a map here is off" over them. Pinned: it switches
@@ -1218,7 +1219,8 @@ def t359_assertions(table):
             continue
         on = r["network"] == "on"
         hv, hd = (r.get("holdings") or {}).get("vector") or {}, (r.get("holdings") or {}).get("dem") or {}
-        cache = "cache" in (hv.get("tilePathServes"), hd.get("tilePathServes"))
+        # A cached elevation tile at a zoom a map stores is the map's to the chip (T368's rule, `served.demSameDepth`).
+        cache = hv.get("tilePathServes") == "cache" or (hd.get("tilePathServes") == "cache" and not (r.get("served") or {}).get("demSameDepth"))
         src, btn = r.get("source"), r.get("button") or {}
         if r.get("chipNetwork") is not on or r.get("allowed") is not on:
             out.append({"what": "T359:network-test", "row": row, "chip": r.get("chipNetwork"), "holdingsAllowed": r.get("allowed")})

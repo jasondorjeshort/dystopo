@@ -28,11 +28,21 @@ class OnlineView(
      * T359: what serves the view's tiles now, by ADR 0066's lookup (`GET /holdings`' `tilePathServes`, the tile paths' own
      * answer): [vector] the vector tile at the map's zoom, [dem] the elevation tile one zoom deeper, each the holding's kind
      * (null: nothing on the phone serves it, so the network does where a fetch is allowed); [vectorName] and [demName] the
-     * holdings' names; [network] a fetch is allowed now (the online member's `allowed`, which reads [OnlineUi.hasNetwork]).
+     * holdings' names; [network] a fetch is allowed now (the online member's `allowed`, which reads [OnlineUi.hasNetwork]);
+     * [demSameDepth], the cache serves the elevation tile at a zoom a map stores it at ([OnlineTiles.viewSource]'s rule, T368:
+     * a z14 tile over a z14 map is not finer), so the chip names the map ([chipDem]) where the lookup names the cache (it
+     * ranks a cached tile by the source's stored depth, not the tile's zoom: T368's follow-up, `GET /holdings` unchanged).
      */
-    class Served(val vector: Holdings.Kind?, val dem: Holdings.Kind?, val vectorName: String?, val demName: String?, val network: Boolean) {
+    class Served(
+        val vector: Holdings.Kind?, val dem: Holdings.Kind?, val vectorName: String?, val demName: String?, val network: Boolean,
+        val demSameDepth: Boolean = false,
+    ) {
+        /** The elevation's holding as the chip names it: a map where the cache serves at a zoom the map stores ([demSameDepth]). */
+        val chipDem: Holdings.Kind? get() = if (demSameDepth && dem == Holdings.Kind.CACHE) Holdings.Kind.MAP else dem
+
         fun json(): Map<String, Any?> = linkedMapOf(
             "vector" to vectorName, "vectorKind" to vector?.word, "dem" to demName, "demKind" to dem?.word, "networkAllowed" to network,
+            "demSameDepth" to demSameDepth,
         )
     }
 
@@ -74,12 +84,14 @@ class OnlineView(
             val vName = here?.let { it.vectorPath ?: it.vectorNow.serving?.holding?.name }
             val dName = here?.let { it.demPath ?: it.demNow.serving?.holding?.name }
             fun kind(n: String?) = n?.let { name -> if (name == "cache") Holdings.Kind.CACHE else here?.holdings?.firstOrNull { it.name == name }?.kind }
-            val served = here?.let { Served(kind(vName), kind(dName), vName, dName, it.online?.allowed == true) }
             val online = runCatching { o?.viewSource(view.lat, view.lon, view.zoom) }.getOrNull()
+            // T368's rule (viewSource): inside a map, a cached tile names the network only past the map's own depth.
+            val sameDepth = kind(dName) == Holdings.Kind.CACHE && online?.first == OnlineTiles.PACK
+            val served = here?.let { Served(kind(vName), kind(dName), vName, dName, it.online?.allowed == true, sameDepth) }
             // The elevation tile whose record and cache keys are read: the cached tile that serves (T368: fetched behind a map),
             // else the record viewSource matched.
-            val demTile = if (served?.dem == Holdings.Kind.CACHE && here != null) Triple(here.dem.z, here.dem.x, here.dem.y) else online?.second
-            val demRecord = if (served?.dem == Holdings.Kind.CACHE && here != null) {
+            val demTile = if (served?.chipDem == Holdings.Kind.CACHE && here != null) Triple(here.dem.z, here.dem.x, here.dem.y) else online?.second
+            val demRecord = if (served?.chipDem == Holdings.Kind.CACHE && here != null) {
                 runCatching { OnlineService.get(app).demSource(here.dem.z, here.dem.x, here.dem.y) }.getOrNull() ?: OnlineService.CACHED
             } else online?.first?.takeIf { it != OnlineTiles.PACK }
             val keys = demTile?.let { (z, x, y) -> keys(app, z, x, y) }.orEmpty()
@@ -125,7 +137,7 @@ class OnlineView(
                 Holdings.Kind.OVERVIEW -> OnlineTiles.WORLD
                 null -> record?.takeIf { it in recorded } ?: if (network) OnlineService.ONLINE else null
             }
-            val words = listOfNotNull(role(served.vector, vectorRecord, served.network), role(served.dem, demRecord, false))
+            val words = listOfNotNull(role(served.vector, vectorRecord, served.network), role(served.chipDem, demRecord, false))
             return words.minByOrNull { FURTHEST.indexOf(it) } ?: if (worldDraws()) OnlineTiles.WORLD else OnlineTiles.NONE
         }
 

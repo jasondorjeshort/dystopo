@@ -70,6 +70,10 @@ class OnlineViewSourceTest {
         assertEquals(OnlineTiles.PACK, source(served(Kind.MAP, Kind.MAP, network = true), demRecord = null))
         assertEquals(OnlineService.ONLINE, source(served(Kind.MAP, Kind.CACHE, network = true), demRecord = OnlineService.ONLINE))
         assertEquals(OnlineService.CACHED, source(served(Kind.MAP, Kind.CACHE, network = false), demRecord = null))
+        // A cached tile at a zoom the map stores is not finer (T368's rule): the map's word, though the lookup names the cache.
+        val same = OnlineView.Served(Kind.MAP, Kind.CACHE, "rainier-fine", "cache", network = true, demSameDepth = true)
+        assertEquals(Kind.MAP, same.chipDem)
+        assertEquals(OnlineTiles.PACK, source(same, demRecord = OnlineService.ONLINE))
     }
 
     @Test
