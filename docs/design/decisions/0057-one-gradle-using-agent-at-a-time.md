@@ -1,7 +1,7 @@
 # 0057. One Gradle-using agent at a time
 
 Date: 2026-11-05
-Status: accepted
+Status: accepted; superseded in part by 0070 (the width on the 128 GB PC: four at once, the emulators queued at two)
 
 Record: the owner's words during wave 28's launch; the board's record of the wave, `docs/tasks/wave-28.md`.
 

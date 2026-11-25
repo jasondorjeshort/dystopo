@@ -98,7 +98,7 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    meter at planning plus that cost is at or under the 7-day hold `policy.json` sets, and otherwise
    plan a smaller wave or wait for the reset (the 5-hour meter keeps its own line, Resume step 4).
    Write the allowance into the wave paragraph as one sentence: the meter at planning, the task
-   count, the cost assumed, the figure it adds up to. One Gradle-using agent at a time unless the owner says wider (ADR 0057), so a wave
+   count, the cost assumed, the figure it adds up to. One Gradle-using agent at a time unless the owner says wider (ADR 0057; four on the 128 GB PC from wave 49, the emulators queued at two, ADR 0070), so a wave
    states its order; agents with no Gradle or emulator may run alongside; a wave
    larger than the budget is not launched in halves on the same meter.
 4. Brief each implementer with the `brief` skill (`implementer.md`), its own worktree, ports and
