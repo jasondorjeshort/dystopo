@@ -553,10 +553,7 @@ object MapLayout {
             val ui = io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardUiState
             if (all != ui.allScroll) ui.allScroll = all
         }
-        if (placed[OverlayIds.STRIP]?.rect != null && placed.stripRoom > 0f) {
-            // The width the rule wrapped the entries at (a pixel more for the rounding), so the strip's rows are the rule's.
-            limits[nameOf(OverlayIds.STRIP)] = MeasuredControls.Limit(maxWidthPx = ceil(placed.stripRoom * d).toInt() + 1, entries = placed.entriesDrawn)
-        }
+        stripLimit(placed, d)?.let { limits[nameOf(OverlayIds.STRIP)] = it }
         // The compass: where the rule puts it, or with the map facing north where it would go once turned.
         val compassAt = placed[OverlayIds.COMPASS] ?: if (input.compass == null) {
             CompassView.sizePx()?.let { s -> OverlayLayout.place(input.copy(compass = OverlaySize(s[0] / d, s[1] / d)), latch)[OverlayIds.COMPASS] }
@@ -573,6 +570,15 @@ object MapLayout {
         }
         return MeasuredControls.Ruled(targets, limits, placed, input, d)
     }
+
+    /**
+     * T239: the readout strip's limit by the rule's placement [placed] (density [d]): the width the rule wrapped the entries
+     * at (a pixel more for the rounding), so the strip's rows are the rule's, and the entries it draws; null while the rule
+     * does not place it (the strip is then measured within its parent's constraints). Pure; T371's test drives it.
+     */
+    internal fun stripLimit(placed: OverlayPlacement, d: Float): MeasuredControls.Limit? =
+        if (placed[OverlayIds.STRIP]?.rect != null && placed.stripRoom > 0f) MeasuredControls.Limit(maxWidthPx = ceil(placed.stripRoom * d).toInt() + 1, entries = placed.entriesDrawn)
+        else null
 
     /** T239: the tops (px) the last rule drew its elements at, by manifest id; for readers off the main thread (`GET /nav`). */
     @Volatile var ruledTopsPx: Map<String, Int> = emptyMap()

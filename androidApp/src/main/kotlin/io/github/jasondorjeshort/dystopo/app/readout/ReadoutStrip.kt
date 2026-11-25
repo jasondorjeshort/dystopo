@@ -180,7 +180,76 @@ object StripLayout {
             "clearOfRecentre" to overlaps(b, RecenterLayout.boundsPx)?.not(),
             "clearOfNavCard" to b?.let { navBottom <= 0f || it[1] / d >= navBottom },
             "clearOfBottomPanels" to bottomDp?.let { it >= floor - 0.5f },
+            // T371: the times the bar's measure capped its entries' width to end an exchange with the rule that went round.
+            "exchangeCaps" to exchange.caps, "exchangeLastCapPx" to exchange.lastCapPx,
+            "entrySizesPx" to entrySizesPx.map { it.toList() }, // T371: what the rule reads, in drawn order (the course short, then the degrees' width)
         )
+    }
+
+    /** T371: the bar's side of its exchange with the layout rule ([StripExchange]), cleared after each main-thread message. */
+    internal val exchange = StripExchange { reset -> android.os.Handler(android.os.Looper.getMainLooper()).post(reset) }
+}
+
+/**
+ * T371 (pure, `StripExchangeTest`): the bar's measure and the layout rule trade answers: the bar publishes its entries'
+ * sizes measured within the width the rule gave it ([StripLayout.entriesMeasured]), and the rule answers a width and an
+ * entry count from them (`MapLayout.stripLimit`). An entry wider than the width wraps, narrower and taller, so the rule's
+ * next answer can differ: at font scale 2.0 with the track bar's panel open and a route card up, the rule put the strip
+ * beside the chips at 50 dp from the entries as they are, every entry wrapped there to 39 dp by 189 dp, the rule then hid
+ * the strip, measured again across the window its entries were whole, and so on without end within one frame's layout
+ * (the main thread silent until killed). The exchange is bounded here: [entryWidth] gives the width the entries are
+ * measured within. It is the width the rule gave until the widths asked in one main-thread message go round (a width
+ * asked again after another came between, [RETURNS] times) or more than [STEPS] widths are asked; then it is the smallest
+ * width asked, from then on in that message, so the sizes no longer follow the rule's answer and the next answer stands:
+ * the exchange ends on the smaller answer (the fewer entries, or the strip hidden). Rows still flow within the rule's
+ * width. An exchange that settles is untouched: it never asks a width again after another came between. [schedule] runs
+ * the clearing after the message (the app's main looper; a test clears by hand with [reset]).
+ */
+internal class StripExchange(private val schedule: (() -> Unit) -> Unit = {}) {
+    private val asked = ArrayList<Int>()
+    private var returns = 0
+
+    /** The cap in force in this message (px), or null. */
+    var capPx: Int? = null
+        private set
+
+    /** How many exchanges were capped since the start, and the last cap (px); for `GET /readout` `layout`. */
+    var caps = 0
+        private set
+    var lastCapPx: Int? = null
+        private set
+
+    /** The width (px) to measure the entries within when the rule gave [maxW] (the strip's inner width). */
+    fun entryWidth(maxW: Int): Int {
+        if (asked.isEmpty() && capPx == null) schedule(::reset)
+        capPx?.let { c -> return minOf(c, maxW).also { capPx = it; lastCapPx = it } }
+        if (asked.lastOrNull() != maxW) {
+            if (maxW in asked) returns++
+            asked += maxW
+        }
+        if (returns >= RETURNS || asked.size > STEPS) {
+            val c = asked.min()
+            capPx = c
+            lastCapPx = c
+            caps++
+            return minOf(c, maxW)
+        }
+        return maxW
+    }
+
+    /** The message is over: the next measure starts a new exchange. */
+    fun reset() {
+        asked.clear()
+        returns = 0
+        capPx = null
+    }
+
+    companion object {
+        /** A width asked again after another came between, this many times, is an exchange that goes round. */
+        const val RETURNS = 2
+
+        /** At most this many different widths in one message before the cap, whatever they are. */
+        const val STEPS = 8
     }
 }
 
@@ -345,7 +414,10 @@ private class DroppingFlow(val entries: List<String>, val degreesAt: Int, val it
         val gapY = rowGap.roundToPx()
         val maxW = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
         val maxH = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
-        val measured = measurables.map { it.measure(Constraints(maxWidth = maxW)) }
+        // T371: the entries within the rule's width, unless the exchange with the rule went round in this message: then
+        // within the smallest width it asked ([StripExchange]); the rows still flow within maxW.
+        val entryW = if (maxW == Int.MAX_VALUE) maxW else StripLayout.exchange.entryWidth(maxW)
+        val measured = measurables.map { it.measure(Constraints(maxWidth = entryW)) }
         val n = entries.size.coerceAtMost(measured.size)
         val full = measured.take(n)
         // T257: the course's point alone, and the entries with it in the course's place.
