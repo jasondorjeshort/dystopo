@@ -1220,10 +1220,12 @@ def scr_download_card(c):
     c.srv.ok("POST", f"/camera?lat={SUMMIT[0]}&lon={SUMMIT[1]}&zoom=13&bearing=0")
     time.sleep(2.0)
     c.srv.ok("POST", "/areas/region?wait=60000", timeout=120.0)
+    fix_feed_start(c)  # T360: the strip's caption held at "elevation" through the frame and the semantics
     time.sleep(1.5)
 
 
 def end_download_card(c):
+    fix_feed_stop(c)  # T360
     c.srv.call("POST", "/areas/picker/close")
     c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
 # end T343
@@ -1467,6 +1469,101 @@ def end_trip_offer(c):
 # end T369
 
 
+# T360
+FIX_FEED_S = 1.0  # a fix this often: the strip's caption turns to "no fix N s" only after a gap of several seconds
+
+
+class FixFeed:
+    """T360: a fresh fix at Paradise every FIX_FEED_S seconds on a thread of its own, from a screen's setup to its end, so
+    the readout strip's caption reads "elevation" in the frame and in the semantics however long the two take (on a loaded
+    PC the semantics came more than 5 s after snapshot()'s one fix, and the overlap line of the strip under the Download
+    card was keyed "no fix N s" in one sweep and "elevation" in the next). The same place and accuracy as every other fix
+    of the tool, so the values beside the caption stay those of a fix standing still."""
+
+    def __init__(self, srv):
+        import threading
+        self.srv, self.stop_event = srv, threading.Event()
+        self.thread = threading.Thread(target=self.run, name="a11y-fix-feed", daemon=True)
+
+    def run(self):
+        while not self.stop_event.wait(FIX_FEED_S):
+            try:
+                self.srv.call("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8", timeout=10)
+            except (OSError, RuntimeError):
+                pass
+
+    def stop(self):
+        self.stop_event.set()
+        self.thread.join(timeout=15)
+
+
+def fix_feed_start(c):
+    fix_feed_stop(c)
+    c.fix_feed = FixFeed(c.srv)
+    c.fix_feed.thread.start()
+
+
+def fix_feed_stop(c):
+    feed = getattr(c, "fix_feed", None)
+    if feed:
+        feed.stop()
+    c.fix_feed = None
+
+
+COVERAGE_TRIES = 20  # one a second: the chip's snapshot (and the panel with it) is made once a second
+
+
+def coverage_scene(chip):
+    """T360: what is wrong with the panel `GET /online` `chip.coverage` reports for the scene, or None: the card open, the
+    section's lines read, and the first naming an offline map that is shown ("<map> · <level> · shown")."""
+    cov = (chip or {}).get("coverage") or {}
+    lines = cov.get("shown") or []
+    if not (chip or {}).get("open"):
+        return "the card is not open"
+    if not lines:
+        return "no panel lines"
+    if not re.search(r" · (Low|Less|Medium|Full) detail · shown$", lines[0]):
+        return f"the first line is {lines[0]!r}, not an offline map shown"
+    return None
+
+
+def scr_coverage_panel(c):
+    """T360: the status chip's card open over Mount Rainier's summit at z13 with its coverage panel ("At the centre of the
+    view", the help icon, the lines from the lookup: the seeded Rainier map shown, then the network's line). The camera, the
+    card and the panel are checked (`GET /online` `chip.coverage`, read twice alike a second apart) before the frame.
+    What it depends on, and how it is pinned and put back:
+    - the clock: the readout strip's caption follows the time since the last fix: a fix every second (FixFeed) from here to
+      end_coverage_panel, after a reset (no climb left by an earlier screen's fixes);
+    - the maps on the phone: the seeded Rainier map, which must be the first line, shown (checked, else the screen fails);
+    - the network, the server and the cache: they word the network's line and may add a "Viewed earlier" line under the
+      map (tiles an earlier screen fetched there); neither is changed here (an emptied cache would change later screens),
+      and both are written to the log. The card's text is one merged label, so a line more or less moves no finding's key;
+    - the card: closed again by end_coverage_panel (close_all also closes it before every screen)."""
+    c.srv.ok("POST", "/readout/reset")
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+    c.srv.ok("POST", f"/camera?lat={SUMMIT[0]}&lon={SUMMIT[1]}&zoom=13&bearing=0")
+    c.srv.ok("POST", "/online/chip?open=1")
+    fix_feed_start(c)
+    last, why = None, None
+    for _ in range(COVERAGE_TRIES):
+        time.sleep(1.0)
+        chip = (c.srv.ok("GET", "/online") or {}).get("chip") or {}
+        why = coverage_scene(chip)
+        lines = ((chip.get("coverage") or {}).get("lines"))
+        if why is None and lines == last:
+            log(f"coverage-panel: {json.dumps(lines)} (chip {chip.get('text')!r})")
+            return
+        last = lines
+    raise RuntimeError(f"the coverage panel not steady in {COVERAGE_TRIES} s: {why or 'its lines kept changing'}")
+
+
+def end_coverage_panel(c):
+    fix_feed_stop(c)
+    c.srv.call("POST", "/online/chip?open=0")
+    c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
+# end T360
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1536,6 +1633,9 @@ SCREENS = [
     ("download-card-over", scr_download_card_over, end_download_card_over, "map"),
     ("trip-offer", scr_trip_offer, end_trip_offer, "map"),
     # end T369
+    # T360
+    ("coverage-panel", scr_coverage_panel, end_coverage_panel, "map"),
+    # end T360
 ]
 
 

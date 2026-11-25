@@ -82,18 +82,22 @@ object CoveragePanel {
     /**
      * The lines for a view at [zoom] centred on ([lat], [lon]) whose vector tile's answer is [vector] and elevation tile's [dem]
      * (one zoom deeper, as [PacksRoutes.holdingsHere] asks) over the lookup's inputs [holdings], with the holdings the tile paths
-     * draw from, [vectorServes] and [demServes] (by name, `cache` for the tiles kept from viewing; null: nothing on the phone
-     * draws it).
+     * draw from, [vectorServes] and [demPathServes] (by name, `cache` for the tiles kept from viewing; null: the tile paths'
+     * answer names none, and the lookup's own serving member stands, else nothing on the phone draws it).
      */
     fun lines(
         zoom: Double, lat: Double, lon: Double, holdings: List<Holdings.Holding>, vector: Holdings.Here, dem: Holdings.Here,
-        vectorServes: String?, demServes: String?,
+        vectorServes: String?, demPathServes: String?,
     ): List<String> {
         val net = vector.network ?: dem.network
         val allowed = net?.allowed == true
+        // Where the tile paths' answer names nothing, the lookup's own serving member (a tile kept from viewing, which the
+        // tile path reads before the network; `tilePathServes` names the cache only at the overview's zooms).
+        val vectorBy = vectorServes ?: vector.serving?.holding?.name
+        val demServes = demPathServes ?: dem.serving?.holding?.name
         // Offline past a map's deepest vector zoom nothing serves the vector tile and the map's roads are enlarged.
-        val enlarged = vector.shallower.firstOrNull()?.takeIf { vectorServes == null && !allowed }
-        val roads = vectorServes ?: enlarged?.holding?.name
+        val enlarged = vector.shallower.firstOrNull()?.takeIf { vectorBy == null && !allowed }
+        val roads = vectorBy ?: enlarged?.holding?.name
         // Each holding once, in the lookup's order (vector's members, then elevation's, then the shallower ones).
         val all = LinkedHashMap<String, Holdings.Holding>()
         for (m in vector.members + dem.members + vector.shallower) all.putIfAbsent(m.holding.name, m.holding)
@@ -132,8 +136,8 @@ object CoveragePanel {
             val depth = here.serving?.depth ?: continue
             if (here.members.any { !it.serves && it.how == Holdings.How.EDGE && it.depth > depth }) return FINER_MAP_ENDS
         }
-        if (enlarged != null) return enlarged(enlarged.depth)
-        if (vector.serving?.holding?.kind == Holdings.Kind.OVERVIEW) {
+        val roads = vector.serving ?: enlarged
+        if (roads?.holding?.kind == Holdings.Kind.OVERVIEW) {
             val z = floor(zoom).toInt()
             val ahead = holdings.filter { h ->
                 !h.off && (h.kind == Holdings.Kind.MAP || h.kind == Holdings.Kind.AREA) &&
@@ -141,6 +145,7 @@ object CoveragePanel {
             }.minByOrNull { it.vector!!.minZoom }
             if (ahead != null) return startsAt(ahead.name, ahead.vector!!.minZoom)
         }
+        if (enlarged != null) return enlarged(enlarged.depth)
         return null
     }
 
@@ -203,17 +208,17 @@ private val SectionInk = Color(0xFF2B2420)
 /**
  * T360: the panel as a section of the chip's open card ([lines] from [OnlineUi.coverage]): its heading with the help icon, then
  * at most [CoveragePanel.MAX_LINES] lines and "and N more". The lines are plain text (none tappable): a tap on them reaches the
- * card, which closes. The section is held to [maxHeightDp] and scrolls past it, so the card shortens before the layout rule
+ * card, which closes. The section is held to [maxHeightDp] and scrolls past it (on its side without the heading: [heading] false), so the card shortens before the layout rule
  * would hide the whole online column for want of room (T343's follow-up).
  */
 @Composable
-internal fun CoverageSection(lines: List<String>, maxHeightDp: Int) {
+internal fun CoverageSection(lines: List<String>, maxHeightDp: Int, heading: Boolean = true) {
     val (shown, rest) = CoveragePanel.fit(lines)
     Column(
         Modifier.control("coveragePanel").heightIn(max = maxHeightDp.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (heading) Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(CoveragePanel.HEADING, Modifier.weight(1f, fill = false), style = TextStyle(color = SectionInk, fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
             HelpIcon("online.coverage")
         }

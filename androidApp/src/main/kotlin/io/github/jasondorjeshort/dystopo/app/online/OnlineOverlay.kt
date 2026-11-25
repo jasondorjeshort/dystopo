@@ -399,7 +399,8 @@ fun OnlineOverlay() {
         }
     }
     val cfg = androidx.compose.ui.platform.LocalConfiguration.current
-    val cramped = cfg.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && cfg.fontScale >= CRAMPED_FONT_SCALE
+    val side = cfg.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE // T360
+    val cramped = side && cfg.fontScale >= CRAMPED_FONT_SCALE
     OnlineChip.cramped = cramped
     val u = ui
     if (u == null || u.hidden) {
@@ -411,7 +412,7 @@ fun OnlineOverlay() {
             // Below the search box (T39), which is drawn after this overlay so its results cover it; T91: below its
             // measured bottom, so the "Indexing places" line no longer runs into it; T239: where the layout rule puts it
             // (under the navigation card while navigating), the chip's card (T236) inside it.
-            Modifier.align(Alignment.TopStart).padding(start = 8.dp).widthIn(max = 260.dp).control("onlineIndicator") // T238
+            Modifier.align(Alignment.TopStart).padding(start = 8.dp).widthIn(max = if (OnlineChip.open && side) SIDE_CARD_DP.dp else 260.dp).control("onlineIndicator") // T238; T360: wider on its side
                 .onGloballyPositioned { io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsAt(it) }, // T57: catalog fits keep clear
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -462,11 +463,29 @@ fun OnlineOverlay() {
 }
 
 /**
- * T360: the coverage section's greatest height: [COVERAGE_SHARE] of the window's height (upright at font 1.0, five lines and
- * the heading fit whole; on its side at a large font the section scrolls).
+ * T360: the coverage section's greatest height. Upright: [COVERAGE_SHARE] of the window's height (five lines and the heading
+ * fit whole at font 1.0). On its side the window is about 410 dp tall and the open card already fills the column down to the
+ * lower controls (measured at font 1.0: 14 dp to spare), so the card is drawn [SIDE_CARD_DP] wide (its two sentences take a
+ * line each) and the section shows its lines without the heading, [SIDE_LINES] lines high, scrolling past them. From font 1.5 on its side ([OnlineChip.cramped]) not one line fits beside
+ * the card (at 2.0, one line hid the whole column), so the section is left out there and `GET /online` still lists it.
  */
 @Composable
-private fun coverageMaxDp(): Int = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * COVERAGE_SHARE).toInt()
+private fun coverageMaxDp(): Int {
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    if (!coverageSide()) return (cfg.screenHeightDp * COVERAGE_SHARE).toInt()
+    if (cfg.fontScale >= CRAMPED_FONT_SCALE) return 0 // cramped: not one line fits (measured at 2.0: the column hid with one)
+    val lines = SIDE_LINES
+    return with(androidx.compose.ui.platform.LocalDensity.current) { (lines * SIDE_LINE_SP).sp.toDp().value.toInt() }
+}
+
+@Composable
+private fun coverageSide(): Boolean =
+    androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+private const val SIDE_CARD_DP = 320
+private const val SIDE_LINES = 2
+/** A 12 sp line's height with its spacing. */
+private const val SIDE_LINE_SP = 17
 
 private const val COVERAGE_SHARE = 0.3f
 // end T360
@@ -489,7 +508,7 @@ private fun ChipCard(u: OnlineUi) {
         u.cacheLine?.let { BasicText(it, style = TextStyle(color = Grey, fontSize = 12.sp)) }
         // T360: the coverage panel, always shown in the open card; held to a share of the window's height and scrolled past it,
         // so the card shortens before the layout rule hides the column.
-        u.coverage?.let { CoverageSection(it, coverageMaxDp()) }
+        u.coverage?.let { l -> coverageMaxDp().takeIf { it > 0 }?.let { CoverageSection(l, it, heading = !coverageSide()) } }
         // end T360
         u.link?.let { l ->
             BasicText(

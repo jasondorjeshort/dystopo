@@ -106,6 +106,21 @@ class CoveragePanelTest {
     }
 
     @Test
+    fun outsideTheMapsTheTilesKeptFromViewingDrawWhereTheTilePathsNameNone() {
+        // Offline outside both maps, the view seen earlier: the lookup serves both tiles from the cache, which the tile paths
+        // read before the network (`tilePathServes` names the cache only at the overview's zooms), so it is shown, not the
+        // world overview enlarged.
+        val cache = Holding("cache", Kind.CACHE, Stored(0, 14), Stored(0, 15), VectorProfile.OPENMAPTILES, cells = { _, _, _, _ -> true })
+        val out = 46.0 to -121.7
+        assertEquals(listOf("Viewed earlier · shown", "Online · not reachable now"), lines(here(out, 12.0, listOf(wide, fine, world, cache), online(allowed = false))))
+        // Nothing kept: the overview, enlarged.
+        assertEquals(
+            listOf("World overview · roads shown", "Coarser here: roads enlarged from z5", "Online · not reachable now"),
+            lines(here(out, 12.0, listOf(wide, fine, world), online(allowed = false))),
+        )
+    }
+
+    @Test
     fun steppedDown() {
         // Near the fine map's edge at z11 its box covers only part of the vector tile: the wide map draws the roads, the finer one
         // is passed over there (its elevation tile, one zoom deeper, lies inside it).
@@ -117,6 +132,8 @@ class CoveragePanelTest {
         // At z5 the world overview draws where the maps start at z8.
         val low = lines(here(summit, 5.0, listOf(wide, fine, world), null))
         assertEquals(listOf("World overview · roads shown", "Coarser here: rainier-wide starts at z8"), low)
+        // At z6.5, offline, past the overview's z5: its roads enlarged, and the maps still start deeper.
+        assertEquals(listOf("World overview · roads shown", "Coarser here: rainier-wide starts at z8", "Online · not reachable now"), lines(here(summit, 6.5, listOf(wide, fine, world), online(allowed = false))))
     }
 
     @Test

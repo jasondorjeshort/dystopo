@@ -194,7 +194,7 @@ object Holdings {
     /**
      * The lookup's answer for tile [z]/[x]/[y] of [role]: [members], every holding that answers it in [ORDER] (the one that
      * serves flagged), [off] the holdings switched off that would, [network] what the network adds (null with no source set).
-     * T360: [shallower], for a vector tile, the maps and areas (on) that store only the tile's ancestor, at their stored maximum
+     * T360: [shallower], for a vector tile, the maps, areas (on) and the world overview that store only the tile's ancestor, at their stored maximum
      * (MapLibre enlarges a vector source past its stored zooms, so where nothing in [members] serves the tile, the first of
      * these is what the map draws offline); in [ORDER], none serving. Empty for elevation (a map past its depth is a member,
      * [How.SYNTHESISES]).
@@ -267,10 +267,10 @@ object Holdings {
         return Here(role, z, x, y, members, off, net, shallower(role, z, x, y, holdings))
     }
 
-    /** T360: [Here.shallower]: the maps and areas (on) whose vector data stops above [z] and stores the tile's ancestor whole. */
+    /** T360: [Here.shallower]: the maps, areas (on) and the overview whose vector data stops above [z] and stores the tile's ancestor whole. */
     private fun shallower(role: Role, z: Int, x: Int, y: Int, holdings: List<Holding>): List<Member> {
         if (role != Role.VECTOR) return emptyList()
-        return holdings.filter { !it.off && (it.kind == Kind.MAP || it.kind == Kind.AREA) }.mapNotNull { h ->
+        return holdings.filter { !it.off && it.kind != Kind.CACHE }.mapNotNull { h ->
             val d = z - (h.vector?.maxZoom ?: return@mapNotNull null)
             if (d <= 0) null else member(h, role, z - d, x shr d, y shr d)?.takeIf { it.how == How.STORES }
         }.sortedWith(ORDER)

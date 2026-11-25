@@ -248,6 +248,10 @@ class HoldingsTest {
         // A map that is off is not listed; elevation never lists any (a map past its depth is a member).
         assertEquals(emptyList(), Holdings.point(Role.VECTOR, wideOnly.first, wideOnly.second, 14, listOf(map("wide", wideBox, 13, 11, off = true)), null).shallower)
         assertEquals(emptyList(), Holdings.point(Role.DEM, wideOnly.first, wideOnly.second, 14, h, null).shallower)
+        // The world overview (z0 to z5) is listed past its zooms too, after the maps.
+        val world = Holding("world", Kind.OVERVIEW, Stored(0, 5, PackBounds(-180.0, -85.0, 180.0, 85.0)), null, VectorProfile.OPENMAPTILES)
+        assertEquals(listOf("world"), Holdings.point(Role.VECTOR, summit.first, summit.second, 6, h + world, null).shallower.map { it.holding.name })
+        assertEquals(listOf("wide", "world"), Holdings.point(Role.VECTOR, wideOnly.first, wideOnly.second, 14, h + world, null).shallower.map { it.holding.name })
         // Who serves is unchanged.
         assertEquals(null, here.serving)
     }
