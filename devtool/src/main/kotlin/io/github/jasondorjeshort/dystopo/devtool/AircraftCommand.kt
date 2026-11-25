@@ -11,9 +11,7 @@ import com.github.ajalt.clikt.parameters.types.int
 import io.github.jasondorjeshort.dystopo.aircraft.AdsbLolSource
 import io.github.jasondorjeshort.dystopo.aircraft.AircraftFetch
 import io.github.jasondorjeshort.dystopo.aircraft.AircraftHttp
-import io.github.jasondorjeshort.dystopo.aircraft.AircraftHttpReply
 import io.github.jasondorjeshort.dystopo.aircraft.AircraftJson
-import io.github.jasondorjeshort.dystopo.aircraft.AircraftNoConnection
 import io.github.jasondorjeshort.dystopo.aircraft.AircraftQuery
 import io.github.jasondorjeshort.dystopo.aircraft.AircraftTracker
 import io.github.jasondorjeshort.dystopo.aircraft.AirportNaming
@@ -27,7 +25,6 @@ import io.github.jasondorjeshort.dystopo.server.reportJson
 import io.github.jasondorjeshort.dystopo.sources.elevation.Geoids
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.time.LocalDate
@@ -241,10 +238,15 @@ class AircraftRoutesCommand : CliktCommand(name = "aircraft-routes") {
  * phone measures it from its fix), bearing, distance and elevation angle from `--from` (Paradise by default) and the
  * route checked against the shipped table. `--live` polls adsb.lol once around `--from` and prints only the request's
  * path, status, time and count (feed data is not printed or kept: ODbL, the finding).
+ *
+ * T365: `--record --area <name>` saves every answer of a run of polls into `out/flights/` ([FlightRecorder], a developer's
+ * recording, never committed), and `--report <folder>` measures the tracker's guesses against it ([FlightReport]). Every
+ * request to the feed (`--live` and `--record`) is counted per UTC day in the cache ([RequestDay]); a run that would take
+ * the day past 240 is refused.
  */
 class AircraftCommand : CliktCommand(name = "aircraft") {
     override fun help(context: Context) =
-        "The Flights layer on the replay fixture (or --live: one poll's path, time and count); prints a JSON report."
+        "The Flights layer on the replay fixture (or --live: one poll's path, time and count; --record: a developer's recording of polls into out/flights/; --report: the error of a guessed position measured from a recording); prints a JSON report."
 
     private val replay by option("--replay", help = "the replay file").default(REPLAY_FIXTURE)
     private val at by option("--at", help = "seconds into the replay").double().default(60.0)
@@ -255,15 +257,30 @@ class AircraftCommand : CliktCommand(name = "aircraft") {
     private val routes by option("--routes", help = "the route table").default(ROUTE_ASSET)
     private val naming by option("--naming", help = "both, codes or cities").default("both")
     private val live by option("--live", help = "poll adsb.lol once around --from").flag()
-    private val radius by option("--radius", help = "nautical miles for --live").int().default(50)
+    private val radius by option("--radius", help = "nautical miles for --live and --record").int().default(50)
     private val polls by option("--polls", help = "saved readsb answers (files or a folder of *.json): route lookups and plausibility before and after round 3, counts only")
     private val airline by option("--airline", help = "with --polls: also the counts for call signs starting so (e.g. UAL)")
+    private val record by option("--record", help = "poll the live feed every --interval for --minutes around --area's centre and save each answer into out/flights/ (counted per UTC day; refused past ${RequestDay.DAY_LIMIT})").flag()
+    private val area by option("--area", help = "with --record: a named area (its centre, rounded to 0.1 degree)")
+    private val interval by option("--interval", help = "with --record: seconds between polls").int().default(30)
+    private val minutes by option("--minutes", help = "with --record: how long to record").double().default(120.0)
+    private val outDir by option("--out", help = "with --record: the folder (default out/flights/<area>-<UTC start>)")
+    private val dryRun by option("--dry-run", help = "with --record: print the plan and the day's count, send nothing").flag()
+    private val report by option("--report", help = "a recorded folder: the guess's error at 30, 120, 300 and 600 s by phase, and the feed's turn-rate and roll fields")
+    private val every by option("--every", help = "with --report: feed the tracker every k-th answer, e.g. 2,4,10 (60, 120 and 300 s at 30 s)")
+    private val noHorizons by option("--no-horizons", help = "with --report: only the --every runs").flag()
+    private val tolerance by option("--tolerance", help = "with --report: how far (s) the real fix may be from the horizon (default half the interval)").double()
 
     override fun run() {
         val t0 = System.nanoTime()
         val p = from.split(',').mapNotNull { it.trim().toDoubleOrNull() }
         if (p.size != 2) throw UsageError("--from takes lat,lon")
         val (lat, lon) = p
+        if (record) return printReport(this, recordRun() + ("ms" to (System.nanoTime() - t0) / 1_000_000))
+        report?.let { folder ->
+            val ks = every?.split(',')?.mapNotNull { it.trim().toIntOrNull()?.takeIf { k -> k >= 1 } }.orEmpty()
+            return printReport(this, FlightReport.report(File(folder), tolerance, ks, horizons = !noHorizons) + ("ms" to (System.nanoTime() - t0) / 1_000_000))
+        }
         if (live) return printReport(this, livePoll(lat, lon) + ("ms" to (System.nanoTime() - t0) / 1_000_000))
         polls?.let { return printReport(this, pollsReport(it) + ("ms" to (System.nanoTime() - t0) / 1_000_000)) }
         val names = AirportNaming.of(naming) ?: throw UsageError("--naming takes both, codes or cities")
@@ -326,23 +343,27 @@ class AircraftCommand : CliktCommand(name = "aircraft") {
         )
     }
 
+    private fun recordRun(): Map<String, Any?> {
+        val name = area ?: throw UsageError("--record takes --area <name> (see 'devtool areas')")
+        val areas = Areas.load()
+        val box = (areas[name] ?: throw UsageError(Areas.unknownAreaMessage(name, areas))).boundingBox()
+        if (interval < 10) throw UsageError("--interval is at least 10 s")
+        val q = AircraftQuery(AircraftQuery.round((box.south + box.north) / 2), AircraftQuery.round((box.west + box.east) / 2), radius.coerceIn(1, 250))
+        val now = System.currentTimeMillis()
+        val polls = Math.ceil(minutes * 60 / interval).toInt().coerceAtLeast(1)
+        val folder = outDir?.let { File(it) } ?: FlightRecorder.defaultFolder(name, now)
+        val rec = FlightRecorder(folder, q, interval, polls, name, RequestDay.shared(), devtoolAircraftHttp, log = { System.err.println(it) })
+        if (dryRun) return rec.plan(now) + ("sent" to 0)
+        return rec.run()
+    }
+
     private fun livePoll(lat: Double, lon: Double): Map<String, Any?> {
         val q = AircraftQuery(AircraftQuery.round(lat), AircraftQuery.round(lon), radius.coerceIn(1, 250))
         var status: Int? = null
-        val http = AircraftHttp { url, headers ->
-            val c = URI(url).toURL().openConnection() as HttpURLConnection
-            c.connectTimeout = 5_000
-            c.readTimeout = 20_000
-            for ((k, v) in headers) c.setRequestProperty(k, v)
-            try {
-                c.connect()
-            } catch (e: IOException) {
-                throw AircraftNoConnection("${e.javaClass.simpleName}: ${e.message}")
-            }
-            status = c.responseCode
-            val body = if (c.responseCode in 200..299) c.inputStream.use { it.readBytes() } else ByteArray(0)
-            AircraftHttpReply(c.responseCode, body, c.getHeaderField("Retry-After"))
-        }
+        val http = AircraftHttp { url, headers -> devtoolAircraftHttp.get(url, headers).also { status = it.status } }
+        val day = RequestDay.shared()
+        day.check(System.currentTimeMillis(), 1)
+        val counted = day.spend(System.currentTimeMillis())
         val src = AdsbLolSource(http, "devtool", { System.currentTimeMillis() })
         val f = src.poll(q, System.currentTimeMillis())
         return linkedMapOf(
@@ -355,6 +376,7 @@ class AircraftCommand : CliktCommand(name = "aircraft") {
             "bytes" to (f as? AircraftFetch.Ok)?.poll?.bytes,
             "error" to when (f) { is AircraftFetch.Failed -> f.reason; is AircraftFetch.Offline -> f.reason; is AircraftFetch.Limited -> "429, retry after ${f.retryAfterS} s"; else -> null },
             "kept" to "nothing: counts only (ODbL feed data stays in memory)",
+            "dayCount" to counted?.requests, "dayLimit" to day.limit,
         )
     }
 
