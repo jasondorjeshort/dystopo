@@ -531,8 +531,13 @@ object MapLayout {
         val d = res.displayMetrics.density
         val root = rootSize()
         if (root[0] <= 0f || root[1] <= 0f) return null
-        val input = inputFrom(c, d, root, insetsPx(), res.configuration.fontScale)
-        val placed = OverlayLayout.place(input, latch)
+        val measured = inputFrom(c, d, root, insetsPx(), res.configuration.fontScale)
+        // T360: with the chip's card open, the online column at the height the rule still places, its coverage section taking
+        // what is left (down to nothing), measured within that limit.
+        val coverage = coverageFit(measured, d)
+        val input = coverage?.let { measured.copy(online = measured.online!!.copy(height = it.first)) } ?: measured
+        val placed = coverage?.second ?: OverlayLayout.place(input, latch)
+        // end T360
         latch = placed.latch
         fun px(v: Float) = Math.round(v * d)
         val targets = LinkedHashMap<String, MeasuredControls.Target>()
@@ -554,6 +559,7 @@ object MapLayout {
             if (all != ui.allScroll) ui.allScroll = all
         }
         stripLimit(placed, d)?.let { limits[nameOf(OverlayIds.STRIP)] = it }
+        coverage?.let { limits[nameOf(OverlayIds.ONLINE)] = MeasuredControls.Limit(maxHeightPx = Math.floor((it.first * d).toDouble()).toInt()) } // T360
         // The compass: where the rule puts it, or with the map facing north where it would go once turned.
         val compassAt = placed[OverlayIds.COMPASS] ?: if (input.compass == null) {
             CompassView.sizePx()?.let { s -> OverlayLayout.place(input.copy(compass = OverlaySize(s[0] / d, s[1] / d)), latch)[OverlayIds.COMPASS] }
@@ -579,6 +585,20 @@ object MapLayout {
     internal fun stripLimit(placed: OverlayPlacement, d: Float): MeasuredControls.Limit? =
         if (placed[OverlayIds.STRIP]?.rect != null && placed.stripRoom > 0f) MeasuredControls.Limit(maxWidthPx = ceil(placed.stripRoom * d).toInt() + 1, entries = placed.entriesDrawn)
         else null
+
+    /**
+     * T360: while the coverage section is up (the chip's card open), the online column's height the rule still places and that
+     * placement ([io.github.jasondorjeshort.dystopo.app.online.CoveragePanel.fitColumn]); null while it is not.
+     */
+    private fun coverageFit(input: OverlayInput, d: Float): Pair<Float, OverlayPlacement>? {
+        val cp = io.github.jasondorjeshort.dystopo.app.online.CoveragePanel
+        val online = input.online ?: return null
+        if (cp.capPx <= 0) return null
+        val natural = minOf(cp.contentPx, cp.capPx) / d
+        return cp.fitColumn(online.height, cp.viewportPx / d, natural, { h -> OverlayLayout.place(input.copy(online = online.copy(height = h)), latch) }) {
+            it[OverlayIds.ONLINE]?.rect != null
+        }
+    }
 
     /** T239: the tops (px) the last rule drew its elements at, by manifest id; for readers off the main thread (`GET /nav`). */
     @Volatile var ruledTopsPx: Map<String, Int> = emptyMap()

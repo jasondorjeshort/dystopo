@@ -144,4 +144,29 @@ class CoveragePanelTest {
         assertEquals("and 3 more", CoveragePanel.json(many)!!["more"])
         assertEquals(null, CoveragePanel.json(many.take(2))!!["more"])
     }
+
+    @Test
+    fun theSectionShortensDownToNothingBeforeTheColumnHides() {
+        // The rule places the column while it is at most `room` tall: a stand-in for OverlayLayout.place.
+        fun fit(room: Float, measured: Float, viewport: Float, natural: Float) =
+            CoveragePanel.fitColumn(measured, viewport, natural, { h -> h to (h <= room) }) { it.second }
+        // Room for all of it: the whole section.
+        assertEquals(300f, fit(400f, 300f, 100f, 100f).first)
+        // Room for part: the most the rule places, within 1 dp; the column shown.
+        val part = fit(250f, 300f, 100f, 100f)
+        assertTrue(part.first in 249f..250f && part.second.second, "$part")
+        // Room for the card alone: the section shortens to nothing, the column shown.
+        val none = fit(200f, 300f, 100f, 100f)
+        assertTrue(none.first in 200f..200.5f && none.second.second, "$none")
+        // Not even the card alone: the whole height, as before the section (the column hides for the card, not the section).
+        assertEquals(300f, fit(150f, 300f, 100f, 100f).first)
+        // Measured within an earlier limit (the section drawn 20 of its 100 dp): the same answer as measured whole.
+        assertTrue(fit(250f, 220f, 20f, 100f).first in 249f..250f)
+        // Wherever the column fits without the section, it fits with it.
+        for (room in 150..450 step 7) {
+            val r = room.toFloat()
+            val (h, p) = fit(r, 300f, 100f, 100f)
+            if (r >= 200f) assertTrue(p.second && h <= r, "room $r: $h")
+        }
+    }
 }

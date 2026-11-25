@@ -971,15 +971,30 @@ try:
     cov["coverage-panel"][1](vctx)
     paths = [p for _m, p in vs.calls]
     assert "/readout/reset" in paths and "/online/chip?open=1" in paths and any(p.startswith("/camera?lat=46.8529") for p in paths), paths
+    assert paths.index("/online/cache/clear") < paths.index("/online/chip?open=1"), paths  # the cache pinned before the card
     assert started == [1], started
     vs.calls.clear()
     cov["coverage-panel"][2](vctx)
     assert started == [1, -1] and ("POST", "/online/chip?open=0") in vs.calls and vctx.fix_feed is None, (started, vs.calls)
+    started.clear()
+    fctx = type("C", (), {"srv": CoverageSrv(first="Nothing on this phone here")})()
     try:
-        cov["coverage-panel"][1](type("C", (), {"srv": CoverageSrv(first="Nothing on this phone here")})())
+        cov["coverage-panel"][1](fctx)
         raise AssertionError("a panel with no map shown passed")
     except RuntimeError as e:
         assert "not steady" in str(e) and "not an offline map" in str(e), e
+    # A setup that raised: the run's loop still calls the screen's end (in its finally), which stops the feed.
+    assert started == [1], started
+    cov["coverage-panel"][2](fctx)
+    assert started == [1, -1] and fctx.fix_feed is None, started
+    import inspect
+    loop = inspect.getsource(a11y.run)
+    assert loop.index("setup(c)") < loop.index("finally:", loop.index("setup(c)")) < loop.index("teardown(c)"), "teardown must run in the screen's finally"
+    # The real feed's thread ends on stop.
+    real = _feed(CoverageSrv())
+    real.thread.start()
+    real.stop()
+    assert not real.thread.is_alive()
     started.clear()
     dctx = type("C", (), {"srv": CoverageSrv()})()
     cov["download-card"][1](dctx)

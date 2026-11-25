@@ -428,7 +428,7 @@ fun OnlineOverlay() {
                 Box(Modifier.size(9.dp).background(color(dot), CircleShape))
                 BasicText(u.text, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
             }
-            if (open) ChipCard(u) else {
+            if (open) ChipCard(u, Modifier.weight(1f, fill = false)) else { // T360: weighted, the rule's limit shortens its section
                 OnlineChip.cardPx = null
                 // T80: why the phone is not reading the sources (the session's download limit, or mobile data turned off by the user; T83).
                 u.notice?.let { Small(it, Red) {} }
@@ -495,9 +495,9 @@ private const val CRAMPED_FONT_SCALE = 1.5f
 
 /** T236: the chip's card: the two sentences, the cache's figure (T242: the indexing line while partial), at most one link. */
 @Composable
-private fun ChipCard(u: OnlineUi) {
+private fun ChipCard(u: OnlineUi, modifier: Modifier = Modifier) {
     Column(
-        Modifier.control("onlineCard").background(Chip, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)) // T238: the tag
+        modifier.control("onlineCard").background(Chip, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)) // T238: the tag
             .clickable { OnlineChip.open = false } // a tap on the card closes it too, as on the chip; the link has its own
             .onGloballyPositioned { c -> val b = c.boundsInRoot(); OnlineChip.cardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) }
             .padding(horizontal = 10.dp, vertical = 8.dp),

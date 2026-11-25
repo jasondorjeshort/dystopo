@@ -1535,10 +1535,15 @@ def scr_coverage_panel(c):
     - the clock: the readout strip's caption follows the time since the last fix: a fix every second (FixFeed) from here to
       end_coverage_panel, after a reset (no climb left by an earlier screen's fixes);
     - the maps on the phone: the seeded Rainier map, which must be the first line, shown (checked, else the screen fails);
-    - the network, the server and the cache: they word the network's line and may add a "Viewed earlier" line under the
-      map (tiles an earlier screen fetched there); neither is changed here (an emptied cache would change later screens),
-      and both are written to the log. The card's text is one merged label, so a line more or less moves no finding's key;
+    - the online tile cache: a terrain tile an earlier screen left there (offline-maps-off views the summit with the map
+      off, so the server's tiles are cached) is ranked by the server's stored depth, z15, ahead of the map's z14, and the
+      scene became "<map> · roads shown", "Viewed earlier · terrain shown" (the verifier's sweep). Pinned by emptying the
+      cache's tiles first (`POST /online/cache/clear`; the offline areas' pinned tiles are kept): with the map on, a view
+      at z13 over the map fetches nothing (the map stores the tiles the view asks), so the scene stays the map's. Not put
+      back (cached tiles cannot be): every later screen meets an empty cache, as on a fresh boot, refilled by its views;
+    - the network and the server word the network's line; neither is changed here, both are written to the log;
     - the card: closed again by end_coverage_panel (close_all also closes it before every screen)."""
+    c.srv.ok("POST", "/online/cache/clear")
     c.srv.ok("POST", "/readout/reset")
     c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
     c.srv.ok("POST", f"/camera?lat={SUMMIT[0]}&lon={SUMMIT[1]}&zoom=13&bearing=0")

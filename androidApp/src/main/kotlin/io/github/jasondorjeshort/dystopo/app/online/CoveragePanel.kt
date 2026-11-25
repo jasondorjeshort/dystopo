@@ -2,6 +2,8 @@ package io.github.jasondorjeshort.dystopo.app.online
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.BasicText
@@ -190,6 +192,46 @@ object CoveragePanel {
         linkedMapOf("heading" to HEADING, "lines" to l, "shown" to shown, "more" to rest.takeIf { it > 0 }?.let { more(it) })
     }
 
+    // ---- The fit (the fix round): the section shortens, down to nothing, before the online column hides ----
+
+    /**
+     * The section's last measure, px (main thread; 0 while it is not composed): [viewportPx] the height drawn, [contentPx]
+     * its lines' whole height, [capPx] its own greatest height ([CoverageSection]'s `maxHeightDp`). The layout rule's pass
+     * (`MapLayout.ruleNow`) reads them for [fitColumn].
+     */
+    @Volatile var viewportPx = 0
+    @Volatile var contentPx = 0
+    @Volatile var capPx = 0
+
+    /**
+     * The online column's height for the layout rule, dp, by construction: [placeAt] is the rule's placement with the column
+     * that tall, [shown] whether it places the column there; the column was last measured [measuredDp] tall with the section
+     * [viewportDp] of its natural [naturalDp] (its lines, at most its own cap). The column without the section is the least;
+     * with the whole section the most. The answer is the most the rule still places (the section takes what is left, down to
+     * nothing), with that placement: where the least fits, the column never hides for the section; where even the least does
+     * not (the card alone does not fit), the most, as before T360. A 1 dp search. Pure, tested.
+     */
+    fun <P> fitColumn(measuredDp: Float, viewportDp: Float, naturalDp: Float, placeAt: (Float) -> P, shown: (P) -> Boolean): Pair<Float, P> {
+        val least = (measuredDp - viewportDp).coerceAtLeast(0f)
+        val most = least + naturalDp.coerceAtLeast(0f)
+        val full = placeAt(most)
+        if (shown(full) || naturalDp <= 0f) return most to full
+        val bottom = placeAt(least)
+        if (!shown(bottom)) return most to full
+        var lo = least
+        var best = bottom
+        var hi = most
+        while (hi - lo > 1f) {
+            val mid = (lo + hi) / 2f
+            val p = placeAt(mid)
+            if (shown(p)) {
+                lo = mid
+                best = p
+            } else hi = mid
+        }
+        return lo to best
+    }
+
     /**
      * The help beside the section's heading (`online.coverage`). Declared beside its icon ([CoverageSection]), gathered by
      * [io.github.jasondorjeshort.dystopo.app.help.HelpRegistry].
@@ -208,21 +250,35 @@ private val SectionInk = Color(0xFF2B2420)
 /**
  * T360: the panel as a section of the chip's open card ([lines] from [OnlineUi.coverage]): its heading with the help icon, then
  * at most [CoveragePanel.MAX_LINES] lines and "and N more". The lines are plain text (none tappable): a tap on them reaches the
- * card, which closes. The section is held to [maxHeightDp] and scrolls past it (on its side without the heading: [heading] false), so the card shortens before the layout rule
- * would hide the whole online column for want of room (T343's follow-up).
+ * card, which closes. The section is held to [maxHeightDp] and scrolls past it (on its side without the heading: [heading]
+ * false); within the layout rule's limit on the online column ([CoveragePanel.fitColumn]) it shortens further, down to
+ * nothing, so the card never hides the column where it would fit without the section (T343's follow-up).
  */
 @Composable
-internal fun CoverageSection(lines: List<String>, maxHeightDp: Int, heading: Boolean = true) {
+internal fun ColumnScope.CoverageSection(lines: List<String>, maxHeightDp: Int, heading: Boolean = true) {
     val (shown, rest) = CoveragePanel.fit(lines)
-    Column(
-        Modifier.testTag("coveragePanel").heightIn(max = maxHeightDp.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        if (heading) Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(CoveragePanel.HEADING, Modifier.weight(1f, fill = false), style = TextStyle(color = SectionInk, fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
-            HelpIcon("online.coverage")
+    CoveragePanel.capPx = with(androidx.compose.ui.platform.LocalDensity.current) { maxHeightDp.dp.roundToPx() }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            CoveragePanel.viewportPx = 0
+            CoveragePanel.contentPx = 0
+            CoveragePanel.capPx = 0
         }
-        shown.forEach { BasicText(it, style = TextStyle(color = SectionInk, fontSize = 12.sp)) }
-        if (rest > 0) BasicText(CoveragePanel.more(rest), style = TextStyle(color = SectionInk, fontSize = 12.sp))
+    }
+    Column(
+        // The fix round: weighted, so within the layout rule's limit on the online column the section takes what the card's
+        // other lines leave, down to nothing ([CoveragePanel.fitColumn]).
+        Modifier.testTag("coveragePanel").weight(1f, fill = false).heightIn(max = maxHeightDp.dp)
+            .onSizeChanged { CoveragePanel.viewportPx = it.height }
+            .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+    ) {
+        Column(Modifier.onSizeChanged { CoveragePanel.contentPx = it.height }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (heading) Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicText(CoveragePanel.HEADING, Modifier.weight(1f, fill = false), style = TextStyle(color = SectionInk, fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+                HelpIcon("online.coverage")
+            }
+            shown.forEach { BasicText(it, style = TextStyle(color = SectionInk, fontSize = 12.sp)) }
+            if (rest > 0) BasicText(CoveragePanel.more(rest), style = TextStyle(color = SectionInk, fontSize = 12.sp))
+        }
     }
 }
