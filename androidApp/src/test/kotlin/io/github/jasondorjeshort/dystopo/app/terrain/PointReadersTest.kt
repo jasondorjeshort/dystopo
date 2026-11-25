@@ -18,8 +18,8 @@ class PointReadersTest {
 
     private fun text(path: String): String = File(app, path).also { assertTrue(it.isFile, "missing $path: moved?") }.readText()
 
-    /** [path]'s code with comments blanked (KDoc names the old reads). */
-    private fun code(path: String): String = text(path).lines().filterNot { it.trimStart().startsWith("*") || it.trimStart().startsWith("/**") || it.trimStart().startsWith("//") }
+    /** [path]'s code with comments blanked (KDoc names the old reads) and `GET /readout/ground`'s bench (the old read, timed beside the new) left out. */
+    private fun code(path: String): String = text(path).replace(Regex("""private fun bench\([\s\S]*?// end T358"""), "").lines().filterNot { it.trimStart().startsWith("*") || it.trimStart().startsWith("/**") || it.trimStart().startsWith("//") }
         .joinToString("\n") { it.substringBefore(" // ") }
 
     private fun asks(mode: String) = Regex("""PointRead\.(sampler|at|pyramidAt)\([^\n]*PointRead\.Mode\.$mode""")

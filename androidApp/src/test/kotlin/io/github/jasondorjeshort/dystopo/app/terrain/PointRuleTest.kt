@@ -33,6 +33,15 @@ class PointRuleTest {
     }
 
     @Test
+    fun insideABoxInMetres() {
+        val box = io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.82, 46.80, -121.68, 46.90) // the fixture's fine map
+        // 0.0025 deg north of the south edge: about 278 m, inside T357's 300 m band (the merged read blends there).
+        assertEquals(278.3, PointRule.insideM(box, 46.8025, -121.75), 0.5)
+        assertEquals(true, PointRule.insideM(box, 46.85, -121.75) > 400.0)
+        assertEquals(true, PointRule.insideM(box, 46.79, -121.75) < 0.0)
+    }
+
+    @Test
     fun bilinearAsDemElevation() {
         assertEquals(15.0, PointRule.bilinear(10f, 20f, 10f, 20f, 0.5, 0.5), 1e-9)
         assertEquals(10.0, PointRule.bilinear(10f, 20f, 30f, 40f, 0.0, 0.0), 1e-9)

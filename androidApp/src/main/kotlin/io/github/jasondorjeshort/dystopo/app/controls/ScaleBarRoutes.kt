@@ -132,10 +132,13 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * T358, the ground height's read (ADR 0066 build task 4, `app/terrain/TerrainRead.kt` `PointRead`): `GET /readout` adds `ground`:
  *   `here` (the point read at the last fix, read held: `elevationM`, `source` a map's name, `cache` or `area`, `zoom`,
  *   `heldZoom` where a held cell is deeper than the maps, `ms`), `reads` per mode and reader (`behind.readout`,
- *   `behind.pressure`, `held.estimate`, `held.trips`, `behind.area`, ...), `readMs` per mode (`reads`, `avg`, `max`),
- *   `tilesAsked` (tiles the point reads fetched behind) and `generations`. `GET /readout/ground?lat=&lon=[&mode=held|behind]`
- *   reads one point (`held` by default, nothing started; `behind` asks the fetch behind as the readout does, and `behind`
- *   says what was done: `asked z/x/y`, `held`, `off`, `notAllowed`, `noSource`, `launch`), with `counters` as `ground`.
+ *   `behind.pressure`, `held.estimate`, `held.trips`, `behind.area`, ...), `readMs` per mode (`timed`, `avg`, `max`: every
+ *   `behind` read, one `held` read in 64), `tilesAsked` (tiles the point reads fetched behind), `generations`, `fastReads`
+ *   (reads of one source alone, away from every edge's blend) and `slowest` (its `ms` and parts: `hereMs`, `behindMs`,
+ *   `readMs`). `GET /readout/ground?lat=&lon=[&mode=held|behind]` reads one point (`held` by default, nothing started;
+ *   `behind` asks the fetch behind as the readout does, and `behind` says what was done: `asked z/x/y`, `held`, `off`,
+ *   `notAllowed`, `noSource`, `launch`), with `counters` as `ground`; `&bench=N` times N held reads within 200 m against
+ *   the chosen map's own pyramid as read before T358 (`pointReadUs`, `chosenMapPyramidUs`).
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
  * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).
@@ -170,7 +173,34 @@ object ScaleBarRoutes {
             "behind" -> io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND
             else -> return Response.json(mapOf("error" to "mode is held or behind"), 400)
         }
+        r.query["bench"]?.toIntOrNull()?.coerceIn(1, 200_000)?.let { n -> return Response.json(bench(lat, lon, n)) }
         return Response.json(linkedMapOf<String, Any?>("lat" to lat, "lon" to lon, "mode" to mode.code) + pointRead.at(lat, lon, mode, "route").json() + ("counters" to pointRead.json()))
+    }
+
+    /**
+     * `GET /readout/ground?lat=&lon=&bench=N`: N reads held within 200 m of the point, timed, against N reads of the chosen map's
+     * own pyramid as the readers read it before T358 (`DemElevation`, z13 at most); both warmed first. The position estimate's cost.
+     */
+    private fun bench(lat: Double, lon: Double, n: Int): Map<String, Any?> {
+        val app = DystopoApp.instance
+        val rnd = java.util.Random(358)
+        val pts = DoubleArray(2 * n) { i -> if (i % 2 == 0) lat + (rnd.nextDouble() - 0.5) * 0.0036 else lon + (rnd.nextDouble() - 0.5) * 0.0052 }
+        val sampler = pointRead.sampler(io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.HELD, "bench")
+        val pk = app.tiles.packs.dem
+        val old = pk?.let { p ->
+            val pyr = io.github.jasondorjeshort.dystopo.tiles.DemPyramid(p.header.minZoom, p.header.maxZoom, io.github.jasondorjeshort.dystopo.app.TileService.demDecoder(), cacheTiles = 16) { z, x, y -> p.tile(z, x, y) }
+            val s = io.github.jasondorjeshort.dystopo.routing.DemElevation(pyr)
+            val lock = Any()
+            io.github.jasondorjeshort.dystopo.routing.ElevationSampler { la, lo -> synchronized(lock) { s.elevation(la, lo) } }
+        }
+        fun time(s: io.github.jasondorjeshort.dystopo.routing.ElevationSampler): Double {
+            for (i in 0 until minOf(n, 200)) s.elevation(pts[2 * i], pts[2 * i + 1]) // warm: the decodes, the JIT
+            val t0 = System.nanoTime()
+            var sum = 0.0
+            for (i in 0 until n) sum += s.elevation(pts[2 * i], pts[2 * i + 1]).takeIf { it.isFinite() } ?: 0.0
+            return Math.round((System.nanoTime() - t0) / 10.0 / n) / 100.0
+        }
+        return linkedMapOf("reads" to n, "pointReadUs" to time(sampler), "chosenMap" to pk?.let { app.tiles.packs.packOf(it) }, "chosenMapPyramidUs" to old?.let { time(it) })
     }
     // end T358
 
