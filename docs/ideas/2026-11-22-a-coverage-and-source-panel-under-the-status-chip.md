@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: feature
-related: [2026-11-22-one-what-does-the-phone-hold-here-function.md, 2026-11-22-colour-the-other-maps-outlines-by-resolution-in-the-downloader.md]
+related: [2026-11-22-one-what-does-the-phone-hold-here-function.md]
 ---
 
 # A coverage-and-source panel under the status chip
