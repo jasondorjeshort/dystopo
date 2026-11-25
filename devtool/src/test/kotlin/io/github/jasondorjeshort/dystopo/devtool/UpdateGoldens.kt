@@ -40,6 +40,9 @@ fun main(args: Array<String>) {
     File(dir, "panorama").mkdirs()
     write(PanoramaGolden.FILE, ByteArrayOutputStream().also { ImageIO.write(PanoramaGolden.render().image, "png", it) }.toByteArray())
     write(PanoramaGolden.ROLLED_FILE, ByteArrayOutputStream().also { ImageIO.write(PanoramaGolden.render(rollDeg = PanoramaGolden.ROLLED_DEG).image, "png", it) }.toByteArray())
+    // T357: the edge join's goldens, in their own subdirectory (EdgeGolden).
+    File(dir, "edge").mkdirs()
+    for (case in EdgeGolden.cases) write(case.file, ByteArrayOutputStream().also { ImageIO.write(EdgeGolden.render(case), "png", it) }.toByteArray())
     // Files no longer in the case list would linger as unused goldens; report them.
     val stale = dir.listFiles { f ->
         (f.name.endsWith(".png") && Goldens.cases.none { it.fileName == f.name }) ||

@@ -113,6 +113,7 @@ class Routes(private val app: DystopoApp) {
         // A Pack's own name is its role (`dem`, `osm`); the log names the region it belongs to.
         fun region(p: Pack?): String? = p?.let { pack -> t.packs.regions.firstOrNull { it.dem === pack || it.osm === pack }?.name ?: pack.file.name }
         t.heldLogName(kind, z, x, y)?.let { return it } // T356: an area's cell (`area:<name>`) or a cached tile (`cache`) deeper than the maps
+        if (o == null || (if (kind == "contours") o.packCoversContour(z, x, y) else o.packCoversDem(z, x, y))) t.edgeLogName(kind, z, x, y)?.let { return it } // T357: `edge:<maps>`, composed across a map's edge
         when (kind) {
             "osm" -> if (o != null && o.vectorAnswer(z, x, y).serves.let { it == io.github.jasondorjeshort.dystopo.packs.Holdings.Source.NETWORK || it == io.github.jasondorjeshort.dystopo.packs.Holdings.Source.CACHE }) online else region(t.packs.osmCandidates(z, x, y).firstOrNull()) // T341: the kept online tile at the overview's zooms
             "contours" -> if (o != null && !o.packCoversContour(z, x, y)) online else region(t.packs.demFor(z, x, y, io.github.jasondorjeshort.dystopo.packs.PackRoleZooms.CONTOUR))

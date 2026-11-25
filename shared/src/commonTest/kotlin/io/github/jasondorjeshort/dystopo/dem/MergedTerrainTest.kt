@@ -99,6 +99,27 @@ class MergedTerrainTest {
     }
 
     @Test
+    fun insideTheBandTheCoarseMapIsReadAndBlended() {
+        // T357: a small window 100 m inside the fine map's south edge, inside the band: the wide map is asked too, and each
+        // cell is the fine map's value at EdgeBlend.weight and the wide map's for the rest.
+        val w = window(46.80 + 100 / EdgeBlend.M_PER_DEG, -121.75, size = 4)
+        val wideAsked = ArrayList<MercatorWindow>()
+        val t = MergedTerrain.Tally()
+        val g = MergedTerrain.read(w, listOf(source("fine", 14, fineBox, 2f), source("wide", 11, wideBox, 1f, asked = wideAsked)), t)
+        assertEquals(1, wideAsked.size)
+        for (k in g.values.indices) {
+            val a = EdgeBlend.weight(fineBox, w.lonAt(k % w.width), w.latAt(k / w.width)).toFloat()
+            assertTrue(a > 0f && a < 1f)
+            assertEquals(1f + a, g.values[k], 1e-5f)
+        }
+        assertEquals(16L, t.cells.values.sum(), "each cell counted once, for its larger share")
+        // With no band the read is the one before T357: the fine map whole inside its box, the wide map never asked.
+        val before = ArrayList<MercatorWindow>()
+        assertTrue(MergedTerrain.read(w, listOf(source("fine", 14, fineBox, 2f), source("wide", 11, wideBox, 1f, asked = before)), bandM = 0.0).values.all { it == 2f })
+        assertTrue(before.isEmpty())
+    }
+
+    @Test
     fun theNetworkIsAskedOnlyForTheRectangleStillMissing() {
         // Over the wide map's south edge: the network is asked for the rows south of it only.
         val w = window(46.68, -121.70)

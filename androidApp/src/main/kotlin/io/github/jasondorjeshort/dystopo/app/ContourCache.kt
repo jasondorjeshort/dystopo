@@ -62,9 +62,11 @@ object ContourCache {
      */
     fun keeps(name: String, identities: Set<String>): Boolean {
         val parts = name.split('-')
-        if (parts[0] == CLIFF_VERSION) return parts.size == 3 && parts[1] in identities && parts[2] in identities
-        if (parts[0] == SHADE_VERSION) return parts.size == 3 && parts[2] in identities
-        return parts.size >= 4 && parts[0] == VERSION && parts.last() in identities
+        // T357: an edge tile's identity names every map it is made from ([io.github.jasondorjeshort.dystopo.dem.MergedTile.key]): kept while all are on the phone.
+        fun known(id: String) = id.split(io.github.jasondorjeshort.dystopo.dem.MergedTile.KEY_JOIN).all { it in identities }
+        if (parts[0] == CLIFF_VERSION) return parts.size == 3 && parts[1] in identities && known(parts[2])
+        if (parts[0] == SHADE_VERSION) return parts.size == 3 && known(parts[2])
+        return parts.size >= 4 && parts[0] == VERSION && known(parts.last())
     }
 
     /**
