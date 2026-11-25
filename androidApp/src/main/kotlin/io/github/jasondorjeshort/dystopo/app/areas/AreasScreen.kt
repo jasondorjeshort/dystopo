@@ -59,15 +59,15 @@ import kotlinx.coroutines.withContext
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
-import org.maplibre.android.style.layers.FillLayer
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
-import org.maplibre.geojson.Polygon
 import java.util.Locale
 import kotlin.concurrent.thread
 
@@ -119,7 +119,8 @@ private fun AreasSheet() {
     val open = Areas.screenOpen
     LaunchedEffect(open) {
         app.map.mapView?.let { AreaOutlines.bind(it); PickerLayer.bind(it) }
-        AreaOutlines.show(if (open) Areas.list else emptyList())
+        // T366: every map's outline by its level, read off the UI thread (the list's poll redraws them while it is up)
+        if (open) withContext(Dispatchers.IO) { AreaOutlines.showAll(app) } else AreaOutlines.show(emptyList())
         if (!open && AreaPicker.mode != null) AreaPicker.close() // T142: closed from elsewhere (help, settings): the picker goes too
     }
     if (!open) return
@@ -226,12 +227,13 @@ internal fun PickerButton(text: String, onClick: () -> Unit) {
  * it holds, whether it counts in the budget, its shape, zooms and bounds, where it came from, and its actions (Show on map,
  * Start here, Update, Retry, Keep on this phone or Allow clearing, Rename, Remove ...). Rename edits here; [onAction] runs the
  * rest ([runRowAction]). Replaces T75's area card, T91's pack note on it and T140's needs-newer card (the state word says it).
- * T361: on the row that carries [help] (the list's first switch), the help icon of Start here ([START_HERE_HELP]) follows the
- * action, or, on the map it chose, the line that says so.
+ * T361: the help icon of Start here ([START_HERE_HELP]) follows the action, or, on the map it chose, the line that says so;
+ * T366: on the row that carries [startHelp] (the list's first open row with either), and the chosen map's line is never cut.
+ * T366: under the name, a swatch in the outline's look and the level's name ([LevelSwatch]) before the size.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = false, onAction: (String) -> Unit) {
+internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = false, startHelp: Boolean = false, onAction: (String) -> Unit) {
     var renaming by remember(row.id) { mutableStateOf<String?>(null) } // T142: the card's Rename
     Column(
         Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).clickable { Areas.toggleDetail(row.detailKey) }.padding(10.dp),
@@ -251,14 +253,17 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = fals
             BasicText(row.state, style = TextStyle(color = toneColor(row.tone), fontSize = 13.sp, fontWeight = FontWeight.Bold))
             BasicText(if (open) " ▾" else " ▸", style = TextStyle(color = Muted, fontSize = 13.sp)) // T221: the row opens
         }
-        BasicText(OfflineMapList.sizeText(row.bytes), style = TextStyle(color = Muted, fontSize = 12.sp))
+        Row(verticalAlignment = Alignment.CenterVertically) { // T366: the level's swatch and name, then the size
+            row.level?.let { LevelSwatch(it); BasicText("${it.label} · ", style = TextStyle(color = Muted, fontSize = 12.sp)) }
+            BasicText(OfflineMapList.sizeText(row.bytes), style = TextStyle(color = Muted, fontSize = 12.sp))
+        }
         // T342: "Use on this phone" on every map that opens, so whether it is used shows without opening the row.
         row.off?.let { off -> UseOnPhone(row.id, off, help) { onAction(USE_ON_PHONE) } }
         if (open) {
             for (line in row.detail) {
-                if (help && line == OfflineMapList.STARTS_HERE) Row(verticalAlignment = Alignment.CenterVertically) { // T361
-                    BasicText(line, Modifier.weight(1f, fill = false), style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    HelpIcon("areas.startHere", flat = true) // [START_HERE_KEY]
+                if (line == OfflineMapList.STARTS_HERE) Row(verticalAlignment = Alignment.CenterVertically) { // T361; T366: never cut
+                    BasicText(line, Modifier.weight(1f, fill = false), style = TextStyle(color = Muted, fontSize = 12.sp))
+                    if (startHelp) HelpIcon("areas.startHere", flat = true) // [START_HERE_KEY]
                 } else BasicText(line, style = TextStyle(color = Muted, fontSize = 12.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -268,7 +273,7 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = fals
                     OfflineMapList.DISMISS -> Action(a, Muted) { onAction(a) }
                     OfflineMapList.START_HERE -> Row(verticalAlignment = Alignment.CenterVertically) { // T361
                         Action(a) { onAction(a) }
-                        if (help) HelpIcon("areas.startHere", flat = true) // [START_HERE_KEY]
+                        if (startHelp) HelpIcon("areas.startHere", flat = true) // [START_HERE_KEY]
                     }
                     else -> Action(a) { onAction(a) }
                 }
@@ -304,6 +309,25 @@ private fun UseOnPhone(id: String, off: Boolean, help: Boolean, onToggle: () -> 
     if (!on) BasicText(OFF_LINE, style = TextStyle(color = Color(0xFF8A5A00), fontSize = 12.sp))
 }
 
+/**
+ * T366: a level's swatch, a short stretch of its outline (colour, width and dash as the map draws it, on the paper-coloured
+ * casing) in the palette of the map's style; the Offline maps rows and the picker card's key. Decorative: the name beside it says it.
+ */
+@Composable
+internal fun LevelSwatch(level: DetailOutline.Level, night: Boolean = AppSettings.mapOptions.night) {
+    val look = DetailOutline.look(level, night)
+    val colour = Color(android.graphics.Color.parseColor(look.colour))
+    val paper = Color(android.graphics.Color.parseColor(DetailOutline.paper(night)))
+    androidx.compose.foundation.Canvas(Modifier.padding(end = 6.dp).size(width = 28.dp, height = 12.dp).background(paper, RoundedCornerShape(3.dp))) {
+        val w = look.width.dp.toPx()
+        val y = size.height / 2
+        val cap = if (look.dots) androidx.compose.ui.graphics.StrokeCap.Round else androidx.compose.ui.graphics.StrokeCap.Butt
+        val effect = look.dash?.let { d -> androidx.compose.ui.graphics.PathEffect.dashPathEffect(d.map { (it * w).coerceAtLeast(0.01f) }.toFloatArray()) }
+        if (level == DetailOutline.Level.DRAFT) drawRect(colour.copy(alpha = look.fill), size = size)
+        drawLine(colour, androidx.compose.ui.geometry.Offset(3.dp.toPx(), y), androidx.compose.ui.geometry.Offset(size.width - 3.dp.toPx(), y), strokeWidth = w, cap = cap, pathEffect = effect)
+    }
+}
+
 /** T234: a state word's colour by its tone. */
 private fun toneColor(t: OfflineMapList.Tone): Color = when (t) {
     OfflineMapList.Tone.BUSY -> Teal
@@ -327,6 +351,7 @@ internal fun offlineMapInputs(app: DystopoApp = DystopoApp.instance): OfflineMap
         OfflineMapList.Pack(
             i.name, i.bytes, i.usable, i.dem != null, i.vector != null, i.bounds?.toList(), i.minZoom, i.maxZoom, i.attribution,
             listOfNotNull(l.files.dem, l.files.vector).maxOfOrNull { it.lastModified() } ?: 0L, l.errors,
+            vectorMaxZoom = i.vector?.maxZoom, demMaxZoom = i.dem?.maxZoom, // T366: its level
         )
     }
     val service = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app)
@@ -556,16 +581,26 @@ private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {
 }
 
 /**
- * The areas' outlines on the map while the Areas sheet is open: a box as an outlined rectangle; a corridor as its
- * centre line under a translucent band whose width follows the zoom so it is as wide as the buffer on the ground.
- * Survives style reloads (re-added when a style finishes loading).
+ * The offline maps' outlines on the map while the Areas sheet (the Offline maps screen, or a picker card) is open: a box as a
+ * rectangle; a corridor by the outline of its band, as wide as its buffer on the ground; a polygon by its rings. Survives style
+ * reloads (re-added when a style finishes loading).
+ *
+ * T366 (finding 2026-11-23-outline-colours-by-map-detail): each outline is drawn by its map's level ([DetailOutline]: the
+ * colour, width and dash of its detail, by day or by night as the map's style is, a map that is off grey and dotted), on a
+ * paper-coloured casing, with no fill (stacked fills darkened where maps overlap; the area being drawn, [PickerLayer], is the
+ * only filled shape). One casing and one line layer per level, coarse first and the finest on top (a map not used under all),
+ * so where two edges coincide the finer covers the coarser. A label rides each outline: the level's name and the map's where
+ * it fits, else the level's name alone, the finest placed first where labels collide. [levelsIn] gives the picker's key.
  */
 object AreaOutlines {
     private const val SOURCE = "dystopo-areas"
-    private const val FILL = "dystopo-areas-fill"
-    private const val BAND = "dystopo-areas-band"
-    private const val LINE = "dystopo-areas-line"
-    private const val COLOR = "#00796b"
+    private const val LABEL = "dystopo-areas-label"
+    private const val LABEL_SHORT = "dystopo-areas-label-short"
+    private fun casingId(l: DetailOutline.Level) = "dystopo-areas-casing-${l.key}"
+    private fun lineId(l: DetailOutline.Level) = "dystopo-areas-line-${l.key}"
+
+    /** The saved levels, in drawing order: a map not used first, then coarse to fine. */
+    private val DRAWN = DetailOutline.Level.values().filter { it != DetailOutline.Level.DRAFT }.sortedBy { it.order }
     private val main = Handler(Looper.getMainLooper())
     private var view: MapView? = null
     private val styleListener = MapView.OnDidFinishLoadingStyleListener { install() }
@@ -573,10 +608,15 @@ object AreaOutlines {
     @Volatile var features = 0
         private set
 
+    /** T366: the palette the layers were last given (null: not styled yet), and the shapes drawn now with their level and box. */
+    @Volatile private var styledNight: Boolean? = null
+    @Volatile private var shapes: List<Pair<DetailOutline.Level, PackBounds>> = emptyList()
+
     fun bind(mapView: MapView) {
         if (view === mapView) return
         view?.removeOnDidFinishLoadingStyleListener(styleListener)
         view = mapView
+        styledNight = null
         mapView.addOnDidFinishLoadingStyleListener(styleListener)
         install()
     }
@@ -588,48 +628,79 @@ object AreaOutlines {
     @Volatile var boxes = 0
         private set
 
-    fun show(records: List<Areas.Record>, packBoxes: Map<String, List<Double>> = emptyMap()) {
+    /**
+     * Every outline of [records] and of [rows]' packs with no record ([packBoxes]), each by its row's level ([OfflineMapList.Row.level]:
+     * a record by the row that shows it, the pack's row for a record naming a pack; a record with no row by its own zooms).
+     */
+    fun show(records: List<Areas.Record>, rows: List<OfflineMapList.Row> = emptyList()) {
         drawn = records.map { it.id }.toSet()
         val fs = ArrayList<Feature>()
-        for ((id, b) in packBoxes) { // T235 (ADR 0056): a pack with no record is outlined by its bounds, as a box area is
+        val kept = ArrayList<Pair<DetailOutline.Level, PackBounds>>()
+        fun edge(points: List<Point>, id: String, level: DetailOutline.Level, name: String) {
+            fs += Feature.fromGeometry(LineString.fromLngLats(points)).apply {
+                addStringProperty("kind", "line"); addStringProperty("id", id); addStringProperty("level", level.key)
+                addStringProperty("label", level.label); addStringProperty("labelLong", DetailOutline.longLabel(level, name))
+                addNumberProperty("sort", 10 - level.order) // the finest placed first
+            }
+        }
+        val boxRows = packBoxes(rows)
+        for ((id, b) in boxRows) { // T235 (ADR 0056): a pack with no record is outlined by its bounds, as a box area is
+            val row = rows.first { it.id == id }
+            val level = row.level ?: DetailOutline.Level.LOW
             val ring = listOf(
                 Point.fromLngLat(b[0], b[1]), Point.fromLngLat(b[2], b[1]), Point.fromLngLat(b[2], b[3]),
                 Point.fromLngLat(b[0], b[3]), Point.fromLngLat(b[0], b[1]),
             )
-            fs += Feature.fromGeometry(Polygon.fromLngLats(listOf(ring))).apply { addStringProperty("kind", "box"); addStringProperty("id", id) }
-            fs += Feature.fromGeometry(LineString.fromLngLats(ring)).apply { addStringProperty("kind", "line"); addStringProperty("id", id) }
+            edge(ring, id, level, row.name)
+            kept += level to PackBounds(b[0], b[1], b[2], b[3])
         }
-        boxes = packBoxes.size
+        boxes = boxRows.size
         for (r in records) {
+            val row = rows.firstOrNull { it.recordId == r.id } ?: r.pack?.let { p -> rows.firstOrNull { it.pack == p } }
+            val level = row?.level ?: OfflineMapList.recordLevel(r)
+            val name = row?.name ?: r.name
             when (val s = r.area.shape) {
-                is AreaShape.Box -> {
-                    val ring = listOf(
+                is AreaShape.Box -> edge(
+                    listOf(
                         Point.fromLngLat(s.west, s.south), Point.fromLngLat(s.east, s.south), Point.fromLngLat(s.east, s.north),
                         Point.fromLngLat(s.west, s.north), Point.fromLngLat(s.west, s.south),
-                    )
-                    fs += Feature.fromGeometry(Polygon.fromLngLats(listOf(ring))).apply { addStringProperty("kind", "box"); addStringProperty("id", r.id) }
-                    fs += Feature.fromGeometry(LineString.fromLngLats(ring)).apply { addStringProperty("kind", "line"); addStringProperty("id", r.id) }
+                    ),
+                    r.id, level, name,
+                )
+                // T106: the corridor's outline polygons; T366: their rings outlined, no band filled
+                is AreaShape.Corridor -> for (p in outline(r.id, s)) for (ring in listOf(p.outer) + p.holes) {
+                    val pts = ring.map { Point.fromLngLat(it.lon, it.lat) }
+                    edge(if (pts.first() == pts.last()) pts else pts + pts.first(), r.id, level, name)
                 }
-                is AreaShape.Corridor -> {
-                    val pts = s.points.map { Point.fromLngLat(it.lon, it.lat) }.let { if (it.size == 1) listOf(it[0], it[0]) else it }
-                    // T106: the band is the corridor's outline filled once (a line as wide as the buffer folded into wedges at bends).
-                    for (p in outline(r.id, s)) {
-                        val rings = (listOf(p.outer) + p.holes).map { ring -> ring.map { Point.fromLngLat(it.lon, it.lat) } }
-                        fs += Feature.fromGeometry(Polygon.fromLngLats(rings)).apply { addStringProperty("kind", "band"); addStringProperty("id", r.id) }
-                    }
-                    fs += Feature.fromGeometry(LineString.fromLngLats(pts)).apply { addStringProperty("kind", "line"); addStringProperty("id", r.id) }
-                }
-                is AreaShape.Polygon -> { // T140: each part with its holes, filled once, and every ring outlined
-                    for ((outer, holes) in polygonParts(s.rings)) {
-                        val rings = (listOf(outer) + holes).map { ring -> (ring + ring.first()).map { Point.fromLngLat(it.lon, it.lat) } }
-                        fs += Feature.fromGeometry(Polygon.fromLngLats(rings)).apply { addStringProperty("kind", "box"); addStringProperty("id", r.id) }
-                        for (ring in rings) fs += Feature.fromGeometry(LineString.fromLngLats(ring)).apply { addStringProperty("kind", "line"); addStringProperty("id", r.id) }
-                    }
+                is AreaShape.Polygon -> for ((outer, holes) in polygonParts(s.rings)) { // T140: every ring of each part
+                    for (ring in listOf(outer) + holes) edge((ring + ring.first()).map { Point.fromLngLat(it.lon, it.lat) }, r.id, level, name)
                 }
             }
+            val b = r.area.bounds
+            kept += level to PackBounds(b.minLon, b.minLat, b.maxLon, b.maxLat)
         }
         data = FeatureCollection.fromFeatures(fs)
         features = fs.size
+        shapes = kept
+        main.post { apply() }
+    }
+
+    /**
+     * T366: every offline map's outline, its level by the one list's rows ([offlineMapInputs], read here: any thread but the UI
+     * one): the picker card's outlines when it opens straight from the map, with no list polling beneath it.
+     */
+    fun showAll(app: DystopoApp = DystopoApp.instance) {
+        val records = Areas.list
+        val rows = runCatching { OfflineMapList.rows(offlineMapInputs(app).copy(records = records, removals = Areas.removals)) }.getOrDefault(emptyList())
+        show(records, rows)
+    }
+
+    /** T366: the levels of the outlines that cross [box] (the view), for the picker card's key. */
+    fun levelsIn(box: PackBounds): Set<DetailOutline.Level> =
+        shapes.filter { (_, b) -> b.minLon < box.maxLon && box.minLon < b.maxLon && b.minLat < box.maxLat && box.minLat < b.maxLat }.map { it.first }.toSet()
+
+    /** T366: the layers in the night palette when the map's style turned to it (or back); the picker's key calls it as it polls. */
+    fun restyle() {
         main.post { apply() }
     }
 
@@ -646,6 +717,7 @@ object AreaOutlines {
      * T106: the corridors' outline polygons, for `GET /areas` checks of the outline (`outline` there). T136: every corridor
      * the app keeps ([records], made here when the sheet has not drawn it yet), with `drawn` (on the map now, while the
      * sheet is open) and its `tripId`; it listed only the ones the sheet had drawn, so nothing while it stayed closed.
+     * T366: `levels`, the shapes drawn per level, and `night`, the palette the layers have.
      */
     fun json(records: List<Areas.Record>): Map<String, Any?> {
         val shown = drawn
@@ -665,7 +737,8 @@ object AreaOutlines {
             val parts = polygonParts(s.rings)
             linkedMapOf("id" to r.id, "drawn" to (r.id in shown), "parts" to parts.size, "holes" to parts.sumOf { it.second.size }, "points" to s.rings.sumOf { it.size })
         }
-        return linkedMapOf("features" to features, "packBoxes" to boxes, "corridors" to corridors, "polygons" to polygons)
+        val levels = shapes.groupingBy { it.first.key }.eachCount()
+        return linkedMapOf("features" to features, "packBoxes" to boxes, "corridors" to corridors, "polygons" to polygons, "levels" to levels, "night" to styledNight)
     }
 
     private fun install() {
@@ -676,23 +749,48 @@ object AreaOutlines {
     private fun addTo(style: Style) {
         if (style.getSource(SOURCE) == null) {
             style.addSource(GeoJsonSource(SOURCE, data))
-            val kind = Expression.get("kind")
-            style.addLayer(
-                FillLayer(FILL, SOURCE).withFilter(Expression.eq(kind, Expression.literal("box")))
-                    .withProperties(PropertyFactory.fillColor(COLOR), PropertyFactory.fillOpacity(0.10f)),
-            )
-            // T106: the corridor's outline polygons ([CorridorOutline]), filled once.
-            style.addLayer(
-                FillLayer(BAND, SOURCE).withFilter(Expression.eq(kind, Expression.literal("band")))
-                    .withProperties(PropertyFactory.fillColor(COLOR), PropertyFactory.fillOpacity(0.18f)),
-            )
-            style.addLayer(
-                LineLayer(LINE, SOURCE).withFilter(Expression.eq(kind, Expression.literal("line"))).withProperties(
-                    PropertyFactory.lineColor(COLOR), PropertyFactory.lineWidth(2f), PropertyFactory.lineDasharray(arrayOf(2f, 1.5f)),
-                ),
-            )
+            for (l in DRAWN) {
+                val only = Expression.eq(Expression.get("level"), Expression.literal(l.key))
+                style.addLayer(LineLayer(casingId(l), SOURCE).withFilter(only))
+                style.addLayer(LineLayer(lineId(l), SOURCE).withFilter(only))
+            }
+            // T366: the long label above the short one, so where the long one fits the short one gives way to it
+            style.addLayer(SymbolLayer(LABEL_SHORT, SOURCE).withProperties(PropertyFactory.textField(Expression.get("label"))))
+            style.addLayer(SymbolLayer(LABEL, SOURCE).withProperties(PropertyFactory.textField(Expression.get("labelLong"))))
+            styledNight = null
         }
         apply()
+    }
+
+    /** T366: the layers' looks in the palette of [night]. */
+    private fun style(style: Style, night: Boolean) {
+        val paper = DetailOutline.paper(night)
+        for (l in DRAWN) {
+            val look = DetailOutline.look(l, night)
+            val cap = if (look.dots) Property.LINE_CAP_ROUND else Property.LINE_CAP_BUTT
+            val casingDash = DetailOutline.casingDash(look)
+            style.getLayer(casingId(l))?.setProperties(
+                PropertyFactory.lineColor(paper), PropertyFactory.lineWidth(DetailOutline.casingWidth(look)), PropertyFactory.lineCap(cap),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            )
+            if (casingDash != null) style.getLayer(casingId(l))?.setProperties(PropertyFactory.lineDasharray(casingDash.toTypedArray()))
+            style.getLayer(lineId(l))?.setProperties(
+                PropertyFactory.lineColor(look.colour), PropertyFactory.lineWidth(look.width), PropertyFactory.lineCap(cap),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            )
+            look.dash?.let { d -> style.getLayer(lineId(l))?.setProperties(PropertyFactory.lineDasharray(d.toTypedArray())) }
+        }
+        val colour = Expression.match(
+            Expression.get("level"), Expression.color(android.graphics.Color.parseColor(DetailOutline.look(DetailOutline.Level.LOW, night).colour)),
+            *DRAWN.map { Expression.stop(it.key, Expression.color(android.graphics.Color.parseColor(DetailOutline.look(it, night).colour))) }.toTypedArray(),
+        )
+        for (id in listOf(LABEL, LABEL_SHORT)) style.getLayer(id)?.setProperties(
+            PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_LINE), PropertyFactory.symbolSpacing(320f),
+            PropertyFactory.symbolSortKey(Expression.get("sort")),
+            PropertyFactory.textFont(arrayOf(io.github.jasondorjeshort.dystopo.maplibre.MapLibreStyle.FONT_MEDIUM)),
+            PropertyFactory.textSize((12.0 * AppSettings.textScale).toFloat()), PropertyFactory.textOffset(arrayOf(0f, -0.9f)),
+            PropertyFactory.textColor(colour), PropertyFactory.textHaloColor(paper), PropertyFactory.textHaloWidth(1.8f),
+        )
     }
 
     private fun apply() {
@@ -700,6 +798,8 @@ object AreaOutlines {
         v.getMapAsync { map ->
             val style = map.style ?: return@getMapAsync
             if (!style.isFullyLoaded) return@getMapAsync
+            val night = AppSettings.mapOptions.night
+            if (styledNight != night && style.getSource(SOURCE) != null) { style(style, night); styledNight = night }
             (style.getSource(SOURCE) as? GeoJsonSource)?.setGeoJson(data)
         }
     }

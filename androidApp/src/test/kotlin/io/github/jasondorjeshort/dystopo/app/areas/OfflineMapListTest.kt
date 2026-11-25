@@ -357,4 +357,24 @@ class OfflineMapListTest {
         assertEquals("Paused at 0%", L.percentWord(L.PAUSED, 0.4, at = true))
         assertEquals("Downloading", L.percentWord(L.DOWNLOADING, null))
     }
+
+    @Test
+    fun eachRowHasItsLevelAndOutline() { // T366
+        val fine = L.Pack("rainier-fine", 9_000_000, true, true, true, listOf(-121.82, 46.80, -121.68, 46.90), 8, 14, vectorMaxZoom = 14, demMaxZoom = 14)
+        val wide = L.Pack("rainier-wide", 9_000_000, true, true, true, listOf(-121.9, 46.7, -121.5, 46.95), 8, 13, vectorMaxZoom = 13, demMaxZoom = 11)
+        val medium = rec("a0001", null, 1, area = box.at(io.github.jasondorjeshort.dystopo.areas.AreaDetail.MEDIUM))
+        val rows = L.rows(L.Inputs(packs = listOf(fine, wide), records = listOf(medium), off = setOf("rainier-wide"))).associateBy { it.id }
+        assertEquals(DetailOutline.Level.FULL, rows.getValue(L.PACK + "rainier-fine").level)
+        assertEquals(DetailOutline.Level.OFF, rows.getValue(L.PACK + "rainier-wide").level, "a map that is off")
+        assertEquals(DetailOutline.Level.MEDIUM, rows.getValue(L.AREA + "a0001").level)
+        val j = rows.getValue(L.PACK + "rainier-fine").json(night = true)
+        assertEquals("full", j["level"])
+        val outline = j["outline"] as Map<*, *>
+        assertEquals("#f0e6ff", outline["colour"])
+        assertEquals(3.0, outline["width"])
+        assertNull(outline["dash"])
+        assertEquals(true, outline["night"])
+        // On again, the wide map is low detail by its archives (map to z13, elevation to z11).
+        assertEquals(DetailOutline.Level.LOW, L.rows(L.Inputs(packs = listOf(wide))).single().level)
+    }
 }
