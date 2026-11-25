@@ -12,8 +12,8 @@ resume pointers are this project's.
 
 ## When (rule in `CLAUDE.md`)
 
-- At the end of every coordinator session, and before any stop: the usage gate (50% of the 5-hour
-  meter, 75% of the 7-day one), the owner
+- At the end of every coordinator session, and before any stop: the usage gate (75% of the 5-hour
+  meter, the 7-day hold `policy.json` sets), the owner
   pausing, a context that is about to run out.
 - After a merge, a launch or a re-plan that changes Now or Next.
 
