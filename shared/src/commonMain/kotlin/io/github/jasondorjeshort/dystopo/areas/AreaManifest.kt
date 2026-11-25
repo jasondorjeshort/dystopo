@@ -210,6 +210,12 @@ data class AreaManifest(
     val packs: List<FileItem> get() = items.filterIsInstance<FileItem>()
     fun tiles(route: String): TilesItem? = items.filterIsInstance<TilesItem>().firstOrNull { it.route == route }
 
+    /** T369: the vector tiles alone (the `osm` route), what the public vector source's cap counts ([AreaLimit.DIRECT_MAX_TILES]). */
+    val vectorTileCount: Int get() = tiles(ROUTE_OSM)?.count ?: 0
+
+    /** T369: the vector tiles' bytes (estimated until fetched, as [bytes]). */
+    val vectorBytes: Long get() = tiles(ROUTE_OSM)?.bytes ?: 0L
+
     /**
      * T152: the tile rows of every [TilesItem] in the download's order ([TileRow]): zoom ascending, then route by name
      * (`dem` before `osm`), then y, then x0. Made as it is walked, nothing per tile held.

@@ -26,7 +26,14 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   the zooms (medium: `maxZoom` 14, `demMaxZoom` 13; its id differs from the less and full ones'); a box with a cap is
  *   refused (400: a region pack holds one zoom range).
  * - T95: `POST /areas/plan` with the same parameters: the corridor's manifest size, tiles per route, and whether the
- *   pinned budget allows it (`fits`, `refusal`), with nothing started (what a trip's Offline button shows).
+ *   pinned budget allows it (`fits`, `refusal`), with nothing started (what a trip's Offline button shows). T369: a box
+ *   (`bbox=`) is planned as "Download this area" plans it, as a rectangle; with no server set the plan's `cap` (`direct`,
+ *   `vectorTiles`, `maxTiles` 3000, `maxBytes` 50000000, `over`, `refusal`) is the public vector source's cap, and over it
+ *   `refusal` is the cap's sentence ("This area needs about 4,700 map tiles, and the public map source allows 3,000 a
+ *   download. ..."), ahead of the budget's; every start refuses alike (409 with the sentence). `GET /areas/download` `cap`
+ *   (`vectorBytes` fetched, `stopped` at 50 MB); `GET /areas/countries` `direct`, `overCap` and each row's `vectorTiles`
+ *   per detail (state `over_cap`); `GET /areas/picker` `overCap` and `cap`; `GET /areas/resume` `why` `cap` for a record
+ *   over it (not resumed by itself while no server is set; `autoResume.stopped` `cap`).
  *   `GET /areas` and `GET /areas/{id}` give each area's `versions` (per source, what its tiles were fetched at),
  *   `olderThanSource` (the content names whose version the source has moved on from; empty when current, null when
  *   unknown) and `coverage.atOlderVersion` (tiles found only at the area's own older version). Downloading an area
@@ -156,7 +163,7 @@ object AreaRoutes {
             "GET" to "/areas/download" -> return Response.json(AreaDownload.json() ?: mapOf("state" to "idle"))
             "DELETE" to "/areas/download", "POST" to "/areas/download/cancel" -> return Response.json(mapOf("cancelled" to AreaDownload.cancel(), "download" to AreaDownload.json()))
             "POST" to "/areas/download" -> return Response.json(download(r), 202)
-            "POST" to "/areas/plan" -> return Response.json(AreaDownload.plan(area(r).second).json())
+            "POST" to "/areas/plan" -> return Response.json(AreaDownload.plan(planArea(area(r).second)).json())
             "POST" to "/areas/trim" -> return Response.json(trim(r))
             "GET" to "/areas/trips" -> return Response.json(TripCorridors.json()) // T130
             "POST" to "/areas/trips" -> { // T130: a reconcile now (`wait=ms` answers after it)
@@ -306,11 +313,12 @@ object AreaRoutes {
         val budget = AppSettings.pinnedCacheMb
         val sizes = CountrySizes.entries
         val records = Areas.all()
+        val direct = AreaDownload.direct() // T369
         val rows = list.map { c ->
             val e = sizes[c.code]
             val rec = records.firstOrNull { r -> e != null && r.id in e.ids }
-            val row = countryRow(e, pinned, rec?.takeIf { it.pinned }?.bytes ?: 0L, budget)
-            fun m(x: CountryMeasure?, id: String?) = x?.let { linkedMapOf("bytes" to it.bytes, "tiles" to it.tiles, "tooLarge" to it.tooLarge, "estimated" to it.estimated, "id" to id) }
+            val row = countryRow(e, pinned, rec?.takeIf { it.pinned }?.bytes ?: 0L, budget, direct)
+            fun m(x: CountryMeasure?, id: String?) = x?.let { linkedMapOf("bytes" to it.bytes, "tiles" to it.tiles, "tooLarge" to it.tooLarge, "estimated" to it.estimated, "id" to id, "vectorTiles" to it.vectorTiles) }
             val detail = AreaDetail.byKey(row.detail) ?: AreaDetail.LESS
             c to linkedMapOf(
                 "code" to c.code, "iso3" to c.iso3, "name" to c.name, "nameLong" to c.nameLong, "continent" to c.continent, "toleranceM" to c.toleranceM,
@@ -323,6 +331,7 @@ object AreaRoutes {
         return linkedMapOf(
             "total" to all.size, "shown" to rows.size, "measured" to rows.count { it.second["state"] != "measuring" },
             "greyed" to rows.count { it.second["greyed"] == true }, "tooLargeNames" to rows.filter { it.second["state"] == "too_large" }.map { it.first.name },
+            "direct" to direct, "overCap" to rows.count { it.second["state"] == "over_cap" }, // T369
             "pinnedBytes" to pinned, "budgetMb" to budget, "heapTiles" to AreaDownload.heapTiles(), "coverCache" to CountrySizes.coverStats, // T170
             "countries" to rows.map { it.second },
         )
@@ -334,6 +343,15 @@ object AreaRoutes {
         val rows = OfflineMapList.rows(offlineMapInputs())
         val open = Areas.detailOpen
         return linkedMapOf("rows" to rows.map { it.json(it.detailKey in open) }, "count" to rows.size, "ms" to Math.round((System.nanoTime() - t0) / 1e5) / 10.0)
+    }
+
+    /**
+     * T369: a box's plan as "Download this area" plans it ([regionArea]: the box as a rectangle at its zooms), so `POST
+     * /areas/plan?bbox=` reads the size and the cap's refusal; any other shape as it is.
+     */
+    private fun planArea(a: AreaOfInterest): AreaOfInterest {
+        val s = a.shape as? io.github.jasondorjeshort.dystopo.areas.AreaShape.Box ?: return a
+        return regionArea(io.github.jasondorjeshort.dystopo.packs.PackBounds(s.west, s.south, s.east, s.north), a.maxZoom, a.name).let { it.withZooms(a.minZoom, a.maxZoom, a.demMaxZoom) }
     }
 
     /** T106: Retry on an area card: the same corridor downloaded again (a pack-backed area is a region pack: 409). */

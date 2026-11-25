@@ -81,6 +81,13 @@ import java.util.concurrent.atomic.AtomicLong
  * worker watches the job and keeps the process alive; when the system stops the worker with the app in the background,
  * [pause] ends the walk like a stall (the cursor saved, the record partial, not counted as a failure) and the chain runs it
  * again from the cursor. [Job.handedOn] tells the worker that the run's end, its record and the resume check's request are done.
+ *
+ * T369 (the public vector source's terms, ADR 0060's owner paragraph): with no server set, a download takes at most
+ * [AreaLimit.DIRECT_MAX_TILES] vector tiles and [AreaLimit.DIRECT_MAX_BYTES] of them. The plan's vector count refuses a start
+ * over the first ([Plan.capRefusal], [capRefusalLine]) on every start, the user's and the resume check's: a record already on
+ * the phone keeps its tiles, says the sentence and is not resumed by itself ([AutoResume.STOP_CAP]). The bytes are counted as
+ * the vector tiles are fetched, and a run that reaches the second stops there ([Job.capStopped], [CAP_STOPPED]: partial, its
+ * tiles kept, not resumed by itself). With a server set neither applies.
  */
 object AreaDownload {
     private val app: DystopoApp get() = DystopoApp.instance
@@ -156,6 +163,19 @@ object AreaDownload {
         @Volatile var pausedBy: String? = null
         /** T156: the run's end is written and the resume check asked ([DownloadWorker] waits for it before deciding the chain's next step). */
         @Volatile var handedOn = false
+        // T369
+        /** T369: no server set: the public vector source's cap applies to this run. */
+        @Volatile var direct = false
+        /** T369: the vector bytes this run fetched from the source (not those found cached), against [AreaLimit.DIRECT_MAX_BYTES]. */
+        val vectorBytes = AtomicLong()
+        /** T369: the run reached [AreaLimit.DIRECT_MAX_BYTES] and stopped there. */
+        @Volatile var capStopped = false
+
+        fun capJson(): Map<String, Any?> = linkedMapOf(
+            "direct" to direct, "vectorBytes" to vectorBytes.get(), "maxBytes" to AreaLimit.DIRECT_MAX_BYTES, "maxTiles" to AreaLimit.DIRECT_MAX_TILES,
+            "vectorTiles" to manifest?.vectorTileCount, "stopped" to capStopped,
+        )
+        // end T369
 
         fun json(): Map<String, Any?> {
             val now = if (finishedAt != 0L) finishedAt else System.currentTimeMillis()
@@ -178,12 +198,19 @@ object AreaDownload {
                     "stalled" to stalled, "stalledByNetwork" to stalledByNetwork, "cursorSaves" to cursorSaves, "cursor" to savedCursor,
                     "pausedBy" to pausedBy, // T156
                 ),
+                "cap" to capJson(), // T369
             )
         }
     }
 
     /** T151: a start the pinned budget refuses (its sentence); an [IllegalStateException], so routes answer 409 as before. */
     class BudgetRefused(message: String) : IllegalStateException(message)
+
+    /** T369: a start the public vector source's cap refuses ([capRefusalLine]); a 409 at the routes, as a budget refusal. */
+    class CapRefused(message: String) : IllegalStateException(message)
+
+    /** T369: true when the phone reads the public sources itself (no server set): the cap applies. */
+    fun direct(): Boolean = OnlineService.get(app).fetcher?.server == DirectSources.SERVER
 
     @Volatile var job: Job? = null
         private set
@@ -243,11 +270,15 @@ object AreaDownload {
         val manifestMs: Long? = null,
         /** T249: [pinnedBytes] is what the tile cache's index had counted so far (planned on the main thread while it is built). */
         val pinnedPartial: Boolean = false,
+        /** T369: planned with no server set: the public vector source's cap applies ([capRefusal]). */
+        val direct: Boolean = false,
     ) {
         val bytes: Long get() = manifest.bytes
         val tiles: Int get() = manifest.tileCount
-        /** T152: the budget's refusal only: the heap no longer refuses an area ([AreaLimit]). */
-        val refusal: String? get() = if (userShape(area)) areaBudgetError(pinnedBytes, bytes, alreadyBytes, budgetMb) else budgetError(pinnedBytes, bytes, alreadyBytes, budgetMb)
+        /** T369: the public vector source's refusal (no server set, over [AreaLimit.DIRECT_MAX_TILES] vector tiles); null otherwise. */
+        val capRefusal: String? get() = if (direct) capRefusalLine(manifest.vectorTileCount.toLong(), lessDetailHelps(area)) else null
+        /** T152: the budget's refusal: the heap no longer refuses an area ([AreaLimit]). T369: the cap's first, which no budget lifts. */
+        val refusal: String? get() = capRefusal ?: if (userShape(area)) areaBudgetError(pinnedBytes, bytes, alreadyBytes, budgetMb) else budgetError(pinnedBytes, bytes, alreadyBytes, budgetMb)
         val pastHeapLimit: Boolean get() = AreaLimit.pastHeap(tiles.toLong(), heapTiles)
 
         fun json(): Map<String, Any?> = linkedMapOf(
@@ -259,6 +290,11 @@ object AreaDownload {
             "manifestFrom" to manifestFrom, "manifestMs" to manifestMs, "pinnedBytes" to pinnedBytes, "alreadyBytes" to alreadyBytes, "budgetMb" to budgetMb,
             "pinnedPartial" to pinnedPartial, // T249
             "fits" to (refusal == null), "refusal" to refusal, "refused" to (refusal != null),
+            // T369: the public vector source's cap (no server set): the plan's vector tiles against it, and its sentence.
+            "cap" to linkedMapOf(
+                "direct" to direct, "vectorTiles" to manifest.vectorTileCount, "maxTiles" to AreaLimit.DIRECT_MAX_TILES, "maxBytes" to AreaLimit.DIRECT_MAX_BYTES,
+                "over" to (capRefusal != null), "refusal" to capRefusal,
+            ),
             // T152: past the tile cache index's comfortable size the download still proceeds (ADR 0041 §3's T152 note).
             "pastHeapLimit" to pastHeapLimit, "heapTiles" to heapTiles.takeIf { it != Long.MAX_VALUE },
             // T140 (ADR 0041 §3, §5): what the sheet shows before anything starts.
@@ -309,6 +345,7 @@ object AreaDownload {
         return Plan(
             area, m, if (fromServer != null) "server" else "phone", pinned, own, AppSettings.pinnedCacheMb, bytesPerMs = speed, lessDetail = less, mediumDetail = medium,
             heapTiles = heapTiles(), manifestMs = if (fromServer == null) System.currentTimeMillis() - t0 else null, pinnedPartial = pinnedPartial,
+            direct = fetcher.server == DirectSources.SERVER, // T369
         )
     }
 
@@ -342,10 +379,19 @@ object AreaDownload {
         val planned = manifest?.takeIf { it.id == area.id } ?: saved
         val from = cursor?.takeIf { saved != null && planned === saved }
         planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) } }
+        // T369: no server set, the public vector source's cap, on every start (the user's, a Retry, an Update, the resume
+        // check's): over it nothing starts; a record already here keeps its tiles, says why and is not resumed by itself.
+        val direct = fetcher.server == DirectSources.SERVER
+        val checked = if (direct) planned ?: localManifest(area, fetcher.server) else planned
+        if (direct) capRefusalLine(checked!!.vectorTileCount.toLong(), lessDetailHelps(area))?.let { why ->
+            if (old != null) Areas.update(area.id) { it.copy(error = why, autoResume = (it.autoResume ?: AutoResume()).copy(stopped = AutoResume.STOP_CAP, nextAt = 0L)) }
+            throw CapRefused(why)
+        }
+        // end T369
         val label = name ?: area.name ?: defaultName(area, java.time.LocalDate.now())
         // T170 (T151's follow-up): a download started with contours keeps them on its resume, Retry and Download again.
         val withContours = contours || old?.contours == true
-        val j = Job(area.id, label, area, fetcher.server, withContours, planned, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L }
+        val j = Job(area.id, label, area, fetcher.server, withContours, checked, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L; it.direct = direct } // T369: the manifest checked
         job = j
         // T106 (a T95 follow-up): an unpinned area stays unpinned until the budget lets its download go on ([run]); an
         // Update the budget refused used to leave it pinned, with its tiles counted against that budget.
@@ -426,27 +472,27 @@ object AreaDownload {
                 if (again.isNotEmpty()) {
                     j.againDone = false
                     fetchRows(j, fetcher, pool, again, AreaManifest.walk(again), j.failedRows, countDone = true, moveCursor = false)
-                    j.againDone = !j.cancelled && j.stalled == null
+                    j.againDone = !j.cancelled && j.stalled == null && !j.capStopped
                 }
-                if (!j.cancelled && j.stalled == null) fetchRows(j, fetcher, pool, items, c.after(AreaManifest.walk(items)), j.failedRows, countDone = true, moveCursor = true, firstIndex = c.wholeRows)
+                if (!j.cancelled && j.stalled == null && !j.capStopped) fetchRows(j, fetcher, pool, items, c.after(AreaManifest.walk(items)), j.failedRows, countDone = true, moveCursor = true, firstIndex = c.wholeRows)
             }
             val retry = synchronized(j.failedRows) { failedItems(items, j.failedRows) }
-            if (retry.isNotEmpty() && !j.cancelled && j.stalled == null) {
+            if (retry.isNotEmpty() && !j.cancelled && j.stalled == null && !j.capStopped) { // T369: not past the cap
                 j.state = "retry"
                 fetcher.retryNow()
                 j.failed.set(0)
                 val still = HashMap<String, HashMap<Int, TileSet>>()
                 fetchRows(j, fetcher, pool, retry, AreaManifest.walk(retry), still, countDone = false, moveCursor = false)
                 // A second walk cut short keeps every tile of the first (the ones it did not reach are still owed).
-                if (!j.cancelled && j.stalled == null) synchronized(j.failedRows) { j.failedRows.clear(); j.failedRows.putAll(still) }
+                if (!j.cancelled && j.stalled == null && !j.capStopped) synchronized(j.failedRows) { j.failedRows.clear(); j.failedRows.putAll(still) }
             }
-            if (j.contours && !j.cancelled && j.stalled == null) { // T156: not after a stall or a pause (the run is partial anyway)
+            if (j.contours && !j.cancelled && j.stalled == null && !j.capStopped) { // T156: not after a stall or a pause (the run is partial anyway)
                 j.state = "contours"
                 makeContours(j, pool)
             }
             j.state = when {
                 j.cancelled -> "cancelled"
-                j.failed.get() > 0 || j.stalled != null -> "partial" // T151: a walk stopped by a stall did not reach the end
+                j.failed.get() > 0 || j.stalled != null || j.capStopped -> "partial" // T151: a walk stopped by a stall did not reach the end; T369: nor one stopped by the cap
                 else -> "done"
             }
             if (j.state == "done") refreshed(j, fetcher, m, changesAtStart)
@@ -469,6 +515,7 @@ object AreaDownload {
                 r.copy(
                     state = when (j.state) { "done" -> "done"; "refused" -> j.stateBefore ?: "partial"; else -> j.state },
                     error = j.error ?: when {
+                        j.capStopped -> CAP_STOPPED // T369
                         j.pausedBy != null && j.state == "partial" -> RESUME_PAUSED // T156
                         j.stalled != null && j.state == "partial" -> RESUME_STALLED // T151
                         j.failed.get() > 0 -> failedTilesLine(j.failed.get()) // T151: it continues by itself (the card says when)
@@ -486,7 +533,8 @@ object AreaDownload {
                         j.state == "refused" || j.manifest == null -> r.cursor
                         else -> cursorNow(j, keepEarlier = !j.againDone)
                     },
-                    autoResume = afterRun(r.autoResume, j.state, progressed = j.fetched.get() > 0, stalled = j.stalled != null && j.stalledByNetwork, now = j.finishedAt, budgetMb = AppSettings.pinnedCacheMb),
+                    autoResume = afterRun(r.autoResume, j.state, progressed = j.fetched.get() > 0, stalled = j.stalled != null && j.stalledByNetwork, now = j.finishedAt, budgetMb = AppSettings.pinnedCacheMb)
+                        .let { a -> if (j.capStopped) (a ?: AutoResume()).copy(stopped = AutoResume.STOP_CAP, nextAt = 0L) else a }, // T369: not resumed by itself
                 )
             }
             ResumeCheck.request(ResumeCheck.TRIGGER_DOWNLOAD_OVER) // T151: the next unfinished area, or this one after its backoff
@@ -571,7 +619,7 @@ object AreaDownload {
         }
         var index = firstIndex
         walk@ for (row in rows) {
-            if (j.cancelled || stalled()) break
+            if (j.cancelled || stalled() || j.capStopped) break // T369: the cap's bytes
             if (moveCursor && System.currentTimeMillis() - j.lastCursorSave >= CURSOR_SAVE_MS) saveCursor(j)
             val item = byRoute.getValue(row.route)
             val r = RowInFlight(index++, row)
@@ -581,7 +629,7 @@ object AreaDownload {
                 j.rowNow = row
             }
             for (x in row.x0..row.x1) {
-                if (j.cancelled || stalled()) break@walk
+                if (j.cancelled || stalled() || j.capStopped) break@walk
                 permits.acquire()
                 try {
                     pool.execute {
@@ -642,6 +690,7 @@ object AreaDownload {
     /** One tile of [item] at [z]/[x]/[y]: false when it could not be fetched now (network or server). */
     private fun fetchTile(j: Job, fetcher: OnlineFetcher, item: TilesItem, z: Int, x: Int, y: Int, counted: Boolean): Boolean {
         if (j.cancelled) return true
+        if (j.capStopped) return false // T369: a tile queued past the cap stays owed (its row is not whole) and is not fetched
         // T356 (ADR 0066): skipped only where a map stores the tile at its own depth; a map answers deeper elevation by
         // overzoom, so a z15 area inside a map to z11 skipped its elevation before.
         val held = runCatching { app.tiles.held }.getOrNull()
@@ -669,6 +718,8 @@ object AreaDownload {
                 } else {
                     j.fetched.incrementAndGet()
                     j.bytes.addAndGet(f.bytes.size.toLong())
+                    // T369: the vector bytes fetched from the public source, against its 50 MB a download.
+                    if (j.direct && item.route == AreaManifest.ROUTE_OSM && AreaLimit.directBytesReached(j.vectorBytes.addAndGet(f.bytes.size.toLong()))) j.capStopped = true
                 }
                 j.unavailableRun.set(0)
                 true
@@ -921,6 +972,36 @@ internal fun sizeLine(bytes: Long, tiles: Int, minZoom: Int, maxZoom: Int, demMa
     }
     return "About ${aboutSize(bytes)} (${String.format(java.util.Locale.US, "%,d", tiles)} tiles) $detail"
 }
+
+// T369
+/**
+ * T369 (ADR 0031: the coordinator's words, listed for the owner): the refusal of a download over the public vector source's
+ * cap, "This area needs about 4,600 map tiles, and the public map source allows 3,000 a download. Make the area smaller,
+ * choose less detail, or set a server in Settings › Sources."; without "choose less detail" where less detail would not cut
+ * the vector tiles ([lessHelps] false). Null within the cap. Names no other product. Pure, tested.
+ */
+internal fun capRefusalLine(vectorTiles: Long, lessHelps: Boolean): String? {
+    if (!AreaLimit.overDirectCap(vectorTiles)) return null
+    fun n(v: Long) = String.format(java.util.Locale.US, "%,d", v)
+    return "This area needs about ${n(roundTiles(vectorTiles))} map tiles, and the public map source allows ${n(AreaLimit.DIRECT_MAX_TILES)} a download. " + capRemedies(lessHelps)
+}
+
+/** T369: the remedies the cap's sentences offer: a smaller area, less detail (where it helps) or a server. Pure, tested. */
+internal fun capRemedies(lessHelps: Boolean): String =
+    if (lessHelps) "Make the area smaller, choose less detail, or set a server in $CAP_SERVER_PLACE." else "Make the area smaller, or set a server in $CAP_SERVER_PLACE."
+
+/** T369: a tile count up to the next hundred from 1,000 ("about 4,600"; 3,001 reads "3,100", never the cap's own figure). Pure, tested. */
+internal fun roundTiles(n: Long): Long = if (n < 1_000) n else (n + 99) / 100 * 100
+
+/** T369: whether less detail cuts [area]'s vector tiles: its vector reaches past z13, where less detail stops. Pure, tested. */
+internal fun lessDetailHelps(area: AreaOfInterest): Boolean = minOf(area.maxZoom, AreaManifest.OSM_MAX_ZOOM) > AreaDownload.LESS_DETAIL_MAX_ZOOM
+
+/** T369: where a server is set, "Settings › Sources". */
+internal val CAP_SERVER_PLACE = "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SETTINGS} › ${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.SOURCES}"
+
+/** T369 (ADR 0031): the line of a download that reached the cap's 50 MB and stopped there, its tiles kept. */
+internal val CAP_STOPPED = "Stopped at 50 MB, the most the public map source allows a download; the tiles fetched so far are kept. " + capRemedies(true)
+// end T369
 
 /** T221: why a download came up short, "1 tile could not be fetched." or "3 tiles could not be fetched.". Pure, tested. */
 internal fun failedTilesLine(n: Int): String = if (n == 1) "1 tile could not be fetched." else "$n tiles could not be fetched."

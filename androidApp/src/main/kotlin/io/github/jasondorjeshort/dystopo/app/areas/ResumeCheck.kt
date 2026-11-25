@@ -109,7 +109,7 @@ object ResumeCheck {
         val now = System.currentTimeMillis()
         val records = Areas.all() // the records read from the small areas file; nothing from the tile cache
         val live = AreaDownload.job?.takeIf { it.running }?.id
-        val d = decide(records, live, now, AppSettings.pinnedCacheMb, triggers.any { it in SKIP_WAIT })
+        val d = decide(records, live, now, AppSettings.pinnedCacheMb, triggers.any { it in SKIP_WAIT }, direct = AreaDownload.direct()) // T369
         val checkMs = (System.nanoTime() - t0) / 1e6
         var started: String? = null
         var note: String? = null
@@ -122,6 +122,8 @@ object ResumeCheck {
             try {
                 AreaDownload.resume(r, triggers.joinToString(", "))
                 started = id
+            } catch (e: AreaDownload.CapRefused) {
+                note = "over the public map source's cap: ${e.message}" // T369: the record says so and is not resumed (STOP_CAP)
             } catch (e: AreaDownload.BudgetRefused) {
                 // Not against the user: the budget's refusal does not loop; Retry, or a change of the budget, lets it go again.
                 Areas.update(id) { it.copy(error = e.message, autoResume = (it.autoResume ?: AutoResume()).copy(stopped = AutoResume.STOP_REFUSED, budgetMb = AppSettings.pinnedCacheMb)) }
@@ -154,7 +156,7 @@ object ResumeCheck {
     /** `GET /areas/resume`: the last check, the triggers seen, the repair at start, and the unfinished records now (read, nothing started). */
     fun json(): Map<String, Any?> {
         val t0 = System.nanoTime()
-        val d = decide(Areas.all(), AreaDownload.job?.takeIf { it.running }?.id, System.currentTimeMillis(), AppSettings.pinnedCacheMb, userPresent = false)
+        val d = decide(Areas.all(), AreaDownload.job?.takeIf { it.running }?.id, System.currentTimeMillis(), AppSettings.pinnedCacheMb, userPresent = false, direct = AreaDownload.direct())
         val ms = (System.nanoTime() - t0) / 1e6
         return linkedMapOf(
             "last" to last, "runs" to runs.get(), "triggersSeen" to seen.mapValues { it.value.get() }.toSortedMap(), "queued" to coalescer.queued,
@@ -240,6 +242,11 @@ data class AutoResume(
     companion object {
         const val STOP_FAILURES = "failures"
         const val STOP_REFUSED = "refused"
+        /**
+         * T369: over the public vector source's cap (a plan over its 3,000 vector tiles, or a run that reached its 50 MB):
+         * not resumed by itself while no server is set; the user's own start (Retry, Download again) is a new download.
+         */
+        const val STOP_CAP = "cap"
 
         fun parse(m: Map<*, *>): AutoResume = AutoResume(
             failures = (m["failures"] as? Number)?.toInt() ?: 0, attempts = (m["attempts"] as? Number)?.toInt() ?: 0,
@@ -286,9 +293,10 @@ internal fun unfinished(r: Areas.Record): Boolean = r.pack == null && r.opaque =
  * T151: the cheap check's decision over [records] (in memory): each unfinished one with its reason (`running`, `ending`,
  * `cancelled`, `stopped`, `refused`, `backoff`, `ready`), the oldest `ready` one to start when no job runs ([live] null), the
  * earliest backoff's end, and the running job when something waits for it. [userPresent] (app start, foreground) skips the
- * backoff's wait; a budget refusal waits for another [budgetMb]. Pure, tested.
+ * backoff's wait; a budget refusal waits for another [budgetMb]. T369: one over the public vector source's cap waits
+ * (`cap`) while [direct] (no server set); with a server set it is ready again. Pure, tested.
  */
-internal fun decide(records: List<Areas.Record>, live: String?, now: Long, budgetMb: Long, userPresent: Boolean): ResumeDecision {
+internal fun decide(records: List<Areas.Record>, live: String?, now: Long, budgetMb: Long, userPresent: Boolean, direct: Boolean = true): ResumeDecision {
     val out = ArrayList<Map<String, Any?>>()
     val ready = ArrayList<Areas.Record>()
     var nextAt: Long? = null
@@ -300,6 +308,7 @@ internal fun decide(records: List<Areas.Record>, live: String?, now: Long, budge
             r.cancelled -> "cancelled"
             a?.stopped == AutoResume.STOP_FAILURES -> "stopped"
             a?.stopped == AutoResume.STOP_REFUSED && a.budgetMb == budgetMb -> "refused"
+            a?.stopped == AutoResume.STOP_CAP && direct -> "cap" // T369
             r.state == "downloading" -> "ending" // its job just ended and the record is being written
             !userPresent && a != null && a.nextAt > now -> "backoff".also { nextAt = minOf(nextAt ?: Long.MAX_VALUE, a.nextAt) }
             else -> "ready".also { ready += r }

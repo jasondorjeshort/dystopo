@@ -9,8 +9,11 @@ import kotlin.math.floor
  * T140 refused a polygon whose tiles passed a heap-derived limit, because its tile sets were hash sets of every tile (the
  * manifest's, the pin cover's) and the download expanded every tile into a work list. Since T152 the sets are rows
  * ([TileSet]), the download walks the manifest's rows ([AreaManifest.walk]) and the pins are rows too, so no structure
- * that lives for the whole area grows with its tiles: the heap is no size limit and nothing here refuses an area. The
- * pinned budget (`pinnedCacheMb`) is the one steer, in bytes, and it is visible (ADR 0023).
+ * that lives for the whole area grows with its tiles: the heap is no size limit and the heap refuses no area. The
+ * pinned budget (`pinnedCacheMb`) is the one steer of the phone's own, in bytes, and it is visible (ADR 0023). T369: one
+ * refusal lives here, and it is not the phone's: with no server set, a download takes its vector tiles from the public
+ * vector source, whose terms allow at most [DIRECT_MAX_TILES] tiles and [DIRECT_MAX_BYTES] a download ([overDirectCap],
+ * [directBytesReached]); a server set has no such cap.
  *
  * One per-tile structure remains: the online tile cache's index (`TileCache`, one entry per cached file, held for every
  * tile on the phone, an area's or not, from the cache's start-up scan on). [BYTES_PER_TILE] is its cost and [maxTiles]
@@ -54,4 +57,25 @@ object AreaLimit {
     /** The upper bound over the manifest's DEM zooms and vector zooms ([AreaManifest.tileItems]'s arguments). */
     fun upperBound(area: AreaOfInterest, demZooms: IntRange?, osmZooms: IntRange?, margin: Int = 1): Long =
         listOfNotNull(demZooms, osmZooms).sumOf { zs -> zs.sumOf { upperBound(area, it, margin) } }
+
+    // T369
+    /**
+     * T369: the public vector source's figure for one offline download (its terms, read 2026-11-24, in the registry's
+     * `openfreemap` entry): at most 3,000 tiles. A rule of terms, not a setting (ADR 0044). Every vector tile of the plan
+     * counts, one a peer or the phone already holds included (simpler, and never over).
+     */
+    const val DIRECT_MAX_TILES = 3_000L
+
+    /**
+     * T369: the same terms' second figure: at most 50 MB a download, taken as 50,000,000 bytes (the smaller reading) and
+     * counted as fetched, gunzipped as the phone stores them (a little more than went over the wire: never over).
+     */
+    const val DIRECT_MAX_BYTES = 50_000_000L
+
+    /** T369: true when a plan of [vectorTiles] passes [DIRECT_MAX_TILES] (3,000 is allowed, 3,001 is not). */
+    fun overDirectCap(vectorTiles: Long): Boolean = vectorTiles > DIRECT_MAX_TILES
+
+    /** T369: true once a download has fetched [vectorBytes] of vector tiles that reach [DIRECT_MAX_BYTES]: it stops there. */
+    fun directBytesReached(vectorBytes: Long): Boolean = vectorBytes >= DIRECT_MAX_BYTES
+    // end T369
 }

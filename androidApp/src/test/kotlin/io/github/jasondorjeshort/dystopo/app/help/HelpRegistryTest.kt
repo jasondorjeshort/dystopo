@@ -223,6 +223,9 @@ class HelpRegistryTest {
             // T364: Show flights.
             "map.flights",
             // end T364
+            // T369: the public map source's cap on a download.
+            "direct.downloadCap",
+            // end T369
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
