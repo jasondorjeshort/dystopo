@@ -38,7 +38,9 @@ object DetailOutline {
      * solid), [dots] round caps (a dash of 0.4 then reads as a dot), [fill] the opacity of a fill (0: none).
      */
     data class Look(val colour: String, val width: Float, val dash: List<Float>?, val dots: Boolean = false, val fill: Float = 0f) {
-        fun json(): Map<String, Any?> = linkedMapOf("colour" to colour, "width" to width.toDouble(), "dash" to dash?.map { it.toDouble() }, "dots" to dots, "fill" to fill.toDouble())
+        fun json(): Map<String, Any?> = linkedMapOf("colour" to colour, "width" to r(width), "dash" to dash?.map { r(it) }, "dots" to dots, "fill" to r(fill))
+
+        private fun r(v: Float): Double = Math.round(v * 1000.0) / 1000.0
     }
 
     /** The map's paper by day and by night (`DefaultOsmStyle`'s background, `NightColors.of` of it). */
