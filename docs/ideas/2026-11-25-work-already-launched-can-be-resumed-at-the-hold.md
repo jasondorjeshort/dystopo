@@ -25,3 +25,5 @@ the wave" (a wording aid; this one stops work).
 
 - How the gate maps a `SendMessage` target to a launch line (the agent's name or id against the `tool_use_id`).
 - A base-owned hook: a departure row in ADR 0038 and a carry-back, or a policy key the base adds.
+
+Priority: a task of wave 49 (the owner, 2026-11-25, by multiple choice: "Split by owner").

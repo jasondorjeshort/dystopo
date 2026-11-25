@@ -25,3 +25,5 @@ which fails a check; this stops the session.
 ## Open
 
 - Whether `git checkout --ours` on the hook scripts before the report keeps the unmerged entry on every git version.
+
+Where it is built: in Hatchery, by a session rooted there, not in this tree (the owner, 2026-11-25, by multiple choice: "Split by owner"); building it here would add a departure row.

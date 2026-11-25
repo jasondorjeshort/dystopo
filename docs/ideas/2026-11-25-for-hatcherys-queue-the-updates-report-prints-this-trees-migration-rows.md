@@ -26,3 +26,5 @@ Lever: a migration is done in the update that brings it, not discovered later. I
 ## Open
 
 - How a tree is named in a row when its remote differs from the name the base uses.
+
+Where it is built: in Hatchery, by a session rooted there, not in this tree (the owner, 2026-11-25, by multiple choice: "Split by owner"); building it here would add a departure row.
