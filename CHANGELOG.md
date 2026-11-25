@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-25
+
+- T369: The cap on a direct-mode download, and a trip's corridor by a tap
+
 ### 2026-11-24
 
 - T370: Flight tracking's rows move from Map options to Data and storage
