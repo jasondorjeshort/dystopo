@@ -274,6 +274,7 @@ def run(dev, out_path, wait_ms, from_dir=None, keep=False):
         table["t354"] = t354_collect(dev, wait_ms, raw_dir)  # T354: GET /holdings against /why and the sky views, each map chosen in turn (its block, below)
         table["t356"] = t356_collect(dev, raw_dir)  # T356: an area's z15 cells inside the coarse map, offline and with no source (its block, below)
         table["t368"] = t368_collect(dev, raw_dir)  # T368: the network's deeper elevation fetched behind the coarse map, the setting on and off (its block, below)
+        table["t359"] = t359_collect(dev, raw_dir)  # T359: the chip, the button, search and the first-run rule against GET /holdings, the network off and on (its block, below)
     except Exception as e:
         table["error"] = f"{type(e).__name__}: {e}"[:500]
     finally:
@@ -379,6 +380,7 @@ def assertions(table):
     out += t354_assertions(table)  # T354
     out += t356_assertions(table)  # T356
     out += t368_assertions(table)  # T368
+    out += t359_assertions(table)  # T359
     return out
 
 
@@ -1092,6 +1094,164 @@ def t368_assertions(table):
             out.append({"what": "T368:holdings-off", "serves": off.get("serves")})
     return out
 # end T368
+
+
+# T359
+# The coverage readers take the lookup (ADR 0066 build task 5): the status chip, the map's "Download this area" button, search's
+# coverage and the first-run rule, against `GET /holdings` (`tilePathServes`, what the tile paths serve). With the network off
+# (airplane mode) and then on, each after the online tile cache and the direct sources' block cache are emptied with the app
+# stopped (so nothing kept answers), at the four places at z12 (inside the maps' zooms) and z7.5 (the elevation from the maps,
+# the map's roads below their first zoom), read `GET /online`, `GET /holdings` and `GET /firstrun`. Asserted per row: the
+# chip's network test (`chip.network`) is the phase's (false in airplane mode); the chip says "on this phone" only where no
+# tile is served by the cache and, online, a map serves the vector tile; where the cache serves a tile the chip does not say
+# "on this phone"; online, where nothing on the phone serves the vector tile, the chip names the network (T341's z7.5 and
+# T339's outside), and offline outside both maps it says "no data here"; the button is shown only online, and reads "Already
+# on this phone" only where the chip says "on this phone"; the first-run card shows nowhere, and the map's message is
+# "outside" only offline outside both maps (`none` elsewhere). The chip's word while a deeper tile is fetched behind a map:
+# the map serves now, so the map's (`OnlineView.sourceOf`). Then search (`GET /search`, the index built first) for a name in
+# the coarse map from a point inside it only (found, `vector`) and from outside both (a sentence, no `vector`), each phase.
+# Last, offline with no server and the phone's own reading of the sources on (T342's and T332's follow-up): both maps off,
+# the map says "No offline map covers this view" outside them and the chip "a map here is off" over them. Pinned: it switches
+# the network and restarts the app itself and empties the caches; the server, direct reading and the maps' off switches are
+# read first and put back; the clock only in its waits. It depends on no earlier part, only on the fixture this part installed.
+T359_ZOOMS = [12, 7.5]
+T359_SEARCH = "Longmire"  # in the coarse map's index (a public place in the Rainier fixture)
+
+
+def t359_row(dev, place, net, zoom, raw_dir):
+    lat, lon = place["lat"], place["lon"]
+    dev.call(f"/camera?lat={lat}&lon={lon}&zoom={zoom}&bearing=0", "POST")
+    time.sleep(6.0 if net == "on" else 4.0)
+    _, on, e1 = dev.call("/online")
+    _, h, e2 = dev.call(f"/holdings?z={zoom}&lat={lat}&lon={lon}")
+    _, fr, e3 = dev.call("/firstrun")
+    if raw_dir:
+        with open(os.path.join(raw_dir, f"t359-{net}-{place['id']}-z{zoom}.json"), "w", encoding="utf-8", newline="\n") as fh:
+            json.dump({"online": on, "holdings": h, "firstrun": fr}, fh, indent=1)
+    c = get(on, "chip") or {}
+    return {"network": net, "place": place["id"], "inside": place["inside"], "zoom": zoom, "errors": [e for e in (e1, e2, e3) if e],
+            "chip": c.get("text"), "source": c.get("source"), "column": c.get("column"), "chipNetwork": c.get("network"),
+            "served": c.get("served"), "offAhead": c.get("offAhead"),
+            "button": {k: get(c, "download", k) for k in ("shown", "text", "enabled")}, "verdict": get(c, "held", "verdict"),
+            "holdings": {r: {"serves": get(h, r, "serves"), "tilePathServes": get(h, r, "tilePathServes")} for r in ("vector", "dem")},
+            "allowed": get(h, "online", "allowed"), "mapMessage": get(fr, "mapMessage"), "cardVisible": get(fr, "cardVisible"),
+            "noPack": get(fr, "noPack")}
+
+
+def t359_search(dev, net):
+    dev.call("/search/build", "POST", timeout=120)
+    t0, st = time.time(), None
+    while time.time() - t0 < 120:
+        _, st, _ = dev.call("/search/status")
+        if get(st, "status") == "ready":
+            break
+        time.sleep(2.0)
+    out = []
+    for pid in ("wide-only", "outside"):
+        p = next(x for x in fx.PLACES if x["id"] == pid)
+        _, b, err = dev.call(f"/search?q={T359_SEARCH}&lat={p['lat']}&lon={p['lon']}&limit=3", timeout=120)
+        out.append({"network": net, "place": pid, "error": err, "reason": get(b, "reason"), "coverage": get(b, "coverage"),
+                    "sentence": get(b, "sentence"), "hits": [x.get("name") for x in (get(b, "hits") or []) if isinstance(x, dict)][:3]})
+    return out
+
+
+def t359_collect(dev, raw_dir):
+    out = {"rows": [], "search": [], "allOff": []}
+    wide, fine = fx.MAPS[0]["name"], fx.MAPS[1]["name"]
+    _, s0, _ = dev.call("/settings")
+    _, d0, _ = dev.call("/firstrun/direct")
+    server0 = (s0 or {}).get("server") or ""
+    direct0 = bool((d0 or {}).get("enabled"))
+    try:
+        for net in ("off", "on"):
+            fx.network(dev, net == "on")
+            dev.call("/online/cache/clear", "POST", timeout=120)
+            dev.adb("shell", "am", "force-stop", fx.PACKAGE, timeout=30)
+            dev.runas("rm -rf cache/sources; true")
+            dev.restart()
+            for place in fx.PLACES:
+                for z in T359_ZOOMS:
+                    out["rows"].append(t359_row(dev, place, net, z, raw_dir))
+            out["search"] += t359_search(dev, net)
+        # Offline, no server, the phone's own reading on, both maps off.
+        fx.network(dev, False)
+        dev.call("/settings?server=", "POST")
+        dev.call("/firstrun/direct?on=1", "POST")
+        for name in (fine, wide):
+            dev.call(f"/areas/rows/off?name={name}&off=1", "POST", timeout=120)
+        dev.restart()
+        for pid in ("inside-both", "outside"):
+            out["allOff"].append(t359_row(dev, next(p for p in fx.PLACES if p["id"] == pid), "all-off", ZOOM, raw_dir))
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        try:
+            for name in (fine, wide):
+                dev.call(f"/areas/rows/off?name={name}&off=0", "POST", timeout=120)
+            dev.call("/settings?server=" + urllib.parse.quote(server0, safe=""), "POST")
+            dev.call(f"/firstrun/direct?on={1 if direct0 else 0}", "POST")
+            fx.network(dev, True)
+        except Exception as e:
+            out["restoreError"] = f"{type(e).__name__}: {e}"[:300]
+    return out
+
+
+T359_PHONE = ("on this phone",)
+T359_NETWORK = ("from your server", "from public sources", "from a nearby phone", "viewed earlier")
+
+
+def t359_assertions(table):
+    out = []
+    t = table.get("t359")
+    if not isinstance(t, dict):
+        return out  # not run: the phases failed before it, or a table from before T359
+    for k in ("error", "restoreError"):
+        if t.get(k):
+            out.append({"what": f"T359:{k}", "error": t[k]})
+    rows = t.get("rows") or []
+    if len(rows) != 2 * len(fx.PLACES) * len(T359_ZOOMS) and not t.get("error"):
+        out.append({"what": "T359:rows", "rows": len(rows)})
+    for r in rows:
+        row = f"t359/{r['network']}/{r['place']}/z{r['zoom']}"
+        if r.get("errors"):
+            out.append({"what": "T359:unread", "row": row, "errors": r["errors"]})
+            continue
+        on = r["network"] == "on"
+        hv, hd = (r.get("holdings") or {}).get("vector") or {}, (r.get("holdings") or {}).get("dem") or {}
+        cache = "cache" in (hv.get("tilePathServes"), hd.get("tilePathServes"))
+        src, btn = r.get("source"), r.get("button") or {}
+        if r.get("chipNetwork") is not on or r.get("allowed") is not on:
+            out.append({"what": "T359:network-test", "row": row, "chip": r.get("chipNetwork"), "holdingsAllowed": r.get("allowed")})
+        if src in T359_PHONE and (cache or (on and hv.get("tilePathServes") is None)):
+            out.append({"what": "T359:on-phone-not-served", "row": row, "chip": r.get("chip"), "holdings": r.get("holdings")})
+        if on and hv.get("tilePathServes") is None and src not in T359_NETWORK:
+            out.append({"what": "T359:network-not-named", "row": row, "chip": r.get("chip"), "holdings": r.get("holdings")})
+        if not on and r["place"] == "outside" and src != "no data here":
+            out.append({"what": "T359:outside-offline", "row": row, "chip": r.get("chip")})
+        if btn.get("shown") and not on:
+            out.append({"what": "T359:button-offline", "row": row, "button": btn})
+        if str(btn.get("text") or "").startswith("Already") and btn.get("shown") and src not in T359_PHONE:
+            out.append({"what": "T359:already-not-on-phone", "row": row, "chip": r.get("chip"), "button": btn, "holdings": r.get("holdings")})
+        want = "outside" if (not on and r["place"] == "outside") else "none"
+        if r.get("cardVisible") or r.get("noPack") or r.get("mapMessage") != want:
+            out.append({"what": "T359:map-message", "row": row, "mapMessage": r.get("mapMessage"), "want": want, "card": r.get("cardVisible")})
+    for s in t.get("search") or []:
+        row = f"t359/search/{s['network']}/{s['place']}"
+        if s.get("error"):
+            out.append({"what": "T359:search-unread", "row": row, "error": s["error"]})
+        elif s["place"] == "wide-only" and (s.get("reason") != "found" or T359_SEARCH not in (s.get("hits") or [])):
+            out.append({"what": "T359:search-inside", "row": row, "search": s})
+        elif s["place"] == "outside" and (s.get("coverage") == "vector" or not s.get("sentence")):
+            out.append({"what": "T359:search-outside", "row": row, "search": s})
+    alloff = {r["place"]: r for r in t.get("allOff") or []}
+    if not t.get("error"):
+        i, o = alloff.get("inside-both") or {}, alloff.get("outside") or {}
+        if i.get("source") != "a map here is off" or i.get("chipNetwork") is not False:
+            out.append({"what": "T359:all-off-chip", "chip": i.get("chip"), "network": i.get("chipNetwork")})
+        if o.get("mapMessage") != "outside" or o.get("cardVisible"):
+            out.append({"what": "T359:all-off-message", "mapMessage": o.get("mapMessage"), "card": o.get("cardVisible")})
+    return out
+# end T359
 
 
 def main(argv=None):

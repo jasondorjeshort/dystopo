@@ -284,6 +284,45 @@ whats = sorted(f["what"] for f in part.t368_assertions({"t368": t368_bad}))
 assert whats == sorted(["T368:fetch-behind", "T368:refresh", "T368:holdings-on", "T368:upgraded", "T368:setting-off-fetched"]), whats
 # end T368
 
+# T359's block: the chip, the button, search and the first-run rule against GET /holdings, the network off and on.
+def t359_row(net, place, z, source, vec, dem, msg="none", already=False, shown=None, network=None):
+    on = net == "on"
+    return {"network": net, "place": place, "zoom": z, "errors": [], "source": source, "chip": f"x · {source}", "chipNetwork": on if network is None else network,
+            "allowed": on if network is None else network, "button": {"shown": on if shown is None else shown, "text": "Already on this phone" if already else "Download this area"},
+            "holdings": {"vector": {"tilePathServes": vec}, "dem": {"tilePathServes": dem}}, "mapMessage": msg, "cardVisible": False, "noPack": False}
+t359_rows = []
+for net in ("off", "on"):
+    for place in ("inside-both", "wide-only", "outside", "fine-edge"):
+        for z in part.T359_ZOOMS:
+            m = "rainier-fine" if place != "outside" else None
+            vec = m if z >= 8 else None
+            if place == "outside":
+                src = "from your server" if net == "on" else "no data here"
+            elif vec is None and net == "on":
+                src = "from your server"
+            else:
+                src = "on this phone"
+            t359_rows.append(t359_row(net, place, z, src, vec, m, msg="outside" if (net == "off" and place == "outside") else "none"))
+t359_search = [{"network": n, "place": "wide-only", "reason": "found", "coverage": "vector", "hits": [part.T359_SEARCH]} for n in ("off", "on")] + \
+              [{"network": n, "place": "outside", "reason": "no-map", "coverage": "no-map", "sentence": "Search needs an offline map here"} for n in ("off", "on")]
+t359_off = [dict(t359_row("all-off", "inside-both", 12, "a map here is off", None, None, network=False)), dict(t359_row("all-off", "outside", 12, "no data here", None, None, msg="outside", network=False))]
+t359_good = {"rows": t359_rows, "search": t359_search, "allOff": t359_off}
+assert part.t359_assertions({"t359": t359_good}) == [], part.t359_assertions({"t359": t359_good})
+assert part.t359_assertions({}) == []
+t359_bad_rows = [dict(r) for r in t359_rows]
+t359_bad_rows[0] = dict(t359_rows[0], chipNetwork=True)  # off/inside-both/z12: the chip's network test true in airplane mode
+t359_bad_rows[1] = dict(t359_rows[1], source="on this phone", holdings={"vector": {"tilePathServes": None}, "dem": {"tilePathServes": "cache"}})  # cache served, chip on this phone
+t359_bad_rows[9] = dict(t359_rows[9], source="on this phone")  # on/inside-both/z7.5: T341's follow-up, the roads online
+t359_bad_rows[12] = dict(t359_rows[12], source="no data here")  # on/outside/z12: T339's follow-up
+t359_bad_rows[13] = dict(t359_rows[13], button={"shown": True, "text": "Already on this phone"})  # on/outside/z7.5: already where the chip is not on the phone
+t359_bad_rows[4] = dict(t359_rows[4], mapMessage="none")  # off/outside/z12: no message offline outside both maps
+t359_bad = {"rows": t359_bad_rows, "search": [dict(t359_search[0], reason="tiles-only")] + t359_search[1:],
+            "allOff": [dict(t359_off[0], source="on this phone"), t359_off[1]]}
+whats = sorted(f["what"] for f in part.t359_assertions({"t359": t359_bad}))
+assert whats == sorted(["T359:network-test", "T359:on-phone-not-served", "T359:on-phone-not-served", "T359:network-not-named", "T359:network-not-named",
+                        "T359:already-not-on-phone", "T359:map-message", "T359:search-inside", "T359:all-off-chip"]), whats
+# end T359
+
 # The part's place in the sweep: listed after a11y, a debug-build device part with its own ceiling.
 with open(os.path.join(here, "sweep.ps1"), encoding="utf-8") as fh:
     sweep = fh.read()
