@@ -1280,9 +1280,16 @@ def readout_gap(c, jump=False):
     apart, [jump] then a network fix 3 km north with no height and one back, then 8 s with none: the values dimmed with
     "no fix 8 s" and the bar's "?" marks. snapshot()'s fresh fix just before the frame makes it "resuming" (still dimmed,
     still marked: the dim leaves on the second fix of a run). The barometer's setting as found is put back by
-    end_readout_states."""
-    c.readout_baro_found = (c.srv.ok("GET", "/settings") or {}).get("readoutBarometer")
+    end_readout_states.
+
+    T372: the pressure entry is switched off for these two screens (put back by end_readout_states): the emulator's
+    barometer reaches the readout only 10 s after the last injected fix, so the entry read 1013 mbar in one run and a dash
+    with its reason line in the next, a line more or less in the glance view, which moved every line under it."""
+    found = c.srv.ok("GET", "/settings") or {}
+    c.readout_baro_found = found.get("readoutBarometer")
+    c.readout_pressure_found = pressure_shown((found.get("readout") or {}).get("pressure"))
     c.srv.ok("POST", "/settings?readoutBarometer=never")
+    c.srv.ok("POST", "/settings?readout.pressure=shown=0")
     c.srv.ok("POST", "/readout/reset")
     for k in range(4):
         c.srv.ok("POST", f"/location?lat={PARADISE[0] + k * 0.00002:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
@@ -1292,6 +1299,13 @@ def readout_gap(c, jump=False):
         time.sleep(1.0)
         c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
     time.sleep(8.0)
+
+
+def pressure_shown(option):
+    """T372: the pressure entry's `shown` as `GET /settings` `readout.pressure` has it ("shown=1;pace=0;..."): "1" or "0",
+    None when not read."""
+    m = re.search(r"(?:^|;)shown=([01])", option or "")
+    return m.group(1) if m else None
 
 
 def scr_readout_states(c):
@@ -1306,18 +1320,54 @@ def end_readout_states(c):
     c.srv.call("POST", "/readout/glance?open=0")
     found = getattr(c, "readout_baro_found", None)
     c.srv.call("POST", f"/settings?readoutBarometer={found or 'auto'}")
+    shown = getattr(c, "readout_pressure_found", None)  # T372
+    c.srv.call("POST", f"/settings?readout.pressure=shown={shown or '1'}")
+
+
+# T372: the glance view's scene, as GET /readout/glance reads it once the view holds: the elevation and the climb
+# "resuming" (dimmed, the first fix after the gap), and in the last minute the one gap and the two jumps.
+GLANCE_SCENE = {"resuming": ("elevation", "climb"), "gaps": 1, "jumps": 2}
+GLANCE_TRIES = 3
+
+
+def glance_scene(g):
+    """T372: what is wrong with the held glance view's scene (`GET /readout/glance`), or None when it is GLANCE_SCENE."""
+    if not g.get("holding"):
+        return "the view does not hold"
+    lines = {l.get("kind"): l for l in g.get("lines") or []}
+    for kind in GLANCE_SCENE["resuming"]:
+        if (lines.get(kind) or {}).get("reasonCode") != "resuming":
+            return f"{kind} reads {(lines.get(kind) or {}).get('reasonCode')!r}, not resuming"
+    recent = (g.get("notes") or {}).get("recent") or []
+    gaps = sum(1 for r in recent if r.startswith("GPS lost"))
+    jumps = sum(1 for r in recent if r.startswith("Position jumped"))
+    if (gaps, jumps, len(recent)) != (GLANCE_SCENE["gaps"], GLANCE_SCENE["jumps"], gaps + jumps):
+        return f"the last minute reads {recent}"
+    return None
 
 
 def scr_glance(c):
     """T363: the glance view (POST /readout/glance?open=1, as a tap on the bar opens it) after a jump and an 8 s gap that a
     fix ended: a line under each value that is not a plain figure (the climb's window filling after the reset) and "In the
-    last minute" with the gap and the jumps. The fix that ends the gap comes before the view opens, so snapshot()'s fresh
-    fix (the second of the run: the dim goes) changes no line's count between the frame and the semantics."""
-    readout_gap(c, jump=True)
-    c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
-    time.sleep(1.5)
-    c.srv.ok("POST", "/readout/glance?open=1")
-    time.sleep(1.0)
+    last minute" with the gap and the jumps.
+
+    T372: the view is opened held (`&hold=1`): it stops refreshing once it has drawn the readout, so the frame and the
+    semantics read one scene however long the frame and the semantics take (a slow capture let the elevation's caption turn
+    to "no fix 6 s" between them, and the fix that snapshot() sends 5 s after the gap ended counted a second gap). The
+    scene is read back and made again, up to GLANCE_TRIES times, when it is not GLANCE_SCENE (a step so slow that the
+    gap-ending fix was 5 s old when the view drew)."""
+    why = None
+    for _ in range(GLANCE_TRIES):
+        readout_gap(c, jump=True)
+        c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
+        time.sleep(0.5)
+        g = c.srv.ok("POST", "/readout/glance?open=1&hold=1") or {}
+        why = glance_scene(g)
+        if why is None:
+            log(f"glance: scene held: {json.dumps((g.get('notes') or {}).get('recent'))}")
+            return
+        c.srv.call("POST", "/readout/glance?open=0")
+    raise RuntimeError(f"the glance view's scene not made in {GLANCE_TRIES} tries: {why}")
 # end T363
 
 
