@@ -71,7 +71,7 @@ T268: `startup` (debug build, after `bothunits`, before the release phase) runs 
 T191 (finding `docs/findings/2026-10-31-sweep-hung-when-the-paging-file-ran-out.md`, a 9.5 h hang): every part
 has a ceiling, 900 s by default (`-PartTimeout`), with `device-tour` 1200 s a run, `device-boot` 1500, `update` 1500,
 `check` 2400 and `matrix` 2400 built in (the release build has 1800 s of its own) and `-PartTimeouts part=seconds`
-overriding any; at the ceiling the running program's process
+overriding any (T375: every boot passes `-WaitForSlot`, 60 min by default, and the parts that boot grow by that wait); at the ceiling the running program's process
 tree is killed by its PID, the part's `steps.tsv` line reads `timeout` and names the PIDs, and the sweep goes on
 (`-InjectHang <part>` replaces a part with a sleeping process tree to test this). Before `device-boot` and the
 `bothunits` boot it waits up to 50 s for the console ports to be free and fails the part naming the holder. The
