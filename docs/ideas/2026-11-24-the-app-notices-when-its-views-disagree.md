@@ -28,4 +28,4 @@ Options: (1) after `2026-11-24-the-views-cross-check-what-they-read-at-one-point
 the in-app check then reuses its rules from `shared`); (2) one pass now, the check in release builds recording into
 the existing reports (`app/reports/DiagnosticDump.kt`) with no prompt, the "Send diagnostics" offer later; (3) rest it.
 
-Answer:
+Answer: (1), after the sweep's cross-check has run in a few closing sweeps (the owner, 2026-11-26, by multiple choice).

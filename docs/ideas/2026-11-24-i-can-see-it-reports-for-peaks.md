@@ -29,4 +29,4 @@ phone-only: "I can see it" and "It's hidden" on the List's picked peak line (`ap
 in the track database with place, time and the prediction, a debug route and an export; (3) a proposal now for the
 shared version (the data flow, privacy and what the server keeps).
 
-Answer:
+Answer: (1), rest it until the refraction or view-range work needs ground truth (the owner, 2026-11-26, by multiple choice).

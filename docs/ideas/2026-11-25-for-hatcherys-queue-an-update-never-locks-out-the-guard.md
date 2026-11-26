@@ -4,7 +4,7 @@ kind: chore
 related: [2026-11-20-a-failing-hook-says-why.md, 2026-10-23-hatchery-ownership-check-in-project-trees.md]
 ---
 
-# For Hatchery's queue: an update never locks out the guard
+# For the base: an update never locks out the guard
 
 Source: coordinator (claude-fable-5-2), a spark during the update from the base of 2026-11-25, in the offer the owner asked for; offered and accepted by the owner; not sanity-checked.
 
@@ -27,13 +27,3 @@ which fails a check; this stops the session.
 - Whether `git checkout --ours` on the hook scripts before the report keeps the unmerged entry on every git version.
 
 Where it is built: in Hatchery, by a session rooted there, not in this tree (the owner, 2026-11-25, by multiple choice: "Split by owner"); building it here would add a departure row.
-
-Question: since your "Split by owner" puts this in Hatchery, should the title become `For the base: ` so the base's
-triage lists it and the update that finds its `Base-idea:` commit deletes it here?
-Options: (1) retitle to `For the base: an update never locks out the guard` and add no block (recommended: the prefix
-is this tree's one channel to the base, `.claude/rules/docs.md` Queues and the `brainstorm` skill's "After an update
-from the base"; as titled now the file is triage's own and would be planned here, against your split); (2) keep it as
-this project's own and build the one-sentence warning in `.claude/skills/update-from-hatchery/SKILL.md` step 3 here,
-with a departure row and a carry-back; (3) drop it.
-
-Answer:

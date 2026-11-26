@@ -4,7 +4,7 @@ kind: chore
 related: [2026-10-23-hatchery-ownership-check-in-project-trees.md]
 ---
 
-# For Hatchery's queue: project policy keys without forking the loader
+# For the base: project policy keys without forking the loader
 
 Source: coordinator (claude-fable-5-2), a spark during the update from the base of 2026-11-25, in the offer the owner asked for; offered and accepted by the owner; not sanity-checked.
 
@@ -25,12 +25,3 @@ durable place for texts meant for another repository", which this file itself wo
 ## Open
 
 - Whether the loader type-checks the section at all, or a project registers a checker beside its hooks.
-
-Question: is this the base's work, to be retitled `For the base: ` so the base's triage lists it, or this project's?
-Options: (1) retitle to `For the base: project policy keys without forking the loader` and add no block (recommended:
-the change is in the base's loader, schema and harness, `.claude/hooks/policy.js`, `policy.schema.json` and
-`test-hooks.js`; built here it would add a fourth departure to close three, and it matches your "Split by owner" of
-2026-11-25 on its two siblings); (2) keep it as this project's own and carry it back as a branch (`carry-back` skill)
-after building it here; (3) drop it and keep the three rows.
-
-Answer:

@@ -24,4 +24,4 @@ Options: (1) rest it until the capture script's first real capture points at an 
 already passes on `main`); (2) build it now as one pass (`tools/` script driving each published release by taps on the
 two-maps fixture); (3) drop it.
 
-Answer:
+Answer: (1), rest it until a capture points at a fault an emulator can reproduce (the owner, 2026-11-26, by multiple choice).

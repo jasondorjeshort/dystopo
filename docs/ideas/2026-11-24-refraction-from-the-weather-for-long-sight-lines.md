@@ -29,4 +29,4 @@ the Mont Blanc area at `Horizon.REFRACTION_K` 0.07, 0.13 and 0.20, listing which
 none or few do, the idea rests with the figure, and a forecast source is researched only if many do); (2) rest it until
 the 200 km view range is built; (3) a proposal now, the forecast source and the model together.
 
-Answer:
+Answer: (1), measure first, one read-only pass (the owner, 2026-11-26, by multiple choice).
