@@ -12,17 +12,20 @@
 #   data      local.properties and the Rainier packs (rainier-dem, rainier-outdoors) copied from the main checkout into
 #             the worktree (copies, never links: CLAUDE.md, Working in parallel)
 #   check     gradlew check --no-daemon in the worktree; the test counts read from every TEST-*.xml under */build/test-results
-#   slot      waits (adb devices every 10 s, up to -SlotWaitMinutes) while the machine's emulator cap (emulators.max in
-#             .claude/hooks/policy.json) is taken by other emulators
+#   slot      the console port's shape and owner (a serial running another AVD fails it), and the emulators adb lists
+#             against the machine's cap (emulators.max in .claude/hooks/policy.json), as a note; it waits for nothing
+#             (T375: the boot waits, under android-emu.ps1's mutex and its waiters' order)
 #   boot      tools\android-emu.ps1 -Build with the brief's AVD, AVD home, console and host ports, -Owner and -Server
-#             (and -PrivateLimitGB when given), from the worktree, so the APK is the branch's
+#             (and -PrivateLimitGB when given), from the worktree, so the APK is the branch's; T375: -WaitForSlot
+#             -SlotWaitMinutes (60), so at the cap it waits for a slot, and its ceiling grows by that wait
 #   tour      python -I tools/android-check.py --views-file tools/android-tour.txt --server <Server>: views ok, the sheet
 #   ui-<part> python -I tools/android-ui.py <part> for each of -Parts (with --serial, --port, --out and -UiArgs)
 #   sweep     (T296, -SweepThrough <part>) tools\sweep.ps1 from its first part through <part>, in the order the branch's
 #             sweep.ps1 -ListParts prints (never an order written here), -Skip for every later part and for the sweep's
 #             own check (this script's check step is that), -NoBothUnits unless <part> is bothunits, on the brief's AVD
 #             and ports: the part meets the state the earlier parts leave. boot, tour and stop are then skipped (the
-#             sweep boots, tours and stops its own emulator); slot waits for one slot (two for bothunits).
+#             sweep boots, tours and stops its own emulator); T375: -WaitForSlot -SlotWaitMinutes goes to the sweep, whose
+#             boots wait, and the step's ceiling grows by a wait per emulator plus one for a reboot.
 #   chk-<n>   (T296, -Checks <file>) each check of a Checks file: a command's exit code, a test count, a JSON path's value
 #   stop      android-emu.ps1 -Stop -Delete of the same emulator (runs whenever boot ran, also after a failure;
 #             -KeepEmulator leaves it running for the agent's own scenario and prints the stop command)
@@ -43,7 +46,9 @@
 #   ... -Checks <file>                # T296: the Done-when's machine-readable items (docs/reference/verifying-a-task.md)
 #   ... -Commit 944294c1              # T296: a past commit instead of origin/task/<Task> (base then only notes main's lead)
 #
-# Every Gradle run is --no-daemon (and GRADLE_OPTS gains -Dorg.gradle.daemon=false for the builds of the scripts it runs);
+# Every Gradle run is --no-daemon (and GRADLE_OPTS gains -Dorg.gradle.daemon=false for the builds of the scripts it runs,
+# and T375 -Dorg.gradle.jvmargs=-Xmx5g -Dkotlin.compiler.execution.strategy=in-process: the Kotlin daemon ran out of
+# memory in check with two builds on the PC, wave 48);
 # every program's wait has a ceiling, at which its process tree is killed by its PID (taskkill /PID /T, never by name),
 # as tools\sweep.ps1 does. The procedure around it: docs/reference/verifying-a-task.md.
 # -Fixture <dir> runs no program: exit codes come from <dir>\codes.json, git and adb answers from <dir>\answers.json, the
@@ -75,6 +80,7 @@ param(
     [switch]$DryRun,
     [switch]$KeepEmulator,
     [switch]$AllowBehind,
+    # T375: the boot's (and the sweep's boots') wait for a free emulator slot, android-emu.ps1 -WaitForSlot.
     [int]$SlotWaitMinutes = 60,
     # T296: run tools\sweep.ps1 through this part, in its -ListParts order; -SweepArgs adds arguments (one string, split
     # on spaces: "-BasePort 9100 -DataDir C:\...\out"); the whole sweep's ceiling is -SweepCeilingMinutes.
@@ -185,6 +191,9 @@ if (-not $Fixture) {
     $env:DYSTOPO_CACHE = if ($Cache) { $Cache } elseif ($env:DYSTOPO_CACHE) { $env:DYSTOPO_CACHE } else { Join-Path $main 'cache' }
     # Every Gradle build of this run and of the scripts it runs (android-emu.ps1, android-push-pack.ps1) without a daemon.
     if ("$env:GRADLE_OPTS" -notmatch 'org\.gradle\.daemon=false') { $env:GRADLE_OPTS = ("$env:GRADLE_OPTS -Dorg.gradle.daemon=false").Trim() }
+    # T375: the memory the wave's briefs give every Gradle run (a value the caller already set is kept).
+    if ("$env:GRADLE_OPTS" -notmatch 'org\.gradle\.jvmargs=') { $env:GRADLE_OPTS = ("$env:GRADLE_OPTS -Dorg.gradle.jvmargs=-Xmx5g").Trim() }
+    if ("$env:GRADLE_OPTS" -notmatch 'kotlin\.compiler\.execution\.strategy=') { $env:GRADLE_OPTS = ("$env:GRADLE_OPTS -Dkotlin.compiler.execution.strategy=in-process").Trim() }
 }
 $logs = Join-Path $Out 'logs'
 if (-not $DryRun) { New-Item -ItemType Directory -Force $logs | Out-Null }
@@ -207,7 +216,7 @@ function Stop-Tree([int]$id) {
 # tree is killed by its PID and the step fails with what was killed.
 function Invoke-Program([string]$id, [string]$exe, [string[]]$argv, [string]$cwd, [int]$timeoutS, [string]$stdin = '') {
     $line = "$cwd> " + ((@($exe) + $argv | ForEach-Object { Quote $_ }) -join ' ') + $(if ($stdin) { " < $stdin" } else { '' })
-    $script:commands.Add([ordered]@{ step = $script:current; id = $id; command = $line })
+    $script:commands.Add([ordered]@{ step = $script:current; id = $id; command = $line; ceilingS = $timeoutS })
     if ($DryRun) { Put "  $line"; return 0 }
     if ($Fixture) { if ($codes -and $null -ne $codes.$id) { return [int]$codes.$id } else { return 0 } }
     Put "  $line"
@@ -514,23 +523,21 @@ if (-not $script:slotNeed) {
 
 if ($script:slotNeed) { Run-Step 'slot' {
     # A wrong console port fails here, before the build: android-emu.ps1's own shape rule, and a serial that runs another AVD.
+    # T375: no wait here any more (it read adb only, outside the mutex, and missed an emulator still booting): the boot
+    # waits for a slot in android-emu.ps1 -WaitForSlot, so the emulators of others are only noted.
+    if (-not $EmuPort) { return @{ note = 'no emulator port given: nothing to check' } }
     if ($EmuPort % 2 -ne 0 -or $EmuPort -lt 5554 -or $EmuPort -gt 5682) { Fail "-EmuPort must be even, 5554-5682 (got $EmuPort)" }
-    $deadline = (Get-Date).AddMinutes($SlotWaitMinutes)
-    $waited = 0
-    while ($true) {
-        $listing = Query 'adbDevices' $adb @('devices')
-        if ($DryRun) { return @{} }
-        $all = @(($listing -split "`r?`n") | ForEach-Object { if ($_ -match '^(emulator-\d+)\s+\S+') { $Matches[1] } })
-        if ($all -contains $serial) {
-            $name = @((Query 'avdName' $adb @('-s', $serial, 'emu', 'avd', 'name')) -split "`r?`n")[0].Trim()
-            if ($name -ne $Avd) { Fail "console port $EmuPort is taken: $serial runs $(if ($name) { "AVD $name" } else { 'an AVD that does not answer' }), not $Avd (the brief's port?)" }
-        }
-        $others = @($all | Where-Object { $_ -ne $serial })
-        if ($emuMax - $others.Count -ge $script:slotNeed) { return @{ others = $others; cap = $emuMax; need = $script:slotNeed; waitedSeconds = $waited; note = "$($others.Count) of $emuMax slots taken by others$(if ($waited) { "; waited $waited s" })" } }
-        if ((Get-Date) -ge $deadline -or $Fixture) { Fail "emulator cap $emuMax still taken after $waited s: $($others -join ', ')" }
-        if ($waited % 60 -eq 0) { Say "slot: $($others.Count) of $emuMax taken ($($others -join ', ')); waiting" }
-        Start-Sleep -Seconds 10; $waited += 10
+    $listing = Query 'adbDevices' $adb @('devices')
+    if ($DryRun) { return @{} }
+    $all = @(($listing -split "`r?`n") | ForEach-Object { if ($_ -match '^(emulator-\d+)\s+\S+') { $Matches[1] } })
+    if ($all -contains $serial) {
+        $name = @((Query 'avdName' $adb @('-s', $serial, 'emu', 'avd', 'name')) -split "`r?`n")[0].Trim()
+        if ($name -ne $Avd) { Fail "console port $EmuPort is taken: $serial runs $(if ($name) { "AVD $name" } else { 'an AVD that does not answer' }), not $Avd (the brief's port?)" }
     }
+    $others = @($all | Where-Object { $_ -ne $serial })
+    $short = $script:slotNeed - ($emuMax - $others.Count)
+    @{ others = $others; cap = $emuMax; need = $script:slotNeed; waitForSlotMinutes = $SlotWaitMinutes
+        note = "$($others.Count) of $emuMax slots taken by others$(if ($short -gt 0) { "; the boot waits up to $SlotWaitMinutes min for $short more (-WaitForSlot)" })" }
 } }
 
 function EmuArgs([string[]]$extra) {
@@ -542,9 +549,10 @@ function EmuArgs([string[]]$extra) {
 Run-Step 'boot' {
     $script:bootRan = -not $DryRun
     $script:bootStarted = (Get-Date).ToUniversalTime()
-    $extra = @('-Build', '-Owner', $Owner, '-Server', $Server)
+    $extra = @('-Build', '-Owner', $Owner, '-Server', $Server, '-WaitForSlot', "$SlotWaitMinutes")
     if ($PrivateLimitGB -gt 0) { $extra += @('-PrivateLimitGB', "$PrivateLimitGB") }
-    $c = Invoke-Program 'boot' 'powershell.exe' (EmuArgs $extra) $wt 1500
+    # T375: the build and the boot's 1500 s, plus the wait for a slot.
+    $c = Invoke-Program 'boot' 'powershell.exe' (EmuArgs $extra) $wt (1500 + 60 * $SlotWaitMinutes)
     if ($DryRun) { return @{} }
     $built = if ((Log-Text 'boot') -match 'built in ([\d,]+) s') { [int]($Matches[1] -replace ',', '') } else { $null }
     if ($c -ne 0) { Fail "android-emu.ps1 -Build exit ${c}: $(Log-Tail 'boot' 3)" }
@@ -610,11 +618,13 @@ if ($SweepThrough) {
         if ($EmuPort) { $argv += @('-EmuPort', "$EmuPort") }
         if ($Port) { $argv += @('-Port', "$Port") }
         if ($AvdHome) { $argv += @('-AvdHome', $AvdHome) }
+        if ($plan.emulators) { $argv += @('-WaitForSlot', "$SlotWaitMinutes") } # T375
         $argv += $SweepArgs
         $f = [ordered]@{ through = $SweepThrough; run = $plan.run; skippedParts = $plan.skip; emulators = $plan.emulators }
         if ($DryRun) { Put "  sweep through ${SweepThrough}: runs $($plan.run -join ', '); skips $(if ($plan.skip.Count) { $plan.skip -join ', ' } else { 'nothing' }); $($plan.emulators) emulator(s)" }
         if ($plan.emulators) { $script:sweepRan = -not $DryRun; $script:bootStarted = (Get-Date).ToUniversalTime() }
-        $c = Invoke-Program 'sweep' 'powershell.exe' $argv $wt ($SweepCeilingMinutes * 60)
+        # T375: a wait for a slot per emulator the range boots, and one more for a reboot that loses its slot meanwhile.
+        $c = Invoke-Program 'sweep' 'powershell.exe' $argv $wt (60 * ($SweepCeilingMinutes + $(if ($plan.emulators) { $SlotWaitMinutes * ($plan.emulators + 1) } else { 0 })))
         if ($DryRun) { return $f }
         $sumFile = Join-Path $wt "$rel\summary.json"
         $j = $null
