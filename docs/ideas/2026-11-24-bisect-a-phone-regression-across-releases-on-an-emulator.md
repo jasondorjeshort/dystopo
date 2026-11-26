@@ -17,5 +17,3 @@ taps (`tools/android-ui.py`) and read screenshots or logcat; the two-maps fixtur
 emulator reproduces the fault only if the owner's own maps are not its cause. The owner installing v0.1.40 and v0.1.41
 on the phone with the same maps is cheaper and tests the real data. Wake it when the phone capture points at
 something an emulator could show.
-
-Waits: at rest — "Record at rest" (the owner, 2026-11-24)
