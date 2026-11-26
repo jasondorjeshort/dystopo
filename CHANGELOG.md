@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-26
+
+- T365: A recorder for flight polls, and the error of a guessed position measured from it
+
 ## v0.1.44-alpha (2026-11-26)
 
 ### 2026-11-25

@@ -77,6 +77,8 @@ past every source's horizon). Pointing the phone at a near or low plane needs 20
 
 ## Next
 
+Measured by T365 (2026-11-26): `2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md` has the table from two recordings and where it bears this finding's reasoning out (the medians) and where it does not (the 90th percentiles, and 5 minutes for cruise). What this paragraph asked for, as written before it:
+
 Measure before building the guessed state: there is no recorder and no truth. A small recorder that saves each
 poll's whole answer (one or two hours over a public area and one near an airport; at 20 s two hours is 360 of
 the day's 500 requests), then a devtool report that applies `moveUp` from each fix to 30, 120, 300 and 600 s,
