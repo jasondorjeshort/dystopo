@@ -428,7 +428,7 @@ internal const val MODE_LINE = "What you are doing now: the readout, the turn-ba
 
 private val PickerInk = Color(0xFF2B2420)
 private val PickerMuted = Color(0xFF6B5A4A)
-private val PickerPaper = Color(0xEEFFFCF5)
+private val PickerPaper = Color(0xFFFFFCF5) // T381: opaque (0xEE before: the map's labels showed through)
 private val PickerAccent = Color(0xFF7A4E2D)
 private val PickerLine = Color(0xFFE2D8C6)
 private val PickerLink = Color(0xFF2C7BB6)

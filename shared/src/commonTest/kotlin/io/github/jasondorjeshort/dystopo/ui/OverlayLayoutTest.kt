@@ -648,4 +648,153 @@ class OverlayLayoutTest {
         if (e.rect == null) assertEquals(OverlayLayout.REASON_NO_ROOM, e.reason)
         assertTrue(OverlayLayout.cardIds(base).contains(OverlayIds.FIRST_RUN_CARD))
     }
+
+    // T381
+    /**
+     * The track bar's row at chip scale [chip] with the bar unfolded while recording (Hide, Waypoint, Tracks, the help icon's
+     * 48 dp target, Pause, as the emulator measured them at 2.0), the recording panel [below] wide under it, in a column
+     * [full] wide.
+     */
+    private fun unfoldedRow(chip: Float, below: Float, full: Float) = OverlayBarRow(
+        listOf(OverlaySize(62f * chip, 29.3f * chip), OverlaySize(81.5f * chip, 29.3f * chip), OverlaySize(65.4f * chip, 29.3f * chip), OverlaySize(48f, 48f), OverlaySize(60.8f * chip, 29.3f * chip)),
+        6f, below, full,
+    )
+
+    /** A length the app logged, given in px at the emulator's 2.625 px per dp. */
+    private fun px(v: Int) = v / 2.625f
+
+    /** The rule's input the app logged in the finding's scene (font 2.0, the bar unfolded, the turn-back card up, a server set). */
+    private val t381Scene = OverlayInput(
+        windowWidth = 411.42856f, windowHeight = 914.2857f, insetTop = 48.761906f, insetBottom = 24f, fontScale = 2f,
+        search = OverlaySize(220f, 63.238094f), topRow = OverlaySize(236.57143f, px(100)), credit = OverlaySize(399.2381f, 55.61905f),
+        online = OverlaySize(208f, 76.57143f), trackBar = OverlaySize(339.0476f, 92.190475f), routes = OverlaySize(86.85714f, px(100)),
+        activity = OverlaySize(86.09524f, px(100)), scaleBar = OverlaySize(179.04762f, 41.904762f),
+        strip = listOf(OverlaySize(80.7619f, 137.90475f), OverlaySize(80.7619f, 161.14285f), OverlaySize(80.7619f, 131.80952f)),
+        horizonSwitch = OverlaySize(335.61905f, 48f), stripCore = 2, buttons = 1, offCentre = true,
+        navigation = OverlayCard(199.57143f, 199.57143f, 136.57143f, 395.42856f, drawn = OverlayRect(8f, 126.09524f, 403.42856f, 259.0476f)),
+        trackPanel = 179.80952f, panels = OverlayRect(8f, 641.1428f, 403.42856f, 766.4762f), cardsDrawn = true,
+    )
+    private val t381Row = unfoldedRow(1.3f, 297.14285f, 395.42856f)
+
+    /**
+     * The exchange as the app ran it: each round the bar's column is measured at the row's width from the round before
+     * ([widthOf] that round's placement), its panel within the height the rule left it ([trackPanelNatural] at most), and the
+     * rule ([rule]) places it; the placements of every round, until one repeats the round before or [rounds] are spent.
+     */
+    private fun exchange(
+        i: OverlayInput, row: OverlayBarRow, trackPanelNatural: Float, rounds: Int,
+        rule: (OverlayInput, OverlayLatch?) -> OverlayPlacement, widthOf: (OverlayPlacement) -> Float,
+    ): List<OverlayPlacement> {
+        val out = ArrayList<OverlayPlacement>()
+        var w = row.full
+        var room = Float.MAX_VALUE
+        var latch: OverlayLatch? = null
+        repeat(rounds) {
+            val bar = OverlayLayout.barAt(row, w)
+            val panel = minOf(trackPanelNatural, (room - bar.height).coerceAtLeast(0f))
+            val p = rule(i.copy(trackBar = bar, trackPanel = panel), latch)
+            latch = p.latch
+            w = widthOf(p)
+            room = if (p.trackRoom > 0f) p.trackRoom else Float.MAX_VALUE
+            if (out.isNotEmpty() && out.last() == p) return out + p
+            out += p
+        }
+        return out
+    }
+
+    @Test
+    fun theBarsRowReadTheOnlineColumnsDrawnEdgeAndWentRound() {
+        // Before T381: the row narrowed at the online column's drawn right edge (TrackControls' FlowRow, T91); shown, it
+        // narrowed the row, the taller row left the column no room, hidden it widened the row, and so on.
+        val old = { p: OverlayPlacement ->
+            p[OverlayIds.ONLINE]?.rect?.let { r -> maxOf(OverlayLayout.ROW_CAP_MIN, t381Scene.windowWidth - r.right - 16f) } ?: t381Row.full
+        }
+        val rounds = exchange(t381Scene, t381Row, t381Scene.trackPanel, 12, { i, l -> OverlayLayout.place(i, l) }, old)
+        assertEquals(12, rounds.size, "the old exchange never repeats a round")
+        val shown = rounds.map { it[OverlayIds.ONLINE]?.rect != null }
+        assertTrue(shown.contains(true) && shown.contains(false), "the online column flips: $shown")
+    }
+
+    @Test
+    fun theBarsRowSettlesInTheLoggedScene() {
+        val rounds = exchange(t381Scene, t381Row, t381Scene.trackPanel, 6, { i, l -> OverlayLayout.placeWithRow(i, t381Row, l) }, { it.barRowWidth })
+        assertTrue(rounds.size <= 4, "at rest in ${rounds.size} rounds")
+        val p = rounds.last()
+        assertEquals(t381Row.full, p.barRowWidth, "the row across: the narrowed row leaves the online column no room")
+        assertNotNull(p[OverlayIds.ONLINE]?.rect, "the online column shown")
+        val bar = assertNotNull(p[OverlayIds.TRACK_BAR]?.rect)
+        assertTrue(bar.top >= p[OverlayIds.ONLINE]!!.rect!!.bottom, "the bar under the online column")
+        assertEquals(emptyList(), p.overlaps())
+        // The same placement whatever width the row was last drawn at.
+        for (w in listOf(160f, 179f, 250f, t381Row.full)) {
+            val again = OverlayLayout.placeWithRow(t381Scene.copy(trackBar = OverlayLayout.barAt(t381Row, w)), t381Row, p.latch)
+            assertEquals(p.copy(latch = null), again.copy(latch = null), "drawn at $w")
+        }
+    }
+
+    @Test
+    fun theRowNarrowsBesideTheOnlineColumnWhileItIsShown() { // T91's wrap, kept
+        val i = drawnFrom(input(411f, 915f, false, 1f, 0, 1, false, true))
+        val row = unfoldedRow(1f, 0f, 395f)
+        val p = OverlayLayout.placeWithRow(i, row)
+        assertEquals(OverlayLayout.rowCap(i, i.online!!, row), p.barRowWidth)
+        val online = assertNotNull(p[OverlayIds.ONLINE]?.rect)
+        val bar = assertNotNull(p[OverlayIds.TRACK_BAR]?.rect)
+        assertTrue(bar.left >= online.right, "the row beside the column: $online $bar")
+        // With no online column the row takes the column's width.
+        assertEquals(row.full, OverlayLayout.placeWithRow(i.copy(online = null), row).barRowWidth)
+        assertEquals(listOf(0..2, 3..4), OverlayLayout.flowLines(listOf(60f, 60f, 60f, 48f, 50f), 200f, 6f))
+    }
+
+    @Test
+    fun theRuleWithTheBarsRowComesToRestAtEveryScaleSideAndCard() {
+        var scenes = 0
+        for (p in phones) for (landscape in listOf(false, true)) for (scale in listOf(1f, 1.25f, 1.5f, 1.75f, 2f)) for (cards in listOf(0, 1, 2, 4, 8, 16)) {
+            for (online in listOf(false, true)) {
+                val w = if (landscape) p.h else p.w
+                val h = if (landscape) p.w else p.h
+                val base = input(w, h, landscape, scale, cards, 1, true, online)
+                val k = curve(scale)
+                val row = unfoldedRow(minOf(k, 1.3f), minOf(170f * k, w - 16f), w - 16f)
+                // The warning card as the app draws it: under the chips where the rule rests them without it, at its least.
+                val i = drawnFrom(base).let { d ->
+                    val c = base.warning ?: return@let d
+                    val q = exchange(d, row, 120f * k, 8, { x, l -> OverlayLayout.placeWithRow(x, row, l) }, { it.barRowWidth }).last()
+                    val top = listOf(OverlayIds.ONLINE, OverlayIds.TRACK_BAR, OverlayIds.ROUTES, OverlayIds.ACTIVITY).mapNotNull { q[it]?.rect?.bottom }.maxOrNull() ?: 100f
+                    // (A card drawn by its own code past the frame is the app's own matter, not the rule's: left out here.)
+                    if (top + 6f + c.least > h * 0.6f) d else d.copy(warning = c.copy(drawn = OverlayRect(8f, top + 6f, minOf(w - 8f, 428f), top + 6f + c.least)))
+                }
+                val at = "${w}x$h scale $scale cards $cards online $online"
+                val rounds = exchange(i, row, 120f * k, 8, { x, l -> OverlayLayout.placeWithRow(x, row, l) }, { it.barRowWidth })
+                assertTrue(rounds.size <= 4 && (rounds.size == 1 || rounds.last() == rounds[rounds.size - 2]), "at rest in ${rounds.size} rounds at $at")
+                assertEquals(emptyList(), rounds.last().overlaps(), at)
+                scenes++
+            }
+        }
+        assertTrue(scenes > 700, "$scenes scenes")
+    }
+    @Test
+    fun theActivityPickerIsABoxTheChipsAndTheCompassYieldTo() {
+        for (scale in listOf(1f, 2f)) for (landscape in listOf(false, true)) {
+            val k = curve(scale)
+            val base = drawnFrom(input(if (landscape) 915f else 412f, if (landscape) 412f else 915f, landscape, scale, 0, 1, false, true))
+                .copy(compass = OverlaySize(48f, 48f))
+            val panel = 260f * k
+            val box = OverlayLayout.place(base.copy(trackPanel = panel, trackPanelBox = true))
+            val at = "scale $scale landscape $landscape"
+            assertEquals(emptyList(), box.overlaps(), at)
+            val bar = assertNotNull(box[OverlayIds.TRACK_BAR]?.rect, at)
+            val row = base.trackBar!!.height
+            // The picker gets its whole height, or every chip and the compass under it yielded first.
+            val whole = bar.height + 0.01f >= row + panel
+            val yielded = listOf(OverlayIds.ACTIVITY, OverlayIds.COMPASS, OverlayIds.ROUTES).all { box[it]?.rect == null }
+            assertTrue(whole || yielded, "the picker cut with a chip under it at $at: $bar")
+            for (id in listOf(OverlayIds.ROUTES, OverlayIds.ACTIVITY, OverlayIds.COMPASS)) box[id]?.rect?.let { r -> assertTrue(r.top >= bar.bottom, "$id under the picker at $at") }
+            // A recording's panel is no box: the Routes chip keeps its place under the bar whatever the panel leaves.
+            if (OverlayLayout.place(base.copy(trackPanel = 0f))[OverlayIds.ROUTES]?.rect != null) {
+                assertNotNull(OverlayLayout.place(base.copy(trackPanel = panel))[OverlayIds.ROUTES]?.rect, at)
+            }
+        }
+    }
+    // end T381
 }
