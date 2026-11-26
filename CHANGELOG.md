@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-26
 
+- T389: The glance view's lines hold their place; a log of the GPS clock (the branch `task/gps-clock-log`)
 - T365: A recorder for flight polls, and the error of a guessed position measured from it
 
 ## v0.1.44-alpha (2026-11-26)
