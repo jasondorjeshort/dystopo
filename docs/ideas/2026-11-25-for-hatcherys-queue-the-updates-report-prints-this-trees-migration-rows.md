@@ -28,3 +28,12 @@ Lever: a migration is done in the update that brings it, not discovered later. I
 - How a tree is named in a row when its remote differs from the name the base uses.
 
 Where it is built: in Hatchery, by a session rooted there, not in this tree (the owner, 2026-11-25, by multiple choice: "Split by owner"); building it here would add a departure row.
+
+Question: since your "Split by owner" puts this in Hatchery, should the title become `For the base: ` so the base's
+triage lists it and the update that finds its `Base-idea:` commit deletes it here?
+Options: (1) retitle to `For the base: the update's report prints this tree's migration rows` and add no block
+(recommended: `.claude/hooks/ownership.js` and the `update-from-hatchery` skill are base-owned, and the prefix is how
+this tree leaves an idea to the base); (2) keep it as this project's own and build the `migrations` section here with
+a departure row and a carry-back; (3) drop it.
+
+Answer:
