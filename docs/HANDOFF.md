@@ -1,36 +1,37 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at the close's last commit (the base's update 405ad87f merged, both brainstorm offers answered), by the side session (wave 48's coordinator, second clone; v0.1.44-alpha is the latest release)
-Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the last closed wave's record `docs/tasks/wave-48.md`, and the ideas
-(`node .claude/hooks/queue-list.js ideas`).
+Updated: 2026-11-26, at the commit that carries this file (wave 49 launched, T389 merged), by the main session in the second clone
+Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
+`docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 48 is closed.** Twenty tasks, T354 to T366 and T368 to T374 (T371 to T374 added by the coordinator; T374 withdrawn, nothing to fix), all merged; the record is `docs/tasks/wave-48.md` and its follow-ups are in the board's `## Later`, those the wave itself settled struck. **v0.1.44-alpha is published** (2026-11-26 05:19 UTC, tag on f5e38641, from the closing sweep on 643dab9c; the log entry of 2026-11-26 has the sweep's reading and the draft's checks). T365 merged after the release (657fd4fa) and is in the next one.
-- **Nothing is running; no hold stands on `main`.**
-- **On the PC:** the worktree `dystopo-wt/sweep-w48` holds `out/sweep-20261126-w48` (a whole sweep: the next release's `-Prev`) and `out/release-v0.1.44`; the worktree `dystopo-wt/T365` holds the two flight recordings in `out/flights/` (not committed). The live viewer runs on 8765 from the main checkout, whose `main` is behind origin (its local `task/*` branches refuse `-d` until it catches up; never `-D`). Two phones are attached over wireless adb: the owner's, used by another session; no agent of this wave touched them.
-- **Cost:** the 7-day meter read 40 at the launch and 92 at the close (three sessions spend from it), against the hold of 97; reset 2026-11-28 03:00 UTC. The 5-hour hold is 75 (the owner, 2026-11-25). The gate also refuses, at a hold, a message that resumes an agent. The `wave` skill's figures are now 1.5 points a task, 2 a wave, 0.5 a release.
+- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **T389 is merged** (940365fa, the phone session's branch `task/gps-clock-log`).
+- **In flight:** T375 (`task/T375`, fea0570b, the implementer's report in; a Sonnet verifier running, `-SweepThrough device-boot`) and T376 (`task/T376`, 62453cca, report in; a Sonnet verifier reading the gate's diff). Nothing else is launched.
+- **Cost:** the 7-day meter read 93 at 21:30 UTC against the hold of 97; it resets 2026-11-27 04:00 UTC (this session's usage file). The owner: "Go now. We can just hold for a few hours when the hold hits." At the hold the gate refuses every new agent and, until T376 merges, every resume.
+- **On the PC:** the main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; worktrees `dystopo-wt/T375`, `T376` and `T990-verify` (left, held by a process) stand; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. Two phones of the owner's dropped off wireless adb during T389's verify (cause not found).
 
 ## Next
 
-1. The close is complete: costs, the record, the brainstorm offer and rest review, the base's update (ADR 0038's base line is 60072884) and its own offer. One idea "For the base:" is kept in `docs/ideas/`; this checkout is not on the machine's sibling list, so the base's triage reads it only if the owner says "list this checkout" or gives the base's session the repository's URL. Nothing is left to clean up but the local `task/*` branches in the main checkout, which refuse `-d` until its `main` catches up.
-2. Wave 49, by the owner's choices so far: it opens with search and peaks from tiles (`docs/ideas/2026-11-07-search-and-routes-find-nothing-outside-a-pack.md`), then `docs/ideas/2026-11-24-change-a-saved-areas-detail-and-keep-its-shape.md`; its first task is ADR 0070's wait for an emulator slot, after which four agents run at once; and, each the owner's word for wave 49: the tile cache's index walk (finding of 2026-11-25), the glance view saying GPS is searching (the idea of 2026-11-25, mandatory), the layout that flips at the largest font (the idea of 2026-11-26), work already launched resumable at the hold (the idea of 2026-11-25). A triage comes first: ideas are untriaged and one carries a `New:` line.
-3. Lessons of this wave for the briefs: a branch that touches the online column or the layout rule is verified through `two-maps`, not `a11y` alone; a verifier is told its hand runs are not optional; timed parts (startup) read high when two sweeps share the PC (ADR 0070: timed runs go alone); a second sweep takes `-SweepArgs "-BasePort 8704"`.
-4. Triage's scan: the earliest open ADR prediction is due 2026-12-01; ADR 0070's two are checked at wave 49's close.
+1. On each verifier's MERGE: the merge sequence for T375 and T376 (the `wave` skill). T376's implementer counted an empty 5-hour reading as under its hold when the 7-day one is read: accepted, said in its merge body.
+2. After T375 merges: a Haiku chore makes `dystopo-wt/tools-main`, a detached worktree of `origin/main` that every verifier and the sweep run their scripts from, and cleans up (the `task/T375`, `task/T376` and `task/gps-clock-log` branches after `origin/main` holds them, their worktrees, `T990-verify`). Then four Gradle agents at once (ADR 0070).
+3. Launch in the board's order as slots and the meter allow: T377, T379, T384, T381, T382, T383, then T378, T390, T385, T386, T380, T387, T388, each after the tasks in its brackets. Every brief carries the wave paragraph's `GRADLE_OPTS`, the tools' copy, the fixture and the Hatchery sentence.
+4. Before T385 launches: one read-only research agent (a fix's own time against its elapsed-realtime stamp: the platform's guidance, two open trackers); its answer goes into T385's entry.
+5. A small release may be cut once T384, T385, T379 and T381 are merged (the wave paragraph); otherwise the closing sweep, with `-Prev` from `dystopo-wt/sweep-w48`.
+6. Triage's scan: the earliest dated ADR prediction is due 2026-12-01; ADR 0070's two and ADR 0071's second are checked at this wave's close.
 
 ## Waiting on user
 
-- **For your eye, wave 48's wording and looks** (each merge commit's body lists its strings): T363's reason sentences and glance notes (d8c9e38a); T361's "Start here" (65ec5346); T364's "Show flights" (577d0fd2); T370's summaries and the Flight tracking rows' place (ca632ef9); T369's five sentences, 145 of 240 country rows greyed with no server set, the prefetch ahead still saving tiles without a tap (cb2871c2); T366's six level names and the outlines' look (b8b5b0ff); T359's four places where the chip's words now show (1afe53cb); T360's panel lines, which name zoom numbers, and its section absent on its side from font 1.5 (e7419f45).
-- **On a phone, v0.1.44-alpha:** nothing of this release was tried on a phone. Worth a look: the outlines' colours outdoors; at the system's largest font with a stale recording and the panel open, whether the track bar moves by itself (the finding of 2026-11-25); the board's Owner actions pending.
-- **The flight recordings** in `dystopo-wt/T365/out/flights/` go when that worktree is removed: say if they should be kept elsewhere.
-- **ADR 0067's step two** (the Horizon view's pane into the List) waits for you to have seen step one.
+- **Your phones:** both dropped off wireless adb on 2026-11-26; reconnect them when you next need them.
+- **For your eye after T389:** the glance view's figures at font 2.0 on its side are 55 px with the rows reserved (126 px at font 1.0 on its side).
+- **Wave 48's wording and looks, v0.1.44-alpha on a phone, the flight recordings in `dystopo-wt/T365/out/flights/`, ADR 0067's step two** (its idea now has a Plan; say when): as the handoff of 2026-11-26 before this one listed them (`git show 64007414:docs/HANDOFF.md`).
+- **Hatchery:** six ideas titled `For the base: ` wait here for Hatchery's triage; its clone sits beside this one, so it should already read them.
 
 ## Open findings
 
-- `docs/findings/2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md`: open (the guessed state's design; a daytime Rainier sample).
-- `docs/findings/2026-11-25-the-map-layout-flips-at-font-2-with-the-bar-unfolded-and-the-turn-back-card.md` and `2026-11-25-tile-cache-index-walk-loops-in-the-background.md`: open, both for wave 49.
-- `docs/findings/2026-11-24-the-map-render-thread-never-rests-while-flights-are-drawn.md`: open (a phone's figure wanted).
-- The five planning findings of 2026-11-23 (`docs/findings/2026-11-23-*.md`): open; wave 48 built each one's task, and their statuses are to be set at the next triage.
-- `docs/findings/2026-11-22-research-for-the-clock-the-moving-horizon-and-the-full-screen-panorama.md`, `2026-11-20-aircraft-layer-sources-and-display.md`, `2026-11-18-github-rate-limit-reddened-two-sweep-parts.md`, `2026-11-16-research-for-pending-ideas.md`, `2026-11-15-a-drive-as-a-speed-profile.md`: open.
-- `docs/findings/2026-11-05-emulator-private-bytes-grow-per-cold-launch.md` (guarded) and `2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: open.
+- `docs/findings/2026-11-26-gps-time-fault-restarts-the-readout-over-and-over.md`: open (T385).
+- `docs/findings/2026-11-25-tile-cache-index-walk-loops-in-the-background.md` (T379, T390, T387) and `2026-11-25-the-map-layout-flips-at-font-2-with-the-bar-unfolded-and-the-turn-back-card.md` (T381): open, in this wave.
+- `docs/findings/2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md`, `2026-11-24-the-map-render-thread-never-rests-while-flights-are-drawn.md`: open.
+- The five planning findings of 2026-11-23 (`docs/findings/2026-11-23-*.md`): open; their statuses were not set at the triage of 2026-11-26.
+- `docs/findings/2026-11-22-research-for-the-clock-the-moving-horizon-and-the-full-screen-panorama.md`, `2026-11-20-aircraft-layer-sources-and-display.md`, `2026-11-18-github-rate-limit-reddened-two-sweep-parts.md`, `2026-11-16-research-for-pending-ideas.md`, `2026-11-15-a-drive-as-a-speed-profile.md`, `2026-11-05-emulator-private-bytes-grow-per-cold-launch.md` (guarded), `2026-10-26-routing-graph-build-runs-out-of-memory-on-the-phone.md`: open.
