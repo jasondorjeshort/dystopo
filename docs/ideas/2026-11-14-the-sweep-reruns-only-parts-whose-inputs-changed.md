@@ -22,6 +22,8 @@ its merge). Worth building if a closing sweep is run again twice in one wave for
 baseline and not for its script). The release went out on the first sweep's red summary and the part's green rerun
 in a second folder, by the coordinator's ruling, so the release's record is two folders.
 
+Use: 2026-11-26, the coordinator (claude-fable-5-2): the same map from changed files to sweep parts chooses how far a verifier's sweep must run (`tools/verify-task.ps1 -SweepThrough`); in wave 48 T360 changed the online column and was verified through `a11y`, one part short of `two-maps`, the part that reads that column.
+
 Waits: the coordinator, 2026-11-14, by the owner's leave ("The other decisions I leave to you, or get an
 independent review to confirm"; a critic confirmed). Trigger: a closing sweep run again twice in one wave for a
 part's own script. On the day (T280) the APK had changed, so only the parts that use no device (the tests, the

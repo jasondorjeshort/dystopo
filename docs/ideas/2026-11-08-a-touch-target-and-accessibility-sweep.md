@@ -30,6 +30,8 @@ contrast.
 `GET /semantics`, `tools/a11y-baseline.json`; no control under 48 dp of touch area). Left: the baseline's findings
 (T270's follow-ups, on the board) and the reading order.
 
+New: 2026-11-26, the coordinator (claude-fable-5-2): wave 48's layout fault (`../findings/2026-11-25-the-map-layout-flips-at-font-2-with-the-bar-unfolded-and-the-turn-back-card.md`) is a node whose bounds do not match its drawing because the layout does not hold still; the check also reads each screen's bounds twice some seconds apart with no input and fails one whose nodes moved, and the a11y tool's `unsteady` mark (T373) becomes a line of the part's summary.
+
 Plan: one pass, after the baseline's screen-reader findings are fixed (the map's controls reachable under a full
 screen or a sheet, the search field's label). `tools/android-a11y.py` gains the traversal order of each screen from
 `GET /semantics` and lists: a control the order never reaches, an order that leaves a card and comes back to it, a
