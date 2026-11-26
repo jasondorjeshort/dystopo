@@ -22,3 +22,14 @@ it prevents the clash, where the durable outbox idea only carries the message af
 
 - Where the line lives (the handoff, which both sessions already fetch, or policy, which a hook can read).
 - Whether a hook warns or refuses.
+
+Plan: one pass, docs and the project's own skill only, no hook. The line lives in `docs/HANDOFF.md`, which every
+resume and both clones already fetch: `Holder: <clone> (<the coordinator's model>), wave <n>, since <date>` under the
+`Updated:` line, or `Holder: none` between waves. The `wave` skill (`.claude/skills/wave/SKILL.md`, project-owned:
+the base has no `wave` skill) sets it in the launch commit, clears it in the close's last commit, and its Resume step
+reads it after `git fetch`: another holder means no planning, no launch, and a fetch before any write to `docs/ideas/`,
+the board or the handoff. The `handoff` skill keeps the line when it rewrites the file (one more sentence on that
+skill's existing departure row in ADR 0038). Verify: the handoff stays under its 40 lines
+(`node .claude/hooks/policy.js --cap-check` over a list naming it); a dry read of the wave skill's Resume by a fresh
+agent. Out of scope: a hook that warns or refuses (a base-owned file and a departure of its own: a later idea if the
+line proves ignored), the `triage` skill (base-owned; a coordinator's triage brief names the holder instead).
