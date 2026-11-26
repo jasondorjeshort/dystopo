@@ -60,6 +60,10 @@ will not report this fault again by itself.
 
 ## Next
 
+For wave 49 (the owner, 2026-11-26, by multiple choice: "Wave 49, release now"); wave 48 releases with it, as
+v0.1.43-alpha very likely has it. The queue's entry:
+`../ideas/2026-11-26-the-map-layout-flips-at-the-largest-font-with-the-bar-unfolded.md`.
+
 1. Name the feedback: at font 2.0 with the scene above, log what `MapLayout.ruleNow` reads and what
    `OverlayLayout.place` answers over ten seconds, and find the input that differs between two passes (the scripts of
    the verifier's probe are the starting point).

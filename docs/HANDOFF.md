@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at commit 2a68e4f6, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
+Updated: 2026-11-26, at commit 5eeea6c0, by the side session (wave 48 launched from it; v0.1.43-alpha is the latest release)
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the wave's
 paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
@@ -16,7 +16,7 @@ paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47
 ## Next
 
 1. T365: at about 06:30 UTC on 2026-11-26 a chore starts recording 2 from `dystopo-wt/T365` (the command in `<scratchpad>/T365-interim.txt`; a dry run first; no flights step and no other `devtool aircraft` request that UTC day before it); when it ends (two hours) the implementer is briefed for the tables from the two folders under `out/flights/` there, then a verifier (devtool only, no emulator), the merge, and the measured table written into a finding.
-2. Follow-ups to place at the close (ideas, or wave 49's tasks): every merged task's Status line lists its own; the layout finding of 2026-11-25 once the owner has chosen; leftovers to clear by one chore: worktrees `T358`, `T358-verify`, `T373`, `T373-verify`, `T374`, their remote and local branches, the AVD `dystopo35-T374`.
+2. Follow-ups to place at the close (ideas, or wave 49's tasks): every merged task's Status line lists its own; the leftovers are cleared but local `task/*` branches in the main checkout that refuse `-d` until its `main` catches up (never `-D`).
 3. The close (the `wave` skill's Close, reread: it gained a step 7, the base's update as a task): the sweep alone on the PC (ADR 0070; `features` and `features-sky`, `-Prev out/sweep-20261124-w47-rerun2`), the release, costs, the wave record, the brainstorm offer by the `brainstorm` skill.
 4. Triage's scan: the earliest open ADR prediction is due 2026-12-01.
 
@@ -32,7 +32,7 @@ paragraphs in `docs/TASKS.md`, the last closed wave's record `docs/tasks/wave-47
 ## Open findings
 
 - The five planning findings of 2026-11-23 (`docs/findings/2026-11-23-*.md`): open; each is the basis of a wave 48 task.
-- `docs/findings/2026-11-25-the-map-layout-flips-at-font-2-with-the-bar-unfolded-and-the-turn-back-card.md` (the owner chooses when it is fixed), `2026-11-25-tile-cache-index-walk-loops-in-the-background.md` (wave 49) and `2026-11-24-the-map-render-thread-never-rests-while-flights-are-drawn.md` (a phone's figure wanted): open.
+- `docs/findings/2026-11-25-the-map-layout-flips-at-font-2-with-the-bar-unfolded-and-the-turn-back-card.md` (wave 49, the owner 2026-11-26; its queue entry is the idea of 2026-11-26), `2026-11-25-tile-cache-index-walk-loops-in-the-background.md` (wave 49) and `2026-11-24-the-map-render-thread-never-rests-while-flights-are-drawn.md` (a phone's figure wanted): open.
 - `docs/findings/2026-11-22-research-for-the-clock-the-moving-horizon-and-the-full-screen-panorama.md`: open.
 - `docs/findings/2026-11-20-aircraft-layer-sources-and-display.md` (outside research) and `2026-11-18-github-rate-limit-reddened-two-sweep-parts.md`: open.
 - `docs/findings/2026-11-16-research-for-pending-ideas.md` and `2026-11-15-a-drive-as-a-speed-profile.md`: open.
