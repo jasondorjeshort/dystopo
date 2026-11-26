@@ -7,6 +7,9 @@ private bytes, a clean scan, the screenshot paths); a failed boot stops the run 
 still run; -Continue runs on; origin/main moved stops at base before check; a console port another AVD holds stops at
 slot; a stop.log line about this emulator fails guard; a privacy hit fails privacy; -Skip; and -DryRun on the real
 checkout lists the commands (gradlew check --no-daemon, android-emu.ps1 -Build) and runs nothing.
+T375's cases: the boot passes -WaitForSlot and its ceiling grows by the wait (the tour's does not); the sweep gets the
+flag and a wait per emulator plus one in its ceiling, none for a range with no device part; other emulators at the cap
+are the slot step's note, not its failure (bothunits included).
 T296's cases: -SweepThrough's command line from a -ListParts fixture (the parts after it skipped, the sweep's own check
 skipped, -NoBothUnits unless the part is bothunits, the emulator steps left to the sweep, two slots for bothunits, no slot
 for a range with no device part, a list of plain names, a part not in the list, a red sweep, a dry run naming the parts);
@@ -258,6 +261,54 @@ class T246Steps(Base):
         self.assertIn("unknown step", p.stdout)
 
 
+class T375WaitForSlot(Base):
+    def command(self, s, cid):
+        cmds = [c for c in s["commands"] if c["id"] == cid]
+        self.assertEqual(len(cmds), 1, s["commands"])
+        return cmds[0]
+
+    def test_boot_passes_the_wait_and_its_ceiling_grows_by_it(self):
+        p, s, text = self.case()
+        boot = self.command(s, "boot")
+        self.assertIn("-WaitForSlot 60", boot["command"])
+        self.assertEqual(boot["ceilingS"], 1500 + 60 * 60)
+        self.assertEqual(steps(s)["slot"]["waitForSlotMinutes"], 60)
+        p, s, text = self.case(args=("-SlotWaitMinutes", "5"))
+        boot = self.command(s, "boot")
+        self.assertIn("-WaitForSlot 5", boot["command"])
+        self.assertEqual(boot["ceilingS"], 1500 + 5 * 60)
+        self.assertEqual(self.command(s, "tour")["ceilingS"], 1500)  # only the boot waits
+
+    def test_the_sweeps_ceiling_grows_by_a_wait_per_emulator_and_a_reboot(self):
+        p, s, text = self.case(args=("-SweepThrough", "a11y", "-SlotWaitMinutes", "5"), parts=False, sweep=sweep_summary())
+        sw = self.command(s, "sweep")
+        self.assertIn("-WaitForSlot 5", sw["command"])
+        self.assertEqual(sw["ceilingS"], 60 * (300 + 5 * 2))
+        p, s, text = self.case(args=("-SweepThrough", "bothunits", "-SlotWaitMinutes", "5"), parts=False, sweep=sweep_summary())
+        self.assertEqual(self.command(s, "sweep")["ceilingS"], 60 * (300 + 5 * 3))
+        p, s, text = self.case(args=("-SweepThrough", "route-sheet"), parts=False, emu=False, sweep=sweep_summary(parts=("server", "route-sheet")))
+        sw = self.command(s, "sweep")
+        self.assertNotIn("-WaitForSlot", sw["command"])
+        self.assertEqual(sw["ceilingS"], 60 * 300)
+
+    def test_no_emulator_arguments_needed_with_skip_boot_tour(self):
+        # verifier.md's no-emulator line on the real checkout: stop runs only after a boot, so it asks for no -Avd or ports.
+        out = self.tmp("verify-task-dry-")
+        p = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-Task", "T999", "-WorktreeRoot", out,
+                            "-Skip", "boot,tour", "-DryRun"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout[-800:])
+        self.assertIn("commands listed, nothing run", p.stdout)
+        self.assertNotIn("-Build", p.stdout)  # no boot (the dry run still lists the stop it would skip)
+        self.assertIn("stop dry run in 0 s: no emulator wanted", p.stdout)
+
+    def test_others_at_the_cap_are_a_note_not_a_failure(self):
+        p, s, text = self.case(answers={"adbDevices": "List of devices attached\nemulator-5572\tdevice\nemulator-5574\tdevice\n"})
+        self.assertTrue(s["ok"], text)
+        sl = steps(s)["slot"]
+        self.assertEqual(sl["others"], ["emulator-5572", "emulator-5574"])
+        self.assertIn("2 of 2 slots taken by others; the boot waits up to 60 min for 1 more", sl["note"])
+
+
 class T296NoEmulator(Base):
     def test_no_emulator_reads_skipped(self):
         # T268's and T291's note: a task with no emulator read "FAILED at step slot" (-EmuPort 0 is not even-and-in-range).
@@ -308,9 +359,12 @@ class T296SweepThrough(Base):
     def test_through_bothunits_wants_two_slots(self):
         p, s, text = self.case(args=("-SweepThrough", "bothunits"), parts=False, sweep=sweep_summary())
         st = steps(s)
-        # One other emulator on a cap of two leaves one slot: not enough for bothunits's second phone.
-        self.assertEqual(s["failedStep"], "slot")
-        self.assertEqual(st["sweep"]["status"], "not run")
+        # One other emulator on a cap of two leaves one slot: T375, the slot step no longer waits or fails for it; the
+        # sweep's boots wait (-WaitForSlot), and the note says so.
+        self.assertTrue(s["ok"], text)
+        self.assertEqual((st["slot"]["status"], st["slot"]["need"]), ("ok", 2))
+        self.assertIn("the boot waits up to 60 min for 1 more (-WaitForSlot)", st["slot"]["note"])
+        self.assertIn("-WaitForSlot 60", self.sweep_cmd(s))
         p, s, text = self.case(args=("-SweepThrough", "bothunits"), parts=False, sweep=sweep_summary(),
                                answers={"adbDevices": "List of devices attached\n"})
         self.assertTrue(s["ok"], text)

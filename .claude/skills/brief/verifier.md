@@ -16,7 +16,10 @@ mechanism, the crossing scenario, or "none">.
    `powershell -ExecutionPolicy Bypass -File <main>\tools\verify-task.ps1 -Task Tnn -WorktreeRoot <worktrees>
    -Avd <avd> -AvdHome <avd home> -EmuPort <n> -Port <p> -Out <scratchpad>\Tnn-verify -ReportFile <report.txt>
    -JavaHome <jdk> -Cache <main>\cache [-Parts <parts>] [-KeepEmulator] [-Checks <checks.json>] [-SweepThrough <part>]`
-   (no emulator: `-Skip boot,tour`; slot, stop and guard then read skipped, "no emulator wanted").
+   (no emulator: `-Skip boot,tour`; slot, stop and guard then read skipped, "no emulator wanted"). Its boot, and a
+   sweep's, waits up to `-SlotWaitMinutes` (60) for a free emulator slot (`android-emu.ps1 -WaitForSlot`; pass
+   `-WaitForSlot 60` to any boot of your own too), so a run that may wait longer than ten minutes runs as a background
+   command, polled for its exit.
    - **Checks:** the task's **Checks:** block, written to `<checks.json>` as `verifying-a-task.md` gives the shape:
      each check is a step `chk-<name>`; a failed one is a finding like a red `check`.
    - **A sweep part:** when the Owns line holds `tools/sweep.ps1` or a new part's script, verify with

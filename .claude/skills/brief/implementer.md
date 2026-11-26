@@ -6,7 +6,9 @@ Machine facts for this run (they override the docs): main checkout `<path>` (nev
 make your worktree with `git -C <main> worktree add <worktrees>\Tnn -b task/Tnn origin/main` and work
 only inside it; copy `local.properties` from the main checkout (the clone has `core.longpaths` set, T349); `JAVA_HOME=<jdk>` and
 `DYSTOPO_CACHE=<main>\cache` in every shell. Your ports: <host ports>; your emulator: AVD
-`<name>` under `<avd home>`, console port <n>, host port <p> (or "no emulator needed"). Servers you
+`<name>` under `<avd home>`, console port <n>, host port <p> (or "no emulator needed"); boot it with
+`tools\android-emu.ps1 ... -WaitForSlot 60`, which waits for a free slot at the machine's cap instead of refusing (a wait
+longer than ten minutes runs as a background command, polled for its exit). Servers you
 may read but never stop or ask to build: <the coordinator's live server, or "none">.
 
 Task (from TASKS.md, binding): <Goal, verbatim or "as written">.
