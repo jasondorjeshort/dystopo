@@ -128,6 +128,7 @@ the `triage` row (landed there as b43ff36, in the shape of Hatchery ADR 0026).
 | `.claude/project/one-review.md` | replaces `one-review`: the verifier per PR | none |
 | `.claude/project/git.md` | replaces `git`: implementers commit and push `task/*`, ADR 0036 integration | none |
 | `.claude/project/licensing.md` | replaces `licensing`: permissive dependencies only, no SPDX headers | none |
+| `.claude/hooks/usage-gate.js` (a resume at HOLD), `.claude/hooks/agent-meter.js` (`launchedBelow`, `appendResume`), `.claude/hooks/test-hooks.js` (RS01 to RS13) | T376 (the owner, 2026-11-26: "Resumes pass, new agents wait"; ADR 0035's amendment): at HOLD only, a `SendMessage` to an agent id whose `agent-<id>.meta.json` in the session's `subagents/` folder (from the payload's `transcript_path`) names a `tool_use_id` with exactly one `launch` line in the session's `agents.tsv`, both readings under their holds, passes with a note and a `resume` line; every gap is the base's refusal; the deny line, `Agent` and `Workflow` unchanged | none as a branch (the owner, 2026-11-26: a report, and Hatchery's agent researches and integrates): `docs/ideas/2026-11-26-for-the-base-a-resume-of-launched-work-passes-the-hold.md`, which suggests a policy key in the base's schema for the rule |
 
 ## Consequences
 

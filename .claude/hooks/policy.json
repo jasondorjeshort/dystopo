@@ -15,7 +15,7 @@
     "staleSeconds": 7200,
     "whenStale": "allow",
     "overrideEnv": "DYSTOPO_GATE_OVERRIDE",
-    "holdAdvice": "No new implementers (CLAUDE.md, Wave size). Finish work already in flight; a verifier for an already-launched task needs the owner's override. Otherwise wait for the reset or the owner's word."
+    "holdAdvice": "No new agents, a verifier included (CLAUDE.md, Wave size): they wait for the reset or a grant, the owner's word. Merges go on; a SendMessage that resumes, by its agent id, an agent this session launched below both holds passes (T376)."
   },
   "edit": {
     "capExempt": ["docs/PLANNING.md", "docs/SERVER.md", "CLAUDE.md"],
