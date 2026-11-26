@@ -652,8 +652,10 @@ class TileCache(
             pending.clear()
         }
         walkMs = (System.nanoTime() - startedNs) / 1_000_000
-        readyLatch.countDown()
+        // T379 (T363's follow-up): the cap is applied before awaitReady returns, so a caller reads the trimmed index (the
+        // access-order test read the entries the trim was about to evict, under load).
         runCatching { trimIfOver() }
+        readyLatch.countDown()
         for ((_, action) in actions) runCatching { action() }
     }
 
@@ -677,7 +679,8 @@ class TileCache(
      * caller and [op] (T229's rule: never a silent answer, never a wait there).
      */
     fun awaitReady(op: String = "awaitReady") {
-        if (ready) return
+        if (readyLatch.count == 0L) return // T379: whole and trimmed
+        if (ready && onMain()) return // whole, its trim under way: the main thread does not wait for it (as before)
         check(!onMain()) {
             "TileCache.$op on the main thread while the index is built, from ${callerOf()}: read bytes, size, pinnedBytes and state (partial while indexing), or call it on a thread"
         }

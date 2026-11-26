@@ -88,7 +88,8 @@ class TileCacheTest {
         c.put("new", ByteArray(100))
         now += 120_000
         c.get("old") // touched: newer than "new" on disk
-        // A restart with a smaller cap keeps the most recently used entry (T242: once the index is whole).
+        // A restart with a smaller cap keeps the most recently used entry (T242: once the index is whole; T379: awaitReady
+        // returns after the trim that applies the cap, which ran after it before and lost the race under load).
         val again = cache(150)
         again.awaitReady()
         assertTrue(again.contains("old"))
