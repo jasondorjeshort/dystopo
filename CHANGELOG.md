@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-25
 
+- T373: The a11y part's other lines that come and go: the stale-recording screen, the route screens' moved lines
 - T358: The point readers take the lookup: the readout, the pressure card, the route tools
 - T360: The coverage panel under the status chip
 - T357: The join at a map's edge, cell by cell
