@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-16
+verified: 2026-11-26
 source: observed in T246 (tools/verify-task.ps1 run against its own branch on the second PC) and T296 (a Checks file run on T289's merge commit); idea 2026-11-08, cheaper verification
 ---
 
@@ -28,7 +28,11 @@ powershell -ExecutionPolicy Bypass -File tools\verify-task.ps1 -Task T247 -Workt
   gives one (else `policy.json`'s); `-Owner` the lock's owner (default `<Task>-verify`); `-Server` the app's server
   for the boot and the tour (default `none`; never the coordinator's 8765, which the script refuses).
 - `-JavaHome`, `-Cache`: `JAVA_HOME` and `DYSTOPO_CACHE` for every program it runs (defaults: the environment, then
-  the JDK paths of `machines.md` and the main checkout's `cache`). `GRADLE_OPTS` gains `-Dorg.gradle.daemon=false`.
+  the JDK paths of `machines.md` and the main checkout's `cache`). `GRADLE_OPTS` gains `-Dorg.gradle.daemon=false`,
+  and (T375) `-Dorg.gradle.jvmargs=-Xmx5g` and `-Dkotlin.compiler.execution.strategy=in-process` unless the caller set
+  them (the Kotlin daemon ran out of memory in `check` with two builds on the PC, wave 48).
+- `-SlotWaitMinutes` (60; T375): how long the boot, and a sweep's boots, wait for a free emulator slot at the cap
+  (`android-emu.ps1 -WaitForSlot`, `android-emulator.md`, The emulator cap).
 - `-Parts routes,search` runs `android-ui.py <part> --serial --port --out` after the tour; `-UiArgs` adds arguments
   (the release parts need `--apk`, `release-realism.md`).
 - `-ReportFile <file>`: the implementer's report as text, scanned with the commit messages.
@@ -56,8 +60,8 @@ the foreground with a ceiling over 40 minutes.
 | `privacy` | `git log origin/main..origin/task/<Task> --format=%B` (and `-ReportFile`) through `PrivacyCheck.java scan` | any hit |
 | `data` | `local.properties` and the Rainier packs copied from the main checkout (never linked) | a source missing |
 | `check` | `gradlew check --no-daemon`; counts from every `TEST-*.xml` under `*/build/test-results`, per module | exit not 0 |
-| `slot` | the console port's shape and owner, then waits (adb every 10 s, `-SlotWaitMinutes` 60) for a free slot (two for a sweep through `bothunits`); `skipped`, "no emulator wanted", with `stop` and `guard`, when neither `boot` nor a sweep with a device part runs | a port another AVD holds, or the wait ends |
-| `boot` | `android-emu.ps1 -Build` with the brief's AVD and ports, from the worktree | exit not 0 (its last lines named) |
+| `slot` | the console port's shape and owner; the emulators adb lists against the cap as a note (two slots wanted for a sweep through `bothunits`), with no wait (T375: the boot waits); `skipped`, "no emulator wanted", with `stop` and `guard`, when neither `boot` nor a sweep with a device part runs | a port another AVD holds |
+| `boot` | `android-emu.ps1 -Build -WaitForSlot <SlotWaitMinutes>` with the brief's AVD and ports, from the worktree: at the cap it waits for a slot, the oldest waiter first | exit not 0 (its last lines named; the cap's refusal after the wait among them) |
 | `tour` | `android-check.py --views-file tools/android-tour.txt --server <Server>` into `tour\` | the tour's `ok` false (failed views listed) |
 | `ui-<part>` | each `-Parts` entry | the part's `ok` false |
 | `sweep` | `tools\sweep.ps1` through `-SweepThrough`'s part into the worktree's `outerify-sweep` (its `summary.json`, `steps.tsv`, sheet) | exit not 0 or the summary's `ok` false (failed parts named), a part not in `-ListParts`, a `sweep.ps1` without `-ListParts` |
@@ -66,8 +70,10 @@ the foreground with a ceiling over 40 minutes.
 | `guard` | the guard log's lowest free RAM and peak private bytes since the boot; `stop.log` lines naming this emulator | a `stop.log` line |
 
 The run stops at the first failed step and names it; `stop` and `guard` still run when `boot` ran, so no emulator is
-left behind. Each program's wait has a ceiling (`check` 2400 s, `boot` and `tour` 1500, a part 900, `stop` 300); at
-it the program's process tree is killed by its PID, as `tools\sweep.ps1` does, and the step fails saying so.
+left behind. Each program's wait has a ceiling (`check` 2400 s, `boot` 1500 plus the slot wait, `tour` 1500, a part
+900, `stop` 300, the sweep `-SweepCeilingMinutes` plus a slot wait per emulator and one for a reboot; each command in
+the summary carries its `ceilingS`); at it the program's process tree is killed by its PID, as `tools\sweep.ps1` does,
+and the step fails saying so.
 
 **When `main` moved** the run stops at `base` before the expensive steps. Nobody rebases a pushed branch: the harness
 refuses every force push (`--force-with-lease` included; T246 and two proposal agents saw it on 2026-11-09), so a
@@ -135,7 +141,7 @@ was on `main`, which the summary names; the whole run took about 20 minutes on t
 (every PNG of the tour and the parts), `commands` (each step's command lines) and `steps`, one object per step with
 `name`, `status` (`ok`, `failed`, `not run`, `skipped`, `kept`), `ok`, `seconds`, `note` or `error`, and its figures:
 `check` has `tests`, `failures`, `errors`, `skipped`, `testFiles`, `modules`; `base` `mainMovedBy`, `branchCommits`;
-`privacy` the scanner's hit counts and `localFile`; `slot` `others`, `cap`, `waitedSeconds`; `boot` `buildSeconds`;
+`privacy` the scanner's hit counts and `localFile`; `slot` `others`, `cap`, `need`, `waitForSlotMinutes`; `boot` `buildSeconds`;
 `tour` `viewsOk`, `viewsTotal`, `tourOk`, `glyphsOk`, `backgroundOk`, `directOk`, `cardsOk`, `failedViews`, `sheet`;
 `ui-<part>` `partOk`; `sweep` `through`, `run`, `skippedParts`, `emulators`, `sweepOk`, `failed`, `ran`, `summary`;
 `chk-<name>` `exitCode`, `tests`, `path`, `value`, `expected`; `guard` `lowestFreeGB`, `peakPrivateGB`, `stops`, `log`. Every program's output is in
@@ -155,5 +161,6 @@ first failure kept under `-Continue`, `main` moved, a held and an odd console po
 fixture (the later parts and the sweep's check skipped, `-NoBothUnits` unless `bothunits`, two slots for it, no slot
 for a range with no device part, a list of plain names, a part not listed, a red sweep, the dry run's part list, the
 real checkout's dry run), a Checks file's three kinds passing and failing by name, a bad Checks file, a task with no
-emulator reading `skipped`, and `-Commit`. It is a unittest module:
+emulator reading `skipped`, and `-Commit`; T375's: the boot's `-WaitForSlot` and its grown ceiling, the sweep's flag and
+ceiling, and other emulators at the cap as the slot step's note. It is a unittest module:
 `python -I -m unittest discover -s tools -p test_verify_task.py`.
