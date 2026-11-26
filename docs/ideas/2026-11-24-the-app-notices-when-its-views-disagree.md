@@ -21,3 +21,11 @@ self-test, which runs only when the owner thinks to run it.
 
 - Which disagreements are faults (shared with the sweep's cross-check), and how often the check runs.
 - Nothing leaves the phone without the user's tap (the existing reports' rule).
+
+Question: build the in-app disagreement check after the sweep's cross-check has run for a while, or now beside it?
+Options: (1) after `2026-11-24-the-views-cross-check-what-they-read-at-one-point.md` has run in a few closing sweeps
+(recommended: the sweep's version settles which disagreements are faults without risking false alarms on a phone, and
+the in-app check then reuses its rules from `shared`); (2) one pass now, the check in release builds recording into
+the existing reports (`app/reports/DiagnosticDump.kt`) with no prompt, the "Send diagnostics" offer later; (3) rest it.
+
+Answer:
