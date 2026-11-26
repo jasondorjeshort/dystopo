@@ -1,6 +1,6 @@
 ---
-verified: 2026-11-16
-source: observed in T298 (recorded hook inputs and past subagent transcripts of wave 34); code.claude.com hooks docs, read in finding 2026-11-16-research-for-pending-ideas
+verified: 2026-11-26
+source: observed in T298 (recorded hook inputs and past subagent transcripts of wave 34); code.claude.com hooks docs, read in finding 2026-11-16-research-for-pending-ideas; T376 (the subagents folder of every session on the PC and a PreToolUse probe's SendMessage keys, 2026-11-23)
 ---
 
 # Per-agent cost: the hooks' lines and tools/agent-cost.py
@@ -55,6 +55,15 @@ A header line, then one line per event; empty cells are unknown values. Columns:
 | `requests`, `input`, `cache_write`, `cache_read`, `output` | empty | sums over the transcript's requests |
 | `last_context` | empty | the last request's total: the notice's figure |
 | `note` | `background` for a background launch | `yield`; `partial: N of M MB read`; `transcript unreadable (CODE)`; a skipped over-long line |
+
+A `resume` line (T376) is written by `usage-gate.js` when it lets a `SendMessage` through at HOLD because its target
+was launched in this session below both holds: the launch's `tool_use_id`, `agent_type`, `model` and `description`,
+the target as `agent_id`, the readings at the resume, and in `note` the launch's time and readings
+(`launched <time> at 5h N%, 7d N%`); the token columns stay empty. The gate finds the launch through the target's
+`agent-<id>.meta.json` in the session's `subagents/` folder (the payload's `transcript_path` is
+`<project>/<session>.jsonl`, its agents in `<project>/<session>/subagents/`) and the one `launch` line with that
+`tool_use_id`; a resume addresses the agent by its id (`a` and 16 hex digits), never by a name. `tools/agent-cost.py`
+reads launch and stop lines only: count the `resume` lines by hand for the work a wave did past the hold.
 
 Only an allowed launch gets a line (a denied one exits before it). A continued (`SendMessage`) or yielding agent
 writes several stop lines; the sums are cumulative, so the last one counts.

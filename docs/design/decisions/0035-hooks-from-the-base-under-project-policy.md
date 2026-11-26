@@ -2,7 +2,7 @@
 
 Date: 2026-10-16
 Status: superseded by 0036
-0036 (2026-10-17, the owner's answers) allows a subagent's pull, merge and rebase on `main` and takes `triage`; 0037 (2026-10-17) replaces the Updating section with the base's ownership map and a departure table; 0043 (2026-10-24) sets `git.branchDelete.requireMergedPr` false, there being no pull requests. Every other section here stands.
+0036 (2026-10-17, the owner's answers) allows a subagent's pull, merge and rebase on `main` and takes `triage`; 0037 (2026-10-17) replaces the Updating section with the base's ownership map and a departure table; 0043 (2026-10-24) sets `git.branchDelete.requireMergedPr` false, there being no pull requests; T376 (2026-11-26) amends the gate's HOLD in place (What changed in behaviour, its last paragraph). Every other section here stands.
 
 Record: the first `update-from-hatchery` run here (Hatchery `89f63c8` to `987265c`, the base line in
 ADR 0020); Hatchery's ADRs 0006 (the policy file), 0010 (the base line decides the update mode) and
@@ -78,6 +78,21 @@ Pulls of `main`. No skill has an agent pull `main`: worktrees are made from `ori
 refreshed by the main session, which rule 4 exempts; ADR 0026 reads that as bookkeeping of its own
 checkout, not running the project. A chore that needs the newest `main` runs `git fetch` and works
 from `origin/main`.
+
+Amended 2026-11-26 (T376; the owner, by multiple choice: "Resumes pass, new agents wait"). At HOLD,
+and never at the deny line, the gate lets a `SendMessage` through when its target is an agent this
+session launched with both of that launch's readings under their holds: the target must be an agent
+id (`a` and 16 hex digits; a name is refused, so a resume addresses the agent by its id), its
+`agent-<id>.meta.json` in the session's `subagents/` folder (found from the payload's
+`transcript_path`) gives the launch's `tool_use_id`, and exactly one `launch` line of the session's
+`agents.tsv` carries it, matched by column. A reading under its hold, or empty while the other is
+present (no live window for that meter, which the gate counts as no hit), passes; no reading, a
+stale one, a launch at or over a hold (one made under a grant included), another session's agent,
+and any missing or broken file are today's refusal. An allowed resume writes a note to stderr and
+a `resume` line to `agents.tsv` (`docs/reference/agent-cost.md`). A new `Agent` call at HOLD, a
+verifier included, and a `Workflow` call are refused as before; a grant file is the owner's way.
+No policy key: a key needs the base's schema, so the rule is ADR 0038's departure row and the base
+gets a report (`docs/ideas/2026-11-26-for-the-base-a-resume-of-launched-work-passes-the-hold.md`).
 
 ### Updating
 

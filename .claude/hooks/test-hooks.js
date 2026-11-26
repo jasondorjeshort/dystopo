@@ -50,7 +50,8 @@
 // (ADR 0027); group PS is the policy-schema
 // compatibility check (PS1 reads this repository's policy.schema.json, ADR 0013); the line
 // above the totals lists the groups that ran. Group AM (Dystopo T298) covers the launch line usage-gate.js appends and
-// agent-meter.js at SubagentStop, under a scratch HOME. Exit codes: 0 all pass (a
+// agent-meter.js at SubagentStop, under a scratch HOME; group RS (Dystopo T376) a SendMessage at HOLD that resumes an
+// agent launched below both holds, on a scratch copy of a real session's folder layout. Exit codes: 0 all pass (a
 // SKIP is not a failure), 1 any failure, 2 usage error.
 'use strict';
 const fs = require('fs');
