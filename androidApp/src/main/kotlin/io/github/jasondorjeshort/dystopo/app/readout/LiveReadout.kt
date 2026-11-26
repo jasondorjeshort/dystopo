@@ -137,6 +137,7 @@ object LiveReadout {
         val provider = loc.provider ?: LocationManager.GPS_PROVIDER
         if (provider == LocationManager.GPS_PROVIDER) lastGpsAt = now
         else if (lastGpsAt != 0L && now - lastGpsAt < GPS_PRECEDENCE_MS) { bump("networkFixesSkipped"); return }
+        ClockLog.onFix(loc)
         val fix = GpsLocationSource.toFix(loc, provider)
         bump("mapFixes")
         post { feedFix(fix, now) }
@@ -316,6 +317,7 @@ object LiveReadout {
             "inputs" to linkedMapOf(
                 "counts" to counts.toSortedMap(),
                 "clockOffsetMs" to offsetMs,
+                "clockLog" to ClockLog.json(), // why the clock goes back: the chip's time against the phone's, each restart's source
                 "injectedRecently" to (lastInjectedAt != 0L && SystemClock.elapsedRealtime() - lastInjectedAt < INJECTED_PRECEDENCE_MS),
                 "composed" to composed, "foreground" to Foreground.started,
             ),
@@ -394,7 +396,7 @@ object LiveReadout {
         val profile = AppSettings.trackProfile(a)
         val options = AppSettings.readoutOptions(a)
         val e = est
-        if (e == null) return ReadoutEstimator(profile, options, dem).also { est = it }
+        if (e == null) return ReadoutEstimator(profile, options, dem).also { it.onClockBack = { src, t, latest, el -> ClockLog.onClockBack(src, t, latest, el, offsetMs) }; est = it }
         if (e.profile != profile) e.setProfile(profile, options) else if (e.options != options) e.options = options
         return e
     }

@@ -162,11 +162,11 @@ class GlanceTextTest {
         assertEquals("no fix", lines[0].reasonCode)
         assertNull(lines[1].reason, "the climb's figure is plain")
         assertTrue(lines[0].spoken.endsWith(". No GPS fix: the last height, until a fix comes."), lines[0].spoken)
-        // The fit reserves the reason's row: the same lines without a reason fit a larger type in the same room.
+        // The fit reserves every line's reason row always: a reason coming or going never changes the type size or the layout.
         val m = GlanceFit.Measure { text, px, _ -> text.length * px * 0.55f to px * 1.2f }
         val with = GlanceFit.fit(lines, 1000f, 600f, 10f, 900f, m)
         val without = GlanceFit.fit(lines.map { it.copy(reason = null) }, 1000f, 600f, 10f, 900f, m)
-        assertTrue(with.valuePx < without.valuePx, "${with.valuePx} < ${without.valuePx}")
+        assertEquals(with.valuePx, without.valuePx, "the reason row is reserved with or without a reason")
         // The last minute: a 9 s gap that ended 40 s ago, a jump 20 s ago, a gap still going (left out), one 70 s ago (gone).
         val now = 1_000_000L
         val record = listOf(
