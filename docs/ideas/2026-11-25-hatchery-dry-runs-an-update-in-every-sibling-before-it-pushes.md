@@ -25,3 +25,11 @@ Why carry it: every base change is otherwise tested first in the projects, by wh
 
 - Cost: the hook suite takes minutes per project; which groups a dry run needs.
 - Projects not checked out beside Hatchery are not seen (as the carry-back queue's read already accepts).
+
+Question: this is a step in Hatchery's own workflow; retitle it `For the base: ` so the base's triage lists it, or keep
+it here?
+Options: (1) retitle to `For the base: Hatchery dry-runs an update in every sibling before it pushes` and add no block
+(recommended: nothing in it runs in this tree, and the base's triage already reads the siblings it would dry-run);
+(2) keep it as this project's own, at rest, as a reminder for the next update's offer; (3) drop it.
+
+Answer:
