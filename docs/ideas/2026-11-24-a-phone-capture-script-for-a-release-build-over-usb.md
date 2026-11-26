@@ -21,3 +21,15 @@ agent recommended a checklist instead; the owner chose to record it.
 ## Open
 
 - A new script, or a `capture` subcommand of `tools/android-ui.py`.
+
+Plan: one pass, a new script, since `tools/android-ui.py` drives the app by taps and this one only watches while the
+owner taps: `tools/android-capture.py --serial <s> [--out <dir>]`. It records `dumpsys package` (versionName,
+versionCode, the signer's digest), `adb logcat -c` then `adb logcat -s Dystopo DystopoAssets` into a file in the
+background, one `adb exec-out screencap -p` frame per Enter (with a typed note, empty allowed) until `q`, then stops the
+logcat by its own process handle and zips the folder under `out/capture-<stamp>/` (gitignored). The zip is scanned with
+`java tools/PrivacyCheck.java scan` and the result printed, so the agent who reads it knows; nothing is sent anywhere.
+Tests in `tools/test_android_capture.py` (argument parsing, the folder's shape with a fake adb), run by
+`tools/run-tool-tests.py`; a line in `docs/reference/android-phone-over-adb.md`. Verify: on an emulator with a release
+build installed from the published draft, three frames and the log captured, the zip read back. Out of scope: listing
+the maps (needs `run-as`; the one-tap self-test's), driving the app, and a phone run (the owner's).
+[no-check: the script and its test file are what the pass adds]
