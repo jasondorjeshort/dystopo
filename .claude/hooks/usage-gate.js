@@ -13,7 +13,8 @@
 // carries the parent's session_id is observed (a subagent's CLAUDE_CODE_SESSION_ID equals the
 // parent's), not documented; when the payload's file is missing the gate tries
 // CLAUDE_CODE_SESSION_ID before failing open. Structured shutdown_request and shutdown_response
-// messages also always pass.
+// messages also always pass. Dystopo T376: at HOLD (never at the deny line) a SendMessage to an agent this session
+// launched with both readings under their holds passes too (resumeAllowed; ADR 0035's amendment, ADR 0038's row).
 // Usage comes from this session's file, ~/.claude/usage-state/<session_id>.json, which
 // .claude/statusline.js writes; session_id is the one in the PreToolUse payload.
 // Spec: docs/hatchery/decisions/0002-hook-specs-usage.md (section 3); policy: ADR 0006; the per-session
@@ -59,7 +60,28 @@ function readPayload(raw) {
   if (!p || typeof p !== 'object') p = {};
   const str = (v) => (typeof v === 'string' && v !== '' ? v : null);
   const ti = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
-  return { sessionId: str(p.session_id), cwd: str(p.cwd), toolName: str(p.tool_name), to: str(ti.to), message: ti.message };
+  return { sessionId: str(p.session_id), cwd: str(p.cwd), toolName: str(p.tool_name), to: str(ti.to), message: ti.message,
+    transcriptPath: str(p.transcript_path) };
+}
+
+// Dystopo T376 (the owner, 2026-11-26: "Resumes pass, new agents wait"): at HOLD only, a SendMessage whose target this
+// session launched with both readings under their holds passes, with a note and a `resume` line in agents.tsv
+// (agent-meter.js, launchedBelow and appendResume). Any gap, fault or unwritten line is false: today's deny.
+function resumeAllowed(ctx, u) {
+  if (ctx.toolName !== 'SendMessage') return false;
+  try {
+    const meter = require('./agent-meter.js');
+    const holds = Object.fromEntries(meterThresholds(u).map(([l, t]) => [l, t.hold]));
+    const r = meter.launchedBelow(ctx.sessionId, ctx.to, ctx.transcriptPath, holds, u.staleSeconds);
+    if (!r.ok) { note(`no resume past the hold: ${r.why}.`); return false; }
+    meter.appendResume(ctx.sessionId, ctx.to, r.launch);
+    const rd = (c) => (c === '' ? 'n/a' : `${c}%`);
+    note(`HOLD passed for a resume of agent ${ctx.to} ("${r.launch.description}"), launched ${r.launch.time} at 5h ${rd(r.launch.five_hour)}, 7d ${rd(r.launch.seven_day)}; resume line written.`);
+    return true;
+  } catch (e) {
+    note(`no resume past the hold: ${e.message}.`);
+    return false;
+  }
 }
 
 // A SendMessage that starts no work: a report to the coordinator ("main"), or no message at all.
@@ -217,6 +239,7 @@ function main(raw) {
       }
       return;
     }
+    if (resumeAllowed(ctx, u)) return;
     const partial = lifted.length ? ` The override in force lifts only ${lifted.join(' and ')}.` : '';
     const expired = grants.filter((g) => g.c.status === 'expired');
     const unused = grants.filter((g) => g.c.status !== 'applies').map((g) => {

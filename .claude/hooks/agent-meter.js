@@ -6,7 +6,9 @@
 // - a `stop` line, appended by this script as a SubagentStop hook: agent_id, agent_type, the tool_use_id, description
 //   and model of the launch (from the agent-<id>.meta.json beside agent_transcript_path), the readings, and the
 //   tokens summed from the agent's own transcript. A stop whose input carries a non-empty background_tasks is the
-//   agent yielding (emulator-stop.js reads it the same way): its line says `yield` in the note.
+//   agent yielding (emulator-stop.js reads it the same way): its line says `yield` in the note;
+// - a `resume` line, appended by usage-gate.js (appendResume) when it lets a SendMessage through at HOLD because the
+//   target was launched in this session below both holds (launchedBelow; Dystopo T376).
 // Columns, the join (tool_use_id, else order) and tools/agent-cost.py: docs/reference/agent-cost.md.
 //
 // Tokens: every assistant line of the transcript carries its request's usage, repeated once per content block
@@ -170,6 +172,79 @@ function stopLine(raw, t0) {
   return append(p.session_id, row);
 }
 
+// ---- Dystopo T376: a SendMessage at HOLD may resume an agent this session launched below both holds ----
+// The owner, 2026-11-26: "Resumes pass, new agents wait". usage-gate.js asks launchedBelow() only for a SendMessage
+// at HOLD; every gap or fault below is a refusal (ok false), which the gate turns into today's deny.
+// An agent id as Claude Code writes it (agent-<id>.meta.json, every one on this machine on 2026-11-26): checked before
+// the id enters a path. A name is not an id and is refused: a resume addresses the agent by its id.
+const AGENT_ID = /^a[0-9a-f]{16}$/;
+const TOOL_USE_ID = /^toolu_[A-Za-z0-9]+$/;
+const PERCENT = /^\d+(\.\d+)?$/;
+
+// The session's subagents folder from the PreToolUse payload's transcript_path: the session's own transcript
+// <project>/<sid>.jsonl, whose agents sit in <project>/<sid>/subagents/ (nested agents too), or a transcript already
+// in that folder. The folder must carry this session's id; anything else is null.
+function subagentsDir(sid, transcriptPath) {
+  if (!str(transcriptPath) || !path.isAbsolute(transcriptPath)) return null;
+  const dir = path.dirname(transcriptPath);
+  if (path.basename(dir) === 'subagents' && path.basename(path.dirname(dir)) === sid) return dir;
+  if (path.basename(transcriptPath) === `${sid}.jsonl`) return path.join(dir, sid, 'subagents');
+  return null;
+}
+
+// The session's agents.tsv as rows keyed by column; throws on a missing file or a header other than COLUMNS.
+function rowsOf(sid) {
+  const lines = fs.readFileSync(path.join(stateDir(), `${sid}.agents.tsv`), 'utf8').split(/\r?\n/);
+  if (lines[0] !== COLUMNS.join('\t')) throw new Error('agents.tsv header is not the known columns');
+  const out = [];
+  for (const l of lines.slice(1)) {
+    const v = l.split('\t');
+    if (v.length === COLUMNS.length) out.push(Object.fromEntries(COLUMNS.map((c, i) => [c, v[i]])));
+  }
+  return out;
+}
+
+// { ok: true, launch } when `to` is an agent of session sid whose one launch line has both readings under their
+// holds ({ '5h': n, '7d': n }): a reading under its hold, or empty while the other is present (the status line had no
+// live window for that meter, which the gate counts as no hit), and the meters no older than staleSeconds. Otherwise
+// { ok: false, why }. Never throws.
+function launchedBelow(sid, to, transcriptPath, holds, staleSeconds) {
+  const no = (why) => ({ ok: false, why });
+  try {
+    if (!str(sid) || !SESSION_ID.test(sid)) return no('no usable session id');
+    if (typeof to !== 'string' || !AGENT_ID.test(to)) return no('the target is not an agent id');
+    const dir = subagentsDir(sid, transcriptPath);
+    if (!dir) return no('no subagents folder of this session from transcript_path');
+    let m;
+    try { m = JSON.parse(fs.readFileSync(path.join(dir, `agent-${to}.meta.json`), 'utf8')); } catch (e) { return no(`no readable meta file (${e.code || 'not JSON'})`); }
+    if (!m || typeof m !== 'object' || Array.isArray(m) || typeof m.toolUseId !== 'string' || !TOOL_USE_ID.test(m.toolUseId)) return no('the meta file has no launch id');
+    let rows;
+    try { rows = rowsOf(sid); } catch (e) { return no(`agents.tsv unreadable (${e.code || e.message})`); }
+    const hits = rows.filter((r) => r.event === 'launch' && r.tool_use_id === m.toolUseId);
+    if (hits.length !== 1) return no(hits.length ? `${hits.length} launch lines for ${m.toolUseId}` : `no launch line for ${m.toolUseId} in this session`);
+    const l = hits[0];
+    const pct = (c) => (c === '' ? null : PERCENT.test(c) ? Number(c) : undefined);
+    const five = pct(l.five_hour);
+    const seven = pct(l.seven_day);
+    if (five === undefined || seven === undefined) return no('a reading on the launch line is not a number');
+    if (five === null && seven === null) return no('the launch line has no reading');
+    if (!/^\d+$/.test(l.meter_age_s) || typeof staleSeconds !== 'number' || Number(l.meter_age_s) > staleSeconds) return no('the launch\'s readings were stale or unknown');
+    if (typeof holds['5h'] !== 'number' || typeof holds['7d'] !== 'number') return no('no hold to compare');
+    if ((five !== null && five >= holds['5h']) || (seven !== null && seven >= holds['7d'])) return no('launched at or over a hold');
+    return { ok: true, launch: l };
+  } catch (e) { return no(`lookup failed (${e.message})`); }
+}
+
+// The `resume` line of an allowed resume: the launch's id, type, model and description, the agent id, today's
+// readings, and the launch's time and readings in the note. Returns the file; throws when it cannot write.
+function appendResume(sid, agentId, launch) {
+  const row = base(sid, 'resume', Math.floor(Date.now() / 1000));
+  const r = (c) => (c === '' ? 'n/a' : `${c}%`);
+  Object.assign(row, { tool_use_id: launch.tool_use_id, agent_id: agentId, agent_type: str(launch.agent_type), model: str(launch.model),
+    description: str(launch.description), note: `launched ${launch.time} at 5h ${r(launch.five_hour)}, 7d ${r(launch.seven_day)}` });
+  return append(sid, row);
+}
+
 if (require.main === module) {
   const t0 = Date.now();
   const hard = setTimeout(() => process.exit(0), HARD_MS);
@@ -186,4 +261,4 @@ if (require.main === module) {
   } catch (_) { process.exit(0); }
 }
 
-module.exports = { appendLaunch, stopLine, tokens, COLUMNS };
+module.exports = { appendLaunch, stopLine, tokens, COLUMNS, launchedBelow, appendResume, subagentsDir };

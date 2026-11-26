@@ -4366,6 +4366,220 @@ if (selected('AM') || (opt.only && opt.only.startsWith('AM'))) {
   }
 }
 
+// ---------- a resume at HOLD of an agent launched below both holds (group RS; Dystopo T376) ----------
+// The fixture copies a real session's layout (read 2026-11-26): the payload's transcript_path is
+// <projects>/<slug>/<sid>.jsonl, every agent of the session (nested ones too) has agent-<id>.jsonl and agent-<id>.meta.json
+// in <projects>/<slug>/<sid>/subagents/, and the meta file carries the launch's toolUseId. The SendMessage payload has the
+// keys a PreToolUse probe of 2026-11-23 recorded. Ids, paths and texts are made up. Launch lines come from the gate itself
+// (an Agent call) unless a case needs a line the gate cannot write.
+if (selected('RS') || (opt.only && opt.only.startsWith('RS'))) {
+  const rsHome = path.join(scratch, 'rs-home');
+  const rsState = path.join(rsHome, '.claude', 'usage-state');
+  const rsProj = path.join(rsHome, '.claude', 'projects', 'C--work-proj');
+  fs.mkdirSync(rsState, { recursive: true });
+  const rsEnv = (extra) => envWith(Object.assign({ HOME: rsHome, USERPROFILE: rsHome, CLAUDE_CONFIG_DIR: undefined, CLAUDE_CODE_SESSION_ID: undefined,
+    HOOK_POLICY_FILE: POLICIES.hatchery }, extra || {}));
+  const now = () => Math.floor(Date.now() / 1000);
+  const state = (sid, five, seven) => fs.writeFileSync(path.join(rsState, `${sid}.json`), JSON.stringify({ updatedAt: now(),
+    five_hour: { used_percentage: five }, seven_day: { used_percentage: seven } }));
+  const transcriptOf = (sid) => {
+    fs.mkdirSync(path.join(rsProj, sid, 'subagents'), { recursive: true });
+    const f = path.join(rsProj, `${sid}.jsonl`);
+    if (!fs.existsSync(f)) fs.writeFileSync(f, '');
+    return f;
+  };
+  const metaFile = (sid, id) => path.join(rsProj, sid, 'subagents', `agent-${id}.meta.json`);
+  const agent = (sid, id, toolUseId) => {
+    transcriptOf(sid);
+    fs.writeFileSync(path.join(rsProj, sid, 'subagents', `agent-${id}.jsonl`), '');
+    fs.writeFileSync(metaFile(sid, id), JSON.stringify({ agentType: 'general-purpose', isBuiltIn: true, description: 'T9 implement: the thing',
+      toolUseId, spawnDepth: 1, requestShape: 'background', requestNonInteractive: true, model: 'opus', pickedEffortModel: 'claude-opus-test', finished: true }));
+  };
+  const grantFile = path.join(rsHome, '.claude', 'usage-gate-overrides', 'rs.json');
+  // Launch through the gate at the given readings; with grant, under a user grant that is removed afterwards.
+  const launchAt = (sid, toolUseId, five, seven, grant) => {
+    state(sid, five, seven);
+    if (grant) { fs.mkdirSync(path.dirname(grantFile), { recursive: true }); fs.writeFileSync(grantFile, JSON.stringify({ until: now() + 3600, reason: 'test grant' })); }
+    const r = run('usage-gate', JSON.stringify({ session_id: sid, transcript_path: transcriptOf(sid), cwd: scratch, permission_mode: 'default',
+      hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: toolUseId,
+      tool_input: { description: 'T9 implement: the thing', subagent_type: 'general-purpose', model: 'opus', prompt: 'x', run_in_background: true } }), rsEnv());
+    fs.rmSync(grantFile, { force: true });
+    return r;
+  };
+  const send = (sid, to, extra) => JSON.stringify(Object.assign({ session_id: sid, transcript_path: transcriptOf(sid), cwd: scratch, prompt_id: 'p-rs',
+    permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_use_id: 'toolu_01SendRS',
+    tool_input: { to, summary: 'fix round', message: 'FIX: the case' } }, extra));
+  const rows = (sid) => {
+    const f = path.join(rsState, `${sid}.agents.tsv`);
+    if (!fs.existsSync(f) || !fs.statSync(f).isFile()) return [];
+    const [head, ...rs] = fs.readFileSync(f, 'utf8').replace(/\n$/, '').split('\n');
+    const cols = head.split('\t');
+    return rs.map((r) => Object.fromEntries(r.split('\t').map((v, i) => [cols[i], v])));
+  };
+  const SEND = ' No resuming or messaging agents (SendMessage).';
+  const sendHold = HOLD_MSG.replace('then report.', `then report.${SEND}`);
+  const sendStop = STOP_MSG.replace('end the turn.', `end the turn.${SEND}`);
+  // A SendMessage at 5h 55 %, 7d 10 % (HOLD under the fixture's 50) refused with today's text and no resume line.
+  const refusedAtHold = (id, label, sid, payload, why) => {
+    state(sid, 55, 10);
+    const before = rows(sid).filter((r) => r.event === 'resume').length;
+    const r = run('usage-gate', payload, rsEnv());
+    const d = parseDecision(r.stdout);
+    const after = rows(sid).filter((r) => r.event === 'resume').length;
+    report(id, label, r.code === 0 && !!d && d.decision === 'deny' && d.reason === sendHold && after === before && (!why || why.test(r.stderr)),
+      `exit ${r.code}, reason ${d && d.reason}, stderr ${JSON.stringify(r.stderr)}, resume lines ${before} -> ${after}`, r.stdout);
+  };
+  const A1 = 'a0123456789abcdef';
+  const A2 = 'a1111111111111111';
+
+  if (selected('RS01')) {
+    const sid = 'rs01-0000-4000-8000-000000000001';
+    const l = launchAt(sid, 'toolu_01LaunchRS01', 20, 30);
+    agent(sid, A1, 'toolu_01LaunchRS01');
+    state(sid, 55, 10);
+    const r = run('usage-gate', send(sid, A1), rsEnv());
+    const res = rows(sid).filter((x) => x.event === 'resume');
+    const x = res[0] || {};
+    report('RS01', 'a SendMessage at HOLD to an agent this session launched at 5h 20, 7d 30 (both under 50) is allowed: a note naming the agent and its launch readings, a resume line',
+      l.code === 0 && l.stdout === '' && r.code === 0 && r.stdout === '' &&
+      new RegExp(`HOLD passed for a resume of agent ${A1} \\("T9 implement: the thing"\\), launched \\S+ at 5h 20%, 7d 30%; resume line written`).test(r.stderr) &&
+      res.length === 1 && x.agent_id === A1 && x.tool_use_id === 'toolu_01LaunchRS01' && x.five_hour === '55' && x.seven_day === '10' &&
+      x.description === 'T9 implement: the thing' && /^launched \d{4}-\d\d-\d\dT\S+Z at 5h 20%, 7d 30%$/.test(x.note),
+      `launch exit ${l.code} ${l.stdout}; exit ${r.code}, stderr ${JSON.stringify(r.stderr)}, rows ${JSON.stringify(rows(sid))}`, r.stdout);
+  }
+  if (selected('RS02')) {
+    // Launched at 5h 55 under a grant that has since been removed: not under the hold, refused.
+    const sid = 'rs02-0000-4000-8000-000000000002';
+    const l = launchAt(sid, 'toolu_01LaunchRS02', 55, 10, true);
+    agent(sid, A1, 'toolu_01LaunchRS02');
+    const launched = rows(sid).filter((x) => x.event === 'launch').length === 1 && l.stdout === '';
+    if (!launched) report('RS02', 'fixture: the granted launch wrote its line', false, `launch ${l.stdout} ${l.stderr}`);
+    else refusedAtHold('RS02', 'a launch at 5h 55 (over the hold, under a grant since ended) is not resumed at HOLD: today\'s deny, no resume line',
+      sid, send(sid, A1), /launched at or over a hold/);
+  }
+  if (selected('RS03')) {
+    // Launched with the 7d reading exactly at the hold, under a grant: "at" the hold is not under it.
+    const sid = 'rs03-0000-4000-8000-000000000003';
+    launchAt(sid, 'toolu_01LaunchRS03', 10, 50, true);
+    agent(sid, A1, 'toolu_01LaunchRS03');
+    refusedAtHold('RS03', 'a launch with 7d exactly at the hold (50) is refused', sid, send(sid, A1), /launched at or over a hold/);
+  }
+  if (selected('RS04')) {
+    const sid = 'rs04-0000-4000-8000-000000000004';
+    launchAt(sid, 'toolu_01LaunchRS04', 20, 30);
+    agent(sid, A1, 'toolu_01LaunchRS04');
+    refusedAtHold('RS04', 'an id-shaped target with no meta file in this session is refused', sid, send(sid, A2), /no readable meta file \(ENOENT\)/);
+  }
+  if (selected('RS05')) {
+    const sid = 'rs05-0000-4000-8000-000000000005';
+    launchAt(sid, 'toolu_01LaunchRS05', 20, 30);
+    agent(sid, A1, 'toolu_01LaunchRS05');
+    // A name is not an id, even when a meta file under that name existed.
+    fs.writeFileSync(metaFile(sid, 'worker'), fs.readFileSync(metaFile(sid, A1)));
+    refusedAtHold('RS05', 'a name target ("worker") is refused even with a meta file under that name: a resume addresses the agent by its id',
+      sid, send(sid, 'worker'), /the target is not an agent id/);
+  }
+  if (selected('RS06')) {
+    // Session B launched A1 below the holds; session A sends to it. Also A1's meta copied into A's folder: A's file has no line.
+    const sa = 'rs06-0000-4000-8000-00000000000a';
+    const sb = 'rs06-0000-4000-8000-00000000000b';
+    launchAt(sb, 'toolu_01LaunchRS06', 20, 30);
+    agent(sb, A1, 'toolu_01LaunchRS06');
+    launchAt(sa, 'toolu_01OtherRS06', 20, 30);
+    refusedAtHold('RS06', 'another session\'s agent is refused (its meta file is not in this session\'s folder)', sa, send(sa, A1), /ENOENT/);
+    fs.copyFileSync(metaFile(sb, A1), metaFile(sa, A1));
+    refusedAtHold('RS06b', 'another session\'s agent whose meta file is copied into this session\'s folder: no launch line here, refused', sa, send(sa, A1), /no launch line/);
+    refusedAtHold('RS06c', 'a transcript_path of another session (B\'s transcript, A\'s session id) is refused', sa,
+      send(sa, A1, { transcript_path: transcriptOf(sb) }), /no subagents folder/);
+  }
+  if (selected('RS07')) {
+    const sid = 'rs07-0000-4000-8000-000000000007';
+    launchAt(sid, 'toolu_01LaunchRS07', 20, 30);
+    agent(sid, A1, 'toolu_01LaunchRS07');
+    fs.writeFileSync(metaFile(sid, A1), '{"toolUseId": "toolu_01LaunchRS07"');
+    refusedAtHold('RS07', 'a broken meta file (truncated JSON) is refused', sid, send(sid, A1), /no readable meta file/);
+    fs.writeFileSync(metaFile(sid, A1), JSON.stringify({ toolUseId: 'toolu_01LaunchRS07\tlaunch' }));
+    refusedAtHold('RS07b', 'a meta file whose toolUseId is not an id is refused', sid, send(sid, A1), /no launch id/);
+  }
+  if (selected('RS08')) {
+    const sid = 'rs08-0000-4000-8000-000000000008';
+    agent(sid, A1, 'toolu_01LaunchRS08');
+    const tsvPath = path.join(rsState, `${sid}.agents.tsv`);
+    fs.mkdirSync(tsvPath, { recursive: true });
+    refusedAtHold('RS08', 'an unreadable agents.tsv (a folder in its place) is refused', sid, send(sid, A1), /agents\.tsv unreadable/);
+    fs.rmSync(tsvPath, { recursive: true, force: true });
+    fs.writeFileSync(tsvPath, `time\tevent\ttool_use_id\n2026-01-01T00:00:00Z\tlaunch\ttoolu_01LaunchRS08\n`);
+    refusedAtHold('RS08b', 'an agents.tsv with another header is refused', sid, send(sid, A1), /header/);
+  }
+  if (selected('RS09')) {
+    // Without the id check this target resolves lexically to A1's meta file, which would be allowed.
+    const sid = 'rs09-0000-4000-8000-000000000009';
+    launchAt(sid, 'toolu_01LaunchRS09', 20, 30);
+    agent(sid, A1, 'toolu_01LaunchRS09');
+    const sneaky = `x/../../subagents/agent-${A1}`;
+    const resolved = path.join(rsProj, sid, 'subagents', `agent-${sneaky}.meta.json`) === metaFile(sid, A1);
+    if (!resolved) report('RS09', 'fixture: the target resolves to the meta file', false, 'path.join did not resolve as expected');
+    else refusedAtHold('RS09', 'a target with path characters that resolves to a valid meta file is refused before any file is read',
+      sid, send(sid, sneaky), /the target is not an agent id/);
+    refusedAtHold('RS09b', 'a target with a drive or a separator (C:\\x, a/b) is refused', sid, send(sid, 'C:\\x'), /not an agent id/);
+  }
+  if (selected('RS10')) {
+    const sid = 'rs10-0000-4000-8000-000000000010';
+    launchAt(sid, 'toolu_01LaunchRS10', 20, 30);
+    agent(sid, A1, 'toolu_01LaunchRS10');
+    state(sid, 85, 10);
+    const r = run('usage-gate', send(sid, A1), rsEnv({ HOOK_POLICY_FILE: deny80 }));
+    const d = parseDecision(r.stdout);
+    report('RS10', 'at the deny line (80) a resume of an agent launched below both holds is refused with today\'s text',
+      r.code === 0 && !!d && d.decision === 'deny' && d.reason === sendStop && rows(sid).every((x) => x.event !== 'resume'), `reason ${d && d.reason}`, r.stdout);
+  }
+  if (selected('RS11')) {
+    const sid = 'rs11-0000-4000-8000-000000000011';
+    launchAt(sid, 'toolu_01LaunchRS11', 20, 30);
+    agent(sid, A1, 'toolu_01LaunchRS11');
+    state(sid, 55, 10);
+    const r = run('usage-gate', JSON.stringify({ session_id: sid, transcript_path: transcriptOf(sid), hook_event_name: 'PreToolUse', tool_name: 'Agent',
+      tool_use_id: 'toolu_01LaunchRS11', tool_input: { to: A1, description: 'T9 verify', subagent_type: 'general-purpose', prompt: 'x' } }), rsEnv());
+    const d = parseDecision(r.stdout);
+    report('RS11', 'a new Agent call at HOLD (a verifier, even one reusing a launched agent\'s ids) is refused as before, no line written',
+      r.code === 0 && !!d && d.decision === 'deny' && d.reason === HOLD_MSG && rows(sid).length === 1, `reason ${d && d.reason}, rows ${rows(sid).length}`, r.stdout);
+  }
+  if (selected('RS12')) {
+    // The real data's shape: no live 5h window at the launch (an empty cell), 7d 30. And a subagent's own transcript_path.
+    const sid = 'rs12-0000-4000-8000-000000000012';
+    fs.writeFileSync(path.join(rsState, `${sid}.json`), JSON.stringify({ updatedAt: now(), seven_day: { used_percentage: 30 } }));
+    run('usage-gate', JSON.stringify({ session_id: sid, transcript_path: transcriptOf(sid), hook_event_name: 'PreToolUse', tool_name: 'Agent',
+      tool_use_id: 'toolu_01LaunchRS12', tool_input: { description: 'T9 implement: the thing', prompt: 'x' } }), rsEnv());
+    agent(sid, A1, 'toolu_01LaunchRS12');
+    agent(sid, A2, 'toolu_01OtherRS12');
+    state(sid, 55, 10);
+    const own = path.join(rsProj, sid, 'subagents', `agent-${A2}.jsonl`);
+    const r = run('usage-gate', send(sid, A1, { transcript_path: own, agent_id: A2, agent_type: 'general-purpose' }), rsEnv());
+    const x = rows(sid).filter((y) => y.event === 'resume')[0] || {};
+    report('RS12', 'a launch with no 5h reading (empty cell) and 7d 30 is resumed; a transcript_path inside the subagents folder finds it too',
+      r.code === 0 && r.stdout === '' && /launched \S+ at 5h n\/a, 7d 30%/.test(r.stderr) && x.agent_id === A1, `stderr ${JSON.stringify(r.stderr)}`, r.stdout);
+  }
+  if (selected('RS13')) {
+    // Lines the gate cannot write by itself: no reading at all, a stale reading, two launch lines for one id.
+    const sid = 'rs13-0000-4000-8000-000000000013';
+    agent(sid, A1, 'toolu_01LaunchRS13');
+    const tsvPath = path.join(rsState, `${sid}.agents.tsv`);
+    const line = (five, seven, age) => ['2026-01-01T00:00:00Z', 'launch', 'toolu_01LaunchRS13', '', 'general-purpose', 'opus', 'T9', five, seven, age, '', '', '', '', '', '', ''].join('\t');
+    const head = ['time', 'event', 'tool_use_id', 'agent_id', 'agent_type', 'model', 'description', 'five_hour', 'seven_day', 'meter_age_s', 'requests', 'input',
+      'cache_write', 'cache_read', 'output', 'last_context', 'note'].join('\t');
+    fs.writeFileSync(tsvPath, `${head}\n${line('', '', '12')}\n`);
+    refusedAtHold('RS13', 'a launch line with no reading at all is refused', sid, send(sid, A1), /no reading/);
+    fs.writeFileSync(tsvPath, `${head}\n${line('20', '30', '7201')}\n`);
+    refusedAtHold('RS13b', 'a launch line whose readings were older than staleSeconds is refused', sid, send(sid, A1), /stale/);
+    fs.writeFileSync(tsvPath, `${head}\n${line('20', '30', '12')}\n${line('20', '30', '12')}\n`);
+    refusedAtHold('RS13c', 'two launch lines for one tool_use_id are refused', sid, send(sid, A1), /2 launch lines/);
+    fs.writeFileSync(tsvPath, `${head}\n${line('20', '30', '12').replace('\tlaunch\t', '\tstop\t')}\n`);
+    refusedAtHold('RS13d', 'a stop line with the id (no launch line) is refused: matched by the event column', sid, send(sid, A1), /no launch line/);
+    fs.writeFileSync(tsvPath, `${head}\n${line('20', '30', '12').replace('toolu_01LaunchRS13', 'toolu_01LaunchRS13x')}\n`);
+    refusedAtHold('RS13e', 'a launch line whose id only starts with the meta file\'s id is refused: matched by column, not substring', sid, send(sid, A1), /no launch line/);
+  }
+}
+
 // ---------- the harness's own command line ----------
 if (selected('CLI01')) {
   const r = spawnSync(NODE, [__filename, '--only', 'nosuch'], { encoding: 'utf8', timeout: 60000 });
