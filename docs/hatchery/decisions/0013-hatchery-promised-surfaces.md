@@ -33,6 +33,9 @@ old behaviour; the usage cache gains a reader, `lead.js`. The Deferred compatibi
 half lands with it: `policy.js --schema`, a recorded `policy.schema.json`, harness group `PS`. Not promised:
 `lead.js`'s commands and output and the `.lead/` directory. Every row below stands.
 Withdrawn by [0027](0027-wave-lead-withdrawn.md), 2026-11-24: the keys and the schema check stand; the cache's reader `lead.js` is gone.
+Amended by [0028](0028-brainstorm-after-update.md), 2026-11-25, by additions only: a title convention on
+an idea file (`For the base: `), read by `triage`, the update and Hatchery's listing; no frontmatter key,
+block or listing field changes. Every row below stands.
 
 Record: no proposal; this ADR applies ADR 0012 to the base itself, as its critic review asked
 (objection 6). `proposed` because three of the surfaces are files the owner writes by hand (the
