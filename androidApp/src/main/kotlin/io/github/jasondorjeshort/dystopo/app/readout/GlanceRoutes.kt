@@ -29,8 +29,8 @@ import io.github.jasondorjeshort.dystopo.app.Response
  * - T384: `lines` ends with the position line (`kind` `position`: `value` the last fix's latitude and longitude in decimal
  *   degrees, or a dash; `reason` where it came from and its age). `gps` is the receiver as the view read it: `searching`
  *   (no GPS fix for the readout's 5 s gap since the device's fixes started; an injected fix that is not `provider=network`
- *   stands in for one), `sinceS` (how long this search has run: from the last GPS fix, or the last start of the device's
- *   fixes), `seen` and `used` (satellites heard, used in a fix), `bestCn0` (dB-Hz), `network` (`accuracyM`, `ageS`) while
+ *   stands in for one), `sinceS` (how long this search has run: from the last GPS fix, or the first start of the device's
+ *   fixes in this process: a restart does not start it again), `seen` and `used` (satellites heard, used in a fix), `bestCn0` (dB-Hz), `network` (`accuracyM`, `ageS`) while
  *   the last fix is a network one, else null; read from the status the view holds while open (`gnssHold` true: [Gnss]'s
  *   `glance` holder, status only; `POST /gnss?case=` replaces the satellites). While it searches, every `reasonCode` `no
  *   fix` reads `searching`, and the accuracy's and the fix age's `reason` (else the first lines reading `searching`) say

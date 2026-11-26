@@ -104,11 +104,13 @@ object Gnss {
         private set
 
     /**
-     * T384: when the search running now began (elapsed realtime): the later of the last start of the device's fixes and
-     * the last GPS fix ([otherGpsAt]: a GPS fix the readout took another way, an injected one); null before any start. Not
-     * [ttffMs], which counts from the first start of the process: an outage after an hour of fixes counts from its last fix.
+     * T384: when this outage began (elapsed realtime): the last GPS fix (the map's listener's, or [otherGpsAt]: a GPS fix
+     * the readout took another way, an injected one), else the first start of the device's fixes in this process; null
+     * before any. Not [ttffMs], which stops at the first fix: an outage after an hour of fixes counts from its last fix. A
+     * restart of the device's fixes (the activity made again at a font or a rotation change, or back from the background)
+     * does not start it again: the outage goes on (the emulator showed the time falling back to 0 at a font change).
      */
-    fun searchSince(otherGpsAt: Long = 0L): Long? = maxOf(lastStartAt, lastGpsFixAt, otherGpsAt).takeIf { lastStartAt > 0L || otherGpsAt > 0L }
+    fun searchSince(otherGpsAt: Long = 0L): Long? = maxOf(deviceStartAt, lastGpsFixAt, otherGpsAt).takeIf { it > 0L }
 
     /**
      * T384: the GPS is searching: location permitted, the device's fixes started, and no GPS fix (the map's listener's, or

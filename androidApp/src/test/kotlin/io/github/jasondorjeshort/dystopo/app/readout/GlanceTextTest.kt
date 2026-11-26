@@ -214,6 +214,12 @@ class GlanceTextTest {
         val idle = GlanceText.lines(noFix(withGps), gps = searching.copy(searching = false), positionLine = true).associateBy { it.kind }
         assertEquals("no fix", idle.getValue("speed").reasonCode)
         assertEquals("No position yet: shown with the first fix.", idle.getValue("position").reason)
+        // A network fix after the gap dims the values "resuming": while the GPS searches that is not GPS coming back.
+        val resuming = walk.copy(speed = ReadoutValue(ReadoutEntry.SPEED, ValueState.SHOWN, 1.3, null, "fix", dimmed = true, reason = ReadoutReason.RESUMING), dimReason = ReadoutReason.RESUMING)
+        val speed = GlanceText.lines(StripText.items(resuming, withGps, ContourUnits.METERS), gps = searching).first { it.kind == "speed" }
+        assertEquals("searching", speed.reasonCode)
+        assertEquals(io.github.jasondorjeshort.dystopo.app.help.ReasonText.SEARCHING_FIGURE, speed.reason)
+        assertEquals("resuming", GlanceText.lines(StripText.items(resuming, withGps, ContourUnits.METERS)).first { it.kind == "speed" }.reasonCode)
         // Without a gps reading (the tests before T384), the lines are as they were.
         assertEquals(GlanceText.lines(noFix(withGps)).map { it.reason }, GlanceText.lines(noFix(withGps), gps = searching.copy(searching = false)).map { it.reason })
     }

@@ -166,14 +166,19 @@ object ReadoutReasons {
 
     /**
      * T384: the reason [reason] reads while the GPS [searching] for a fix: [ReadoutReason.SEARCHING] in place of
-     * [ReadoutReason.NO_FIX] (the same "no fix", with what is being done about it), every other reason as it is.
+     * [ReadoutReason.NO_FIX] (the same "no fix", with what is being done about it) and of [ReadoutReason.RESUMING] (a
+     * network fix after the gap is not GPS coming back: the emulator showed "GPS just came back" beside "GPS searching"),
+     * every other reason as it is.
      */
     fun searching(reason: ReadoutReason?, searching: Boolean): ReadoutReason? =
-        if (searching && reason == ReadoutReason.NO_FIX) ReadoutReason.SEARCHING else reason
+        if (searching && reason in SEARCH_REPLACES) ReadoutReason.SEARCHING else reason
 
-    /** T384: every (entry, reason) a drawn value can show while the GPS searches: [POSSIBLE] with "no fix" read as [ReadoutReason.SEARCHING]. */
+    /** T384: the reasons [searching] replaces. */
+    val SEARCH_REPLACES: Set<ReadoutReason> = setOf(ReadoutReason.NO_FIX, ReadoutReason.RESUMING)
+
+    /** T384: every (entry, reason) a drawn value can show while the GPS searches: [POSSIBLE] with "no fix" and "resuming" read as [ReadoutReason.SEARCHING]. */
     val WHILE_SEARCHING: Set<Pair<ReadoutEntry, ReadoutReason>> get() =
-        POSSIBLE.filter { it.second == ReadoutReason.NO_FIX }.map { it.first to ReadoutReason.SEARCHING }.toSet()
+        POSSIBLE.filter { it.second in SEARCH_REPLACES }.map { it.first to ReadoutReason.SEARCHING }.toSet()
 
     /** The bar marks the value: its reason says the data is missing or stale, and the value does not read "?" already. */
     fun marked(reason: ReadoutReason?, readsUnknown: Boolean): Boolean =

@@ -147,7 +147,7 @@ object GlanceText {
     const val POSITION = "position"
 
     /** The position's type size as a share of the figures' (held to the width and to the smallest size, [GlanceFit.wideValuePx]). */
-    const val POSITION_SHARE = 0.6f
+    const val POSITION_SHARE = 0.5f
 
     /** A signal this strong or more reads "good" ([io.github.jasondorjeshort.dystopo.gnss.GnssHealth.HEALTHY_T4], the GPS view's own mark, dB-Hz). */
     val GOOD_CN0: Double get() = io.github.jasondorjeshort.dystopo.gnss.GnssHealth.HEALTHY_T4
@@ -202,14 +202,17 @@ object GlanceText {
     fun position(p: Position?, gps: Gps?, units: ContourUnits, format: CoordinateFormat = CoordinateFormat.DEFAULT): GlanceLine {
         val reason = when {
             p == null -> if (gps?.searching == true) "No position yet: GPS is searching." else "No position yet: shown with the first fix."
-            p.network -> "Not GPS: network position" + (p.accuracyM?.let { " ± " + UnitFormat.distance(it, units) } ?: "") + ", ${ReasonText.span(p.ageMs)} ago."
-            else -> "From GPS, ${ReasonText.span(p.ageMs)} ago."
+            p.network -> "Not GPS: network position" + (p.accuracyM?.let { " ± " + UnitFormat.distance(it, units) } ?: "") + ", ${age(p.ageMs)} ago."
+            else -> "From GPS, ${age(p.ageMs)} ago."
         }
         return GlanceLine(
             kind = POSITION, caption = POSITION, value = p?.let { format.format(it.lat, it.lon) } ?: ReadoutText.DASH, unit = "",
             captionTemplate = "", valueTemplate = positionTemplate(format), share = POSITION_SHARE, reason = reason,
         )
     }
+
+    /** A position's age in whole seconds counted down, as the fix age reads it ("6 s", not 6.6 rounded to "7 s"). */
+    private fun age(ms: Long): String = ReasonText.span(ms - ms % 1000)
 
     /** The widest text [format] gives: every digit an 8, the longest degrees. */
     fun positionTemplate(format: CoordinateFormat): String = format.format(-88.8888888, -178.8888888).map { if (it.isDigit()) '8' else it }.joinToString("")
@@ -254,7 +257,7 @@ object GlanceText {
      * T384: on its side, at most this many: the notes' reserved rows give way first, so the position line costs the
      * figures nothing where the height is shortest (T389's verifier read the figures at 55 px there at font 2.0).
      */
-    const val MAX_RECENT_SIDE = 2
+    const val MAX_RECENT_SIDE = 1
 
     /**
      * The turn-around clock as a line, from its reading ([state] a `TurnState` key, [colour], [turnBackMs], [arrivalMs])
