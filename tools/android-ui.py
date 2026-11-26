@@ -5346,6 +5346,8 @@ def tile_area_fixture(dev, args, body, skip_open_case=None):
     was_running = debug.app_pid(exe, args.serial, pkg) is not None
     lat, lon = SEARCH_TILES_AT
     uri = f"'dystopo://map?lat={lat}&lon={lon}&z=13'"
+    # A cold start: the part cleared logcat (release_with_pack), so a running debug build's port line is gone.
+    dev.shell("am", "force-stop", pkg, check_ok=False)
     dev.shell("am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", uri, "-n", debug.activity(pkg), timeout=60)
     port = args.port or _free_port()
     srv = DebugServer(port, args.serial)
