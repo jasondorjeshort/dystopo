@@ -1,23 +1,23 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at the commit that carries this file (wave 49 launched, T389 merged), by the main session in the second clone
+Updated: 2026-11-26, at the commit that carries this file (wave 49: three merged, four implementers in flight), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **T389 is merged** (940365fa, the phone session's branch `task/gps-clock-log`).
-- **In flight:** T375 (`task/T375`, fea0570b, the implementer's report in; a Sonnet verifier running, `-SweepThrough device-boot`) and T376 (`task/T376`, 62453cca, report in; a Sonnet verifier reading the gate's diff). Nothing else is launched.
-- **Cost:** the 7-day meter read 93 at 21:30 UTC against the hold of 97; it resets 2026-11-27 04:00 UTC (this session's usage file). The owner: "Go now. We can just hold for a few hours when the hold hits." At the hold the gate refuses every new agent and, until T376 merges, every resume.
-- **On the PC:** the main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; worktrees `dystopo-wt/T375`, `T376` and `T990-verify` (left, held by a process) stand; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. Two phones of the owner's dropped off wireless adb during T389's verify (cause not found).
+- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged:** T389 (940365fa), T376 (9feb7f02), T375 (bd8f3741); each has its Status line on the board and its log entry.
+- **In flight, four Opus implementers launched 2026-11-26 about 21:55 UTC, no branch pushed yet:** T377 (`task/T377`), T379 (`task/T379`), T384 (`task/T384`), T381 (`task/T381`). A Haiku chore is making the tools' copy `dystopo-wt/tools-main` and cleaning up the three merged branches and their worktrees.
+- **Cost:** the 7-day meter read 94 at 21:53 UTC against the hold of 97; it resets 2026-11-27 04:00 UTC (this session's usage file). The owner: "Go now. We can just hold for a few hours when the hold hits." At the hold the gate refuses every new agent, a verifier included; a fix round may resume, by its id, an agent launched below the hold (T376).
+- **On the PC:** the main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. Two phones of the owner's dropped off wireless adb during T389's verify (cause not found).
 
 ## Next
 
-1. On each verifier's MERGE: the merge sequence for T375 and T376 (the `wave` skill). T376's implementer counted an empty 5-hour reading as under its hold when the 7-day one is read: accepted, said in its merge body.
-2. After T375 merges: a Haiku chore makes `dystopo-wt/tools-main`, a detached worktree of `origin/main` that every verifier and the sweep run their scripts from, and cleans up (the `task/T375`, `task/T376` and `task/gps-clock-log` branches after `origin/main` holds them, their worktrees, `T990-verify`). Then four Gradle agents at once (ADR 0070).
-3. Launch in the board's order as slots and the meter allow: T377, T379, T384, T381, T382, T383, then T378, T390, T385, T386, T380, T387, T388, each after the tasks in its brackets. Every brief carries the wave paragraph's `GRADLE_OPTS`, the tools' copy, the fixture and the Hatchery sentence.
-4. Before T385 launches: one read-only research agent (a fix's own time against its elapsed-realtime stamp: the platform's guidance, two open trackers); its answer goes into T385's entry.
+1. As each implementer reports: a Sonnet verifier with the report in its brief, run from `dystopo-wt/tools-main` (T381's with `-SweepThrough two-maps`); at the hold the verifier waits for the reset. Then the merge sequence, and after a merge that touches `tools/` a chore moves `tools-main` to the new tip.
+2. Launch as slots free, each after the tasks in its brackets on the board: T382, T383, then T378, T390, T385, T386, T380, T387, T388. Every brief carries the wave paragraph's `GRADLE_OPTS`, `-WaitForSlot 60`, the fixture and the Hatchery sentence; the briefs of this session are the pattern (scratchpad, not kept).
+3. Before T385 launches: one read-only research agent (a fix's own time against its elapsed-realtime stamp: the platform's guidance, two open trackers); its answer goes into T385's entry.
+4. Timed runs go alone: hold launches for T379's and T387's start-up runs when their implementers report them as not judged.
 5. A small release may be cut once T384, T385, T379 and T381 are merged (the wave paragraph); otherwise the closing sweep, with `-Prev` from `dystopo-wt/sweep-w48`.
 6. Triage's scan: the earliest dated ADR prediction is due 2026-12-01; ADR 0070's two and ADR 0071's second are checked at this wave's close.
 
