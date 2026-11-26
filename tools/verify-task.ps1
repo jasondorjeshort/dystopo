@@ -143,7 +143,9 @@ $autoSkipped = @{}
 if ($SweepThrough) { foreach ($n in @('boot', 'tour', 'stop')) { if ($Skip -notcontains $n) { $Skip += $n; $autoSkipped[$n] = '-SweepThrough: the sweep boots, tours and stops its own emulator' } } }
 $deviceSteps = @('boot', 'tour', 'stop') + @($Parts | ForEach-Object { "ui-$_" }) + @($(if ($SweepThrough) { 'sweep' }))
 function Selected([string]$name) { (-not $Only.Count -or $Only -contains $name) -and $Skip -notcontains $name }
-if (@($deviceSteps | Where-Object { Selected $_ }).Count -and -not $Fixture) {
+# T375: stop runs only after a boot (or by -Only stop), so a run with -Skip boot,tour (verifier.md's no-emulator line) needs
+# no emulator arguments; before, it exited 2 asking for them.
+if (@($deviceSteps | Where-Object { (Selected $_) -and ($_ -ne 'stop' -or $Only -contains 'stop' -or (Selected 'boot')) }).Count -and -not $Fixture) {
     if (-not $EmuPort -or -not $Port -or -not $Avd) { Write-Output 'verify-task: the device steps need -Avd, -EmuPort and -Port from the brief (or -Skip boot,tour,stop,guard)'; exit 2 }
     if ($Port -eq 8765 -or $EmuPort -eq 5554) { Write-Output 'verify-task: 8765 and console 5554 are the coordinator''s'; exit 2 }
 }

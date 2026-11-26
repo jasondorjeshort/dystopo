@@ -291,6 +291,16 @@ class T375WaitForSlot(Base):
         self.assertNotIn("-WaitForSlot", sw["command"])
         self.assertEqual(sw["ceilingS"], 60 * 300)
 
+    def test_no_emulator_arguments_needed_with_skip_boot_tour(self):
+        # verifier.md's no-emulator line on the real checkout: stop runs only after a boot, so it asks for no -Avd or ports.
+        out = self.tmp("verify-task-dry-")
+        p = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SCRIPT, "-Task", "T999", "-WorktreeRoot", out,
+                            "-Skip", "boot,tour", "-DryRun"], capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout[-800:])
+        self.assertIn("commands listed, nothing run", p.stdout)
+        self.assertNotIn("-Build", p.stdout)  # no boot (the dry run still lists the stop it would skip)
+        self.assertIn("stop dry run in 0 s: no emulator wanted", p.stdout)
+
     def test_others_at_the_cap_are_a_note_not_a_failure(self):
         p, s, text = self.case(answers={"adbDevices": "List of devices attached\nemulator-5572\tdevice\nemulator-5574\tdevice\n"})
         self.assertTrue(s["ok"], text)
