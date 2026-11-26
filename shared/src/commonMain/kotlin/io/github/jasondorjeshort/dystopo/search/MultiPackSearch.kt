@@ -35,7 +35,9 @@ object MultiPackSearch {
             val key = TextFold.normalized(e.name)
             val dup = kept.any { k ->
                 val o = k.hit.entry
-                o.kind == e.kind && TextFold.normalized(o.name) == key &&
+                // T377: two maps of two schemas (a pack's outdoors tiles, an area's OpenMapTiles tiles) may class one place
+                // differently: across maps, the same name this close is one place when both are points or both lines.
+                (o.kind == e.kind || k.pack != h.pack && o.kind.line == e.kind.line) && TextFold.normalized(o.name) == key &&
                     SearchIndex.distanceKm(o.lat, o.lon, e.lat, e.lon) <= DUPLICATE_KM
             }
             if (!dup) kept += h
