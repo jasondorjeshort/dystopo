@@ -1,7 +1,7 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at the commit that moved wave 48 to its record, by the side session (wave 48's coordinator, second clone; v0.1.44-alpha is the latest release)
+Updated: 2026-11-26, at the close's last commit (the base's update 405ad87f merged, both brainstorm offers answered), by the side session (wave 48's coordinator, second clone; v0.1.44-alpha is the latest release)
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the last closed wave's record `docs/tasks/wave-48.md`, and the ideas
 (`node .claude/hooks/queue-list.js ideas`).
 
@@ -14,7 +14,7 @@ Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), th
 
 ## Next
 
-1. What is left of the close: the base's update (the `wave` skill's Close, step 7: a Haiku chore fetches `hatchery` and lists what is past the base line of ADR 0038; the ideas session took an update on 2026-11-25, so it may list nothing) and the brainstorm offer (step 6), if this file's commit message does not say they are done.
+1. The close is complete: costs, the record, the brainstorm offer and rest review, the base's update (ADR 0038's base line is 60072884) and its own offer. One idea "For the base:" is kept in `docs/ideas/`; this checkout is not on the machine's sibling list, so the base's triage reads it only if the owner says "list this checkout" or gives the base's session the repository's URL. Leftovers for a chore: the worktree `dystopo-wt/hatchery-6007288` and its remote branch.
 2. Wave 49, by the owner's choices so far: it opens with search and peaks from tiles (`docs/ideas/2026-11-07-search-and-routes-find-nothing-outside-a-pack.md`), then `docs/ideas/2026-11-24-change-a-saved-areas-detail-and-keep-its-shape.md`; its first task is ADR 0070's wait for an emulator slot, after which four agents run at once; and, each the owner's word for wave 49: the tile cache's index walk (finding of 2026-11-25), the glance view saying GPS is searching (the idea of 2026-11-25, mandatory), the layout that flips at the largest font (the idea of 2026-11-26), work already launched resumable at the hold (the idea of 2026-11-25). A triage comes first: ideas are untriaged and one carries a `New:` line.
 3. Lessons of this wave for the briefs: a branch that touches the online column or the layout rule is verified through `two-maps`, not `a11y` alone; a verifier is told its hand runs are not optional; timed parts (startup) read high when two sweeps share the PC (ADR 0070: timed runs go alone); a second sweep takes `-SweepArgs "-BasePort 8704"`.
 4. Triage's scan: the earliest open ADR prediction is due 2026-12-01; ADR 0070's two are checked at wave 49's close.
