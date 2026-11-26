@@ -16,3 +16,13 @@ the file a reader of the queue opens first, does not mention it, and the queue n
 The edit: one sentence in `docs/ideas/README.md`, under what drains the queue, saying what the prefix means here and
 pointing at the rule; and a check that `node .claude/hooks/queue-list.js ideas` shows such a file in a way a triage
 will not mistake for untriaged work of its own.
+
+Plan: one edit, the coordinator's own doc change (`docs/ideas/` is project-owned by `.claude/hooks/ownership.json`).
+Add to `docs/ideas/README.md`, under "What drains it, and on what terms", one sentence: an idea titled
+`For the base: ` is left to the base while it has no block; no pass here builds it, Hatchery's triage lists it, the
+update that finds its `Base-idea:` commit deletes it, and removing the prefix makes it this project's again
+(`.claude/rules/docs.md`, Queues; the `brainstorm` skill, "After an update from the base"). Checked at triage: the
+listing needs no change, since `queue-list.js ideas` prints the title and the `triage` skill's step 4 already counts
+such rows apart (this triage counted one), so the second half of the idea is met; changing `queue-list.js` would be a
+base-owned edit. Verify: the post-edit hook quiet on the README, `node .claude/hooks/queue-list.js ideas --check`
+clean. Out of scope: the rule's wording in `.claude/rules/docs.md` and the skill.
