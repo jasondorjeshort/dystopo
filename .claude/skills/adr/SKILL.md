@@ -24,7 +24,10 @@ proposal; major choices arrive here through the `proposal` skill. From the Hatch
 3. Context says what forced the decision and what was verified, with sources (a PLANNING section, a
    log entry, a PR, a measurement). Decision is concrete: names, paths, data shapes, boundaries,
    failure modes, and every deferred item with the trigger that revives it. Consequences include the
-   costs, not only the benefits. Rejected alternatives stay, each with its reason.
+   costs, not only the benefits. Rejected alternatives stay, each with its reason. An incompatible
+   change to a surface other trees or tools read (Hatchery's ADR 0013 lists the base's) carries a
+   Migration table, one row per tree: Tree, Arrives by update, The project edits, When, Check
+   (Hatchery's ADR 0026).
 4. If anything exceeds 150 lines (specs, tables), put it in a sibling file `NNNN-<topic>.md` and link
    it from the ADR.
 5. Index: add a row to `docs/design/decisions/README.md`. If the decision came from a section of

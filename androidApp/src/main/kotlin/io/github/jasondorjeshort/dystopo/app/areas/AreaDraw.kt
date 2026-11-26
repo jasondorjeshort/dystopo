@@ -395,7 +395,6 @@ object PickerLayer {
     private const val LINE = "dystopo-picker-line"
     private const val MID = "dystopo-picker-mid"
     private const val VERTEX = "dystopo-picker-vertex"
-    private const val COLOR = "#00796b"
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private var view: MapView? = null
     private val styleListener = MapView.OnDidFinishLoadingStyleListener { install() }
@@ -464,8 +463,10 @@ object PickerLayer {
             style.addSource(GeoJsonSource(SOURCE, data))
             val kind = Expression.get("kind")
             fun isKind(k: String) = Expression.eq(kind, Expression.literal(k))
-            style.addLayer(FillLayer(FILL, SOURCE).withFilter(isKind("shape")).withProperties(PropertyFactory.fillColor(COLOR), PropertyFactory.fillOpacity(0.16f)))
-            style.addLayer(LineLayer(LINE, SOURCE).withFilter(isKind("edge")).withProperties(PropertyFactory.lineColor(COLOR), PropertyFactory.lineWidth(2.5f)))
+            val look = DetailOutline.look(DetailOutline.Level.DRAFT, io.github.jasondorjeshort.dystopo.app.AppSettings.mapOptions.night) // T366: the key's "Area being drawn"
+            val COLOR = look.colour
+            style.addLayer(FillLayer(FILL, SOURCE).withFilter(isKind("shape")).withProperties(PropertyFactory.fillColor(COLOR), PropertyFactory.fillOpacity(look.fill)))
+            style.addLayer(LineLayer(LINE, SOURCE).withFilter(isKind("edge")).withProperties(PropertyFactory.lineColor(COLOR), PropertyFactory.lineWidth(look.width)))
             style.addLayer(
                 CircleLayer(MID, SOURCE).withFilter(isKind("mid")).withProperties(
                     PropertyFactory.circleRadius(6f), PropertyFactory.circleColor(COLOR), PropertyFactory.circleOpacity(0.7f),

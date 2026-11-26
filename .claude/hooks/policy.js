@@ -14,6 +14,8 @@
 //     error = a one-line description. Each hook decides what an error means (git-guard denies
 //     every git command; the others fall back to DEFAULTS and say so).
 // Keys starting with "$" (for example "$comment") are ignored at any level.
+// loadSection(file, key) checks one section the same way, without the defaults and the file's other
+// keys unread (git-guard rule 20 reads another repository's privacy section with it).
 //
 // Debug: node .claude/hooks/policy.js [file]  prints the effective policy, or the error and exit 1.
 // CLAUDE.md check: node .claude/hooks/policy.js --claude-check  checks CLAUDE.md in the current
@@ -36,6 +38,11 @@
 // else 0. The last stdout line is always "cap-check: <N> files, <M> over cap" (N files checked
 // against a cap, M FAIL lines), on every exit: a run without it is a failed run (an older policy.js
 // that does not know the flag, a crash). Pusher check 7 runs it; post-edit.js uses docCap.
+// Schema: node .claude/hooks/policy.js --schema  prints one JSON object, keys sorted, "<dotted key>":
+// { "type": <name in TYPES>, "default": <base value> } per leaf of SCHEMA. policy.schema.json beside
+// this file records it ({ "$comment", "keys" }) and is regenerated in any commit that changes the
+// schema; harness group PS fails a recorded key removed, retyped or with its default changed
+// (ADR 0013, ADR 0025 item 12; docs/hatchery/decisions/0025-lead-contract.md section 2).
 // Test seam: HOOK_POLICY_FILE names another file (test-hooks.js sets it; unset in normal use).
 'use strict';
 const fs = require('fs');
@@ -60,8 +67,12 @@ const DEFAULTS = {
     deny: null,
     // Per-meter overrides; null inherits hold/deny, so a meter has no deny line when both are null. A project whose session meter strands
     // in-flight agents sooner than the weekly one runs down sets them apart (policy.examples/per-meter.json).
-    fiveHour: { hold: null, deny: null },
-    sevenDay: { hold: null, deny: null },
+    // finish and finishAgents (ADR 0025) are read by nothing since ADR 0027: no caller passes HOLD by
+    // them. Still validated: null is the meter's own hold, a value below that hold is malformed, there
+    // is no shared usage.finish, and finishAgents may be empty, never "any". Leave finish null.
+    fiveHour: { hold: null, deny: null, finish: null },
+    sevenDay: { hold: null, deny: null, finish: null },
+    finishAgents: ['wave-lead'],
     staleSeconds: 7200,
     whenStale: 'allow',
     // Name of an environment variable that, set to "1" when the session starts, lifts HOLD on both
@@ -126,6 +137,8 @@ const TYPES = {
   count: (v) => Number.isInteger(v) && v >= 1,
   formatters: (v) => v !== null && typeof v === 'object' && !Array.isArray(v) &&
     Object.keys(v).every((k) => /^\.[A-Za-z0-9]+$/.test(k) && isStrings(v[k]) && v[k].length > 0),
+  // usage.finishAgents: agent names, [] allowed; never "any" or "none".
+  agents: isStrings,
 };
 const SCHEMA = {
   git: {
@@ -137,8 +150,9 @@ const SCHEMA = {
   },
   usage: {
     hold: 'percent', deny: 'percentOrNull',
-    fiveHour: { hold: 'percentOrNull', deny: 'percentOrNull' },
-    sevenDay: { hold: 'percentOrNull', deny: 'percentOrNull' },
+    fiveHour: { hold: 'percentOrNull', deny: 'percentOrNull', finish: 'percentOrNull' },
+    sevenDay: { hold: 'percentOrNull', deny: 'percentOrNull', finish: 'percentOrNull' },
+    finishAgents: 'agents',
     staleSeconds: 'seconds', whenStale: 'stale', overrideEnv: 'envNameOrNull', pool: 'pool', holdAdvice: 'text', denyAdvice: 'text',
   },
   edit: { capExempt: 'patterns', anchorExempt: 'patterns', formatters: 'formatters' },
@@ -181,6 +195,7 @@ function load(file) {
     const policy = merge(SCHEMA, JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text), DEFAULTS, '');
     for (const [label, t] of meterThresholds(policy.usage)) {
       if (t.deny !== null && t.hold > t.deny) throw new Error(`usage hold is above deny for the ${label} meter`);
+      if (t.finish < t.hold) throw new Error(`usage finish is below hold for the ${label} meter`);
     }
     // The pool's defaults filled in, "$" keys dropped, so callers see { command, timeoutSeconds }.
     const pool = policy.usage.pool;
@@ -195,12 +210,56 @@ function load(file) {
   }
 }
 
-// The effective [label, {hold, deny}] pair per meter: the per-meter value where set, else the
-// shared one; deny is null when the meter has no deny line. Keys match the windows the status
-// line caches.
+// What one object section of a policy file sets (key: a top-level SCHEMA key such as "privacy"),
+// checked as load() checks it but never filled from the defaults, the file's other keys never read:
+// { section, error, source }. section is null when the file is absent (source null too) or does not
+// have the key, else the keys it gives (a key it leaves out is undefined); error as load() words it.
+// git-guard reads another repository's privacy section with it (rule 20), so a key that
+// repository's newer base added elsewhere does not refuse the push, while an unknown key or a wrong
+// value inside the section still does.
+function loadSection(file, key) {
+  if (!SCHEMA[key] || typeof SCHEMA[key] !== 'object') throw new Error(`loadSection: ${key} is not a policy section`);
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) {
+    if (e && e.code === 'ENOENT') return { section: null, error: null, source: null };
+    return { section: null, error: `cannot read ${file}: ${e.message}`, source: file };
+  }
+  try {
+    const raw = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('top level must be an object');
+    if (raw[key] === undefined) return { section: null, error: null, source: file };
+    const given = merge(SCHEMA[key], raw[key], {}, key);
+    for (const k of Object.keys(given)) if (given[k] === undefined) delete given[k];
+    return { section: given, error: null, source: file };
+  } catch (e) {
+    return { section: null, error: `${file}: ${e.message}`, source: file };
+  }
+}
+
+// The effective [label, {hold, deny, finish}] pair per meter: the per-meter value where set, else
+// the shared one; deny is null when the meter has no deny line; finish is the meter's own (there is
+// no shared one), null resolved to the meter's hold, and load() checks it; no caller reads it since
+// ADR 0027. Keys match the windows the status line caches.
 function meterThresholds(usage) {
-  const pick = (m) => ({ hold: m.hold === null ? usage.hold : m.hold, deny: m.deny === null ? usage.deny : m.deny });
+  const pick = (m) => {
+    const hold = m.hold === null ? usage.hold : m.hold;
+    return { hold, deny: m.deny === null ? usage.deny : m.deny, finish: m.finish === null || m.finish === undefined ? hold : m.finish };
+  };
   return [['5h', pick(usage.fiveHour)], ['7d', pick(usage.sevenDay)]];
+}
+
+// The --schema object: per leaf of SCHEMA its dotted key, type name and base value, keys sorted.
+function schemaKeys() {
+  const out = {};
+  const walk = (sch, def, prefix) => {
+    for (const k of Object.keys(sch)) {
+      const at = prefix ? `${prefix}.${k}` : k;
+      if (typeof sch[k] === 'string') out[at] = { type: sch[k], default: def[k] };
+      else walk(sch[k], def[k], at);
+    }
+  };
+  walk(SCHEMA, DEFAULTS, '');
+  return Object.fromEntries(Object.keys(out).sort().map((k) => [k, out[k]]));
 }
 
 // The effective { subagents, protectedBranches } for pull, merge and rebase (git-guard's rule 4):
@@ -499,7 +558,7 @@ function claudeCheck(root, edit) {
   return { lines, info, files: files.size, code: lines.length ? 1 : 0 };
 }
 
-module.exports = { load, matches, docCap, lineCount, hasLengthMarker, overLimit, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, integrateLimits, usageVerdict, meterThresholds, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
+module.exports = { load, loadSection, matches, docCap, lineCount, hasLengthMarker, overLimit, capCheck, claudeCheck, DOCS_CAP, HANDOFF_CAP, CLAUDE_MD_CAP, CLAUDE_LOADED_CAP, claudeCapsLifted, integrateLimits, usageVerdict, meterThresholds, schemaKeys, classifyGrant, readGrants, judgeGrants, holdCovered, holdLifted, readAccount, accountLabel, accountsDiffer, DEFAULTS };
 
 if (require.main === module && process.argv[2] === '--cap-check') {
   const c = process.argv[3] ? capCheck(process.argv[3])
@@ -507,6 +566,10 @@ if (require.main === module && process.argv[2] === '--cap-check') {
   if (c.code === 2) process.stderr.write('usage: node .claude/hooks/policy.js --cap-check <listfile>\n');
   process.stdout.write(`${c.lines.map((l) => `${l}\n`).join('')}cap-check: ${c.files} files, ${c.lines.length} over cap\n`);
   process.exitCode = c.code; // not process.exit: a write to a pipe may still be in flight
+} else if (require.main === module && process.argv[2] === '--schema') {
+  // One key per line, so a regenerated policy.schema.json diffs by key.
+  const keys = schemaKeys();
+  process.stdout.write(`{\n${Object.keys(keys).map((k) => `  ${JSON.stringify(k)}: ${JSON.stringify(keys[k])}`).join(',\n')}\n}\n`);
 } else if (require.main === module && process.argv[2] === '--claude-check') {
   // A policy that does not load is a FAIL here, never the defaults, as in --cap-check.
   const r = load();

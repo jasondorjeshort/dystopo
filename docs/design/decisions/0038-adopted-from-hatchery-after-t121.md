@@ -3,7 +3,7 @@
 Date: 2026-10-21
 Status: accepted
 
-Hatchery base: f7f41af6094559ef868be56c64df3ec41ef7fcf9 (living line, bumped by update-from-hatchery; last 2026-10-21, T121)
+Hatchery base: 6939e792927d95b0c9b1cf5f5fd0510780798180 (living line, bumped by update-from-hatchery; last 2026-11-25)
 Mechanism: Hatchery ADR 0016 (update by patch over the base-owned set, read from `.claude/hooks/ownership.json` at the base commit), its ADR 0019 (the carry-back channel), and for the adoption itself ADR 0020 here and Hatchery ADR 0004.
 
 Record: T120 (PR #7) and T121 (PR #9) in `docs/TASKS.md` and their 2026-10-21 entries in the
@@ -62,8 +62,8 @@ here).
   `claude.ai` link passes only in a commit message's trailer block, and the link anywhere else stays
   a `session` hit; GitHub's web-flow identity passes as committer, never as author or tagger, and its
   service address passes in text. Their carry-back landed as Hatchery PR #2 (its ADR 0020, merged
-  2026-10-21) after the base line above, so the two rows stay until an update moves the line past
-  that merge; then base wins and the rows go.
+  2026-10-21); the update of 2026-11-25 moved the base line past that merge, so the base's text
+  holds both rules now and the two rows are gone.
 - **The scan runs from the guard and from the terminal.** The guard's rule 20 scans every push from
   a session commit by commit, with the main checkout's copy of the scan (so a change to the scan's
   own contract is pushed from a terminal until it is on `main`, T120). `privacy.allow` is the
@@ -82,7 +82,9 @@ here).
   new lines folded in by hand, both sides kept (T121: keeping HEAD whole on the scan would have
   dropped the base's range fix); any other conflict is base wins; the line is bumped last, only when
   every failed path has a disposition. A row whose change the base has taken is deleted in the same
-  update.
+  update. The update runs at every wave close (`wave` skill, Close step 7; owner, 2026-11-25), and a
+  base change wanted sooner is taken by the whole update, never by copying one base commit: three
+  commits taken by hand made five of the eleven conflicts of the update of 2026-11-25.
 
 ## Departures
 
@@ -92,13 +94,11 @@ goes. Carry-back is an idea file in Hatchery, the Hatchery commit or ADR that to
 `none`. Carried forward from ADR 0037 as it stood after T121 (T117's rows had gone in T121). Sent
 2026-10-23 through the `carry-back` skill, awaiting Hatchery's landing: CB1's skip and the handoff
 skill's no-process-ids rule; the ownership map's project-side list became a request for Hatchery's
-queue instead (its row). The two PV rows' carry-back has landed in Hatchery (above); they stay until
-the base line passes it.
+queue instead (its row). Closed by the update of 2026-11-25: the two PV rows (Hatchery ADR 0020) and
+the `triage` row (landed there as b43ff36, in the shape of Hatchery ADR 0026).
 
 | Path | Reason | Carry-back |
 |---|---|---|
-| `.claude/hooks/privacy-scan.js`, `.claude/hooks/test-hooks.js` (PV46, PV38 before T121) | the attribution trailer is allowed (owner, 2026-10-21): a `Claude-Session:` line whose value is one `claude.ai` link passes in a commit message's trailer block (the last paragraph, not the subject, every line a trailer); the link in an added line, a file name, a tag or any other message line stays a `session` hit (T120) | Hatchery ADR 0020 (PR #2, merged 2026-10-21 as 51d29f9: ADR 0018 item 10 amended, the commit skill's trailer rule; the cases PV46 and PV47 there); the row goes when the base line passes that merge |
-| `.claude/hooks/privacy-scan.js`, `.claude/hooks/test-hooks.js` (PV47, PV39 before T121) | every pushed commit carries the owner's real identity (owner, 2026-10-21), and a history rewrite re-sends GitHub's web merges: `GitHub <noreply@github.com>` passes as committer, never as author or tagger, and `noreply@github.com` passes in text like `noreply@anthropic.com` (a service address names no person) (T120) | Hatchery ADR 0020 (PR #2, merged 2026-10-21 as 51d29f9: ADR 0018 item 10 amended, the commit skill's trailer rule; the cases PV46 and PV47 there); the row goes when the base line passes that merge |
 | `.claude/hooks/test-hooks.js` (CB1) | the carry-back identity check skips a tree with a `Hatchery base:` line, the `adr` skill's test for a project, as well as one with a `hatchery` remote: its history carries GitHub's web-merge committer and two early commits authored as Claude, which the scan never re-reads (T121) | `carry-back/test-hooks-cb1-skip` at a692465 (sent 2026-10-23: CB1's skip uses the `adr` skill's two-part test, cases CB2 and CB3, the hook spec's CB paragraph) |
 | `.claude/hooks/test-hooks.js` (GE22) | the long `--exec` spelling refused under this project's own `policy.json`, from a subagent and from the main session (T121) | none (the base's GE cases cover the same parse) |
 | `.claude/hooks/test-hooks.js` (GE23) | a push and a lease-push of `carry-back/x` allowed and of `feature/x` refused under the `git` section of this project's own `policy.json` (T129) | none (the base's GP cases cover the branch patterns) |
@@ -106,9 +106,9 @@ the base line passes it.
 | `.claude/hooks/ownership.json` | `projectOwned` names this project's modules, tooling, build files and the `docs/` files outside the listed folders, so fitness check O1 passes; the base's `$comment` target is kept (T121) | none as a branch: a project-side list would change the map's schema, a promised surface of Hatchery's ADR 0016, so the request (O1 and A1 skipping by the two-part test, or the list through a proposal there) waits in `docs/ideas/2026-10-23-hatchery-ownership-check-in-project-trees.md` for a Hatchery-rooted session to file |
 | `docs/hatchery/` | taken whole and never edited; this project's own ADRs, proposals and findings stay in `docs/design/decisions/`, `docs/design/proposals/` and `docs/findings/`, as the base's `adr` skill has every tree but Hatchery do: a row, not a move (T121) | none |
 | `.claude/rules/README.md` | this project's rules table (`kotlin.md`, `trackdb.md`) | none |
-| `.claude/rules/docs.md` | this project's exemptions, indexes, places rule and ideas line; the base's new lines folded in by hand, its gate sentences (pusher check 7, the reviewer) rewritten for a tree without a pusher: the post-edit hook warns and `--cap-check` fails | none |
+| `.claude/rules/docs.md` | this project's exemptions, indexes, places rule and ideas line; the base's new lines folded in by hand (2026-11-25: the Queues section of Hatchery ADR 0026 and the path check's placeholders), its gate sentences (pusher check 7, the reviewer) rewritten for a tree without a pusher: the post-edit hook warns and `--cap-check` fails | none |
 | `.claude/settings.json` | mixed by the map: exec-form hooks, this project's permissions (ADR 0035); T190 adds `emulator-lock.js` beside `git-guard.js` under `PreToolUse` `Bash|PowerShell` and `emulator-stop.js` under `SubagentStop` (timeout 120 s), the emulator cap | none (the settings stay mixed; the two hooks are the project's) |
-| `.claude/hooks/policy.js` (`emulators`) | T190: the schema throws on an unknown key, so the project's `emulators` block (`max` an integer from 1, `lockDir` text; defaults 2 and `~/.dystopo/emulators`) needs a line in `DEFAULTS`, `TYPES` (`count`) and `SCHEMA` | Hatchery: a project-extension section the loader passes through without a schema edit (for example a `project` key whose members a project's own scripts check), so a project key no longer forks `policy.js` |
+| `.claude/hooks/policy.js` (`emulators`), `.claude/hooks/policy.schema.json`, `.claude/hooks/test-hooks.js` (PS2's fixture) | T190: the schema throws on an unknown key, so the project's `emulators` block (`max` an integer from 1, `lockDir` text; defaults 2 and `~/.dystopo/emulators`) needs a line in `DEFAULTS`, `TYPES` (`count`) and `SCHEMA`; since the update of 2026-11-25 the base's schema check (group PS) also needs the block's keys recorded in `policy.schema.json` and given in the pre-0025 fixture | Hatchery: a project-extension section the loader passes through without a schema edit (for example a `project` key whose members a project's own scripts check), so a project key no longer forks `policy.js` |
 | `.claude/hooks/emulator-lock.js`, `.claude/hooks/emulator-stop.js`, `.claude/hooks/test-hooks.js` (EL01 to EL15, ES01 to ES08) | T190: the emulator cap's two hooks (a raw-boot tripwire and claims at `PreToolUse`, the stop by the lock's PID at `SubagentStop`) live under the base-owned `.claude/hooks/` beside the scripts they reuse (`policy.js`, `shell-parse.js`), with their cases in the base's harness | Hatchery: the `SubagentStop` input fields seen on Claude Code 2.1.316 (`agent_id`, `agent_type`, `agent_transcript_path`, `background_tasks`) for its hook spec; the hooks themselves stay the project's |
 | `.claude/hooks/usage-gate.js` (the launch line) | T298: after its verdict, an allowed `Agent` call appends a launch line (time, `tool_use_id`, `subagent_type`, `model`, `description`, the two readings) to `~/.claude/usage-state/<session>.agents.tsv` through `agent-meter.js`, inside a `try`, so a fault loses the line and never the launch or a deny | Hatchery: the per-agent cost lines as a base feature (the gate's append, the stop hook, the hook spec's input fields: `tool_use_id` at `PreToolUse`, `agent-<id>.meta.json` beside the transcript, usage repeated per content block); a carry-back once the coordinator's live check after the merge has passed |
 | `.claude/hooks/agent-meter.js`, `.claude/settings.json` (`SubagentStop`), `.claude/hooks/test-hooks.js` (AM01 to AM12, `--input ... agent-meter`) | T298: a second `SubagentStop` hook beside `emulator-stop.js` (timeout 10 s) appends the stop line with the transcript's token sums; the cases run under a scratch HOME | the same carry-back as the row above |
@@ -128,7 +128,6 @@ the base line passes it.
 | `.claude/project/one-review.md` | replaces `one-review`: the verifier per PR | none |
 | `.claude/project/git.md` | replaces `git`: implementers commit and push `task/*`, ADR 0036 integration | none |
 | `.claude/project/licensing.md` | replaces `licensing`: permissive dependencies only, no SPDX headers | none |
-| `.claude/skills/triage/SKILL.md` | ADR 0065's triage text: step 4 reads entries newer than a block, step 9 the brainstorm offered on yes, step 10 its counts, the Bounds never rewrite a Waits | `carry-back/triage-brainstorm-and-rest` at 982e4a5 (sent 2026-11-22; replaces carry-back/triage-brainstorm-step at 4d00b15, which is not to be landed) |
 
 ## Consequences
 

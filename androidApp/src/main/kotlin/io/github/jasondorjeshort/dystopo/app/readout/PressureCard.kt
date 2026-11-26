@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
 import io.github.jasondorjeshort.dystopo.app.control
-import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.gpx.GpxFormat
 import io.github.jasondorjeshort.dystopo.readout.FallAlert
 import io.github.jasondorjeshort.dystopo.readout.HeightSource
@@ -69,8 +68,10 @@ import java.util.concurrent.TimeUnit
  *   while the barometer switch is on (`readoutBarometer`) and the phone has one. The barometer's samples arrive through
  *   [onSensorPressure], a replay's pressure column through [onReplayPressure] (while it flows the sensor is ignored, as
  *   the readout does), the recorder's accepted fixes through [onFix] (one line in `tracking/Tracking.onFix`): each fix's
- *   height is the active DEM pack's at the fix ([Trips.demSampler]; bare earth in the United States, a surface model
- *   elsewhere, `UnitRegions.isUnitedStates`), else the fix's own GNSS height.
+ *   height is the one point read's at the fix (T358: [io.github.jasondorjeshort.dystopo.app.terrain.PointRead], held now with
+ *   the network's deeper tile fetched behind; bare earth in the United States, a surface model elsewhere,
+ *   `UnitRegions.isUnitedStates`), else the fix's own GNSS height. A deeper tile that lands is taken from the next fix on, in
+ *   that minute's median; it stays held (cached) when the network goes, so the height does not step back.
  * - **Evaluation** each time a minute closes, with the chosen weather station's temperature when one is known
  *   ([PressureSource.stationTemperature]; the station is fetched only while the readout strip shows in the foreground, so a
  *   recording with the screen off uses the last report, which the trend ages).
@@ -187,11 +188,14 @@ object PressureWatch {
         post { take { trend.onPressure(timeMs, hPa) } }
     }
 
+    /** T358: the ground height at a fix, the one point read held now with the fetch behind (as the readout's). */
+    private val pressureGround = io.github.jasondorjeshort.dystopo.app.terrain.PointRead.sampler(io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND, "pressure")
+
     /** One fix the recorder accepted (`tracking/Tracking.onFix`, its thread). */
     fun onFix(fix: LocationFix) {
         if (!recording || synthetic != null) return
         post {
-            val dem = runCatching { Trips.demSampler()?.elevation(fix.lat, fix.lon) }.getOrNull()?.takeIf { it.isFinite() }
+            val dem = runCatching { pressureGround.elevation(fix.lat, fix.lon) }.getOrNull()?.takeIf { it.isFinite() } // T358
             val (h, src) = when {
                 dem != null -> dem to if (UnitRegions.isUnitedStates(fix.lat, fix.lon)) HeightSource.DEM_BARE_EARTH else HeightSource.DEM_SURFACE
                 fix.ele != null -> fix.ele to HeightSource.GNSS
@@ -684,15 +688,18 @@ object WayDownWatch {
 
     private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
-    /** One sampler per DEM pack, read under a lock (its tile cache is not thread-safe). */
-    private val samplers = java.util.WeakHashMap<io.github.jasondorjeshort.dystopo.app.Pack, io.github.jasondorjeshort.dystopo.routing.ElevationSampler>()
+    /** One sampler per composed pyramid, read under a lock (its sample count is not thread-safe). */
+    private val samplers = java.util.WeakHashMap<io.github.jasondorjeshort.dystopo.tiles.DemPyramid, io.github.jasondorjeshort.dystopo.routing.ElevationSampler>()
 
+    /**
+     * T358 (ADR 0066 build task 4): the terrain around the fix by the map's rule, what the phone holds composed
+     * ([io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt], held now with the fix's tile fetched behind where the
+     * network is deeper), sampled at z14 as before; null with nothing held at the fix.
+     */
     private fun sampler(lat: Double, lon: Double): io.github.jasondorjeshort.dystopo.routing.ElevationSampler? {
-        val packs = DystopoApp.instance.tiles.packs
-        val dem = packs.demPacks.firstOrNull { d -> d.header.let { h -> lon in h.minLon..h.maxLon && lat in h.minLat..h.maxLat } } ?: packs.dem ?: return null
+        val pyramid = io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt(lat, lon, io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND, "wayDown") ?: return null
         return synchronized(samplers) {
-            samplers.getOrPut(dem) {
-                val pyramid = io.github.jasondorjeshort.dystopo.tiles.DemPyramid(dem.header.minZoom, dem.header.maxZoom, io.github.jasondorjeshort.dystopo.app.TileService.demDecoder(), cacheTiles = 24) { z, x, y -> dem.tile(z, x, y) }
+            samplers.getOrPut(pyramid) {
                 val s = io.github.jasondorjeshort.dystopo.routing.DemElevation(pyramid, zoom = 14)
                 val lock = Any()
                 io.github.jasondorjeshort.dystopo.routing.ElevationSampler { la, lo -> synchronized(lock) { s.elevation(la, lo) } }

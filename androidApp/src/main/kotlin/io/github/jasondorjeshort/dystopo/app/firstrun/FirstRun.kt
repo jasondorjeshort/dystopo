@@ -111,18 +111,42 @@ object FirstRun {
      */
     fun noPack(app: DystopoApp = DystopoApp.instance): Boolean = mapMessage(app, null).firstRun
 
-    /** T332: the boxes of the open regions (their elevation and vector archives). */
+    /**
+     * T332: the boxes of the open regions (their elevation and vector archives). T359 (ADR 0066 build task 5): the lookup's
+     * maps ([io.github.jasondorjeshort.dystopo.app.PackSet.holdings], in memory: the maps that are on, each archive's box).
+     */
     private fun regionBoxes(app: DystopoApp): List<PackBounds> =
-        app.tiles.packs.regions.flatMap { listOfNotNull(it.demCoverage?.bounds, it.osmCoverage?.bounds) }
+        app.tiles.packs.holdings().filter { it.kind == io.github.jasondorjeshort.dystopo.packs.Holdings.Kind.MAP && !it.off }
+            .flatMap { listOfNotNull(it.dem?.bounds, it.vector?.bounds) }
 
-    /** T332: the boxes of the downloaded areas that hold tiles ([MapMessage.heldArea]). */
+    /**
+     * T332: the boxes of the downloaded areas that hold tiles ([MapMessage.heldArea]). Read from the records, not the
+     * lookup's areas: the lookup lists finished areas only (`Areas.lookupHoldings`), and an area stopped part way holds tiles too.
+     */
     private fun areaBoxes(): List<PackBounds> =
         io.github.jasondorjeshort.dystopo.app.areas.Areas.list.filter { MapMessage.heldArea(it.state, it.pack != null) }.mapNotNull { runCatching { it.area.bounds }.getOrNull() }
+
+    /**
+     * T359: an online source draws the view: the lookup's online member ([io.github.jasondorjeshort.dystopo.app.online.OnlineTiles.onlineMember])
+     * allows a fetch now, which reads the one network rule. Before, a source being set was enough, so with direct reading
+     * on and no network a phone whose maps are all off, or that holds only an area, got no message (T342's and T332's
+     * follow-ups). Cached for a second: the map screen asks every half second.
+     */
+    private fun onlineDraws(app: DystopoApp): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - onlineAt < 1_000) return onlineNow
+        onlineNow = runCatching { app.tiles.online?.onlineMember()?.allowed == true }.getOrDefault(app.tiles.online != null)
+        onlineAt = now
+        return onlineNow
+    }
+
+    @Volatile private var onlineAt = Long.MIN_VALUE / 2
+    @Volatile private var onlineNow = false
 
     /** T332: the map's message for the visible box [view] ([MapMessage.choose]); the boxes are in memory, so any thread. */
     fun mapMessage(app: DystopoApp, view: PackBounds?): MapMessage = MapMessage.choose(
         opened = io.github.jasondorjeshort.dystopo.app.areas.Areas.isRead,
-        regions = regionBoxes(app), areas = areaBoxes(), view = view, online = app.tiles.online != null,
+        regions = regionBoxes(app), areas = areaBoxes(), view = view, online = onlineDraws(app), // T359: a fetch allowed, not a source set
         heldOff = app.tiles.packs.off.isNotEmpty(), // T342: a map that is off is held and covers nothing
     )
 
@@ -243,7 +267,7 @@ object FirstRun {
             // T332: the rule's inputs and what the map chose last (`opening`, `nothingHeld`, `nothingHeldOnline`, `outside`, `none`).
             "mapHolds" to linkedMapOf(
                 "opened" to io.github.jasondorjeshort.dystopo.app.areas.Areas.isRead, "regions" to app.tiles.packs.regions.size, "areas" to areaBoxes().size,
-                "online" to (app.tiles.online != null),
+                "online" to onlineDraws(app), "sourceSet" to (app.tiles.online != null), // T359: the rule's `online` is a fetch allowed now
                 "off" to app.tiles.packs.off, // T342: maps on the phone that are off (held, covering nothing)
             ),
             "mapMessage" to lastMessage?.code, "textShown" to FirstRunCardState.text, "actionShown" to FirstRunCardState.action,

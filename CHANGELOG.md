@@ -4,8 +4,17 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.44-alpha (2026-11-26)
+
 ### 2026-11-25
 
+- T373: The a11y part's other lines that come and go: the stale-recording screen, the route screens' moved lines
+- T358: The point readers take the lookup: the readout, the pressure card, the route tools
+- T360: The coverage panel under the status chip
+- T357: The join at a map's edge, cell by cell
+- T359: The coverage readers take the lookup: the chip, the Download offer, search
+- T372: The glance screen's a11y finding that comes and goes
+- T366: Offline maps' outlines coloured by detail, with a second cue and a key
 - T368: The network where it is finer, behind what the phone holds
 - T369: The cap on a direct-mode download, and a trip's corridor by a tap
 

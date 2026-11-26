@@ -32,7 +32,7 @@ none since 2026-10-24 (ADR 0043): the coordinator merges a verified branch itsel
    `out/coordinator-pids.txt`) so agents and the owner have the viewer (`docs/reference/live-server.md`).
    AVDs go under `E:\dystopo-avd`.
 4. Read the usage before launching (the status line, or this session's file under
-   `~/.claude/usage-state/`); at 50% of the 5-hour meter or the 7-day hold `policy.json` sets launch
+   `~/.claude/usage-state/`); at 75% of the 5-hour meter or the 7-day hold `policy.json` sets launch
    no new implementers. On the owner's word, and only then, write a grant file in `~/.claude/usage-gate-overrides/` (`{"until": <epoch seconds>,
    "reason": "<the owner's words>", "meters": ["7d"]}`, both meters when `meters` is absent, optionally
    `"session": "<id>"` or `"project": "<path>"`; ADR 0035) with the meters and the end time the owner
@@ -98,7 +98,7 @@ and settings added or missing against ADR 0044. Answer every objection by editin
    meter at planning plus that cost is at or under the 7-day hold `policy.json` sets, and otherwise
    plan a smaller wave or wait for the reset (the 5-hour meter keeps its own line, Resume step 4).
    Write the allowance into the wave paragraph as one sentence: the meter at planning, the task
-   count, the cost assumed, the figure it adds up to. One Gradle-using agent at a time unless the owner says wider (ADR 0057), so a wave
+   count, the cost assumed, the figure it adds up to. One Gradle-using agent at a time unless the owner says wider (ADR 0057; four on the 128 GB PC from wave 49, the emulators queued at two, ADR 0070), so a wave
    states its order; agents with no Gradle or emulator may run alongside; a wave
    larger than the budget is not launched in halves on the same meter.
 4. Brief each implementer with the `brief` skill (`implementer.md`), its own worktree, ports and
@@ -199,10 +199,17 @@ and the caches are regenerable; the only files on the machine that are not are t
    `## Later`, one line per task naming it; read that list, strike what is done or taken, then
    commit the board, the record and the index together and push with `bash tools/push-verified.sh`.
    A failed check in the recipe stops the chore; relaunch it Sonnet-class.
-6. Offer the brainstorm (ADR 0065): after the release, and after a push of triaged ideas, the
-   `triage` skill's step 9 (at most nine lines, the header, record only what the owner accepts).
-   Every third wave close, recorded in the wave record, also offer the rest review: the resting
-   ideas only (`grep -l "^Waits: at rest" docs/ideas/*.md`), sorted by distinct recurrences, one
-   line each; the owner decides each line: keep, wake or delete. It is an offered list, not a
-   sitting an agent runs. The first review also lists every `Waits:` with no trigger and every one
-   written on a blanket leave (ADR 0065, Context), for the owner to restate or convert.
+6. Offer the brainstorm (`brainstorm` skill; ADR 0065 as ADR 0069 amends it): after the release,
+   and after a push of triaged ideas; one prompted offer per session, its answers by multiple
+   choice, its record line as the skill gives it. A release also prompts the rest review (the
+   skill's step 7: the `rest` rows of the listing, at most once in seven days; the owner decides
+   each line: keep, wake or delete). It is an offered list, not a sitting an agent runs. The first
+   review also lists every `Waits:` with no trigger and every one written on a blanket leave
+   (ADR 0065, Context), for the owner to restate or convert.
+7. Update from the base (owner, 2026-11-25). A Haiku chore runs `git fetch hatchery` and reports
+   `git log --oneline <base line>..hatchery/main` (the base line is the `Hatchery base:` line of
+   ADR 0038). When that lists commits, an Opus-class implementer runs the `update-from-hatchery` skill on
+   a branch `task/hatchery-<sha7>` in its own worktree, with `node .claude/hooks/test-hooks.js` as
+   its check, and a verifier repeats the check before the merge sequence. A base change wanted
+   sooner is taken the same way, by the whole update: never by copying one base commit, which
+   leaves the base line behind and makes the next update conflict on text both sides already hold.

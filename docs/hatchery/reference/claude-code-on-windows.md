@@ -1,6 +1,6 @@
 ---
-verified: 2026-10-17
-source: observed (machine user name in paths, ADR 0018 evidence 2026-10-17; PowerShell pipe and MSYS git show rewrite 2026-10-17; npm behaviour tested 2026-10-14; twelve waves of parallel agents on a downstream project; Windows 10 and 11, Claude Code 2.1.x, Git Bash and Windows PowerShell 5.1); hook and status line code read 2026-10-14, usage-gate grants 2026-10-15, per-session usage file 2026-10-16; robocopy and Remove-Item behaviour with junctions observed 2026-10-14
+verified: 2026-11-25
+source: observed (Bash call moved to the background observed 2026-11-24 and 2026-11-25; machine user name in paths, ADR 0018 evidence 2026-10-17; PowerShell pipe and MSYS git show rewrite 2026-10-17; npm behaviour tested 2026-10-14; twelve waves of parallel agents on a downstream project; Windows 10 and 11, Claude Code 2.1.x, Git Bash and Windows PowerShell 5.1); hook and status line code read 2026-10-14, usage-gate grants 2026-10-15, per-session usage file 2026-10-16; robocopy and Remove-Item behaviour with junctions observed 2026-10-14
 ---
 
 # Claude Code on Windows: what holds
@@ -15,6 +15,16 @@ source: observed (machine user name in paths, ADR 0018 evidence 2026-10-17; Powe
   emulator (`adb -s emulator-NNNN emu kill`).
 - Each parallel agent gets its own ports and its own emulator (AVD name, console port, host port)
   assigned in the brief; a shared port range in the brief is how collisions are avoided.
+
+## Long commands
+
+- A Bash call that runs long is moved to the background and returns with only what it printed so
+  far, whatever its timeout. Observed 2026-11-24, Claude Code 2.1.331, interactive: a call past about
+  three minutes came back though its timeout was 600000; the caller is invoked again when the command
+  exits, and the whole output is in the background task's output file. Seen again 2026-11-25 in a
+  subagent session: back after 180 seconds with the first line and a note naming the output file. The
+  test command runs that long. Wait for it and never start a second copy. Not looked up: a documented
+  value for the time, and whether a setting moves it.
 
 ## Git worktrees
 
@@ -100,7 +110,7 @@ source: observed (machine user name in paths, ADR 0018 evidence 2026-10-17; Powe
 
 - The status line (`.claude/statusline.js`) writes the 5-hour and weekly percentages to one cache
   file per session, `~/.claude/usage-state/<session_id>.json`, labelled with the logged-in account;
-  the `usage-gate` hook (PreToolUse on `Agent|Workflow`) reads the file of the `session_id` it is
+  the `usage-gate` hook (PreToolUse on `Agent|Workflow|SendMessage`) reads the file of the `session_id` it is
   given and refuses a new launch while either meter is at or above its HOLD line. A file labelled
   with another account than the one logged in counts as no data. Bash is never gated. ADR 0011.
 - The lines are policy, not code: `usage.hold` and `usage.deny` in `.claude/hooks/policy.json`.

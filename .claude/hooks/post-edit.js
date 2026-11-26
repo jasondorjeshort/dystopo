@@ -6,7 +6,8 @@
 // policy.js: sections, the 40 and 190 caps, unresolved imports), or an edited docs/**/*.md file
 // breaks a size cap or passes the 300 threshold without its [length:] marker, lacks required
 // frontmatter, is missing from its directory index (or, in a queue directory listed on demand,
-// would list as ? in queue-list.js), or names a repository path that does not exist, or an edited
+// would list as ? in queue-list.js, or, an idea, has an entry line out of place, ADR 0026), or
+// names a repository path that does not exist, or an edited
 // .claude/skills/*/SKILL.md passes 500 lines, and it runs the formatter for the file's extension
 // if one is set. Every @
 // import is read by imports.js, the one parser; every queue file by queue-list.js's read().
@@ -50,7 +51,11 @@ const { edit } = load().policy;
 // Formatters, keyed by file extension (lower case, with the dot). The value is an argv array;
 // the edited file's absolute path is appended at run time. Empty in the base; a project sets
 // edit.formatters, for example ".rs": ["rustfmt", "--edition", "2021"]. A non-zero exit or a
-// 20 s timeout is reported back to the agent, never blocks.
+// 20 s timeout is reported back to the agent, never blocks. On Windows a command that names or
+// resolves to a .cmd or .bat file (an npm shim such as ["prettier", "--write"]) runs through
+// cmd.exe, every argument quoted; an .exe and every other platform spawn directly (batchFile).
+// An argument holding " or % or a line break is not run through cmd.exe (cmdLine), and a timeout
+// there ends cmd.exe, not what the batch file started.
 const FORMATTERS = Object.assign({}, edit.formatters);
 // Test seam: a JSON object in this variable is merged over FORMATTERS, so the harness
 // can exercise the formatter path without a policy file. Unset in normal use.
@@ -171,9 +176,14 @@ function queueLines(root, rel, abs, dir) {
   if (!readme.split('\n').some((l) => isQueueMarker(l, dir, marker))) return null;
   const notChecked = [`post-edit: queue-list.js did not load; ${rel} was not checked.`];
   if (!ql || typeof ql.read !== 'function') return notChecked;
-  let problems;
-  try { problems = ql.read(dir, abs).problems; } catch (_) { return notChecked; }
-  return problems.map((p) => `post-edit: ${rel} would list as ? (${p.field} ${p.value === null ? 'missing' : `is "${p.value}"`}; allowed: ${p.allowed}). See docs/${dir}/README.md.`);
+  let row;
+  try { row = ql.read(dir, abs); } catch (_) { return notChecked; }
+  // After the problem lines, the placement warnings of ADR 0026 (0026-brainstorm-contract.md,
+  // section 2), one line each; an older queue-list.js without warnings gives none.
+  return [
+    ...row.problems.map((p) => `post-edit: ${rel} would list as ? (${p.field} ${p.value === null ? 'missing' : `is "${p.value}"`}; allowed: ${p.allowed}). See docs/${dir}/README.md.`),
+    ...(Array.isArray(row.warnings) ? row.warnings : []).map((w) => `post-edit: ${rel} line ${w.line}: ${w.text}. See the brainstorm skill.`),
+  ];
 }
 
 // docs/<dir>/README.md: a line starting "Listed on demand:" that is not the marker for <dir>
@@ -220,8 +230,60 @@ function missingImports(root, rel) {
     `post-edit: ${rel} imports @${i.token}, which resolves to ${i.target} and ${i.isDir ? 'is a directory, which loads nothing' : 'does not exist'} (an import resolves from the importing file's directory).`);
 }
 
+// On Windows Node cannot spawn a .cmd or .bat file without a shell. batchFile finds the file the
+// command names as cmd.exe would: a name with a directory part in that directory, a bare name in
+// the current directory and then each PATH directory, and a name with no extension with each
+// PATHEXT extension in turn, first match wins. It returns that file's full path when it is a .cmd
+// or .bat, else null: an .exe or .com (rustfmt, node), a name found nowhere, and every other
+// platform spawn directly as before, so the 20 s timeout still ends the formatter itself and a
+// cmd.exe builtin (echo, del) is never run.
+const BATCH = /^\.(cmd|bat)$/i;
+function batchFile(cmd) {
+  if (process.platform !== 'win32' || typeof cmd !== 'string' || cmd === '') return null;
+  const ext = path.extname(cmd);
+  if (ext !== '' && !BATCH.test(ext)) return null;
+  const exts = ext !== '' ? [''] : (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const dirs = /[\\/:]/.test(cmd) ? ['']
+    : [process.cwd(), ...(process.env.PATH || '').split(';').map((d) => d.replace(/"/g, '')).filter(Boolean)];
+  for (const d of dirs) {
+    for (const e of exts) {
+      const f = path.resolve(d, cmd + e);
+      let found = false;
+      try { found = fs.statSync(f).isFile(); } catch (_) { /* absent */ }
+      if (found) return BATCH.test(path.extname(f)) ? f : null;
+    }
+  }
+  return null;
+}
+// Inside double quotes cmd.exe still expands %name% and ends the line at CR or LF, and a " would
+// close the quote; & | < > ^ ( ) and spaces are literal there, and ! is too because /v:off turns
+// delayed expansion off. So the batch file's full path and every argument are quoted (a trailing
+// run of backslashes doubled, so the program's own parser does not read \" as a quote) and an
+// argument holding " % CR LF or NUL is refused. The full path, never a bare name: a batch file
+// found on PATH under a quoted name gets a wrong %~dp0, which npm shims use to find their script.
+const CMD_REFUSED = /["%\r\n\0]/;
+function cmdLine(file, args) {
+  const all = [file, ...args];
+  for (const a of all) {
+    const m = CMD_REFUSED.exec(a);
+    if (m) return { refused: { '\r': 'CR', '\n': 'LF', '\0': 'NUL' }[m[0]] || m[0] };
+  }
+  return { line: all.map((a) => `"${a.replace(/(\\+)$/, '$1$1')}"`).join(' ') };
+}
+
 function runFormatter(argv, abs, rel) {
-  const r = childProcess.spawnSync(argv[0], [...argv.slice(1), abs], { timeout: 20000, encoding: 'utf8' });
+  let r;
+  const batch = batchFile(argv[0]);
+  if (batch) {
+    // A timeout here ends cmd.exe; what the batch file started may outlive it.
+    const c = cmdLine(batch, [...argv.slice(1), abs]);
+    if (c.refused) return [`post-edit: formatter ${argv[0]} failed on ${rel}: not run: cmd.exe cannot be passed ${c.refused} safely`];
+    // /s strips the outer quotes and runs the line as written; verbatim, so Node adds no quoting.
+    r = childProcess.spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/v:off', '/s', '/c', `"${c.line}"`],
+      { timeout: 20000, encoding: 'utf8', windowsVerbatimArguments: true });
+  } else {
+    r = childProcess.spawnSync(argv[0], [...argv.slice(1), abs], { timeout: 20000, encoding: 'utf8' });
+  }
   if (!r.error && r.status === 0) return [];
   let detail = (r.stderr || '').split(/\r?\n/).filter((l) => l !== '').slice(0, 5).join('\n');
   if (!detail && r.error) detail = r.error.message;

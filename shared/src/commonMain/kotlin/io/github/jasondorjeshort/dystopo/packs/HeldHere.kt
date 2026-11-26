@@ -17,8 +17,8 @@ import kotlin.math.min
  * holds nothing for the verdict; it is reported apart ([Held.off]) so the chip can say "A map here is off".
  *
  * The box is cut into cells (the tiles of the request's deepest zoom, or a coarser zoom when that would pass [MAX_CELLS]); a
- * cell is held by a map when the part of the cell inside the box lies inside the map's box, and by an area when its cells
- * hold the tile. A cell is held **at the detail** when a holding of that detail or finer holds it and, when the download
+ * cell is held by a map when the lookup has the map answer the cell (or, at the map's edge, the part of the cell inside the
+ * box lies inside the map's box), and by an area when its cells hold the tile (past its depth, the tile's ancestor there). A cell is held **at the detail** when a holding of that detail or finer holds it and, when the download
  * would bring routing and place search ([Want.routing]), that holding brings them too. [Verdict.ALL] (nothing new) is every
  * cell held at the detail; the card then offers no Download of that detail and the button reads "Already on this phone".
  *
@@ -26,8 +26,9 @@ import kotlin.math.min
  * pack path's full detail; the area path fetches to z15, the same detail in the card's words), medium is the map to z14 with
  * elevation to z13, less both to z13. A holding shallower than less detail is [LOW].
  *
- * ADR 0066 build task 5 re-points this to the shared `Holdings.kt` lookup; its signature (a box and a detail in, what is
- * held and by whom out) is the one that lookup serves. Pure, tested (`HeldHereTest`).
+ * T359 (ADR 0066 build task 5): whether a holding holds a cell is the shared lookup's answer ([Holdings.tile], through
+ * [lookup]), so the card, the button and the chip read what `GET /holdings` reads; the signature (a box and a detail in, what
+ * is held and by whom out) is T343's. Pure, tested (`HeldHereTest`).
  */
 object HeldHere {
     /** At most this many cells per box; a wider box is cut at a coarser zoom. */
@@ -143,6 +144,8 @@ object HeldHere {
         val y1 = floor(WebMercator.latToY(box.minLat, z)).toInt().coerceIn(0, n)
         val on = holdings.filter { !it.off && overlaps(it.bounds, box) }
         val off = holdings.filter { it.off && overlaps(it.bounds, box) }
+        val lookOn = on.map { lookup(it) }
+        val lookOff = off.map { lookup(it) }
         val onCount = IntArray(on.size)
         val offCount = IntArray(off.size)
         var cells = 0
@@ -159,12 +162,12 @@ object HeldHere {
                 var held = false
                 var good = false
                 for ((i, h) in on.withIndex()) {
-                    if (!holds(h, z, x, y, west, south, east, north)) continue
+                    if (!holds(lookOn[i], z, x, y, west, south, east, north)) continue
                     onCount[i]++
                     held = true
                     if (rank(h.detail) >= wantRank && (!want.routing || h.routing)) good = true
                 }
-                for ((i, h) in off.withIndex()) if (holds(h, z, x, y, west, south, east, north)) offCount[i]++
+                for (i in off.indices) if (holds(lookOff[i], z, x, y, west, south, east, north)) offCount[i]++
                 if (held) any++
                 if (good) atDetail++
             }
@@ -184,12 +187,38 @@ object HeldHere {
         return Held(want, verdict, shareAt, share, holders(on, onCount), holders(off, offCount), cells, z)
     }
 
-    /** True when [h] holds cell z/x/y, whose part inside the box is [west]..[east], [south]..[north]. */
-    private fun holds(h: Holding, z: Int, x: Int, y: Int, west: Double, south: Double, east: Double, north: Double): Boolean {
-        val c = h.cells
-        if (c != null) return c(z, x, y)
-        val b = h.bounds
-        return west >= b.minLon - EPS && east <= b.maxLon + EPS && south >= b.minLat - EPS && north <= b.maxLat + EPS
+    /**
+     * T359 (ADR 0066 build task 5): [h] as the lookup's holding ([Holdings.Holding]): a map holds its box for each kind it has,
+     * to its deepest zoom; an area holds its own cells. Listed as on whatever [Holding.off] says ([held] keeps the maps that
+     * are off apart and asks whether they would hold a cell).
+     */
+    fun lookup(h: Holding): Holdings.Holding {
+        val kind = if (h.kind == Kind.MAP) Holdings.Kind.MAP else Holdings.Kind.AREA
+        val cells = h.cells
+        return Holdings.Holding(
+            h.name, kind, h.vectorMaxZoom?.let { Holdings.Stored(0, it, h.bounds) }, h.demMaxZoom?.let { Holdings.Stored(0, it, h.bounds) },
+            cells = cells?.let { c -> { _, z, x, y -> c(z, x, y) } },
+        )
+    }
+
+    /**
+     * True when [h] holds cell z/x/y, whose part inside the box is [west]..[east], [south]..[north], by the lookup
+     * ([Holdings.tile], each role [h] stores): it answers the cell (a map's elevation past its depth is made from its deepest
+     * tile; a holding asked past its depth answers by the cell's ancestor at its depth). A map whose box covers only part of
+     * the tile ([Holdings.How.EDGE]) holds it where the part inside the box lies inside the map's box.
+     */
+    private fun holds(h: Holdings.Holding, z: Int, x: Int, y: Int, west: Double, south: Double, east: Double, north: Double): Boolean {
+        for (role in Holdings.Role.entries) {
+            val s = h.stored(role) ?: continue
+            val d = z - s.maxZoom
+            val m = Holdings.tile(role, z, x, y, listOf(h), null).members.firstOrNull()
+                ?: (if (d > 0) Holdings.tile(role, s.maxZoom, x shr d, y shr d, listOf(h), null).members.firstOrNull() else null)
+                ?: continue
+            if (m.how != Holdings.How.EDGE) return true
+            val b = s.bounds ?: return true
+            if (west >= b.minLon - EPS && east <= b.maxLon + EPS && south >= b.minLat - EPS && north <= b.maxLat + EPS) return true
+        }
+        return false
     }
 
     private fun overlaps(a: PackBounds, b: PackBounds): Boolean = a.minLon < b.maxLon && b.minLon < a.maxLon && a.minLat < b.maxLat && b.minLat < a.maxLat

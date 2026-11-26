@@ -39,7 +39,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Agent|Workflow",
+        "matcher": "Agent|Workflow|SendMessage",
         "hooks": [
           {
             "type": "command",

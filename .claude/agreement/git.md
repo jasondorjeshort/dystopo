@@ -18,4 +18,5 @@
 - `privacy.allow`, the never list and the user allow list are the owner's: edited from the main
   session, after asking the user; no brief, agent or hook grant edits them.
 - Commit messages end with `Co-Authored-By: <model that did the work> <noreply@anthropic.com>`,
-  for example `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+  for example `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, and may carry a
+  `Claude-Session:` trailer after it, the one place a session link is allowed (ADR 0020).

@@ -123,15 +123,17 @@ class OnlineUi(
 
     /**
      * T236: the view's column (a cache hit inside an offline map on the list is "kept"; T80: a network tile names its source).
-     * T343, one rule with the button ([held]): a view the phone holds whole at the button's detail is on this phone (an offline
-     * map, or a tile area's kept tiles), whatever tile was matched; a view not drawn from the phone where a map that is off
-     * (T342) would hold part of it is [Column.OFF], "a map here is off".
+     * T359 (ADR 0066 build task 5): from the lookup, what serves the view's tiles ([OnlineView.source], [OnlineView.resolve]); a
+     * map that is off (T342) and would serve ahead of what serves now ([OnlineView.offAhead]) is [Column.OFF], "a map here is
+     * off", wherever another map serves. T343, one rule with the button ([held]): where the phone serves the view and holds it
+     * whole at the button's detail, a map among its holders makes it [Column.PACK], tile areas alone [Column.CACHE_KEPT].
      */
     val column: Column get() {
-        val h = held
-        if (h != null && h.verdict == HeldHere.Verdict.ALL) return if (h.holders.any { it.atDetail && it.kind == HeldHere.Kind.MAP }) Column.PACK else Column.CACHE_KEPT
+        if (view?.offAhead == true) return Column.OFF
         val c = tileColumn
-        return if (h != null && h.off.isNotEmpty() && c != Column.PACK && c != Column.CACHE_KEPT) Column.OFF else c
+        val h = held
+        if (h != null && h.verdict == HeldHere.Verdict.ALL && c in PHONE) return if (h.holders.any { it.atDetail && it.kind == HeldHere.Kind.MAP }) Column.PACK else Column.CACHE_KEPT
+        return c
     }
 
     /** The column of the tile matched at the view's centre ([OnlineView.source]). */
@@ -145,6 +147,9 @@ class OnlineUi(
     }
 
     private val fromNetwork: Boolean get() = row == Row.ONLINE && column in NETWORK
+
+    /** T360: the coverage panel's lines, from the lookup's answer the chip's source was read from ([OnlineView.here]); null without one. */
+    val coverage: List<String>? get() = view?.here?.let { runCatching { CoveragePanel.lines(it) }.getOrNull() }
 
     /** The chip's second part: where this view's map is. */
     val sourceText: String get() = when (column) {
@@ -211,7 +216,8 @@ class OnlineUi(
     /** T236: `chip` in `GET /online`: the text and dot, whether the card is [open], its sentences, figure and link. */
     fun chipJson(open: Boolean): Map<String, Any?> = linkedMapOf(
         "text" to text, "word" to row.word, "source" to sourceText, "dot" to row.dot.name.lowercase(Locale.US), "row" to row.name.lowercase(Locale.US),
-        "column" to column.name.lowercase(Locale.US), "open" to open, "hidden" to hidden,
+        "column" to column.name.lowercase(Locale.US), "open" to open, "hidden" to hidden, "network" to network, // T359: the one network rule
+        "served" to view?.served?.json(), "offAhead" to view?.offAhead, // T359: the lookup's answer the column is read from
         "detail" to listOf(stateSentence, sourceSentence), "figure" to cacheLine, "link" to link?.text,
         // T343: the button beside it, by the same rule (shown, its words, whether a tap opens the card, the maps it names), and the rule's answer.
         "download" to linkedMapOf(
@@ -219,6 +225,7 @@ class OnlineUi(
             "cramped" to OnlineChip.cramped,
         ),
         "held" to held?.json(),
+        "coverage" to CoveragePanel.json(coverage), // T360: the panel's lines, shown in the open card
     )
 
     /** The progress line while a download runs, else null. */
@@ -289,6 +296,8 @@ class OnlineUi(
          */
         const val OFF_SENTENCE = "A map here is off. Turn it on in ${Screens.OFFLINE_MAPS} to use it."
         private val NETWORK = setOf(Column.NETWORK_PUBLIC, Column.NETWORK_SERVER, Column.NETWORK_PEER)
+        /** T359: the columns of a view the phone serves itself, which [column] may refine by [held]. */
+        private val PHONE = setOf(Column.PACK, Column.CACHE_KEPT)
 
         /** The snapshot for camera [cam] (read on the UI thread, source unknown): everything else is read here, on a worker. */
         fun make(service: OnlineService, app: DystopoApp, cam: OnlineView?): OnlineUi {
@@ -299,7 +308,7 @@ class OnlineUi(
             return OnlineUi(
                 service.state(), view, service.region.json(), service.region.running, if (service.isDirect) service.direct.notice() else null, service.isDirect,
                 io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunCardState.visible,
-                network = hasNetwork(app), serverSet = server.isNotEmpty() && service.fetcher != null, server = server.ifEmpty { null },
+                network = hasNetwork(app, orElse = true), serverSet = server.isNotEmpty() && service.fetcher != null, server = server.ifEmpty { null },
                 cache = CacheFigures(c.bytes, c.pinnedBytes, AppSettings.onlineCacheMb, c.partial), held = held,
             )
         }
@@ -316,14 +325,26 @@ class OnlineUi(
         const val CHIP_CELLS = 4096
 
         /**
-         * T236: the phone has a network now (an active one with capabilities, as [DirectSources.onCellular] reads it). T343 (T340's
-         * finding): no active network is no network; it asked for the capabilities of none, whose failure read as a network, so
-         * the chip said Online in airplane mode.
+         * T359: the one rule for "is there a network", read by the chip, the online member ([OnlineTiles.onlineMember], so
+         * [OnlineTiles.aheadByDepth], `GET /holdings` and the first-run rule), the terrain read's epoch
+         * ([io.github.jasondorjeshort.dystopo.app.terrain.TerrainRead]) and the phone's own source reader
+         * ([DirectSources.hasNetwork]): an active network that offers the internet ([networkOf]). T343 (T340's finding): no
+         * active network is no network. [context] defaults to the app's; [orElse] is the answer when there is none to ask (a
+         * JVM test), each caller's own.
          */
-        fun hasNetwork(context: android.content.Context): Boolean = runCatching {
-            val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
-        }.getOrDefault(true)
+        fun hasNetwork(context: android.content.Context? = null, orElse: Boolean = false): Boolean = try {
+            val cm = (context ?: DystopoApp.instance).getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+            networkOf(caps != null, caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true)
+        } catch (e: RuntimeException) {
+            orElse
+        }
+
+        /**
+         * T359: [hasNetwork]'s rule: an active network with [capabilities] that offers the [internet]. In airplane mode there is
+         * no active network (or one without the internet), so it reads false. Pure, tested.
+         */
+        fun networkOf(capabilities: Boolean, internet: Boolean): Boolean = capabilities && internet
     }
 }
 
@@ -378,7 +399,8 @@ fun OnlineOverlay() {
         }
     }
     val cfg = androidx.compose.ui.platform.LocalConfiguration.current
-    val cramped = cfg.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && cfg.fontScale >= CRAMPED_FONT_SCALE
+    val side = cfg.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE // T360
+    val cramped = side && cfg.fontScale >= CRAMPED_FONT_SCALE
     OnlineChip.cramped = cramped
     val u = ui
     if (u == null || u.hidden) {
@@ -390,7 +412,7 @@ fun OnlineOverlay() {
             // Below the search box (T39), which is drawn after this overlay so its results cover it; T91: below its
             // measured bottom, so the "Indexing places" line no longer runs into it; T239: where the layout rule puts it
             // (under the navigation card while navigating), the chip's card (T236) inside it.
-            Modifier.align(Alignment.TopStart).padding(start = 8.dp).widthIn(max = 260.dp).control("onlineIndicator") // T238
+            Modifier.align(Alignment.TopStart).padding(start = 8.dp).widthIn(max = if (OnlineChip.open && side) SIDE_CARD_DP.dp else 260.dp).control("onlineIndicator") // T238; T360: wider on its side
                 .onGloballyPositioned { io.github.jasondorjeshort.dystopo.app.MapInsets.onlineChipsAt(it) }, // T57: catalog fits keep clear
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -406,7 +428,7 @@ fun OnlineOverlay() {
                 Box(Modifier.size(9.dp).background(color(dot), CircleShape))
                 BasicText(u.text, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium))
             }
-            if (open) ChipCard(u) else {
+            if (open) ChipCard(u, Modifier.weight(1f, fill = false)) else { // T360: weighted, the rule's limit shortens its section
                 OnlineChip.cardPx = null
                 // T80: why the phone is not reading the sources (the session's download limit, or mobile data turned off by the user; T83).
                 u.notice?.let { Small(it, Red) {} }
@@ -440,14 +462,42 @@ fun OnlineOverlay() {
     } }
 }
 
+/**
+ * T360: the coverage section's greatest height. Upright: [COVERAGE_SHARE] of the window's height (five lines and the heading
+ * fit whole at font 1.0). On its side the window is about 410 dp tall and the open card already fills the column down to the
+ * lower controls (measured at font 1.0: 14 dp to spare), so the card is drawn [SIDE_CARD_DP] wide (its two sentences take a
+ * line each) and the section shows its lines without the heading, [SIDE_LINES] lines high, scrolling past them. From font 1.5 on its side ([OnlineChip.cramped]) not one line fits beside
+ * the card (at 2.0, one line hid the whole column), so the section is left out there and `GET /online` still lists it.
+ */
+@Composable
+private fun coverageMaxDp(): Int {
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    if (!coverageSide()) return (cfg.screenHeightDp * COVERAGE_SHARE).toInt()
+    if (cfg.fontScale >= CRAMPED_FONT_SCALE) return 0 // cramped: not one line fits (measured at 2.0: the column hid with one)
+    val lines = SIDE_LINES
+    return with(androidx.compose.ui.platform.LocalDensity.current) { (lines * SIDE_LINE_SP).sp.toDp().value.toInt() }
+}
+
+@Composable
+private fun coverageSide(): Boolean =
+    androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+private const val SIDE_CARD_DP = 320
+private const val SIDE_LINES = 2
+/** A 12 sp line's height with its spacing. */
+private const val SIDE_LINE_SP = 17
+
+private const val COVERAGE_SHARE = 0.3f
+// end T360
+
 /** T343: the font scale from which a window on its side is [OnlineChip.cramped]. */
 private const val CRAMPED_FONT_SCALE = 1.5f
 
 /** T236: the chip's card: the two sentences, the cache's figure (T242: the indexing line while partial), at most one link. */
 @Composable
-private fun ChipCard(u: OnlineUi) {
+private fun ChipCard(u: OnlineUi, modifier: Modifier = Modifier) {
     Column(
-        Modifier.control("onlineCard").background(Chip, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)) // T238: the tag
+        modifier.control("onlineCard").background(Chip, RoundedCornerShape(10.dp)).border(1.dp, Line, RoundedCornerShape(10.dp)) // T238: the tag
             .clickable { OnlineChip.open = false } // a tap on the card closes it too, as on the chip; the link has its own
             .onGloballyPositioned { c -> val b = c.boundsInRoot(); OnlineChip.cardPx = floatArrayOf(b.left, b.top, b.right, b.bottom) }
             .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -456,6 +506,10 @@ private fun ChipCard(u: OnlineUi) {
         BasicText(u.stateSentence, style = TextStyle(color = if (u.row == OnlineUi.Row.PAUSED) Red else Ink, fontSize = 12.sp))
         BasicText(u.sourceSentence, style = TextStyle(color = Ink, fontSize = 12.sp))
         u.cacheLine?.let { BasicText(it, style = TextStyle(color = Grey, fontSize = 12.sp)) }
+        // T360: the coverage panel, always shown in the open card; held to a share of the window's height and scrolled past it,
+        // so the card shortens before the layout rule hides the column.
+        u.coverage?.let { l -> coverageMaxDp().takeIf { it > 0 }?.let { CoverageSection(l, it, heading = !coverageSide()) } }
+        // end T360
         u.link?.let { l ->
             BasicText(
                 l.text, style = TextStyle(color = LinkBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold),

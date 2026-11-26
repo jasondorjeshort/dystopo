@@ -83,6 +83,14 @@ object Glance {
     internal var fontScale = 1f
     internal var view: WeakReference<android.view.View>? = null
 
+    /**
+     * T372: the view stops refreshing once it has drawn the readout as it stands ([HOLD_AFTER_TICKS] refreshes after it
+     * opened), so a check's frame and its semantics read one scene whatever the time between them (`POST /readout/glance
+     * ?open=1&hold=1`, debug builds only); [holding] once it holds. Cleared when the view closes.
+     */
+    internal var hold = false
+    internal var holding = false
+
     fun show(by: String) {
         if (open) return
         open = true
@@ -98,6 +106,8 @@ object Glance {
         open = false
         closes++
         lastClosedBy = by
+        hold = false
+        holding = false
     }
 
     /** `GET /readout/glance` (main thread). */
@@ -127,6 +137,7 @@ object Glance {
             "night" to night,
             "fontScale" to fontScale,
             "keepScreenOn" to (view?.get()?.keepScreenOn ?: false),
+            "hold" to hold, "holding" to holding, // T372
             "opens" to opens, "closes" to closes, "lastOpenedBy" to lastOpenedBy, "lastClosedBy" to lastClosedBy,
             "help" to "readout.glance",
         )
@@ -182,7 +193,15 @@ fun GlanceView() {
     var notes by remember { mutableStateOf(currentNotes()) } // T363
     var night by remember { mutableStateOf(ScaleBarLayout.night) } // the map's night style, as the scale bar last drew it
     LaunchedEffect(Unit) {
+        var ticks = 0
         while (true) {
+            // T372: held (a debug route's check), the view keeps what it drew once the readout's refresh has come in.
+            if (Glance.hold && ticks >= HOLD_AFTER_TICKS) {
+                Glance.holding = true
+                Foreground.delay(REFRESH_MS)
+                continue
+            }
+            ticks++
             LiveReadout.refresh()
             val items = LiveReadout.snapshot?.items ?: LiveReadout.placeholder()
             // The clock runs when its card shows it (read here, on the main thread); its reading off it.
@@ -355,6 +374,9 @@ private fun deadlineNow(navigating: Boolean): GlanceLine? {
 private fun clock(ms: Long): String = io.github.jasondorjeshort.dystopo.app.ClockFormat.text(ms)
 
 private const val REFRESH_MS = 500L
+
+/** T372: a held view stops after this many refreshes: the first posts the readout's refresh, the second draws it. */
+private const val HOLD_AFTER_TICKS = 2
 private const val REF_DP = 100f
 
 /** The type size's bounds: the smallest still legible at arm's length, the largest a figure needs. */

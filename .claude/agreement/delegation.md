@@ -7,3 +7,5 @@ board, `CLAUDE.md`), and the wrap-up commits below. Everything that executes the
 subagents in `.claude/agents/`, even when it is one command: installs, pulls, builds, test runs,
 servers, devices, and every fix. When the gate blocks launches, the coordinator writes the handoff and stops; it
 does not do the delegated work itself.
+
+A wave is the batch of changes the coordinator launches together.

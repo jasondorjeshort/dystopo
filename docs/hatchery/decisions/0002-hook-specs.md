@@ -121,7 +121,7 @@ unreadable branch match no pattern list but `*`.
 | 17 | `worktree remove` with `-f` or `--force` | `forced worktree removal` |
 | 18 | `checkout -B <b>`, `switch -C`/`--force-create <b>`, or `branch -f <b>` (not deleting, moving or copying) when `<b>` is the current branch or matches `git.commit.protectedBranches` | `forced branch reset` |
 | 19 | an invocation with an unknown subcommand; or an opaque invocation of `push`, `send-pack`, `reset`, `checkout`, `switch`, `restore`, `clean`, `branch`, `worktree`, `stash`, `config`, `reflog` or a rule-4 subcommand. Other subcommands (`log`, `diff`, `add`, ...) stay allowed. Text past the depth limit counts as an unknown subcommand. | `unexpanded argument` |
-| 20 | tried right after rule 3: `push` or `send-pack` from any caller, the main session and `--dry-run` included, when the push shares its line with another git invocation, or when `privacy-scan.js` reports a hit or an error for the commits the push sends (an opaque push is left to rule 19). The require and the scan sit in one try: any throw is this rule's deny, and no other rule is affected. Advice: shared line, run the push on a line of its own; hits, fix the text and fold the edit into the unpushed commit, a false positive is the owner's via `privacy.allow` or the user allow file; error, run the scan by hand and read its `cannot` line. | `personal data in the outgoing commits` |
+| 20 | tried right after rule 3: `push` or `send-pack` from any caller, the main session and `--dry-run` included, when the push shares its line with another git invocation, or when `privacy-scan.js` reports a hit or an error for the commits the push sends (an opaque push is left to rule 19). The require and the scan sit in one try: any throw is this rule's deny, and no other rule is affected. Advice: shared line, run the push on a line of its own; hits, fix the text and fold the edit into the unpushed commit, a false positive is the owner's via `privacy.allow` or the user allow file; error, run the scan by hand and read its `cannot` line. Which privacy section (`privacyFor`, 2026-11-18): the pushed repository is told by its git common dir (`rev-parse --git-common-dir` with the push's own `-C`, `--git-dir`, `--work-tree` and `GIT_DIR`/`GIT_WORK_TREE`), never its work tree, and directories are compared by stat's device and inode, never by path, so a worktree of the guard's repository however its gitdir is spelled (a UNC share included), or its commits pushed through another work tree, keep the guard's section; a directory that cannot be stat'ed keeps it too. Another repository whose work-tree top-level is its own (a plain rev-parse at that top-level names the top-level itself and the same common dir, so not a `--work-tree` subdirectory) and holds `.claude/hooks/policy.json` is scanned with `allow` and `identities` each the union of the guard's (first) and the list that file sets; only its privacy section is read (`policy.js` `loadSection`: never the defaults, its other keys unread, an unknown key or wrong value inside `privacy` refused), and a file that sets neither list, or no privacy key, leaves the guard's section alone; that file unreadable or its section malformed is an error naming the file; no file, the guard's section as before. A line that sets a repository-locating variable the scan's git is not given (`GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_INDEX_FILE` and the rest of `REPO_LOCATE`) as a prefix or an export keeps the guard's section; one set some way the reader does not follow (`set -a`, `read`, `[Environment]::SetEnvironmentVariable`) is an error, as for `GIT_DIR`. When another repository's section was unioned, the hit advice adds: `Scanned under this repository's privacy section and <file>'s, unioned: a lift for these commits goes in <file>; privacy-scan.js run by hand reads only one of the two.` The limit: that policy is trusted as the other repository's own work tree has it, so a clone of the guard's repository with an edited `policy.json` can push the guard's commits to a shared remote, which is no stronger than editing the guard's own `policy.json`. Cases PV48. | `personal data in the outgoing commits` |
 
 The merged-PR check runs `gh pr list --head <branch> --state merged --json number --limit 1` in the
 invocation's directory, once per branch; any failure counts as not merged. Test seam:
@@ -243,6 +243,8 @@ Checks on `docs/**/*.md` (`<path>` from the root with forward slashes; line coun
 | `docs/reference/*.md` (not README) missing `verified:` | `post-edit: <path> lacks verified: frontmatter. See .claude/rules/docs.md.` |
 | a file at least one directory below `docs/` (not `docs/handoff/*.md`, see the import row above), basename not `README.md` or `HANDOFF.md`, named in no `README.md` from its own folder up to `docs/<top>/README.md`, unless it is `docs/<dir>/<file>.md` and `docs/<dir>/README.md` carries the marker line of ADR 0017 (`0017-queue-list.md`, section 4) | `post-edit: <path> is not listed in <folder>/README.md. Add one line.` |
 | `docs/<dir>/<file>.md` under a README with the valid marker for `<dir>`: each problem `read(<dir>, file)` of `queue-list.js` returns (a value outside the grammar that would list as `?`), after the frontmatter row | `post-edit: <path> would list as ? (<field> is "<value>"; allowed: <set>). See docs/<dir>/README.md.` (`<field> missing; allowed: <set>` for an absent value) |
+| `docs/ideas/<file>.md` under a README with the valid marker for `ideas`: each line outside the frontmatter and outside fences starting `Came up again: `, `New: ` or `Use: ` (an entry, ADR 0026) that stands after the first line starting `Plan:`, `Question:` or `Waits:` (W1, `warnings` of `read`, after the `?` lines) | `post-edit: <path> line <n>: entry below the block (move it above; a line under a blank Answer: reads as the answer). See the brainstorm skill.` |
+| the same file: each such entry line whose next line is non-blank and not an entry line (W2, after W1 for the same line) | `post-edit: <path> line <n>: entry not followed by a blank line or another entry (one physical line; a wrapped line that starts with a block word opens a block). See the brainstorm skill.` |
 | the same file when the marker is valid but `queue-list.js` does not load, or its `read` throws (the index check is skipped too) | `post-edit: queue-list.js did not load; <path> was not checked.` |
 | an edited `docs/<dir>/README.md` (three segments) with a line starting `Listed on demand:` that is not the marker for `<dir>` (wrong mode word, wrong shape); one message per README; deeper READMEs are not read | `post-edit: docs/<dir>/README.md carries a Listed on demand: line that is not "Listed on demand: node .claude/hooks/queue-list.js <dir>"; the directory counts as indexed.` |
 | a backtick-quoted token holding `/` whose first segment is a top-level directory of the root (not `.git`), that does not exist | `post-edit: <path> names paths that do not exist: <list>. Fix them, or mark the paragraph [no-check: <reason>] (.claude/rules/docs.md).` |
@@ -267,15 +269,31 @@ starts a line between them. Lines split on LF or CRLF.
 Formatters: `edit.formatters` in the policy, keyed by lower-case extension with the dot, value an
 argv array; the file's absolute path is appended. Test seam: a JSON object in
 `POST_EDIT_FORMATTERS_JSON` is merged over them. Run as `spawnSync(argv[0], [...argv.slice(1), abs],
-{ timeout: 20000 })`, no shell, so on Windows an npm `.cmd` shim cannot be the command. Failure is a
-spawn error or a non-zero status: `post-edit: formatter <argv[0]> failed on <path>: <detail>`, the
-first 5 non-empty stderr lines, else the spawn error, else `killed by <signal> (timeout 20 s?)`.
+{ timeout: 20000 })`, no shell, except on Windows when `argv[0]` names or resolves to a `.cmd` or
+`.bat` file (any case). The hook resolves it as cmd.exe would: in its own directory when it has one,
+else in the current directory and then each `PATH` directory; with no extension, each `PATHEXT`
+extension in turn; the first file found decides. A `.cmd` or `.bat` runs as `%ComSpec%` (else
+`cmd.exe`) `/d /v:off /s /c "<line>"` with verbatim arguments, so an npm shim such as `prettier`
+runs. Anything else (an `.exe` such as `rustfmt` or `node`, a name found nowhere, a cmd.exe builtin
+name) spawns directly as before. In the line the batch file's full path, every argument and the
+file's path are double-quoted, a trailing run of backslashes doubled. Inside the quotes
+`& | < > ^ ( )`, spaces and (with `/v:off`) `!` are literal. The full path is used, never a bare
+name: a batch file found on `PATH` under a quoted name gets a wrong `%~dp0`. cmd.exe expands `%`
+even inside quotes and a `"` would end them, so a path or argument holding `"`, `%`, CR, LF or NUL is
+not run: the detail is `not run: cmd.exe cannot be passed <char> safely`. On that route the timeout
+ends cmd.exe, not what the batch file started, and the spawn error names cmd.exe.
+Failure is a spawn error, a non-zero status or that refusal: `post-edit: formatter <argv[0]> failed
+on <path>: <detail>`, the first 5 non-empty stderr lines, else the spawn error, else `killed by
+<signal> (timeout 20 s?)`.
 
 Output with at least one message, exit 0:
 `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"<messages>"}}`; none:
 exit 0, no stdout. Harness cases P01 to P04 and PX01 to PX20 cover the checks above, the
 formatter, the `CLAUDE.md` cap, the `[length:]` marker (present, blank, on line 11) and the
-`SKILL.md` warning; PA the path anchors, closed records, list-item scope and elided
+`SKILL.md` warning; PW the cmd.exe route on Windows, one SKIP line elsewhere: `.cmd` and
+`.BAT` shims given metacharacters, a bare name resolving to a `.cmd` and to an `.exe`, the `%` and
+`"` refusals, an `.exe` still spawned directly, and builtin names (none on `PATH`: not run;
+`echo.cmd` on `PATH`: the file, not the builtin); PA the path anchors, closed records, list-item scope and elided
 paths (PA09); PC cap exemptions (an exempt unmarked doc, an exempt `SKILL.md`) and formatters from a policy file, a malformed policy, and the task-branches example;
 PH the handoff paths (ADR 0014): the stream and total caps, the map import, and the `@` line
 resolution, each case in its own scratch root (`ph-<id>`) so P02 keeps its tree; Q the queue
@@ -300,5 +318,6 @@ push. The CLI and its output lines: ADR 0018's scan sibling, section 3. Harness 
 
 Moved on 2026-10-16 to `0002-hook-specs-usage.md`, still section 3: the per-session cache, the
 account label, the status line's text and flags, the gate's thresholds, staleness, grants and pool
-advice, and the harness cases U, UO, UG, UX, UP and S. Other records that cite "section 3" of the
+advice, and the harness cases U, UO,
+UG, UX, UP, UF, PS and S. Other records that cite "section 3" of the
 hook specs mean that file.

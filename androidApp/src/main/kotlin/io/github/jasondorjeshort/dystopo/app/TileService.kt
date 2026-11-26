@@ -8,6 +8,7 @@ import io.github.jasondorjeshort.dystopo.app.online.DirectSources
 import io.github.jasondorjeshort.dystopo.app.online.DirectTrace
 import io.github.jasondorjeshort.dystopo.app.options.ShadeService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
+import io.github.jasondorjeshort.dystopo.dem.MergedTile
 import io.github.jasondorjeshort.dystopo.dem.Terrarium
 import io.github.jasondorjeshort.dystopo.dem.TileWindows
 import io.github.jasondorjeshort.dystopo.geo.BoundingBox
@@ -406,7 +407,10 @@ class TileService(
     }
 
     /** The contour cache directory of [p]'s tiles in the current unit (see [ContourCache]). */
-    fun contourDir(p: Pack): String = ContourCache.dirName(contourOptions.units.symbol, contourOptions.tileSize, identities[p] ?: packIdentity(p.file), intervalTag)
+    fun contourDir(p: Pack): String = contourDir(identities[p] ?: packIdentity(p.file))
+
+    /** T357: the contour cache directory of tiles made from the maps of [identity] (one map's, or an edge tile's [MergedTile.key]). */
+    fun contourDir(identity: String): String = ContourCache.dirName(contourOptions.units.symbol, contourOptions.tileSize, identity, intervalTag) // end T357
 
     /** The primary pack's contour cache directory (reported in `/stats`). */
     val contourCacheVersion: String = packs.dem?.let(::contourDir) ?: ContourCache.dirName(contourOptions.units.symbol, contourOptions.tileSize, "none", intervalTag)
@@ -530,6 +534,56 @@ class TileService(
     val networkDemStored: Int? get() = networkStored(Holdings.Role.DEM)
     // end T368
 
+    // ---- T357: the join at a map's edge, cell by cell (ADR 0066 decision 4) ----
+
+    /** T357: each set of maps meeting at an edge, composed ([MergedTile]), by the maps' identities; dropped by [trimMemory]. */
+    private val edgeTiles = HashMap<String, MergedTile>()
+
+    /** T357: a DEM map's box. */
+    private fun boxOf(pk: Pack): io.github.jasondorjeshort.dystopo.packs.PackBounds = pk.header.let { io.github.jasondorjeshort.dystopo.packs.PackBounds(it.minLon, it.minLat, it.maxLon, it.maxLat) }
+
+    /**
+     * T357: the maps tile z/x/y is composed from where it lies across a finer map's edge (what its readers sample reaches into
+     * that map's band and another map lies under it: [MergedTile.joins]), or null where one map makes it whole, as before. The
+     * maps are the DEM maps overlapping the tile's [MergedTile.extent] in [PackSet.demFor]'s order, which is the terrain read's
+     * (the lookup's depth first rule); the held paths (an area's cell or a cached tile deeper than the maps) are asked before
+     * this one in every tile path, so where the cache or the network holds a tile deeper than both maps that tile answers whole.
+     */
+    fun edgeFor(z: Int, x: Int, y: Int): MergedTile? {
+        val dems = packs.demPacks
+        if (dems.size < 2) return null
+        val ext = MergedTile.extent(z, x, y)
+        val over = dems.filter { z >= it.header.minZoom - 1 && io.github.jasondorjeshort.dystopo.dem.EdgeBlend.overlaps(boxOf(it), ext) }
+        if (over.size < 2 || !MergedTile.joins(over.map(::boxOf), ext)) return null
+        val pyramids = over.map(::pyramid) // the maps' own pyramids, made again when the LRU dropped one
+        val id = over.joinToString(MergedTile.KEY_JOIN) { identities[it] ?: packIdentity(it.file) }
+        return synchronized(edgeTiles) {
+            edgeTiles[id]?.takeIf { m -> m.sources.all { s -> pyramids.any { it === s.pyramid } } } ?: MergedTile(
+                over.mapIndexed { i, pk -> MergedTile.Source(packs.packOf(pk) ?: pk.name, identities[pk] ?: packIdentity(pk.file), boxOf(pk), pk.header.minZoom, pk.header.maxZoom, pyramids[i], chosen = packs.dem === pk) },
+                cacheTiles = EDGE_CACHE_TILES,
+            ).also { edgeTiles[id] = it }
+        }
+    }
+
+    /** T357: the request log's `edge:<maps>` for a tile composed across an edge, the maps in the read's order; null otherwise. */
+    fun edgeLogName(kind: String, z: Int, x: Int, y: Int): String? = if (kind == "osm") null else edgeFor(z, x, y)?.let { "edge:" + it.names.joinToString("+") }
+
+    /** T357: the DEM edge path: tile z/x/y composed from the maps meeting there, as Terrarium; null where one map makes it. */
+    private fun edgeDem(z: Int, x: Int, y: Int): ByteArray? {
+        val m = edgeFor(z, x, y) ?: return null
+        val started = System.nanoTime()
+        val g = m.pyramid.window(z, x * MergedTile.TILE, y * MergedTile.TILE, MergedTile.TILE, MergedTile.TILE)
+        if (g.values.all { it.isNaN() }) return null
+        return terrariumPng(g).also { demSynthesis.add((System.nanoTime() - started) / 1e6, mapOf("tile" to "$z/$x/$y", "edge" to m.key)) }
+    }
+
+
+    /** T357: drops the composed tiles (the maps' own pyramids are [trimMemory]'s); the bytes estimated. */
+    private fun trimEdges(): Long = synchronized(edgeTiles) {
+        edgeTiles.values.sumOf { it.pyramid.cachedTiles.toLong() * MergedTile.TILE * MergedTile.TILE * 4 }.also { edgeTiles.clear() }
+    }
+    // end T357
+
     /** Tiles generating at once (T63: also the server's generation pool size, [GEN_THREADS]). */
     val contourPermits = GEN_THREADS
     private val contourSlots = Semaphore(contourPermits)
@@ -557,7 +611,7 @@ class TileService(
     private val pyramid: DemPyramid? get() = packs.dem?.let(::pyramid)
 
     /** T47: hillshade and slope raster tiles from the DEM for the map options ([ShadeService]). */
-    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let { pyramid(it) to (identities[it] ?: packIdentity(it.file)) } }, online, contourPermits, counters = counters.shade, heldPyramid = { heldPyramid }) // T41: the pack under each tile; T49: its identity; T65: cumulative counters; T356: the held cells with no source set
+    val shade = ShadeService(cacheDir, demIdentity, { z, x, y -> packs.demFor(z, x, y)?.let { pyramid(it) to (identities[it] ?: packIdentity(it.file)) } }, online, contourPermits, counters = counters.shade, heldPyramid = { heldPyramid }, edgeFor = ::edgeFor) // T41: the pack under each tile; T49: its identity; T65: cumulative counters; T356: the held cells with no source set; T357: edge tiles
 
     /** Contour requests from the map currently in [contourTile]; the warm-up pauses while any are. */
     private val foregroundContours = AtomicInteger()
@@ -594,7 +648,7 @@ class TileService(
             pyramids.values.sumOf { p -> p.cachedTiles.toLong() * p.tileSize * p.tileSize * 4 }.also { pyramids.clear() }
         }
         runCatching { packWider.trimMemory() } // T254 (registered with the heap guard before it is made)
-        return dropped + cliffs.trimMemory() + (online?.trimMemory() ?: 0L)
+        return dropped + cliffs.trimMemory() + (online?.trimMemory() ?: 0L) + trimEdges() // T357
     }
 
     init {
@@ -787,6 +841,9 @@ class TileService(
         held.tile(Holdings.Role.DEM, z, x, y)?.let { return ok(dem, "image/png", it) }
         demBehind(z, x, y) // T368: the network's deeper tile fetched behind the map's, which answers below at once
         online?.takeUnless { it.packCoversDem(z, x, y) }?.let { return it.demTile(z, x, y) } // T38: online fallback
+        // T357: across a finer map's edge, composed cell by cell from the maps meeting there (after the held tile above).
+        edgeDem(z, x, y)?.let { return ok(dem, "image/png", it) }
+        // end T357
         // T41: the packs that overlap the tile, best first; the first one storing it answers.
         val candidates = packs.demCandidates(z, x, y)
         if (candidates.isEmpty()) return TileResult.notFound().also { dem.notFound.incrementAndGet() }
@@ -865,12 +922,15 @@ class TileService(
 
     /** The cliff cache directory of vector tile z/x/y from [osmPack]; null without a DEM pack there. */
     private fun cliffDir(osmPack: Pack, z: Int, x: Int, y: Int): String? {
+        // T357: an edge tile's sides are decided from the maps meeting there, kept under both identities.
+        edgeFor(z, x, y)?.let { m -> return ContourCache.cliffDir(osmIdentities[osmPack] ?: return null, m.key) }
+        // end T357
         val demPack = packs.demFor(z, x, y) ?: return null
         return ContourCache.cliffDir(osmIdentities[osmPack] ?: return null, identities[demPack] ?: return null)
     }
 
     /** The pyramid of the DEM pack that answers DEM tile z/x/y, for [cliffs]; null outside every pack. */
-    private fun cliffPyramid(z: Int, x: Int, y: Int): DemPyramid? = packs.demFor(z, x, y)?.let(::pyramid)
+    private fun cliffPyramid(z: Int, x: Int, y: Int): DemPyramid? = edgeFor(z, x, y)?.pyramid ?: packs.demFor(z, x, y)?.let(::pyramid) // T357: an edge tile's composed pyramid
 
     fun contourTile(z: Int, x: Int, y: Int): TileResult {
         foregroundContours.incrementAndGet()
@@ -886,6 +946,9 @@ class TileService(
             }
             // T356: with no source set, over an area's cells deeper than the maps (or no map at all): made from what the phone holds, not kept.
             if (online == null && held.deeperOver(z, x, y) != null) return ok(contours, "application/x-protobuf", generateContourTile(heldPyramid, z, x, y, null, contourGen))
+            // T357: across a finer map's edge, made from the maps meeting there cell by cell, kept under both maps' identities.
+            edgeFor(z, x, y)?.let { m -> return ok(contours, "application/x-protobuf", contourBytes(contourDir(m.key), { m.pyramid }, z, x, y, contourGen)) }
+            // end T357
             // T41: the DEM pack that holds the tile (else the best one overlapping it) makes it, into its own cache directory.
             val pack = packs.demFor(z, x, y, PackRoleZooms.CONTOUR) ?: return TileResult.notFound().also { contours.notFound.incrementAndGet() }
             val bytes = contourBytes(pack, z, x, y, contourGen)
@@ -915,13 +978,26 @@ class TileService(
         stats: ContourTileStats,
         cancel: (() -> Boolean)? = null,
         onCacheHit: () -> Unit = { contourCacheHits.incrementAndGet() },
+    ): ByteArray = contourBytes(contourDir(pack), { pyramid(pack) }, z, x, y, stats, cancel, onCacheHit) // T357: one map's tiles
+
+    // ---- T357: contour tile bytes in cache directory [dir] from the pyramid [pyramidOf] gives (one map's, or an edge tile's) ----
+    private fun contourBytes(
+        dir: String,
+        pyramidOf: () -> DemPyramid,
+        z: Int,
+        x: Int,
+        y: Int,
+        stats: ContourTileStats,
+        cancel: (() -> Boolean)? = null,
+        onCacheHit: () -> Unit = { contourCacheHits.incrementAndGet() },
     ): ByteArray {
-        val key = ContourCache.key(contourDir(pack), z, x, y)
+        val key = ContourCache.key(dir, z, x, y)
         contourCache.get(key)?.let {
             onCacheHit()
             return it
         }
-        val p = pyramid(pack)
+        val p = pyramidOf()
+        // end T357
         val mine = CompletableFuture<ByteArray?>()
         val running = contourInFlight.putIfAbsent(key, mine)
         if (running != null) {
@@ -930,7 +1006,7 @@ class TileService(
                 running.get() ?: ByteArray(0)
             } catch (e: ExecutionException) {
                 // T42: the warm-up gave this tile up for a map request (maybe this one): generate it here.
-                if (e.cause is ContourBuildCancelled) return contourBytes(pack, z, x, y, stats, cancel, onCacheHit)
+                if (e.cause is ContourBuildCancelled) return contourBytes(dir, pyramidOf, z, x, y, stats, cancel, onCacheHit) // T357
                 throw e.cause ?: e
             }
         }
@@ -1193,6 +1269,9 @@ class TileService(
         const val WARMUP_POLL_MS = 50L
         /** DEM pyramids kept at once (T41): 96 decoded tiles, 24 MB, each. */
         const val MAX_PYRAMIDS = 2
+
+        /** T357: decoded tiles kept per set of maps meeting at an edge (256 KB each). */
+        const val EDGE_CACHE_TILES = 64 // end T357
 
         /** T356: the areas' holdings are read again at most this often ([HeldTiles]). */
         const val AREAS_MS = 2_000L

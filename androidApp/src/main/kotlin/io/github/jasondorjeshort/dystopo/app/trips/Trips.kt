@@ -7,11 +7,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import io.github.jasondorjeshort.dystopo.app.Pack
-import io.github.jasondorjeshort.dystopo.app.TileService
 import io.github.jasondorjeshort.dystopo.app.routing.EndNames
 import io.github.jasondorjeshort.dystopo.app.routing.RouteOrigin
 import io.github.jasondorjeshort.dystopo.app.routing.RoutePlanner
+import io.github.jasondorjeshort.dystopo.app.terrain.PointRead
 import io.github.jasondorjeshort.dystopo.app.sync.ShareLinkClient
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
 import io.github.jasondorjeshort.dystopo.model.RouteEditor
@@ -22,14 +21,12 @@ import io.github.jasondorjeshort.dystopo.model.RouteSummary
 import io.github.jasondorjeshort.dystopo.model.SavedDirections
 import io.github.jasondorjeshort.dystopo.model.UuidGenerator
 import io.github.jasondorjeshort.dystopo.model.Waypoint
-import io.github.jasondorjeshort.dystopo.routing.DemElevation
 import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.PlannedRoute
 import io.github.jasondorjeshort.dystopo.store.RouteImport
 import io.github.jasondorjeshort.dystopo.sync.EntityKind
 import io.github.jasondorjeshort.dystopo.sync.RouteListItem
 import io.github.jasondorjeshort.dystopo.sync.SyncStore
-import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
@@ -127,28 +124,31 @@ object Trips {
 
     // ---- the editor's inputs ----
 
-    /** T175: per opened pack, not per file path: a reload reopens the same file and closes the pack a path-keyed sampler read. */
-    private val dem = PerPack { p: Pack ->
-        val pyramid = DemPyramid(p.header.minZoom, p.header.maxZoom, TileService.demDecoder(), cacheTiles = 16) { z, x, y -> p.tile(z, x, y) }
-        val sampler = DemElevation(pyramid)
-        val lock = Any()
-        ElevationSampler { lat, lon -> synchronized(lock) { sampler.elevation(lat, lon) } }
-    }
+    // T358 (ADR 0066 build task 4): the one point read ([PointRead]) in place of the chosen map's pyramid (T175's per-pack sampler).
+    private val held = PointRead.sampler(PointRead.Mode.HELD, "trips")
+    private val behind = PointRead.sampler(PointRead.Mode.BEHIND, "route")
 
-    /** A DEM sampler on the active DEM pack (its own small tile cache), or null without one. */
-    private fun elevation(): ElevationSampler? = dem.get(app.tiles.packs.dem)
+    /**
+     * T358: the elevation of what the phone holds, by the map's rule ([PointRead.Mode.HELD]: nothing is fetched), or null when
+     * nothing could answer anywhere (no map with elevation, no source set, no tile area). A dropped waypoint and the ground
+     * under each aircraft read it ([elevationAt]), so they start no fetch.
+     */
+    private fun elevation(): ElevationSampler? = held.takeIf { PointRead.anything() }
 
-    /** T108: the active DEM pack's sampler for a crow line on the route card ([RoutePlanner.plan]), or null without one. */
-    fun demSampler(): ElevationSampler? = elevation()
+    /**
+     * T108: the sampler for a crow line on the route card ([RoutePlanner.plan]), or null with nothing to read. T358: a route tool,
+     * so held now with the fetch behind ([PointRead.Mode.BEHIND]) where the network is deeper.
+     */
+    fun demSampler(): ElevationSampler? = behind.takeIf { PointRead.anything() }
 
-    /** T91: the active DEM pack's elevation at a point (metres, one decimal), or null without a DEM or data there. */
+    /** T91: the elevation at a point (metres, one decimal), or null without data there. T358: held only ([elevation]). */
     fun elevationAt(lat: Double, lon: Double): Double? =
         elevation()?.elevation(lat, lon)?.takeUnless { it.isNaN() }?.let { Math.round(it * 10) / 10.0 }
 
-    /** An editor on the active pack's graph (waits up to [waitMs] for it to load or build; straight legs without one). */
+    /** An editor on the active pack's graph (waits up to [waitMs] for it to load or build; straight legs without one). T358: its straight legs read as a route tool ([demSampler]). */
     fun editor(waitMs: Long = 120_000): RouteEditor {
         val graph = try { RoutePlanner.router(waitMs) } catch (e: RoutePlanner.NotReady) { null }
-        return RouteEditor(graph, elevation())
+        return RouteEditor(graph, demSampler())
     }
 
     // ---- reading ----

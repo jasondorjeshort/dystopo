@@ -62,6 +62,8 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   T342: each row's `off` is its "Use on this phone" switch (true: the map is off, false: on, null: a row without one);
  *   `POST /areas/rows/off?id=pack:<name>&off=1|0` sets it as the switch does, without a restart (`name=<pack>` for `id`), and
  *   answers its `result` (`off`, `records` changed, `listed`, `offNames`, `active`, `inUse`) with the rows after it.
+ *   T366: each row's `level` (`full`, `medium`, `less`, `low`, `off`; [DetailOutline]) and `outline` (`colour`, `width`, `dash`,
+ *   `dots`, `fill`, `night`: how its outline and swatch are drawn in the map's palette now).
  * - T221, a removal you can see: `DELETE /areas/{id}` answers when the tiles are gone (`ms`, `tilesDeleted`); until then the area
  *   stays in `GET /areas` and `GET /areas/{id}` with `state` `removing` and `removing` (`done`, `total`, `line` as the row reads
  *   it, `ms`). `chunkDelayMs=N` (0 to 10000) waits after each chunk of 256 tiles, so a screenshot can catch the row.

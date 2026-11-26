@@ -684,11 +684,12 @@ _sleep = a11y.time.sleep
 a11y.time.sleep = lambda s: None
 try:
     ssrv = StaleSrv()
-    ctx = type("C", (), {"srv": ssrv, "recorded": None})()
+    ctx = type("C", (), {"srv": ssrv, "recorded": None, "drawn_check": None})()
     rs[0][1](ctx)
+    assert ctx.drawn_check is a11y.stale_drawn, ctx.drawn_check  # T373: the frame checked against the semantics
     paths = [p for _m, p in ssrv.calls]
     assert paths[1] == "/tracks/record?source=injected&activity=foot" and ctx.recorded == "t-2", paths
-    assert paths[3:6] == [f"/tracks/stale?lastFixAgeH={a11y.STALE_AGE_H}&hold=1", "/tracks/wayback?on=1", "/tracks/ui?bar=1"], paths
+    assert paths[3:6] == [f"/tracks/stale?lastFixAgeH={a11y.STALE_AGE_H}&hold=1", "/tracks/wayback?on=1", "/tracks/ui?bar=0"], paths
     assert paths[-1] == "/tracks/stale" and ssrv.polls == 2, paths
     ssrv.calls.clear()
     rs[0][2](ctx)
@@ -697,6 +698,88 @@ try:
 finally:
     a11y.time.sleep = _sleep
 # end T348
+
+# T373: the frame is kept only between two semantics reads that agree. The track bar's "Hide" read 200 px away in the
+# second read is a move; the live readout's own words changing are not; a node that came is.
+def sem_of(*windows):
+    return {"windows": [{"unmerged": list(w)} for w in windows]}
+
+
+strip = node(40, [0, 900, 400, 1000], testTag="readoutStrip")
+hide_a = node(41, [920, 717, 1021, 774], text="Hide")
+hide_b = node(41, [150, 930, 380, 1020], text="Hide")
+v1 = node(42, [10, 910, 100, 960], parent=40, text="5268 ft")
+v2 = node(42, [10, 910, 130, 960], parent=40, text="no fix 6 s")
+clock = node(43, [500, 500, 620, 540], text="0:00:06")
+clock2 = node(43, [500, 500, 622, 540], text="0:00:07")  # within STEADY_PX
+a = a11y.places(sem_of([strip, v1, hide_a, clock]))
+assert a11y.shifted(a, a11y.places(sem_of([strip, v2, hide_a, clock2]))) == [], "the readout's words and a tick are no move"
+assert a11y.shifted(a, a11y.places(sem_of([strip, v1, hide_b, clock]))) == ["Hide"]
+assert a11y.shifted(a, a11y.places(sem_of([strip, v1, hide_a, clock, node(44, [0, 0, 10, 10], text="Waypoint")]))) == ["Waypoint"]
+assert a11y.shifted(a, a11y.places(sem_of([strip, v1, hide_a, clock], [hide_a]))) == ["Hide"], "a window's node keys apart"
+
+
+class SnapSrv:
+    """The semantics reads in turn from `pairs` (two a try); every other call recorded."""
+    def __init__(self, pairs):
+        self.reads, self.pairs, self.calls = 0, pairs, []
+
+    def ok(self, method, path, **kw):
+        if path == "/semantics":
+            s = self.pairs[min(self.reads, len(self.pairs) - 1)]
+            self.reads += 1
+            return dict(s, density=D, screenPx=SCREEN)
+        self.calls.append(path)
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append(path)
+        return 200, {}
+
+
+class SnapDev:
+    def frame(self):
+        return None, check.Raster(4, 4)
+
+    def nodes(self):
+        return []
+
+
+_settle, _sleep = a11y.settle, a11y.time.sleep
+a11y.settle, a11y.time.sleep = (lambda dev, **kw: None), (lambda s: None)
+try:
+    moved, held = sem_of([hide_a]), sem_of([hide_b])
+    fix_path = f"/location?lat={a11y.PARADISE[0]}&lon={a11y.PARADISE[1]}&accuracy=8"
+    sctx = type("C", (), {"dev": SnapDev(), "srv": SnapSrv([moved, held, held, held])})()
+    a11y.snapshot(sctx, "recording-stale:2.0", 2.0, "screen")
+    assert sctx.frame_tries == 2 and sctx.unsteady == [] and sctx.srv.reads == 4, (sctx.frame_tries, sctx.unsteady)
+    assert sctx.srv.calls.count(fix_path) == 2, sctx.srv.calls
+    never = type("C", (), {"dev": SnapDev(), "srv": SnapSrv([moved, held] * a11y.FRAME_TRIES)})()
+    a11y.snapshot(never, "x:1.0", 1.0, "screen")
+    assert never.frame_tries == a11y.FRAME_TRIES and never.unsteady == ["Hide"], never.unsteady
+    # A screen's drawn check: a frame it answers with a reason is taken again (the semantics agreeing is not enough).
+    answers = ["drawn away from its semantics: Hide", None]
+    dctx = type("C", (), {"dev": SnapDev(), "srv": SnapSrv([held]), "drawn_check": staticmethod(lambda r, s: answers.pop(0))})()
+    a11y.snapshot(dctx, "recording-stale:2.0", 2.0, "screen")
+    assert dctx.frame_tries == 2 and dctx.unsteady == [] and answers == [], (dctx.frame_tries, dctx.unsteady)
+
+finally:
+    a11y.settle, a11y.time.sleep = _settle, _sleep
+
+# stale_drawn: the bar's chips dark where the semantics put them, or which are not.
+dr = check.Raster(1080, 1200)
+check.fill(dr, 0, 0, 1080, 1200, (200, 205, 190))  # the map
+check.fill(dr, 920, 717, 102, 58, (43, 36, 32))  # Hide drawn in the column arrangement
+sem_b = {"screenPx": [1080, 1200], "windows": [{"unmerged": [node(50, [920, 717, 1022, 775], text="Hide"), node(51, [0, 0, 10, 10], text="x")]}]}
+sem_a = {"screenPx": [1080, 1200], "windows": [{"unmerged": [node(50, [243, 946, 345, 1004], text="Hide")]}]}
+assert a11y.stale_drawn(dr, sem_b) is None
+assert a11y.stale_drawn(dr, sem_a) == "drawn away from its semantics: Hide"
+
+# close_all folds the track bar's panel (opening Tracks and routes unfolds it and its close leaves it so).
+csrv = SnapSrv([sem_of()])
+a11y.close_all(csrv)
+assert csrv.calls.index("/tracks/ui?open=0") < csrv.calls.index("/tracks/ui?bar=0"), csrv.calls
+# end T373
 
 # T343: the Download card at Mount Rainier's summit (z13), opened as the map's button does; its end closes it and puts the
 # camera back on the view the screens start from.
@@ -766,16 +849,26 @@ assert 7 in a11y.in_layer([{"id": 7, "testTag": "flightsStatus"}, {"id": 9}], _m
 
 # T363: the readout's states (the bar dimmed in a gap, its values marked "?") and the glance view after a jump and a gap:
 # the barometer set to Never and put back as found, the glance view opened by its route and closed by the end.
+# T372: the pressure entry off for both screens and put back as found; the glance view opened held, its scene read back
+# and made again when it is not the one wanted.
+HELD = {"open": True, "holding": True,
+        "lines": [{"kind": "elevation", "reasonCode": "resuming"}, {"kind": "climb", "reasonCode": "resuming"}],
+        "notes": {"recent": ["GPS lost for 8 s, 1 s ago", "Position jumped 1.9 mi, 9 s ago", "Position jumped 1.9 mi, 10 s ago"]}}
+
+
 class ReadoutSrv:
-    def __init__(self):
+    def __init__(self, glances=None):
         self.calls = []
+        self.glances = list(glances or [HELD])
 
     def ok(self, method, path, **kw):
         self.calls.append((method, path))
         if path == "/settings":
-            return {"readoutBarometer": "always"}
+            return {"readoutBarometer": "always", "readout": {"pressure": "shown=0;pace=0;damping=medium"}}
         if path == "/readout":
             return {"bar": {"fields": [{"entry": "elevation", "mark": True}]}}
+        if path.startswith("/readout/glance?open=1"):
+            return self.glances.pop(0) if len(self.glances) > 1 else self.glances[0]
         return {}
 
     def call(self, method, path, **kw):
@@ -785,20 +878,43 @@ class ReadoutSrv:
 
 ry = {s[0]: s for s in a11y.SCREENS if s[0] in ("readout-states", "glance")}
 assert ry["readout-states"][3] == "map" and ry["glance"][3] == "screen", ry
+assert a11y.pressure_shown("shown=1;pace=0") == "1" and a11y.pressure_shown("pace=0;shown=0") == "0"
+assert a11y.pressure_shown(None) is None and a11y.pressure_shown("pace=0") is None
+assert a11y.glance_scene(HELD) is None
+assert "hold" in a11y.glance_scene(dict(HELD, holding=False))
+assert "climb" in a11y.glance_scene(dict(HELD, lines=[HELD["lines"][0], {"kind": "climb", "reasonCode": "filling"}]))
+two_gaps = dict(HELD, notes={"recent": ["GPS lost for 5 s, 0 s ago"] + HELD["notes"]["recent"]})
+assert "last minute" in a11y.glance_scene(two_gaps)
+assert "last minute" in a11y.glance_scene(dict(HELD, notes={"recent": HELD["notes"]["recent"] + ["1 late GPS fix skipped, 3 s ago"]}))
 a11y.time.sleep = lambda s: None
 try:
     rs = ReadoutSrv()
     rctx = type("C", (), {"srv": rs})()
     ry["readout-states"][1](rctx)
-    assert rs.calls[:3] == [("GET", "/settings"), ("POST", "/settings?readoutBarometer=never"), ("POST", "/readout/reset")], rs.calls
+    assert rs.calls[:4] == [("GET", "/settings"), ("POST", "/settings?readoutBarometer=never"),
+                            ("POST", "/settings?readout.pressure=shown=0"), ("POST", "/readout/reset")], rs.calls
     assert sum(1 for c in rs.calls if c[1].startswith("/location?")) == 4 and rs.calls[-1] == ("GET", "/readout"), rs.calls
     rs.calls.clear()
     ry["glance"][1](rctx)
-    assert any("provider=network" in c[1] for c in rs.calls) and rs.calls[-1] == ("POST", "/readout/glance?open=1"), rs.calls
+    assert any("provider=network" in c[1] for c in rs.calls) and rs.calls[-1] == ("POST", "/readout/glance?open=1&hold=1"), rs.calls
     assert rs.calls[-2][1].startswith("/location?"), "the gap ended before the view opens"
     rs.calls.clear()
     ry["glance"][2](rctx)
-    assert rs.calls == [("POST", "/readout/glance?open=0"), ("POST", "/settings?readoutBarometer=always")], rs.calls
+    assert rs.calls == [("POST", "/readout/glance?open=0"), ("POST", "/settings?readoutBarometer=always"),
+                        ("POST", "/settings?readout.pressure=shown=0")], rs.calls
+    # A scene with a second gap is closed and made again; three that miss fail the screen with the reason.
+    rs = ReadoutSrv([two_gaps, HELD])
+    rctx = type("C", (), {"srv": rs})()
+    ry["glance"][1](rctx)
+    assert rs.calls.count(("POST", "/readout/glance?open=1&hold=1")) == 2 and ("POST", "/readout/glance?open=0") in rs.calls, rs.calls
+    rs = ReadoutSrv([two_gaps])
+    rctx = type("C", (), {"srv": rs})()
+    try:
+        ry["glance"][1](rctx)
+        raise AssertionError("a scene never made should fail")
+    except RuntimeError as e:
+        assert "3 tries" in str(e) and "last minute" in str(e), e
+    assert rs.calls.count(("POST", "/readout/glance?open=1&hold=1")) == a11y.GLANCE_TRIES
 finally:
     a11y.time.sleep = _sleep
 # end T363
@@ -895,5 +1011,82 @@ try:
 finally:
     a11y.time.sleep = _sleep
 # end T369
+
+
+# T360: the coverage panel's screen waits for the card's panel to read steady with an offline map shown first, fails when it
+# does not; download-card and coverage-panel keep a fix coming every second from their setup to their end.
+class CoverageSrv:
+    def __init__(self, first="rainier · Full detail · shown", open_=True):
+        self.calls, self.first, self.open = [], first, open_
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/online":
+            lines = [self.first, "Online · nothing finer here"]
+            return {"chip": {"open": self.open, "text": "Online · on this phone", "coverage": {"lines": lines, "shown": lines}}}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+cov = {s[0]: s for s in a11y.SCREENS if s[0] in ("coverage-panel", "download-card")}
+assert cov["coverage-panel"][3] == "map" and cov["coverage-panel"][2] is not None, cov
+assert a11y.coverage_scene({"open": True, "coverage": {"shown": ["rainier · Full detail · shown"]}}) is None
+assert "not an offline map" in a11y.coverage_scene({"open": True, "coverage": {"shown": ["Online · shown"]}})
+assert "not open" in a11y.coverage_scene({"open": False, "coverage": {"shown": ["rainier · Full detail · shown"]}})
+a11y.time.sleep = lambda s: None
+_feed = a11y.FixFeed
+try:
+    started = []
+
+    class StubFeed:
+        def __init__(self, srv):
+            self.thread = type("T", (), {"start": lambda _s: started.append(1)})()
+
+        def stop(self):
+            started.append(-1)
+
+    a11y.FixFeed = StubFeed
+    vs = CoverageSrv()
+    vctx = type("C", (), {"srv": vs})()
+    cov["coverage-panel"][1](vctx)
+    paths = [p for _m, p in vs.calls]
+    assert "/readout/reset" in paths and "/online/chip?open=1" in paths and any(p.startswith("/camera?lat=46.8529") for p in paths), paths
+    assert paths.index("/online/cache/clear") < paths.index("/online/chip?open=1"), paths  # the cache pinned before the card
+    assert started == [1], started
+    vs.calls.clear()
+    cov["coverage-panel"][2](vctx)
+    assert started == [1, -1] and ("POST", "/online/chip?open=0") in vs.calls and vctx.fix_feed is None, (started, vs.calls)
+    started.clear()
+    fctx = type("C", (), {"srv": CoverageSrv(first="Nothing on this phone here")})()
+    try:
+        cov["coverage-panel"][1](fctx)
+        raise AssertionError("a panel with no map shown passed")
+    except RuntimeError as e:
+        assert "not steady" in str(e) and "not an offline map" in str(e), e
+    # A setup that raised: the run's loop still calls the screen's end (in its finally), which stops the feed.
+    assert started == [1], started
+    cov["coverage-panel"][2](fctx)
+    assert started == [1, -1] and fctx.fix_feed is None, started
+    import inspect
+    loop = inspect.getsource(a11y.run)
+    assert loop.index("setup(c)") < loop.index("finally:", loop.index("setup(c)")) < loop.index("teardown(c)"), "teardown must run in the screen's finally"
+    # The real feed's thread ends on stop.
+    real = _feed(CoverageSrv())
+    real.thread.start()
+    real.stop()
+    assert not real.thread.is_alive()
+    started.clear()
+    dctx = type("C", (), {"srv": CoverageSrv()})()
+    cov["download-card"][1](dctx)
+    assert started == [1], started
+    cov["download-card"][2](dctx)
+    assert started == [1, -1], started
+finally:
+    a11y.time.sleep = _sleep
+    a11y.FixFeed = _feed
+# end T360
 
 print("test_android_a11y: ok")

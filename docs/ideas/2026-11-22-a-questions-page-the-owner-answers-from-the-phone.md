@@ -13,6 +13,8 @@ Lever: the measured answer lag. Outranks the why-is-this-blank route for owner t
 
 **What exists already (to be checked):** Questions live in `docs/ideas/` and are answered in chat or by editing the file.
 
+Use: 2026-11-25, coordinator (claude-fable-5-2): the page also lists the offer Questions (`Question: offered`, a line of a brainstorm offer the owner did not answer) with their four answers (record, record at rest, fold into a file, no); the listing's `offered` field finds them.
+
 Question: Do you want open Questions served as a private claude.ai artifact page you answer from any device, with a chore writing your answers back into the idea files as `Answer:` lines?
 Recommendation: A, tried once at the next triage before it becomes routine; it meets the measured lag (median 3.8 days, sittings of 11 to 37) and the ideas are public in the repo anyway, but it is a new place your words are entered and an agent transcribes them, which is yours to accept.
 Options:

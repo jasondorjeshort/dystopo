@@ -130,6 +130,9 @@ object AreaPicker {
         private set
     /** The around flow's typed value, as typed. */
     var typed by mutableStateOf("")
+    /** T366: the levels the card's key lists ([PickerKey]: the outlines in view, and the area being drawn), as last drawn. */
+    var keyLevels by mutableStateOf<List<DetailOutline.Level>>(emptyList())
+        internal set
 
     /** Whether Cancel goes back to the sheet's list (opened from the sheet) or to the map (the long-press card, search). */
     private var backToSheet = true
@@ -274,6 +277,7 @@ object AreaPicker {
         PickerLayer.clear()
         summary = null
         downloadError = null
+        keyLevels = emptyList() // T366
     }
 
     /** True while a picker card stands over the map (the long-press card stays shut then). */
@@ -387,8 +391,11 @@ object AreaPicker {
     /** T157: the line under the size line: what the medium detail keeps and drops; null at the other details. */
     fun hintOf(s: Summary?): String? = if (s != null && s.error == null && detailOf(s) == DETAIL_MEDIUM) MEDIUM_DETAIL_HINT else null
 
-    /** T153: a region's path line ([regionPathLine]); null for the other flows. */
-    fun pathLineOf(s: Summary?): String? = if (mode is Mode.Region && s != null && s.error == null) regionPathLine(s.pack, detailOf(s)) else null
+    /**
+     * T153: a region's path line ([regionPathLine]); null for the other flows. T366 (T369's follow-up): and null on a refused card,
+     * which offers no Download for the line to describe.
+     */
+    fun pathLineOf(s: Summary?): String? = if (mode is Mode.Region && s != null && s.error == null && refusalOf(s) == null) regionPathLine(s.pack, detailOf(s)) else null
 
     /** Starts the download of the plan shown (any thread but the UI's: it records the area). */
     fun download(): Map<String, Any?> {
@@ -439,6 +446,7 @@ object AreaPicker {
             "id" to p?.area?.id, // T157: the id of the area Download would record (each detail's differs)
             "full" to s?.full?.json(), "medium" to s?.medium?.json(), "less" to s?.less?.json(), "layerFeatures" to PickerLayer.features,
             "drawing" to AreaDraw.json(),
+            "key" to keyLevels.map { linkedMapOf("level" to it.key, "label" to it.label) }, // T366: the card's key, as drawn
             "around" to (m as? Mode.Around)?.let { a ->
                 linkedMapOf(
                     "lat" to a.center.lat, "lon" to a.center.lon, "radiusM" to a.radiusM, "presetsM" to radiusPresets(AppSettings.units),
@@ -719,6 +727,40 @@ internal fun PickerCard() {
                 }
             }
             SummaryLines()
+            PickerKey() // T366
+        }
+    }
+}
+
+/**
+ * T366 (finding 2026-11-23-outline-colours-by-map-detail): the card's key, the levels on screen: the area being drawn and every
+ * level whose outline crosses the view ([AreaOutlines.levelsIn]), each a swatch in its outline's look and its name, the area
+ * being drawn first, then finest to coarsest, a map not used last ([DetailOutline.keyOrder]). Read again every second while the
+ * card is up (the camera moves under it); the outlines take the night palette when the map's style turns to it. Nothing when
+ * only the area being drawn would be listed.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PickerKey() {
+    val app = DystopoApp.instance
+    var night by androidx.compose.runtime.remember { mutableStateOf(AppSettings.mapOptions.night) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            night = AppSettings.mapOptions.night
+            AreaOutlines.restyle()
+            val box = OnlineView.currentOnMain(app)?.bounds
+            val saved = box?.let { AreaOutlines.levelsIn(it) }.orEmpty()
+            val levels = if (saved.isEmpty()) emptyList() else DetailOutline.keyOrder(saved + listOfNotNull(DetailOutline.Level.DRAFT.takeIf { PickerLayer.features > 0 }))
+            if (levels != AreaPicker.keyLevels) AreaPicker.keyLevels = levels
+            io.github.jasondorjeshort.dystopo.app.Foreground.delay(1000)
+        }
+    }
+    val levels = AreaPicker.keyLevels
+    if (levels.isEmpty()) return
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (l in levels) Row(verticalAlignment = Alignment.CenterVertically) {
+            LevelSwatch(l, night)
+            BasicText(l.label, style = TextStyle(color = Muted, fontSize = 12.sp))
         }
     }
 }

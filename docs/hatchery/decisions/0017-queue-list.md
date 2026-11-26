@@ -4,6 +4,9 @@ Companion to [ADR 0017](0017-queue-directories-list-on-demand.md). The contract 
 `.claude/hooks/queue-list.js` from and the harness checks; the parts ADR 0013 promises are marked
 "promised". Where the code and this file differ, one of them has a bug; the ADR says which parts may
 not change without a proposal. Sibling names are allowed here: a decision is a closed record.
+Amended by ADR 0026 (`0026-brainstorm-contract.md`, section 2): sections 2, 3 and 5 gain five
+`ideas` fields, a `warnings` array and cases Q14 to Q18; nothing below is changed or removed.
+Amended 2026-11-24: section 2's operator Title rule and Q07 (the 2026-10-17 idea on operator titles).
 
 ## 1. Command line (promised: the path, the three mode words, the four flags named, the exit meanings)
 
@@ -38,9 +41,15 @@ Frontmatter (every mode): a first line `---` and the next `---` within the first
 rule `hasFrontmatter` in `post-edit.js` uses). A key is the text before the first `:` of a line
 between the markers; its value is the rest, trimmed. No such block: no keys.
 
-Title (every mode): the text after `# ` of the first line starting `# ` outside the frontmatter;
-else the first non-blank line outside it, whole; else `?` with the problem
-`{ field: "title", value: null, allowed: "a # heading or a first line" }`.
+Title (`operator`): the text inside the first bold run of the first line outside the frontmatter
+that starts with one (`^\*\*(.+?)\*\*`, group 1), trimmed; the rest of the line is dropped, and a
+line whose run is blank is passed over. An operator entry opens with a bold line and has no `#`
+title, so preferring the bold line keeps a `# ` line in a fenced command block from winning. An
+entry with no such line takes the rule below.
+
+Title (every other mode, and `operator` with no bold line): the text after `# ` of the first line
+starting `# ` outside the frontmatter; else the first non-blank line outside it, whole; else `?`
+with the problem `{ field: "title", value: null, allowed: "a # heading or a first line" }`.
 
 `findings`: `status` is the first whitespace-delimited word of the `status:` value (promised:
 regenesis writes `resolved (ADR 0011, 2026-10-14)`, which reads `resolved`); allowed `open`,
@@ -125,8 +134,8 @@ A scratch tree like the `P` cases, the script run with `child_process.spawnSync(
 case is. Fixtures: `docs/findings/` with `status: open`, `status: resolved (ADR 0011, 2026-10-14)`,
 `status: superseded`, `status: done`, and one without frontmatter; `docs/ideas/` with one file per
 block kind (`plan`, `question`, `answered`, `waits`, `untriaged`), one with `kind: idea`, one with
-`status: new` beside a valid `kind:`, one empty; `docs/operator/` with an H1 file, a first-line
-file and an empty file; READMEs with a valid marker, with none, with a marker for the wrong
+`status: new` beside a valid `kind:`, one empty; `docs/operator/` with an H1 file, a bold-first-line
+file, a bold line before a fenced `# comment` and a list, a file with no bold line, and an empty file; READMEs with a valid marker, with none, with a marker for the wrong
 directory, and with a `Listed on demand:` line of the wrong shape. Cases:
 
 - Q01 `findings` text: three columns, byte order, `resolved (...)` reads `resolved`, `done` is `?`,
@@ -140,7 +149,9 @@ directory, and with a `Listed on demand:` line of the wrong shape. Cases:
 - Q05 `ideas --untriaged`: the untriaged file only, never the `?` files; stderr unchanged.
 - Q06 `--check`: exit 1 on each directory with a problem, exit 0 on a clean copy; stdout printed in
   both.
-- Q07 `operator`: the H1 title, the first-line title, `?` for the empty file.
+- Q07 `operator`: the first bold line's text, even when a `# comment` line in a fenced block and a
+  numbered list follow it; an entry with no bold line keeps the H1 or first-line title; `?` for the
+  empty file. An `ideas` file whose `#` title follows a blank line still lists its heading.
 - Q08 `--markdown`: a header row and one `| \`<file>\` |` row per file.
 - Q09 usage errors, each exit 2 with nothing on stdout: no mode, `tasks`, `--untriaged findings`,
   `--status open ideas`, `--json --markdown`, `--status` without a value, a mode whose directory

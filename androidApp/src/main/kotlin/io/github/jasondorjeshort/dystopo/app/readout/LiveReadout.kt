@@ -10,7 +10,6 @@ import io.github.jasondorjeshort.dystopo.app.Foreground
 import io.github.jasondorjeshort.dystopo.app.nav.NavSession
 import io.github.jasondorjeshort.dystopo.app.tracking.GpsLocationSource
 import io.github.jasondorjeshort.dystopo.app.tracking.Tracking
-import io.github.jasondorjeshort.dystopo.app.trips.Trips
 import io.github.jasondorjeshort.dystopo.model.ActivityProfile
 import io.github.jasondorjeshort.dystopo.model.ElevationSource
 import io.github.jasondorjeshort.dystopo.readout.KnownHeights
@@ -23,7 +22,6 @@ import io.github.jasondorjeshort.dystopo.readout.ReadoutOptions
 import io.github.jasondorjeshort.dystopo.readout.ReadoutText
 import io.github.jasondorjeshort.dystopo.readout.STATION_SOURCE_ID
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
-import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.store.LocationFix
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,7 +57,7 @@ import java.util.concurrent.TimeUnit
  *   takes effect at the next [refresh].
  * - **Along the route**: while navigating, the fix's progress along the navigated line when within its off-route
  *   distance, so the speed on foot and by bike is distance along the route over a long window (T160's `route` source).
- * - **The DEM** is the active DEM pack's ([Trips.demSampler]); with none the elevation runs on GNSS (and the barometer).
+ * - **The DEM** is the one point read's (T358: [io.github.jasondorjeshort.dystopo.app.terrain.PointRead], the deepest the phone holds, the network's fetched behind where deeper); with none the elevation runs on GNSS (and the barometer).
  * - **The sea-level pressure** (T173): while the barometer is wanted and present, [PressureSource] fetches the nearest
  *   weather stations' settings for a whole-degree box around the view and [recompute] hands the chosen one to the
  *   estimator as a prior (applied once per report); `GET /readout` › `seaLevelPressure` shows it.
@@ -371,7 +369,12 @@ object LiveReadout {
         return if (on) p.alongM else null
     }
 
-    private val dem = ElevationSampler { lat, lon -> runCatching { Trips.demSampler()?.elevation(lat, lon) }.getOrNull() ?: Double.NaN }
+    /**
+     * T358 (ADR 0066 build task 4): the ground height by the map's rule, held now with the point's tile fetched behind where the
+     * network is deeper ([io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND]); never waits for the network on
+     * the fix's thread. A deeper tile that lands is read at the estimator's next DEM update (150 m on), not back in time.
+     */
+    private val dem = io.github.jasondorjeshort.dystopo.app.terrain.PointRead.sampler(io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND, "readout")
 
     /**
      * T250: the activity the readout runs on: the recording's while a track records (the activity its track carries, as

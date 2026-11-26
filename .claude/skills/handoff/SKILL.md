@@ -12,8 +12,8 @@ resume pointers are this project's.
 
 ## When (rule in `CLAUDE.md`)
 
-- At the end of every coordinator session, and before any stop: the usage gate (50% of the 5-hour
-  meter, 75% of the 7-day one), the owner
+- At the end of every coordinator session, and before any stop: the usage gate (75% of the 5-hour
+  meter, the 7-day hold `policy.json` sets), the owner
   pausing, a context that is about to run out.
 - After a merge, a launch or a re-plan that changes Now or Next.
 
@@ -60,9 +60,13 @@ resume pointers are this project's.
    ```
 
 3. Anything that does not fit: a task or follow-up to `docs/TASKS.md`; evidence to a finding
-   (`finding` skill); durable facts to `docs/reference/`. The handoff links, it never explains.
+   (`finding` skill); durable facts to `docs/reference/`. The handoff links, it never explains. An
+   idea nobody asked for goes through the `brainstorm` skill, never straight into `docs/ideas/`.
 4. Check `wc -l docs/HANDOFF.md` is 40 or less.
-5. Commit and push it from the main session (the coordinator's own doc edit, ADR 0026) with
+5. If a triage, a wave close or a release happened this session and no brainstorm offer was made,
+   make it now (`brainstorm` skill); its files ride in this commit, and the record of an offer that
+   wrote nothing is one line of this commit's body.
+   Commit and push it from the main session (the coordinator's own doc edit, ADR 0026) with
    `bash tools/push-verified.sh`, and report the VERIFIED line, not the command's output. At the gate
    too: the handoff commit is the one thing the coordinator does with its own hands before stopping.
 6. Report in one paragraph what moved to findings or the board.

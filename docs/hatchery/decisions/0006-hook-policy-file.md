@@ -1,7 +1,7 @@
 # 0006. Hook policy lives in one file beside the hooks
 
 Date: 2026-10-13
-Status: accepted, superseded in part by 0016 and 0017
+Status: accepted, superseded in part by 0016, 0017, 0021, 0022 and 0025
 Superseded in part by [0016](0016-base-owned-and-project-owned-files.md), 2026-10-17: the sentence
 under the key table that keeps the 150-line `CLAUDE.md` cap a constant in `post-edit.js` (the
 project file's caps are 40 and 190, in `policy.js`, lifted by `edit.capExempt` naming `CLAUDE.md`),
@@ -11,6 +11,16 @@ Superseded in part by [0017](0017-queue-directories-list-on-demand.md), 2026-10-
 exemptions are policy" gains one exemption that is not: the index check for a queue directory is
 switched off by a marker line in that directory's own README, never by a key, so the key table
 gains nothing. Everything else stands.
+Superseded in part by [0021](0021-guardrails-bound-damage.md), 2026-10-21: the base values of
+`git.commit.subagents` and `git.push.subagents` become `"any"`, and under `usage.mode: "warn"` the
+coordinator may write a session grant with its reason; the key table takes both in place. Everything else stands.
+Superseded in part by [0022](0022-session-meter-hold-is-waited-out.md), 2026-10-29: the HOLD behaviour of
+the gating rule when only the session meter is at HOLD. Everything else stands.
+Superseded in part by [0025](0025-wave-lead.md), 2026-11-23: `usage.hold` no longer stops every caller alike
+where a project sets a meter's `finish` above it: an agent type on `usage.finishAgents` goes on to that line,
+and a grant lifts both. The keys are additions whose defaults keep the old behaviour; the key table and the
+fail-mode table take their rows in place when the code lands. Everything else stands.
+Withdrawn by [0027](0027-wave-lead-withdrawn.md), 2026-11-24: `usage.hold` stops every caller alike; the keys stay, read by nothing.
 
 The key table and "The HOLD override" section are living: they are amended in place as keys and
 formats change, and keep the provenance notes a decision record carries (the projects a key came
@@ -67,7 +77,9 @@ per model seen downstream (task branches, single branch, per-meter thresholds), 
 | `privacy.allow` | literal strings, case-insensitive; a `*` or `/` is malformed | `["user"]` | Lifts a hit of any class of the privacy scan whose match equals an entry. Non-personal literals only; edited by the owner from the main session (ADR 0018, scan contract section 2). |
 | `privacy.identities` | list of `{ "name", "email" }`, each a non-empty string, the email with one `@` | `[]` | The identities allowed as author, committer or tagger; the first is the repository identity decant and adopt set. Empty turns the `identity` class off with a notice on stderr (ADR 0018). |
 | `usage.hold` / `usage.deny` | percent / percent or `null` | `50` / `null` | No new subagents at `hold`; stop at `deny`, a ceiling no override lifts. `null` means no deny line: HOLD is the only line, and the override can lift it up to and past a saturated meter. `hold` may not exceed a `deny` that is set. |
-| `usage.fiveHour` / `usage.sevenDay` | `{ "hold", "deny" }`, each percent or `null` | both `null` | Per-meter thresholds; `null` inherits `usage.hold` / `usage.deny`, so a meter has no deny line when its own and the shared `deny` are both `null`. Each meter is judged by its own pair and the worse verdict wins (ReGenesis, its ADR 0004). |
+| `usage.fiveHour` / `usage.sevenDay` | `{ "hold", "deny", "finish" }`, each percent or `null` | all `null` | Per-meter thresholds; `null` inherits `usage.hold` / `usage.deny`, so a meter has no deny line when its own and the shared `deny` are both `null`. Each meter is judged by its own pair and the worse verdict wins (ReGenesis, its ADR 0004). `finish`: the next row. |
+| `usage.fiveHour.finish` / `usage.sevenDay.finish` | percent or `null` | `null` | Read by nothing since ADR 0027: no caller passes HOLD by it. Still validated: a value below the meter's effective `hold` is malformed, and there is no shared `usage.finish`. Leave it `null`. |
+| `usage.finishAgents` | agent names; `[]` allowed, `"any"` never (the `TYPES` entry `agents`) | `["wave-lead"]` | Read by nothing since ADR 0027. Still validated; the base value stays, a changed default being an incompatible change (ADR 0013). |
 | `usage.staleSeconds` | seconds | `7200` | Older usage data is stale. |
 | `usage.whenStale` | `"allow"` or `"deny"` | `"allow"` | What the gate does with stale or missing data. |
 | `usage.overrideEnv` | variable name or `null` | `null` | An environment variable that, set to `1` when the session starts, lifts HOLD on both meters for that session (never the deny line): the launch-time form of a session grant (The HOLD override). |

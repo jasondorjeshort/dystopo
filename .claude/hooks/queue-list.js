@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Lists a queue directory (docs/ideas/, docs/operator/, docs/findings/) from its files, so the
 // READMEs keep no per-file index (ADR 0017). Contract: docs/hatchery/decisions/0017-queue-list.md,
-// sections 1 to 3; the parts ADR 0013 promises are the path, the mode words, --status,
-// --untriaged, --json, --check, the --json fields and the exit codes.
+// sections 1 to 3, amended by ADR 0026 (0026-brainstorm-contract.md, section 2: five ideas fields
+// and the placement warnings on stderr) and, 2026-11-24, section 2's operator Title rule (the
+// first bold run; titleOf); the parts ADR 0013 promises are the path, the mode words,
+// --status, --untriaged, --json, --check, the --json fields and the exit codes.
 //
 //   node .claude/hooks/queue-list.js <ideas|operator|findings> [--status <v>] [--untriaged] [--json | --markdown] [--check]
 //
@@ -33,13 +35,21 @@ const ALLOWED = {
 const STATUSES = new Set(['open', 'resolved', 'superseded']);
 const KINDS = new Set(['bug', 'feature', 'question', 'chore']);
 const IDEA_KEYS = new Set(['date', 'kind', 'related']);
-// Columns between file and title, in --json field order.
-const COLUMNS = { findings: ['status'], ideas: ['kind', 'block'], operator: [] };
+// Columns between file and title, in --json field order. The ideas columns after block are ADR
+// 0026's (0026-brainstorm-contract.md, section 2).
+const COLUMNS = { findings: ['status'], ideas: ['kind', 'block', 'rest', 'offered', 'recurrences', 'news', 'uses'], operator: [] };
+// Entry lines on an idea (ADR 0026): the prefix and one space, at the start of a body line outside
+// fences, wherever it stands. Keyed by the read() field that counts them.
+const ENTRIES = { recurrences: 'Came up again: ', news: 'New: ', uses: 'Use: ' };
+const isEntry = (l) => Object.values(ENTRIES).some((p) => l.startsWith(p));
+const W1 = 'entry below the block (move it above; a line under a blank Answer: reads as the answer)';
+const W2 = 'entry not followed by a blank line or another entry (one physical line; a wrapped line that starts with a block word opens a block)';
 const FRONTMATTER_LINES = 20; // the closing --- within the first 20 lines, as post-edit's hasFrontmatter
 
 // Frontmatter: a first line --- and the next --- within the first 20 lines. A key is the text
 // before the first : of a line between them (trimmed), its value the rest, trimmed; the first
-// occurrence of a key wins. body is every line outside the block.
+// occurrence of a key wins. body is every line outside the block; offset is the number of file
+// lines before body[0], so body[i] is file line offset + i + 1.
 function split(text) {
   const lines = text.split(/\r?\n/);
   const keys = [];
@@ -52,25 +62,37 @@ function split(text) {
         const key = l.slice(0, c).trim();
         if (key && !keys.some(([k]) => k === key)) keys.push([key, l.slice(c + 1).trim()]);
       }
-      return { keys, body: lines.slice(i + 1) };
+      return { keys, body: lines.slice(i + 1), offset: i + 1 };
     }
   }
-  return { keys, body: lines };
+  return { keys, body: lines, offset: 0 };
 }
 const valueOf = (keys, key) => { const e = keys.find(([k]) => k === key); return e ? e[1] : null; };
 
-// The first line starting "# " (its text), else the first non-blank line (whole), else null.
-function titleOf(body) {
+// operator mode: the text inside the first bold run (^\*\*(.+?)\*\*, group 1, trimmed; the rest of
+// the line is dropped) of the first body line that starts with one and whose run is not blank. An
+// operator entry opens with a bold line and has no # title, so preferring it keeps a # line in a
+// fenced command block from winning. With no such line, and in every other mode: the first line
+// starting "# " (its text), else the first non-blank line (whole), else null.
+function titleOf(body, mode) {
+  if (mode === 'operator') {
+    for (const l of body) {
+      const m = /^\*\*(.+?)\*\*/.exec(l);
+      if (m && m[1].trim() !== '') return m[1].trim();
+    }
+  }
   const h = body.find((l) => l.startsWith('# '));
   if (h !== undefined) return h.slice(2).trim();
   const first = body.find((l) => l.trim() !== '');
   return first === undefined ? null : first.trim();
 }
 
-// The triage block, read as the triage skill reads it: the last line outside a fenced block that
-// starts Plan:, Question: or Waits: opens it, and it runs to the end of the file.
-function blockOf(body) {
+// The body's lines outside fenced blocks (their indices; a fence line itself is not outside), and
+// the first and the last of them that start Plan:, Question: or Waits: (-1 when none).
+function scan(body) {
   let fence = null;
+  const outside = [];
+  let first = -1;
   let opener = -1;
   for (let i = 0; i < body.length; i++) {
     const l = body[i];
@@ -80,8 +102,15 @@ function blockOf(body) {
       continue;
     }
     if (f && !(f[1][0] === '`' && f[2].includes('`'))) { fence = f[1]; continue; }
-    if (/^(Plan|Question|Waits):/.test(l)) opener = i;
+    outside.push(i);
+    if (/^(Plan|Question|Waits):/.test(l)) { opener = i; if (first < 0) first = i; }
   }
+  return { outside, first, opener };
+}
+
+// The triage block, read as the triage skill reads it: the last line outside a fenced block that
+// starts Plan:, Question: or Waits: opens it, and it runs to the end of the file.
+function blockOf(body, opener = scan(body).opener) {
   if (opener < 0) return 'untriaged';
   if (body[opener].startsWith('Plan:')) return 'plan';
   if (body[opener].startsWith('Waits:')) return 'waits';
@@ -93,17 +122,39 @@ function blockOf(body) {
   return 'question'; // no Answer: line at all is a blank answer
 }
 
-// read(mode, absFile) -> { file, title, ...columns, problems }. problems: [{ field, value, allowed }],
-// value null when the field is missing. A problem puts ? in its field. findings rows also carry
-// statusText, the whole status: value, for the --status whole-value match.
+// ideas only (ADR 0026, 0026-brainstorm-contract.md section 2): the entry counts, rest and offered,
+// and the placement warnings, over the body lines outside fences, whatever kind and the frontmatter
+// say. A warning never puts ? in a field and never counts as a problem.
+function entriesOf(body, offset, block, sc) {
+  const out = { rest: false, offered: false, recurrences: 0, news: 0, uses: 0, warnings: [] };
+  const opener = sc.opener >= 0 ? body[sc.opener] : '';
+  out.rest = block === 'waits' && opener.startsWith('Waits: at rest');
+  out.offered = (block === 'question' || block === 'answered') && opener.startsWith('Question: offered ');
+  for (const i of sc.outside) {
+    const l = body[i];
+    if (!isEntry(l)) continue;
+    for (const [field, prefix] of Object.entries(ENTRIES)) if (l.startsWith(prefix)) out[field]++;
+    const line = offset + i + 1;
+    if (sc.first >= 0 && i > sc.first) out.warnings.push({ line, text: W1 });
+    const next = i + 1 < body.length ? body[i + 1] : null;
+    if (next !== null && next.trim() !== '' && !isEntry(next)) out.warnings.push({ line, text: W2 });
+  }
+  return out;
+}
+
+// read(mode, absFile) -> { file, title, ...columns, problems, warnings }. problems: [{ field,
+// value, allowed }], value null when the field is missing. A problem puts ? in its field.
+// warnings: [{ line, text }], line 1-based in the file; empty outside ideas. findings rows also
+// carry statusText, the whole status: value, for the --status whole-value match.
 function read(mode, absFile) {
   const text = fs.readFileSync(absFile, 'utf8');
-  const { keys, body } = split(text);
+  const { keys, body, offset } = split(text);
   const problems = [];
   const bad = (field, value) => { problems.push({ field, value, allowed: ALLOWED[field] }); return '?'; };
   const row = { file: path.basename(absFile) };
-  const title = titleOf(body);
+  const title = titleOf(body, mode);
   row.title = title === null ? bad('title', null) : title;
+  let warnings = [];
   if (mode === 'findings') {
     const v = valueOf(keys, 'status');
     row.statusText = v;
@@ -112,9 +163,15 @@ function read(mode, absFile) {
     const k = valueOf(keys, 'kind');
     row.kind = k !== null && KINDS.has(k) ? k : bad('kind', k);
     const foreign = keys.find(([key]) => !IDEA_KEYS.has(key));
-    row.block = foreign ? bad('frontmatter', foreign[0]) : blockOf(body);
+    const sc = scan(body);
+    row.block = foreign ? bad('frontmatter', foreign[0]) : blockOf(body, sc.opener);
+    const e = entriesOf(body, offset, row.block, sc);
+    warnings = e.warnings;
+    delete e.warnings;
+    Object.assign(row, e);
   }
   row.problems = problems;
+  row.warnings = warnings;
   return row;
 }
 
@@ -179,6 +236,7 @@ function main(argv) {
         ? `queue-list: ${r.file}: ${p.field} missing; allowed: ${p.allowed}\n`
         : `queue-list: ${r.file}: ${p.field} is "${p.value}"; allowed: ${p.allowed}\n`);
     }
+    for (const w of r.warnings) process.stderr.write(`queue-list: ${r.file}: line ${w.line}: ${w.text}\n`);
   }
 
   let shown = rows;

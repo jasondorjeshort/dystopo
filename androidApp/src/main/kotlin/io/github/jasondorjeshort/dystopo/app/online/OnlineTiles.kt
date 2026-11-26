@@ -132,18 +132,12 @@ class OnlineTiles(
 
     /**
      * T341: the phone has an active network (read at most once a second). The fetcher's state reads `unknown` for a while after
-     * a start in airplane mode, and nothing is fetched behind the overview then. Not `OnlineUi.hasNetwork`, which reads true in
-     * airplane mode on the API 35 emulator (`terrain/TerrainRead.kt` reads it the same way).
+     * a start in airplane mode, and nothing is fetched behind the overview then. T359: the one rule, [OnlineUi.hasNetwork].
      */
     private fun hasNetwork(): Boolean {
         val now = System.currentTimeMillis()
         if (now - networkAt < 1_000) return network
-        network = try {
-            val cm = io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } != null
-        } catch (e: RuntimeException) {
-            true // no app (a test): let the fetcher decide
-        }
+        network = OnlineUi.hasNetwork(orElse = true) // T359: the one rule; no app (a test): let the fetcher decide
         networkAt = now
         return network
     }

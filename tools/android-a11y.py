@@ -625,8 +625,11 @@ def set_font_scale(dev, srv, scale, timeout=20.0):
 
 def close_all(srv):
     """Every overlay the screens open, closed (each call may answer an error when there is nothing to close), and a fresh
-    fix at Paradise, so the readout strip never reads a stale fix's age."""
+    fix at Paradise, so the readout strip never reads a stale fix's age. T373: the track bar's panel folded (`bar=0`, as its
+    Hide does): opening the Tracks and routes screen unfolds it and closing the screen leaves it so, which gave every screen
+    after `tracks-routes:1.0` (and all of the 2.0 pass) another layout than a hand run of the same screen."""
     for method, path in (("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8"), ("POST", "/settings/ui?open=0"), ("POST", "/packs/ui?show=false"), ("POST", "/tracks/ui?open=0"),
+                         ("POST", "/tracks/ui?bar=0"),
                          ("POST", "/tracks/picker?open=close"), ("POST", "/tracks/close"), ("POST", "/map/longpress/cancel"),
                          ("POST", "/nav/stop"), ("POST", "/route/details?open=0"), ("POST", "/route/clear"),
                          ("POST", "/online/chip?open=0"), ("POST", "/help/close"), ("POST", "/gnss/ui?open=0")):
@@ -787,6 +790,7 @@ def scr_recording(c):
     c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
     j = c.srv.ok("POST", "/tracks/record?activity=foot")
     c.recorded = ((j or {}).get("recording") or {}).get("id") or (j or {}).get("id")
+    c.srv.ok("POST", "/tracks/ui?bar=1")  # T373: the panel unfolded (it was the Activity picker's, left by close_all)
 
 
 def end_recording(c):
@@ -1172,21 +1176,35 @@ def end_offline_maps_off(c):
 
 # T348
 STALE_AGE_H = 72  # the age the screen gives the recording's last fix (POST /tracks/stale?lastFixAgeH=)
+STALE_DARK = 90  # T373: the track bar's chips are drawn dark (43, 36, 32): no channel of their fill above this
 
 
 def scr_recording_stale(c):
     """T348: a recording at Paradise whose last fix reads three days old (the debug age, held against the fixes the part injects; no clock moved): the question
     card at the bottom ("This recording stopped getting location updates 3 days ago. ...", Finish it, Keep recording) and
-    the recording panel unfolded with the turn-back chip on, whose card says "No turn-back time" and how old the last
+    the turn-back chip on, whose card says "No turn-back time" and how old the last
     location update is. State it leaves, put back by end_recording_stale (also after a failed step): the recording
-    (stopped and deleted; its end forgets the debug age)."""
+    (stopped and deleted; its end forgets the debug age).
+
+    T373: the track bar folded ("● 73 ft" and Waypoint; the panel's lines are the `recording` screen's). Unfolded, at font
+    2.0 with the sweep's server up (the online column holding its chip and "Already on this phone") this scene never
+    settles: at every relayout (the panel's clock ticking is enough; with no fix, no feed, no server or the readout bar off
+    it still does) the layout flips, every one to four seconds, between the online column shown with the bar a row under
+    it ("Hide" 93 dp from the left) and the column hidden with the bar a column at the right (Hide at 350 dp), the strip
+    dropping and restoring its climb with it; and the drawing lags a flip, so the frame showed one arrangement and the
+    semantics the other ("Hide" and "Waypoint" read on the map at 2.42 to 2.69: the red sweeps; a caption's box with none
+    of its text: "ft/h"), and a tap where Hide was drawn missed it in two of four tries. A fault of the layout rule, left to
+    a follow-up. Folded, the layout held for 20 s. The screen also gives snapshot() a check of its frame (stale_drawn:
+    the bar's dark chips where the semantics put them), so a frame in another arrangement than its semantics is taken
+    again rather than read."""
+    c.drawn_check = stale_drawn
     c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
     j = c.srv.ok("POST", "/tracks/record?source=injected&activity=foot")
     c.recorded = ((j or {}).get("started") or {}).get("id")
     c.srv.ok("POST", f"/location?lat={PARADISE[0] + 0.0002:.6f}&lon={PARADISE[1]}&accuracy=5")
     c.srv.ok("POST", f"/tracks/stale?lastFixAgeH={STALE_AGE_H}&hold=1")
     c.srv.ok("POST", "/tracks/wayback?on=1")
-    c.srv.ok("POST", "/tracks/ui?bar=1")
+    c.srv.ok("POST", "/tracks/ui?bar=0")
     deadline = time.time() + 30
     while True:
         s = c.srv.ok("GET", "/tracks/stale") or {}
@@ -1196,6 +1214,20 @@ def scr_recording_stale(c):
             raise RuntimeError(f"the stale recording's question did not show: {json.dumps(s)[:300]}")
         time.sleep(1.0)
     time.sleep(1.0)
+
+
+def stale_drawn(raster, sem):
+    """T373: None when the track bar's chips are drawn where the semantics put them (each one's rectangle dark, STALE_DARK),
+    else which are not."""
+    off = []
+    for w in sem.get("windows") or []:
+        for n in w.get("unmerged") or []:
+            if label_of(n) in ("Hide", "Waypoint", "Tracks") and visible(n, sem.get("screenPx") or [raster.w, raster.h]):
+                b = n["boundsPx"]
+                c = colour_read(raster, [max(0, b[0]), max(0, b[1]), min(raster.w, b[2]), min(raster.h, b[3])]) or {}
+                if max(c.get("bg") or [255]) > STALE_DARK:
+                    off.append(label_of(n))
+    return f"drawn away from its semantics: {', '.join(off)}" if off else None
 
 
 def end_recording_stale(c):
@@ -1220,10 +1252,12 @@ def scr_download_card(c):
     c.srv.ok("POST", f"/camera?lat={SUMMIT[0]}&lon={SUMMIT[1]}&zoom=13&bearing=0")
     time.sleep(2.0)
     c.srv.ok("POST", "/areas/region?wait=60000", timeout=120.0)
+    fix_feed_start(c)  # T360: the strip's caption held at "elevation" through the frame and the semantics
     time.sleep(1.5)
 
 
 def end_download_card(c):
+    fix_feed_stop(c)  # T360
     c.srv.call("POST", "/areas/picker/close")
     c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
 # end T343
@@ -1280,9 +1314,16 @@ def readout_gap(c, jump=False):
     apart, [jump] then a network fix 3 km north with no height and one back, then 8 s with none: the values dimmed with
     "no fix 8 s" and the bar's "?" marks. snapshot()'s fresh fix just before the frame makes it "resuming" (still dimmed,
     still marked: the dim leaves on the second fix of a run). The barometer's setting as found is put back by
-    end_readout_states."""
-    c.readout_baro_found = (c.srv.ok("GET", "/settings") or {}).get("readoutBarometer")
+    end_readout_states.
+
+    T372: the pressure entry is switched off for these two screens (put back by end_readout_states): the emulator's
+    barometer reaches the readout only 10 s after the last injected fix, so the entry read 1013 mbar in one run and a dash
+    with its reason line in the next, a line more or less in the glance view, which moved every line under it."""
+    found = c.srv.ok("GET", "/settings") or {}
+    c.readout_baro_found = found.get("readoutBarometer")
+    c.readout_pressure_found = pressure_shown((found.get("readout") or {}).get("pressure"))
     c.srv.ok("POST", "/settings?readoutBarometer=never")
+    c.srv.ok("POST", "/settings?readout.pressure=shown=0")
     c.srv.ok("POST", "/readout/reset")
     for k in range(4):
         c.srv.ok("POST", f"/location?lat={PARADISE[0] + k * 0.00002:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
@@ -1292,6 +1333,13 @@ def readout_gap(c, jump=False):
         time.sleep(1.0)
         c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
     time.sleep(8.0)
+
+
+def pressure_shown(option):
+    """T372: the pressure entry's `shown` as `GET /settings` `readout.pressure` has it ("shown=1;pace=0;..."): "1" or "0",
+    None when not read."""
+    m = re.search(r"(?:^|;)shown=([01])", option or "")
+    return m.group(1) if m else None
 
 
 def scr_readout_states(c):
@@ -1306,18 +1354,54 @@ def end_readout_states(c):
     c.srv.call("POST", "/readout/glance?open=0")
     found = getattr(c, "readout_baro_found", None)
     c.srv.call("POST", f"/settings?readoutBarometer={found or 'auto'}")
+    shown = getattr(c, "readout_pressure_found", None)  # T372
+    c.srv.call("POST", f"/settings?readout.pressure=shown={shown or '1'}")
+
+
+# T372: the glance view's scene, as GET /readout/glance reads it once the view holds: the elevation and the climb
+# "resuming" (dimmed, the first fix after the gap), and in the last minute the one gap and the two jumps.
+GLANCE_SCENE = {"resuming": ("elevation", "climb"), "gaps": 1, "jumps": 2}
+GLANCE_TRIES = 3
+
+
+def glance_scene(g):
+    """T372: what is wrong with the held glance view's scene (`GET /readout/glance`), or None when it is GLANCE_SCENE."""
+    if not g.get("holding"):
+        return "the view does not hold"
+    lines = {l.get("kind"): l for l in g.get("lines") or []}
+    for kind in GLANCE_SCENE["resuming"]:
+        if (lines.get(kind) or {}).get("reasonCode") != "resuming":
+            return f"{kind} reads {(lines.get(kind) or {}).get('reasonCode')!r}, not resuming"
+    recent = (g.get("notes") or {}).get("recent") or []
+    gaps = sum(1 for r in recent if r.startswith("GPS lost"))
+    jumps = sum(1 for r in recent if r.startswith("Position jumped"))
+    if (gaps, jumps, len(recent)) != (GLANCE_SCENE["gaps"], GLANCE_SCENE["jumps"], gaps + jumps):
+        return f"the last minute reads {recent}"
+    return None
 
 
 def scr_glance(c):
     """T363: the glance view (POST /readout/glance?open=1, as a tap on the bar opens it) after a jump and an 8 s gap that a
     fix ended: a line under each value that is not a plain figure (the climb's window filling after the reset) and "In the
-    last minute" with the gap and the jumps. The fix that ends the gap comes before the view opens, so snapshot()'s fresh
-    fix (the second of the run: the dim goes) changes no line's count between the frame and the semantics."""
-    readout_gap(c, jump=True)
-    c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
-    time.sleep(1.5)
-    c.srv.ok("POST", "/readout/glance?open=1")
-    time.sleep(1.0)
+    last minute" with the gap and the jumps.
+
+    T372: the view is opened held (`&hold=1`): it stops refreshing once it has drawn the readout, so the frame and the
+    semantics read one scene however long the frame and the semantics take (a slow capture let the elevation's caption turn
+    to "no fix 6 s" between them, and the fix that snapshot() sends 5 s after the gap ended counted a second gap). The
+    scene is read back and made again, up to GLANCE_TRIES times, when it is not GLANCE_SCENE (a step so slow that the
+    gap-ending fix was 5 s old when the view drew)."""
+    why = None
+    for _ in range(GLANCE_TRIES):
+        readout_gap(c, jump=True)
+        c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=8&ele=1650")
+        time.sleep(0.5)
+        g = c.srv.ok("POST", "/readout/glance?open=1&hold=1") or {}
+        why = glance_scene(g)
+        if why is None:
+            log(f"glance: scene held: {json.dumps((g.get('notes') or {}).get('recent'))}")
+            return
+        c.srv.call("POST", "/readout/glance?open=0")
+    raise RuntimeError(f"the glance view's scene not made in {GLANCE_TRIES} tries: {why}")
 # end T363
 
 
@@ -1417,6 +1501,106 @@ def end_trip_offer(c):
 # end T369
 
 
+# T360
+FIX_FEED_S = 1.0  # a fix this often: the strip's caption turns to "no fix N s" only after a gap of several seconds
+
+
+class FixFeed:
+    """T360: a fresh fix at Paradise every FIX_FEED_S seconds on a thread of its own, from a screen's setup to its end, so
+    the readout strip's caption reads "elevation" in the frame and in the semantics however long the two take (on a loaded
+    PC the semantics came more than 5 s after snapshot()'s one fix, and the overlap line of the strip under the Download
+    card was keyed "no fix N s" in one sweep and "elevation" in the next). The same place and accuracy as every other fix
+    of the tool, so the values beside the caption stay those of a fix standing still."""
+
+    def __init__(self, srv):
+        import threading
+        self.srv, self.stop_event = srv, threading.Event()
+        self.thread = threading.Thread(target=self.run, name="a11y-fix-feed", daemon=True)
+
+    def run(self):
+        while not self.stop_event.wait(FIX_FEED_S):
+            try:
+                self.srv.call("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8", timeout=10)
+            except (OSError, RuntimeError):
+                pass
+
+    def stop(self):
+        self.stop_event.set()
+        self.thread.join(timeout=15)
+
+
+def fix_feed_start(c):
+    fix_feed_stop(c)
+    c.fix_feed = FixFeed(c.srv)
+    c.fix_feed.thread.start()
+
+
+def fix_feed_stop(c):
+    feed = getattr(c, "fix_feed", None)
+    if feed:
+        feed.stop()
+    c.fix_feed = None
+
+
+COVERAGE_TRIES = 20  # one a second: the chip's snapshot (and the panel with it) is made once a second
+
+
+def coverage_scene(chip):
+    """T360: what is wrong with the panel `GET /online` `chip.coverage` reports for the scene, or None: the card open, the
+    section's lines read, and the first naming an offline map that is shown ("<map> · <level> · shown")."""
+    cov = (chip or {}).get("coverage") or {}
+    lines = cov.get("shown") or []
+    if not (chip or {}).get("open"):
+        return "the card is not open"
+    if not lines:
+        return "no panel lines"
+    if not re.search(r" · (Low|Less|Medium|Full) detail · shown$", lines[0]):
+        return f"the first line is {lines[0]!r}, not an offline map shown"
+    return None
+
+
+def scr_coverage_panel(c):
+    """T360: the status chip's card open over Mount Rainier's summit at z13 with its coverage panel ("At the centre of the
+    view", the help icon, the lines from the lookup: the seeded Rainier map shown, then the network's line). The camera, the
+    card and the panel are checked (`GET /online` `chip.coverage`, read twice alike a second apart) before the frame.
+    What it depends on, and how it is pinned and put back:
+    - the clock: the readout strip's caption follows the time since the last fix: a fix every second (FixFeed) from here to
+      end_coverage_panel, after a reset (no climb left by an earlier screen's fixes);
+    - the maps on the phone: the seeded Rainier map, which must be the first line, shown (checked, else the screen fails);
+    - the online tile cache: a terrain tile an earlier screen left there (offline-maps-off views the summit with the map
+      off, so the server's tiles are cached) is ranked by the server's stored depth, z15, ahead of the map's z14, and the
+      scene became "<map> · roads shown", "Viewed earlier · terrain shown" (the verifier's sweep). Pinned by emptying the
+      cache's tiles first (`POST /online/cache/clear`; the offline areas' pinned tiles are kept): with the map on, a view
+      at z13 over the map fetches nothing (the map stores the tiles the view asks), so the scene stays the map's. Not put
+      back (cached tiles cannot be): every later screen meets an empty cache, as on a fresh boot, refilled by its views;
+    - the network and the server word the network's line; neither is changed here, both are written to the log;
+    - the card: closed again by end_coverage_panel (close_all also closes it before every screen)."""
+    c.srv.ok("POST", "/online/cache/clear")
+    c.srv.ok("POST", "/readout/reset")
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+    c.srv.ok("POST", f"/camera?lat={SUMMIT[0]}&lon={SUMMIT[1]}&zoom=13&bearing=0")
+    c.srv.ok("POST", "/online/chip?open=1")
+    fix_feed_start(c)
+    last, why = None, None
+    for _ in range(COVERAGE_TRIES):
+        time.sleep(1.0)
+        chip = (c.srv.ok("GET", "/online") or {}).get("chip") or {}
+        why = coverage_scene(chip)
+        lines = ((chip.get("coverage") or {}).get("lines"))
+        if why is None and lines == last:
+            log(f"coverage-panel: {json.dumps(lines)} (chip {chip.get('text')!r})")
+            return
+        last = lines
+    raise RuntimeError(f"the coverage panel not steady in {COVERAGE_TRIES} s: {why or 'its lines kept changing'}")
+
+
+def end_coverage_panel(c):
+    fix_feed_stop(c)
+    c.srv.call("POST", "/online/chip?open=0")
+    c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
+# end T360
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1486,6 +1670,9 @@ SCREENS = [
     ("download-card-over", scr_download_card_over, end_download_card_over, "map"),
     ("trip-offer", scr_trip_offer, end_trip_offer, "map"),
     # end T369
+    # T360
+    ("coverage-panel", scr_coverage_panel, end_coverage_panel, "map"),
+    # end T360
 ]
 
 
@@ -1547,19 +1734,70 @@ def tap_profile_close(c, sem):
 TAPS = {"map": [tap_settings, tap_activity], "route": [tap_trip_details], "profile": [tap_profile_close]}
 
 
+# T373: the frame is taken between two reads of the semantics that agree, so a layout that moves while the frame is
+# taken (the readout strip's caption changing and the layout rule moving what stands beside it) is caught and taken
+# again rather than read as text on the map. Every labelled node's place is compared by its key (key_label), the live
+# readout's own nodes left out (their words change by design); a pair of reads that differs by more than STEADY_PX at an
+# edge, or a node that came or went, takes the frame again (after a settle), up to FRAME_TRIES times. The screen's entry
+# has `frameTries`, and `unsteady` (the keys that still moved) when the last try did not hold. A screen whose drawing can
+# stand in another arrangement than its semantics sets `drawn_check(raster, sem)` (recording-stale): a frame it answers
+# with a reason is taken again the same way.
+FRAME_TRIES = 6
+STEADY_PX = 4
+
+
+def places(sem):
+    """{(window, label key): sorted bounds} of the unmerged trees' labelled nodes outside the live readout."""
+    out = {}
+    for wi, w in enumerate(sem.get("windows") or []):
+        nodes = w.get("unmerged") or []
+        live = in_layer(nodes, DYNAMIC_TAGS)
+        for n in nodes:
+            lab = label_of(n)
+            if not lab or n["id"] in live or not n.get("boundsPx"):
+                continue
+            out.setdefault((wi, key_label(lab)), []).append(tuple(n["boundsPx"]))
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def shifted(a, b, tol=STEADY_PX):
+    """The label keys whose places differ between two reads (a node that came or went, or an edge past `tol` px)."""
+    out = []
+    for k in sorted(set(a) | set(b), key=str):
+        pa, pb = a.get(k) or [], b.get(k) or []
+        if len(pa) != len(pb) or any(abs(x - y) > tol for ra, rb in zip(pa, pb) for x, y in zip(ra, rb)):
+            out.append(k[1])
+    return out
+
+
 def snapshot(c, name, scale, layer, tags=frozenset()):
     """One screen: settled frame, semantics, dump, layout; the findings. On a screen opened over the map (`layer` "screen")
     the map's own controls (`tags`) are left out of the checks and listed as one `covered` finding where they lie under it."""
     dev, srv = c.dev, c.srv
     settle(dev)
-    # A fresh fix at the same place just before the frame: the readout strip dims its words a few seconds after the last
-    # fix ("no fix 8 s"), which made a slow screen's strip a contrast finding in one sweep and not the next.
-    srv.call("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
-    time.sleep(0.5)
-    _, raster = dev.frame()
-    t = time.time()
-    sem = srv.ok("GET", "/semantics")
-    sem_ms = round((time.time() - t) * 1000)
+    c.frame_tries, c.unsteady = 0, []
+    for _try in range(FRAME_TRIES):
+        if _try:
+            settle(dev, timeout=4.0)
+        # A fresh fix at the same place just before the frame: the readout strip dims its words a few seconds after the
+        # last fix ("no fix 8 s"), which made a slow screen's strip a contrast finding in one sweep and not the next.
+        srv.call("POST", f"/location?lat={PARADISE[0]}&lon={PARADISE[1]}&accuracy=8")
+        time.sleep(0.5)
+        before = srv.ok("GET", "/semantics")
+        _, raster = dev.frame()
+        t = time.time()
+        sem = srv.ok("GET", "/semantics")
+        sem_ms = round((time.time() - t) * 1000)
+        c.frame_tries += 1
+        c.unsteady = shifted(places(before), places(sem))
+        if not c.unsteady and getattr(c, "drawn_check", None):
+            miss = c.drawn_check(raster, sem)  # T373: a screen whose drawing can lag its layout (recording-stale)
+            if miss:
+                c.unsteady = [miss]
+        if not c.unsteady:
+            break
+        log(f"{name}: the layout moved across the frame ({', '.join(c.unsteady[:6])})"
+            f"{'; taken again' if _try < FRAME_TRIES - 1 else '; kept, listed as unsteady'}")
     density = sem.get("density") or 1.0
     screen = sem.get("screenPx") or [raster.w, raster.h]
     nodes = dev.nodes()
@@ -1648,9 +1886,13 @@ def run(args):
                 close_all(srv)
                 try:
                     c.best_start = None
+                    c.drawn_check = None  # T373: set by a screen whose drawing can lag its layout (recording-stale)
                     setup(c)
                     raster, sem, findings, info = snapshot(c, sname, scale, layer, tags)
                     entry.update(info)
+                    entry["frameTries"] = c.frame_tries  # T373
+                    if c.unsteady:
+                        entry["unsteady"] = c.unsteady[:12]
                     if c.best_start is not None:  # T280: the start-time line the frame was taken with
                         entry["bestStart"] = c.best_start
                         log(f"{sname}: start-time line {json.dumps(c.best_start)}")

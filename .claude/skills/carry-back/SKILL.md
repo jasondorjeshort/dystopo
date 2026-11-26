@@ -129,6 +129,7 @@ pusher runs step 6.
 
    <the branch commit's body above its trailers, Carry-back-base line included>
    Dropped: <path> (<why>)                       (one per path, only when any)
+   Changed at review: <what> (ADR NNNN)          (optional: a review changed what the message describes)
    Carry-back: <repo> carry-back/<slug> at <sha40 of FETCH_HEAD>
 
    Co-Authored-By: <each of the branch's lines>

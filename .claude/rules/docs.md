@@ -73,16 +73,29 @@ their one-line replacements. From the Hatchery base, with this project's exempti
   (`README.md`, `decisions/README.md`, `reference/README.md`), base-owned; never edited here.
 - A new directory under `docs/` or a new kind of document gets a line in the last section of
   `docs/ARCHITECTURE.md`.
+- An index is the one list a doc may carry. Prose never inventories files, fields, routes or counts
+  ("the twelve commands", "a 400-line file"): every ordinary commit moves the figure, and a later
+  session then "corrects" it. Write the rule that generates the list instead.
+
+## Queues: one file per item, deleted when done
+
 - `docs/ideas/` is a queue: one dated file per item, deleted on the task branch that lands its work,
   never ticked (ADR 0036). Git has the history; a directory holding only its README is the resting
   state. An idea ends in at most one block: `Plan:` (settled, pass-sized, ready to build),
   `Question:` with a blank `Answer:` (the owner's choice; they fill the answer in), or `Waits:` (the
-  owner's deferral to a named trigger, or at rest on the owner's quoted words). No block means
-  untriaged. The `triage` skill writes blocks; only the owner decides a `Waits:` (an agent writes
-  one only from the owner's quoted words) or deletes an idea for not being wanted.
-- An index is the one list a doc may carry. Prose never inventories files, fields, routes or counts
-  ("the twelve commands", "a 400-line file"): every ordinary commit moves the figure, and a later
-  session then "corrects" it. Write the rule that generates the list instead.
+  owner's deferral: to a trigger it names, or, as `Waits: at rest`, until the owner wakes it). No
+  block means untriaged. The `triage` skill writes blocks. Only the owner decides a `Waits:` or that
+  an idea is not wanted; the session the owner answered (or the coordinator, from words the owner
+  wrote under `Answer:`) writes the line, or deletes the file, from those words, quoted with `(the
+  owner, <date>)`, in the commit message for a deletion; never a subagent, never by default.
+- Entries on an idea (`Came up again:`, `New:`, `Use:`; formats in the `brainstorm` skill) are one
+  physical line each, above the block, a blank line before the block; no line of a block starts with
+  an entry prefix. `queue-list.js` warns of an entry below a block and of a wrapped one.
+- A file with a `New:` line, or ending in an offer Question (`Question: offered`), is not ready to
+  build: the block that takes a `New:` in removes the line; the coordinator acts on an offer answer.
+  A pass that lands a `Plan:` deletes the file when no `Use:` line remains and otherwise removes the
+  block, leaving the file untriaged.
+- Where `docs/ideas/README.md` says otherwise, this section is the record (Hatchery ADR 0026).
 
 ## Frontmatter
 
@@ -138,5 +151,7 @@ their one-line replacements. From the Hatchery base, with this project's exempti
   hands it to a shell.
 - A path written in a doc names a file that exists; the post-edit hook warns about one that does
   not. A paragraph or list item that must name a path that is gone or not yet there carries
-  `[no-check: <reason>]`; closed records (proposals, decisions, findings) are exempt by policy. A
-  moved paragraph leaves a pointer behind.
+  `[no-check: <reason>]`; closed records (proposals, decisions, findings) are exempt by policy.
+  The check does not read a placeholder (`NNNN`, `YYYY`, `*`, or a `<slug>`, `{a,b}` or `$VAR`
+  token) or an elided path (a `...` segment, as in `src/.../X.kt`) as a path, so those need no
+  marker. A moved paragraph leaves a pointer behind.

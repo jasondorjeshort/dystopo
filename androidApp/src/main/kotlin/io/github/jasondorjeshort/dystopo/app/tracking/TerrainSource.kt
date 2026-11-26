@@ -20,7 +20,6 @@ import io.github.jasondorjeshort.dystopo.nav.TerrainLiveOptions
 import io.github.jasondorjeshort.dystopo.nav.TerrainState
 import io.github.jasondorjeshort.dystopo.readout.Altimeter
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
-import io.github.jasondorjeshort.dystopo.routing.ElevationSampler
 import io.github.jasondorjeshort.dystopo.routing.GraphTileArchive
 import io.github.jasondorjeshort.dystopo.routing.RoutingGraph
 import io.github.jasondorjeshort.dystopo.store.LocationFix
@@ -76,7 +75,8 @@ object TerrainSource : LocationSource {
     private val listeners = CopyOnWriteArrayList<(LocationFix) -> Unit>()
     private val options = TerrainLiveOptions()
 
-    private val dem = ElevationSampler { lat, lon -> runCatching { io.github.jasondorjeshort.dystopo.app.trips.Trips.demSampler()?.elevation(lat, lon) }.getOrNull() ?: Double.NaN }
+    /** T358 (ADR 0066 decision 3): the position estimate reads only what the phone holds or has cached and starts no fetch. */
+    private val dem = io.github.jasondorjeshort.dystopo.app.terrain.PointRead.sampler(io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.HELD, "estimate")
 
     // Worker thread only.
     private val live = TerrainLive(options, ::graphAt, dem)

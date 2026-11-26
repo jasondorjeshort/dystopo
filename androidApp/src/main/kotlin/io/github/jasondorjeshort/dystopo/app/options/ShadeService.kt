@@ -7,6 +7,7 @@ import io.github.jasondorjeshort.dystopo.app.TileResult
 import io.github.jasondorjeshort.dystopo.app.TileService
 import io.github.jasondorjeshort.dystopo.app.online.OnlineTiles
 import io.github.jasondorjeshort.dystopo.app.online.TileCache
+import io.github.jasondorjeshort.dystopo.dem.MergedTile
 import io.github.jasondorjeshort.dystopo.tiles.DemPyramid
 import io.github.jasondorjeshort.dystopo.tiles.ShadeOptions
 import io.github.jasondorjeshort.dystopo.tiles.ShadeTileStats
@@ -87,6 +88,10 @@ class ShadeService(
      * deeper than the maps), for a tile the caller says the maps do not make ([tile]'s `packCovers` false).
      */
     private val heldPyramid: () -> DemPyramid? = { null },
+    // ---- T357 (ADR 0066 decision 4): the maps tile z/x/y is composed from across a finer map's edge, or null where one map
+    // makes it; asked in the maps' branch only, after the held and online paths, so a deeper held tile answers whole.
+    private val edgeFor: (Int, Int, Int) -> MergedTile? = { _, _, _ -> null },
+    // end T357
 ) {
     val served = counters.served
     val cacheHits = counters.cacheHits
@@ -125,8 +130,11 @@ class ShadeService(
             val bytes = if (held != null) {
                 generate(held, o, z, x, y)
             } else if (packCovers || online == null) {
-                val (p, identity) = pyramidFor(z, x, y) ?: return notFound()
-                cachedOrGenerate(p, identity, o, z, x, y)
+                edgeFor(z, x, y)?.let { m -> cachedOrGenerate(o.key, m.key, z, x, y, cacheHits) { edgeBytes(m, z, x, y) { d -> drawShade(m, o, z, x, y, d) } } } // T357
+                    ?: run {
+                        val (p, identity) = pyramidFor(z, x, y) ?: return notFound()
+                        cachedOrGenerate(p, identity, o, z, x, y)
+                    }
             } else {
                 online.shadeTile(o.key, z, x, y) { p, readZoom -> generate(p, o, z, x, y, readZoom) } // T74: disk-cached like online contours; T104: the pack's first zoom
             }
@@ -207,6 +215,51 @@ class ShadeService(
         }
     }
 
+    // ---- T357: an edge tile ([MergedTile]) is drawn from the composed pyramid once for each map's depth (the depth sets the
+    // sample zoom: [ShadeTiles.plan]) and the drawings are mixed by the maps' shares of each pixel, so the tile matches the
+    // one-map tiles beside it: the coarse map's own drawing outside the fine box, the fine map's past the band.
+
+    private fun edgeBytes(m: MergedTile, z: Int, x: Int, y: Int, draw: (Int) -> IntArray): ByteArray {
+        val byDepth = HashMap<Int, IntArray>()
+        val layers = m.depths.map { d -> byDepth.getOrPut(d) { draw(d) } }
+        val argb = if (byDepth.size == 1) layers[0] else MergedTile.mix(layers, m.shares(z, x, y, ShadeTiles.TILE_SIZE))
+        if (argb.all { it == 0 }) {
+            transparent.incrementAndGet()
+            return emptyPng
+        }
+        return encode(argb, ShadeTiles.TILE_SIZE)
+    }
+
+    /** The shade of tile z/x/y from [m]'s composed pyramid as a map of depth [depth] draws it (timed into [stats]). */
+    private fun drawShade(m: MergedTile, o: ShadeOptions, z: Int, x: Int, y: Int, depth: Int): IntArray {
+        val requested = System.nanoTime()
+        slots.acquire()
+        try {
+            val started = System.nanoTime()
+            val plan = ShadeTiles.plan(z, x, y, depth)
+            val grid = ShadeTiles.sample(m.pyramid, plan)
+            val sampled = System.nanoTime()
+            val tile = ShadeTiles.render(grid, plan, o)
+            val done = System.nanoTime()
+            stats.add(plan, tile, (done - started) / 1e6, (sampled - started) / 1e6, 0.0, 0, o, (started - requested) / 1e6, null)
+            return tile.argb
+        } finally {
+            slots.release()
+        }
+    }
+
+    /** The sun's shade of tile z/x/y from [m]'s composed pyramid as a map of depth [depth] draws it. */
+    private fun drawSun(m: MergedTile, o: SunShadeOptions, z: Int, x: Int, y: Int, depth: Int): IntArray {
+        slots.acquire()
+        try {
+            val plan = ShadeTiles.sunPlan(z, x, y, depth, o)
+            return ShadeTiles.sunRender(ShadeTiles.sunSample(m.pyramid, plan), plan, o).argb
+        } finally {
+            slots.release()
+        }
+    }
+    // end T357
+
     /** T188: the `v` of the sun tiles' URL: the pack and the server's content version (the instant is `m`). */
     fun sunUrlVersion(): String = demIdentity + (online?.fetcher?.contentTag?.takeIf { it.isNotEmpty() }?.let { "-$it" } ?: "")
 
@@ -222,11 +275,14 @@ class ShadeService(
             val bytes = if (held != null) {
                 generateSun(held, o, z, x, y).first
             } else if (packCovers || online == null) {
-                val (p, identity) = pyramidFor(z, x, y) ?: run {
-                    sv.notFound.incrementAndGet()
-                    return TileResult.notFound()
-                }
-                cachedOrGenerate(o.key, identity, z, x, y, counters.sunCacheHits) { generateSun(p, o, z, x, y).first }
+                edgeFor(z, x, y)?.let { m -> cachedOrGenerate(o.key, m.key, z, x, y, counters.sunCacheHits) { edgeBytes(m, z, x, y) { d -> drawSun(m, o, z, x, y, d) } } } // T357
+                    ?: run {
+                        val (p, identity) = pyramidFor(z, x, y) ?: run {
+                            sv.notFound.incrementAndGet()
+                            return TileResult.notFound()
+                        }
+                        cachedOrGenerate(o.key, identity, z, x, y, counters.sunCacheHits) { generateSun(p, o, z, x, y).first }
+                    }
             } else {
                 online.shadeTile(o.key, z, x, y) { p, _ -> generateSun(p, o, z, x, y).first }
             }
@@ -299,10 +355,16 @@ class ShadeService(
         return ShadeTiles.pointAnswer(p, lat, lon, epochMs).takeUnless { it.horizon.groundM.isNaN() }
     }
 
-    /** T194: the DEM pyramid under [lat], [lon] (the pack's, deepest first, else the online DEM's), or null; terrain shade along a route reads it. */
+    // ---- T358 (ADR 0066 build task 4): the long-press card, the turn-back clock and the route tools read the one point read ----
+    /**
+     * T194: the DEM pyramid under [lat], [lon], or null; terrain shade along a route reads it. T358: what the phone holds there
+     * composed by the map's rule ([io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt], held now with the
+     * point's tile fetched behind where the network is deeper), else, where nothing is held, the online DEM's as before.
+     */
     fun pyramidAt(lat: Double, lon: Double): DemPyramid? =
-        POINT_ZOOMS.firstNotNullOfOrNull { z -> pyramidFor(z, WebMercator.lonToX(lon, z).toInt(), WebMercator.latToY(lat, z).toInt())?.first }
+        runCatching { io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt(lat, lon, io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND) }.getOrNull()
             ?: online?.pyramid()
+    // end T358
 
     /** T193: a turn-back clock's terrain day at a point: [day] when the sweep answered, [noData] without elevation there. */
     class TerrainAt(val day: io.github.jasondorjeshort.dystopo.nav.Sun.TerrainDay?, val noData: Boolean, val sweepMs: Double?, val totalMs: Double, val error: String? = null)
@@ -389,8 +451,6 @@ class ShadeService(
         /** T193: the terrain sunset's sweeps, one at a time, off the UI thread and the tile permits. */
         private val terrainWorker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-terrain-sunset").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
 
-        /** T188: the DEM zooms a point answer looks for a pack at, deepest first. */
-        private val POINT_ZOOMS = listOf(ShadeTiles.POINT_ZOOM, 12, 10, 8)
 
         /** [FastPng]: Bitmap.compress took most of a tile's time. */
         private fun encode(argb: IntArray, size: Int): ByteArray = FastPng.encode(argb, size, size)

@@ -4,9 +4,7 @@ import android.os.SystemClock
 import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
-import io.github.jasondorjeshort.dystopo.app.Pack
 import io.github.jasondorjeshort.dystopo.app.PackSet
-import io.github.jasondorjeshort.dystopo.app.TileService
 import io.github.jasondorjeshort.dystopo.model.RoutePoint
 import io.github.jasondorjeshort.dystopo.render.ContourUnits
 import io.github.jasondorjeshort.dystopo.routing.CostModel
@@ -29,7 +27,8 @@ import java.util.concurrent.TimeUnit
  * planned (the route card, `GET /route`, the printed sheet's margin); never stored (no format change). One worker
  * thread; the last [CACHE] results are kept by the route's points, its mode and the pack set, so the card, the sheet
  * and the debug route share one computation. Not for drive routes (the ground beside a road says little). The words
- * are [ExposureText]'s (pure, `ExposureAlongTest`). No setting (the survey: one practice, ADR 0044).
+ * are [ExposureText]'s (pure, `ExposureAlongTest`). No setting (the survey: one practice, ADR 0044). T358: the DEM is the
+ * one point read's composed pyramid ([demFor]), no longer one pack's.
  */
 object RouteExposure {
     /** One route's terrain, the DEM pack read, the time taken, or the error. */
@@ -43,8 +42,8 @@ object RouteExposure {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Triple<List<RoutePoint>, TravelMode, Int>, Future<Result>>?) = size > CACHE
     }
 
-    /** One sampler per opened DEM pack (its own small tile cache), read under a lock on the worker. */
-    private val samplers = java.util.WeakHashMap<Pack, ElevationSampler>()
+    /** One sampler per composed pyramid (T358), read under a lock on the worker. */
+    private val samplers = java.util.WeakHashMap<DemPyramid, ElevationSampler>()
 
     @Volatile var computed = 0
         private set
@@ -75,23 +74,26 @@ object RouteExposure {
     fun await(points: List<RoutePoint>, mode: TravelMode, ms: Long = 10_000): Result? =
         runCatching { start(points, mode)?.get(ms, TimeUnit.MILLISECONDS) }.getOrNull()
 
-    private fun demFor(points: List<RoutePoint>, packs: PackSet): Pack? {
-        val lat0 = points.minOf { it.lat }; val lat1 = points.maxOf { it.lat }
-        val lon0 = points.minOf { it.lon }; val lon1 = points.maxOf { it.lon }
-        return packs.demPacks.firstOrNull { d -> d.header.let { h -> h.minLon <= lon0 && h.maxLon >= lon1 && h.minLat <= lat0 && h.maxLat >= lat1 } }
-            ?: packs.demPacks.firstOrNull { d -> d.header.let { h -> h.maxLon >= lon0 && h.minLon <= lon1 && h.maxLat >= lat0 && h.minLat <= lat1 } }
-    }
+    /**
+     * T358 (ADR 0066 build task 4): the terrain along the route by the map's rule, what the phone holds composed at the route's
+     * first point (else its middle, else its end) with that point's tile fetched behind where the network is deeper
+     * ([io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt]); before, the one map whose box held the route. The
+     * source named is what answers at that point.
+     */
+    private fun demFor(points: List<RoutePoint>): Pair<DemPyramid, String?>? =
+        listOf(points.first(), points[points.size / 2], points.last()).firstNotNullOfOrNull { p ->
+            io.github.jasondorjeshort.dystopo.app.terrain.PointRead.pyramidAt(p.lat, p.lon, io.github.jasondorjeshort.dystopo.app.terrain.PointRead.Mode.BEHIND, "exposure")
+                ?.let { it to io.github.jasondorjeshort.dystopo.app.terrain.PointRead.sourceAt(p.lat, p.lon) }
+        }
 
     private fun compute(points: List<RoutePoint>, mode: TravelMode, packs: PackSet): Result {
         LineState.hold()
         val t0 = SystemClock.elapsedRealtime()
-        val dem = demFor(points, packs)
-        if (dem == null) return Result(null, SystemClock.elapsedRealtime() - t0, null).also { computed++ }
+        val (pyramid, source) = runCatching { demFor(points) }.getOrNull() ?: return Result(null, SystemClock.elapsedRealtime() - t0, null).also { computed++ }
         return try {
             val params = ExposureParams()
             val sampler = synchronized(samplers) {
-                samplers.getOrPut(dem) {
-                    val pyramid = DemPyramid(dem.header.minZoom, dem.header.maxZoom, TileService.demDecoder(), cacheTiles = 24) { z, x, y -> dem.tile(z, x, y) }
+                samplers.getOrPut(pyramid) {
                     val s = DemElevation(pyramid, zoom = params.zoom)
                     val lock = Any()
                     ElevationSampler { lat, lon -> synchronized(lock) { s.elevation(lat, lon) } }
@@ -100,10 +102,10 @@ object RouteExposure {
             val r = ExposureAlong.find(points, sampler, CostModel(mode), params)
             val ms = SystemClock.elapsedRealtime() - t0
             Log.i(TAG, "${r.samples.size} samples along ${r.lengthM.toInt()} m in $ms ms: over 30 ${r.over30.distanceM.toInt()} m, ridges ${r.ridge.distanceM.toInt()} m")
-            Result(r, ms, dem.name)
+            Result(r, ms, source)
         } catch (e: Exception) {
             Log.w(TAG, "terrain along the route failed", e)
-            Result(null, SystemClock.elapsedRealtime() - t0, dem.name, "${e.javaClass.simpleName}: ${e.message}")
+            Result(null, SystemClock.elapsedRealtime() - t0, source, "${e.javaClass.simpleName}: ${e.message}")
         } finally {
             computed++
         }
