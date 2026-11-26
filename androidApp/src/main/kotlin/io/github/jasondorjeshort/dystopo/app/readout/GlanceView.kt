@@ -399,7 +399,8 @@ private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, ni
         // T363: why the value is not a plain figure and what ends it, at full strength under the dimmed figure.
         // Its row is always there (a blank one when the line has no reason) so the figures never move as a state comes and goes.
         if (l.reason != null) SideEffect { Glance.reasonPx[l.kind] = reasonPx } else SideEffect { Glance.reasonPx.remove(l.kind) }
-        BasicText(l.reason ?: " ", style = style(density, reasonPx, false, valueColor), maxLines = 2, onTextLayout = overflow("reason"))
+        // T384: a blank row is no text node a screen reader or a check reads (T389 baselined them as textOutside).
+        BasicText(l.reason ?: " ", if (l.reason == null) Modifier.clearAndSetSemantics { } else Modifier, style = style(density, reasonPx, false, valueColor), maxLines = 2, onTextLayout = overflow("reason"))
     }
 }
 
