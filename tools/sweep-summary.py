@@ -426,6 +426,11 @@ def a11y(d, part):
         out["skipped"] = r["skipped"]
     if r.get("errors"):
         out["errors"] = r["errors"]
+    # T381: the screens whose layout still moved across their frame (the a11y tool's `unsteady`, T373), with what moved.
+    unsteady = {s.get("screen"): s["unsteady"] for s in r.get("screens") or [] if s.get("unsteady")}
+    if unsteady:
+        out["unsteady"] = unsteady
+    # end T381
     return out
 # end T270
 

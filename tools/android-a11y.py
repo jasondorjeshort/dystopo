@@ -1600,6 +1600,86 @@ def end_coverage_panel(c):
     c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
 # end T360
 
+# T381
+HOLD_S = 8.0  # the layout must stand still this long (GET /layout read every HOLD_STEP_S) before the frame
+HOLD_STEP_S = 0.5
+HOLD_DEADLINE_S = 40.0  # past this without HOLD_S of stillness the screen fails (setup raises: the part is red)
+
+
+def layout_places(srv):
+    """T381: what moves when the map's layout flips: the rule's rectangles of the track bar, the online column, the Routes
+    chip, the activity chip and the readout strip (`GET /layout` `elements`), and "Hide" where the semantics put it
+    while it is drawn."""
+    lay = srv.ok("GET", "/layout") or {}
+    out = {e.get("name"): e.get("rectPx") for e in lay.get("elements") or []
+           if e.get("name") in ("waypointAndTracks", "onlineIndicator", "routesChip", "activityChip", "readoutStrip")}
+    sem = srv.ok("GET", "/semantics") or {}
+    for w in sem.get("windows") or []:
+        for n in w.get("merged") or []:
+            # Only a Hide drawn on the screen: a hidden bar's node stays in the tree, unplaced, wherever its parent put it.
+            if label_of(n) == "Hide" and n.get("clickable") and visible(n, sem.get("screenPx") or [1 << 30, 1 << 30]):
+                out["Hide"] = n.get("boundsPx")
+    return out
+
+
+def hold_layout(c, name):
+    """T381: wait until the layout stood still for HOLD_S (every element of layout_places at the same place in every read),
+    else fail the screen after HOLD_DEADLINE_S with what moved. Logs how long it took and how many changes it saw."""
+    t0 = time.time()
+    last, since, changes, moved = layout_places(c.srv), time.time(), 0, set()
+    while time.time() - since < HOLD_S:
+        if time.time() - t0 > HOLD_DEADLINE_S:
+            raise RuntimeError(f"{name}: the layout did not hold for {HOLD_S:.0f} s in {HOLD_DEADLINE_S:.0f} s "
+                               f"({changes} changes: {', '.join(sorted(moved))})")
+        time.sleep(HOLD_STEP_S)
+        cur = layout_places(c.srv)
+        if cur != last:
+            changes += 1
+            moved |= {k for k in set(cur) | set(last) if cur.get(k) != last.get(k)}
+            last, since = cur, time.time()
+    log(f"{name}: the layout held {HOLD_S:.0f} s after {time.time() - t0:.1f} s ({changes} changes before)")
+
+
+def scr_recording_stale_unfolded(c):
+    """T381: the finding of 2026-11-25's scene, which T373 left folded: scr_recording_stale's recording (its last fix
+    three days old, the debug age held; the question card at the bottom; the turn-back chip on, its card "No turn-back
+    time" at the top) with the track bar's panel unfolded. Before T381 this flipped at font 2.0 between the online column
+    shown with the bar a row under it and the column hidden with the bar a column at the right, each frame (the row's
+    width read the online column's drawn edge). The screen fails unless the layout holds HOLD_S (hold_layout), and keeps
+    T373's frame check (stale_drawn). What it depends on and how it is pinned: the clock: the strip's caption follows the
+    time since the last fix (FixFeed: a fix every second at Paradise, from here to the end), the recording's age is the
+    held debug age (no clock moved), and the panel's time counts up from the recording's start (digits only, the same
+    width); the server and the network word the online column's chip, written to the log, not changed."""
+    scr_recording_stale(c)
+    c.srv.ok("POST", "/tracks/ui?bar=1")
+    fix_feed_start(c)
+    chip = ((c.srv.ok("GET", "/online") or {}).get("chip") or {}).get("text")
+    log(f"recording-stale-unfolded: the online chip reads {chip!r}")
+    hold_layout(c, "recording-stale-unfolded")
+
+
+def end_recording_stale_unfolded(c):
+    fix_feed_stop(c)
+    end_recording_stale(c)
+
+
+def scr_activity_covered(c):
+    """T381: the activity picker opened from the activity chip (`POST /tracks/picker?open=mode`) over coverage-panel's
+    scene (the status chip's card open with its coverage section, scr_coverage_panel: the seeded Rainier map, a fix every
+    second, the online cache emptied first). The owner's frame of 2026-11-24: the picker under the right-hand column, the map
+    showing through it. Since T381 the picker's paper is opaque and the rule gives the bar's column (the picker in it) its
+    box, which the Routes chip, the activity chip and the compass stand under or yield to. Fails unless the layout holds
+    HOLD_S. Pinned as scr_coverage_panel pins it; put back by end_activity_covered (close_all closes the picker)."""
+    scr_coverage_panel(c)
+    c.srv.ok("POST", "/tracks/picker?open=mode")
+    hold_layout(c, "activity-covered")
+
+
+def end_activity_covered(c):
+    c.srv.call("POST", "/tracks/picker?open=close")
+    end_coverage_panel(c)
+# end T381
+
 
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
@@ -1673,6 +1753,10 @@ SCREENS = [
     # T360
     ("coverage-panel", scr_coverage_panel, end_coverage_panel, "map"),
     # end T360
+    # T381
+    ("recording-stale-unfolded", scr_recording_stale_unfolded, end_recording_stale_unfolded, "map"),
+    ("activity-covered", scr_activity_covered, end_activity_covered, "map"),
+    # end T381
 ]
 
 
