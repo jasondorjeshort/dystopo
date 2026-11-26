@@ -22,3 +22,11 @@ from "drawn if geometry allows" into a forecast people can test, and the "I can 
 
 - A forecast source with a permissive licence and a lapse rate or levels near the ground (registry first).
 - How large the effect is at 100 to 200 km for the public areas: a measurement before any build.
+
+Question: measure how much refraction moves the far skyline before deciding on a forecast source, or rest the idea?
+Options: (1) one read-only measurement pass first (recommended: a `devtool` run of the skyline from Paradise and from
+the Mont Blanc area at `Horizon.REFRACTION_K` 0.07, 0.13 and 0.20, listing which peaks past 100 km change state; if
+none or few do, the idea rests with the figure, and a forecast source is researched only if many do); (2) rest it until
+the 200 km view range is built; (3) a proposal now, the forecast source and the model together.
+
+Answer:
