@@ -1,6 +1,6 @@
 ---
 name: update-from-hatchery
-description: Apply the base-owned changes of the Hatchery repository to a decanted or adopted project as one three-way patch from its recorded base line, resolving conflicts by the ownership map and the departure table. Use when asked to update from Hatchery, sync the base, or take base changes.
+description: Apply the base-owned changes of the Hatchery repository to a decanted or adopted project as one three-way patch from its recorded base line, resolving conflicts by the ownership map and the departure table. Ends with the brainstorm offer (the `brainstorm` skill). Use when asked to update from Hatchery, sync the base, or take base changes.
 ---
 
 # Update from Hatchery
@@ -74,7 +74,8 @@ Run every printed command in the Bash tool, never PowerShell: its pipe re-encode
    - conflict markers: step 4 for that path.
 6. `the helper --report --ref <sha> [--exclude ...]` with the same excludes; its sections go in the
    report, and these need an action:
-   - `unclassified`: did not arrive; file a carry-back idea for Hatchery to classify.
+   - `unclassified`: did not arrive; file an idea titled `For the base: ` (`brainstorm` skill) for
+     Hatchery to classify.
    - `excluded`: seen, not applied; a guard fix to an excluded hook is the project's by hand.
    - `replaced sections`: read the base's new text against the project's replacement file under
      `.claude/project/`; update it or drop it and restore the import line.
@@ -90,6 +91,32 @@ Run every printed command in the Bash tool, never PowerShell: its pipe re-encode
 8. Every update: set the `Hatchery base:` line in the provenance ADR to `<sha>`, only when every
    failed path has a disposition (excluded, taken, already done, kept: row); otherwise a path
    would drop out of every later diff unseen. On a first update the ADR is step 7's.
+   Then the ideas this project leaves to the base (`brainstorm` skill, "After an update from the
+   base"), in Bash from the root, with the sha written out:
+
+   ```
+   repo=$(basename -s .git "$(git remote get-url origin 2>/dev/null || pwd)"); E=$(mktemp)
+   F=$(git log <sha> --format='%x01%h%n%B' | awk 'index($0, "\001") == 1 { h = substr($0, 2); next } /^Base-idea: / { sub(/[ \t\r]+$/, ""); print h "\t" $0 }')
+   j=$(node .claude/hooks/queue-list.js ideas --json 2>"$E") || echo "base-idea: listing failed: $(head -1 "$E")"; rm -f "$E"
+   [ -n "$j" ] && printf '%s' "$j" | node -e '
+   let rows; try { rows = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch (e) { console.log("failed -"); rows = []; }
+   for (const r of rows) if (String(r.title).startsWith("For the base: ")) console.log(r.block + " " + r.file);
+   ' | while read -r b f; do
+     [ "$b" = failed ] && { echo "base-idea: listing failed: not JSON"; continue; }
+     hit=$(printf '%s\n' "$F" | L="Base-idea: $repo docs/ideas/$f" awk -F'\t' '($2 "") == ENVIRON["L"] { print $1; exit }')
+     n=$(grep -rlF -- "$f" docs/design/decisions/ | head -1)
+     echo "base-idea: $f: ${hit:+filed }${hit:-kept} ($b${n:+, named in $n})"
+   done
+   ```
+
+   `git rm` each file whose line ends `filed <sha7> (untriaged)`, and no other: the base holds it
+   as its own idea, and the deletion rides in step 10's commit. `filed` is the whole `Base-idea:`
+   line found as written in a commit of the base's history up to `<sha>`, compared as a string and
+   never as a pattern. A line that ends `named in <path>)` is kept while that record names the file
+   (a departure row's `Carry-back` cell, ADR 0019, would otherwise point at nothing); it goes at
+   the first update after the record stops naming it. Every line that is not a deletion goes in
+   the report as printed; `listing failed` or a block printed `?` means a file was not read, and
+   nothing is deleted on its account.
 9. Checks, each must pass or be reported verbatim: `node --version`;
    `node .claude/hooks/usage-gate.js < /dev/null` exits 0; the lines of pusher check 7 print no
    `FAIL`: `--cap-check` over the docs, the handoff total, and
@@ -99,6 +126,14 @@ Run every printed command in the Bash tool, never PowerShell: its pipe re-encode
 10. Commit from the agent policy allows (the `runner` below HOLD, the main session at any level),
    subject `Update from Hatchery <FROM7>..<sha7>`, body the incoming list. Do not push; pushing
    goes through the `commit` skill's Pushing section.
+11. The brainstorm offer (`brainstorm` skill, "After an update from the base"), once step 10's
+   commit exists: every update ends in one, at HOLD too and never at STOP, and it does not count as
+   the session's prompted offer.
+   Whoever ran steps 1 to 10 lists up to nine candidates, one line and an anchor each, each marked
+   `base` (a friction or a gap in a base-owned file that this update showed) or `project` (what the
+   incoming changes suggest for the project's own rules, policy, skills and docs); a subagent puts
+   them in its report, since only the coordinator can ask the owner. A defect is not a candidate:
+   it is filed as before. An update that stopped before step 10 makes no offer.
 
 ## Report
 
@@ -106,6 +141,13 @@ Run every printed command in the Bash tool, never PowerShell: its pipe re-encode
 - Every failed path with its disposition; departure rows written; excludes added.
 - The `--report` sections, the actions taken for each, and check results (failures verbatim).
 - What the project should act on: new skills, changed hooks or agreement text, new ADRs to read.
+- The ideas left to the base: step 8's lines, and which files were deleted.
+- Defects this update showed in a base-owned file, one line and an anchor each: the coordinator
+  files each as before, without an offer, titled `For the base: ` unless the project is fixing it
+  itself.
+- Up to nine candidates for the offer, one line and an anchor each, marked `base` or `project`
+  (step 11). The coordinator makes the offer in the turn in which it reports this update to the
+  owner.
 
 ## Rules
 

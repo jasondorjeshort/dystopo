@@ -74,7 +74,8 @@ Decisions so far:
   marker line rows) and 0018 (the privacy keys, the never and user allow lists, the scan CLI and
   the pre-push hook path), 0021 (role defaults, `privacy.identities` as extras, two keys) and 0026
   (the idea-grammar row's record, five listing fields, the two Deferred items). Amended by 0025
-  (three usage keys; the compatibility check's policy-schema half).
+  (three usage keys; the compatibility check's policy-schema half) and 0028 (a title convention on
+  idea files).
 - [0014 Handoff layout](0014-handoff-layout.md): one
   `docs/HANDOFF.md` by default, no hash, the edit rides in the work commit; a per-stream split
   (`@handoff/<file>.md` lines, 40 each, 120 together, no README, no fixed files) the tooling
@@ -96,7 +97,8 @@ Decisions so far:
   numbering from 0016 up, projects from 0001; `update.exclude`. Siblings: [the map](0016-ownership-map.md),
   [the procedure](0016-update-procedure.md), [the migration](0016-migration.md).
   Supersedes 0008; supersedes in part 0002, 0004, 0006, 0007, 0009, 0010, 0013. Amended by 0019
-  (item 6 and the map sibling: the `Carry-back` column values).
+  (item 6 and the map sibling: the `Carry-back` column values) and 0028 (the update ends in an
+  offer and checks the ideas left to the base).
   [no-check: the map and the subtree exist once the ADR is implemented]
 - [0017 Queue directories list on demand](0017-queue-directories-list-on-demand.md):
   `docs/ideas/`, `docs/operator/` and `docs/findings/` keep no per-file index; `node
@@ -130,7 +132,8 @@ Decisions so far:
   sibling checkouts by their base line; landed and declined states are commits on `main` found by
   `git log --grep`; a `carry-back` skill (send and land), fitness check `CB1`; the issue flow
   deferred to the owner's `Waits:`. Amends 0016 (item 6, the column values) and 0018 ("Not
-  covered").
+  covered"). Amended by 0028 (how Hatchery finds a request without a diff; the `Base-idea:` line).
+  Superseded in part by 0029 (item 4: a sibling list is kept, on the machine and never tracked).
 - [0020 Attribution trailers and the web committer](0020-attribution-trailers-and-the-web-committer.md):
   the owner allows attribution trailers; a `Claude-Session:` line passes the scan only in a
   message's trailer block with one `claude.ai` link as its value, and stays a hit everywhere else;
@@ -186,7 +189,8 @@ Decisions so far:
   `queue-list.js` gains five `--json` fields and two placement warnings; one record line per offer;
   the carried `triage` text lands with seven edits. Formats, reader contract, build order and the
   migration per tree in [the sibling](0026-brainstorm-contract.md). Supersedes in part 0007 and
-  0013; amends 0017. [no-check: the skill exists once the ADR is implemented]
+  0013; amends 0017. Amended by 0028 (the offer after an update, outside the one prompted offer;
+  the title `For the base: `). [no-check: the skill exists once the ADR is implemented]
 - [0027 The wave lead is withdrawn](0027-wave-lead-withdrawn.md): the pilot failed K1 on every reading and
   the owner withdrew the lead; the `wave-lead` agent, its two hook entries, its sentences, its script with
   group `WL`, the gate's finish-line branch and the status line's ` finish <n>` go, in two steps (text by a
@@ -195,3 +199,26 @@ Decisions so far:
   the relay by review-file path and the wrap-up commit by pathspec stay; a migration row per tree; the idea
   files it makes moot are named for the owner's word. Supersedes in part 0025; withdraws 0025's parts of
   0006, 0007 and 0022.
+- [0028 An update ends in a brainstorm offer](0028-brainstorm-after-update.md): in a tree with a base
+  line every update that reaches its commit ends in an offer the coordinator makes, outside the
+  session's one prompted offer, at HOLD too and never at STOP: at most nine lines under two headings,
+  for the base and for this project's workflow, from candidates the updating agent reports; an idea a
+  project leaves to the base is titled `For the base: `, is skipped by the project's triage and
+  listed by Hatchery's (`base-idea:` lines, read with Hatchery's own reader; a sibling not beside
+  Hatchery on the owner's word); Hatchery's filing commit carries `Base-idea: <repo> docs/ideas/<file>`,
+  matched whole as a string, and the project's next update deletes its copy unless a decision record
+  names it; four defaults the owner can reverse. The exact edits to five skills and the rule file,
+  and the check, in [the sibling](0028-update-offer-edits.md). Amends 0026, 0019, 0016 and 0013 by
+  additions. Superseded in part by 0029 (a sibling not beside Hatchery is read from the machine's
+  list, not on the owner's word each time; the closing line; the variable `X`).
+- [0029 The machine's sibling list](0029-machine-sibling-list.md): `~/.claude/hatchery-siblings.txt`,
+  one file per machine outside every repository, one directory or clone URL per line, written once
+  by a coordinator from the owner's sentence (Hatchery's for any sibling, a project's for its own
+  checkout) and never by a subagent; `triage` step 2 becomes one block that reads the checkouts
+  beside Hatchery and then the list for both listings, each directory once, a URL cloned shallow
+  into a temporary directory at every run; a line is data, never an option or a command, and a URL
+  with credentials is refused unprinted; an entry that cannot be read, or is no sibling, prints a
+  `sibling-list:` line and counts as `not read` on both count lines; a missing file is an empty
+  list; the project's closing line checks the list and offers "list this checkout"; the add blocks
+  never rewrite a line; not a promised surface; four defaults the owner can reverse. The exact edits to three skills and the check in
+  [the sibling](0029-sibling-list-edits.md). Supersedes in part 0019 (item 4) and 0028.

@@ -2,6 +2,9 @@
 
 Date: 2026-11-22
 Status: accepted
+Amended by [0028](0028-brainstorm-after-update.md), 2026-11-25, by additions only: an offer after
+every update from the base, outside the one prompted offer of item 2, in two groups; the title
+`For the base: ` on an idea a project leaves to the base. Every item below stands.
 
 Record: proposal `../../design/proposals/0026-brainstorm-offer-and-rest-pile.md` (option D as
 revised) and `../../design/proposals/0026-critic-review.md` (one blocking, seven serious, five

@@ -64,8 +64,10 @@ resume pointers are this project's.
    idea nobody asked for goes through the `brainstorm` skill, never straight into `docs/ideas/`.
 4. Check `wc -l docs/HANDOFF.md` is 40 or less.
 5. If a triage, a wave close or a release happened this session and no brainstorm offer was made,
-   make it now (`brainstorm` skill); its files ride in this commit, and the record of an offer that
-   wrote nothing is one line of this commit's body.
+   make it now (`brainstorm` skill); and if an update from the base was committed this session and
+   its own offer was not made, make that one too, whatever else was offered (Hatchery ADR 0028). Their
+   files ride in this commit, and the record of an offer that wrote nothing, or had no line, is one
+   line of this commit's body.
    Commit and push it from the main session (the coordinator's own doc edit, ADR 0026) with
    `bash tools/push-verified.sh`, and report the VERIFIED line, not the command's output. At the gate
    too: the handoff commit is the one thing the coordinator does with its own hands before stopping.

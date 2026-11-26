@@ -1,7 +1,16 @@
 # 0019. The carry-back channel: a sibling-hosted branch, landed as a fresh base commit
 
 Date: 2026-10-18
-Status: accepted
+Status: accepted, superseded in part by 0029
+Superseded in part by [0029](0029-machine-sibling-list.md), 2026-11-25: item 4's "No sibling list is
+kept anywhere; the base line is the test" becomes "no sibling list is tracked anywhere": the base
+line is still the test for a checkout beside Hatchery, and a list on the machine, outside every
+repository, adds the siblings the owner names; the line `carry-back: <n> pending` gains `, <m> not
+read`. Everything else stands.
+Amended by [0028](0028-brainstorm-after-update.md), 2026-11-25, by additions only: a request
+without a diff (item 1) is, in the sibling, an idea titled `For the base: `; the `triage` step of
+item 4 lists those too, and Hatchery's filing commit carries a `Base-idea:` line. Every item below
+stands.
 
 Record: proposal `../proposals/0019-carry-back-channel.md` (recommendation E, changed from B after
 the critic; every objection answered in its last section) and `../proposals/0019-critic-review.md`

@@ -1101,8 +1101,9 @@ for (const [n, command, agent, cwd, want] of GP) {
     // A policy file in a subdirectory of another repository, not at its top-level.
     nested('subish', { [`deep/${POLICY_REL}`]: nestedPolicy({ allow: [OTHER] }) }, [line('a.txt', `mail ${OTHER}`)]);
     // No privacy key, and an empty privacy section: no list is set, so nothing is unioned (never the
-    // default allow ["user"]); the workspace's allow is empty, so a user path is a hit.
-    const userPath = line('a.txt', 'path /home/user/y');
+    // default allow ["user"]); the workspace's allow is empty, so a user path is a hit. The segment is
+    // built at run time: a project whose own allow drops "user" would refuse a literal one here.
+    const userPath = line('a.txt', `path /home/${'us' + 'er'}/y`);
     nested('no-privacy', { [POLICY_REL]: '{}\n' }, [userPath]);
     nested('empty-privacy', { [POLICY_REL]: nestedPolicy({}) }, [userPath]);
     pvCommit(ws.dir, line('a.txt', `mail ${OTHER}`));
