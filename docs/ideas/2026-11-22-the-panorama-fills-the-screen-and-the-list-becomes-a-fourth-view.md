@@ -59,13 +59,28 @@ a row tap returns to the lens turned to the item).
 
 Use: 2026-11-22, coordinator (claude-opus-5-5): the viewshed's list of places to go (the answered viewpoint-finder idea, `2026-11-21-a-viewpoint-finder-where-a-peak-can-be-seen-from.md`) belongs in the same fourth list view: what is in sight, and where to go to see it (accepted by the owner).
 Came up again: 2026-11-24, the owner, having used step one on v0.1.43-alpha (the trigger step two waited for): the Panorama's "List view" button "is now obsolete as it just takes you to the list view which is already a button" (the switch's fourth segment); the Horizon view's list, "at least of flights", "is also obsolete. That list is in the list view, and clicking on the flight pops it up at the bottom anyway"; the Panorama's Layers button is good ("lets us control the layers from there"); the owner called these observations on work in progress, "probably not currently relevant until other things get cleaned up".
-New: 2026-11-24, the owner: "I tend to think the bottom area of horizon mode should contain that flight info (or whatever else you click on) rather than them being popups." So step two: the Horizon view's pane goes to the List as ADR 0067 says, the Panorama's "List view" button goes, and the space under the Horizon's round plot becomes the selection's detail (a flight's card, a peak's, the sun's or a satellite's), replacing the pop-up cards there.
 
-Question: does the fourth view replace the pane under the Panorama (the lens always full screen, the list a segment of
-the switch), and does it carry the Horizon view's pane as well? Recommended: yes to both, in two steps: first the
-Panorama's lens full screen with its overlays and the pane's content as the list view (so nothing is lost), then the
-Horizon view's pane moved to the same list when the owner has seen it.
-
-Answer: yes, in two steps: the Panorama's lens full screen with the pane's content as the list view first, then the Horizon view's pane moved to the same list once the owner has seen it (the owner, 2026-11-22, by multiple choice at triage).
+2026-11-22, the triage's Question (does the fourth view replace the Panorama's pane, and carry the Horizon view's
+too?) and the owner's answer, by multiple choice: "yes, in two steps: the Panorama's lens full screen with the pane's
+content as the list view first, then the Horizon view's pane moved to the same list once the owner has seen it".
+2026-11-24, the owner, having seen step one (taken in by the triage of 2026-11-26 from its `New:` line): "I tend to
+think the bottom area of horizon mode should contain that flight info (or whatever else you click on) rather than them
+being popups."
 
 2026-11-23, T351 (step one's second half built): the Panorama's plot is the whole window inside the system bars (kept), upright and on its side, behind the switch, with no pane; its overlays (the tape, Layers and List view at the upper right, the place line with Back to here at a chosen point, a picked peak's line and the weak-compass line at the upper left, the zoom buttons and Follow phone at the lower right, the correction's line and the flights' credit beside or above the switch, the edge arrow) are boxes placed by one rule (`PanoramaOverlays`) that the names keep off. One control, Layers, opens the four layers' switches with the view's heading and help. Step one (T344 and T351) is built; step two, the Horizon view's pane moved into the List, waits for the owner to see step one (the Answer above). Full screen without the system bars was not built (the survey: a setting, default off, only if ever wanted).
+
+Plan: step two, settled by the Answer of 2026-11-22 now that the owner has used step one (2026-11-24), with the
+owner's shape of that day; one pass, not in a wave that also owns `app/skylist/` (the List's sort and its map line).
+(1) The Horizon view's pane leaves `app/horizon/HorizonScreen.kt`: its sections live only in the List
+(`app/skylist/SkyListScreen.kt`), which shows the view it was opened from (the Horizon view's range when opened
+there). (2) The space under the round plot (beside it on its side) becomes the selection's detail: a picked flight's
+card, a peak's, the Sun's or a satellite's line, in place of the pop-up cards there; with nothing picked it holds the
+place line and a hint. The layers' switches come from a Layers control as on the Panorama
+(`app/panorama/PanoramaLayers.kt`). (3) The Panorama's "List view" button goes (`app/panorama/PanoramaScreen.kt`,
+`shared/.../horizon/PanoramaOverlays.kt` and its test); the switch's fourth segment is the way in. Verify:
+`SkyListTest` (no section of either old pane missing), `PanoramaOverlaysTest`, `MapLayoutTest`; on the emulator at
+Paradise, upright and on its side at font 1.0 and 2.0, a replayed flight and a peak picked in the Horizon view, frames
+viewed; the sweep's `features-sky` and `a11y` parts with their frame names checked first (`sweep-diff.py
+--check-first`). Docs: `docs/reference/android-horizon-view.md`, `android-panorama-view.md`, and the Outcome of ADR
+0067's step-two prediction. Strings in the report (ADR 0031). Out of scope: full screen without the system bars, the
+List's sort, the viewshed's section.
