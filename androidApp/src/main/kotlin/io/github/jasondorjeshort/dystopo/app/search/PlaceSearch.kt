@@ -71,7 +71,12 @@ object PlaceSearch {
             return cover.contains(x, y)
         }
 
-        fun matches(r: io.github.jasondorjeshort.dystopo.app.areas.Areas.Record): Boolean = r.id == id && AreaTiles.versionsKey(r) == versions
+        /** What a new download of the area changes (its tiles, bytes and time): a fresh state reads its tiles again at once. */
+        val stamp: String = stampOf(record)
+
+        fun matches(r: io.github.jasondorjeshort.dystopo.app.areas.Areas.Record): Boolean = r.id == id && AreaTiles.versionsKey(r) == versions && stampOf(r) == stamp
+
+        private fun stampOf(r: io.github.jasondorjeshort.dystopo.app.areas.Areas.Record) = "${r.tiles}:${r.bytes}:${r.downloadMs}"
     }
 
     /**
@@ -249,7 +254,7 @@ object PlaceSearch {
     private val refs = java.util.concurrent.ConcurrentHashMap<String, AreaRef>()
 
     private fun refOf(r: io.github.jasondorjeshort.dystopo.app.areas.Areas.Record): AreaRef {
-        val k = r.id + "|" + AreaTiles.versionsKey(r)
+        val k = r.id + "|" + AreaTiles.versionsKey(r) + "|" + r.tiles + ":" + r.bytes + ":" + r.downloadMs
         refs[k]?.let { return it }
         if (refs.size > 64) refs.clear()
         return AreaRef(r).also { refs[k] = it }
