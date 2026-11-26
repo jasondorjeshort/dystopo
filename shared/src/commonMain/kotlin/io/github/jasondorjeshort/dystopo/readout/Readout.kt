@@ -125,6 +125,12 @@ enum class ReadoutReason(val code: String, val kind: ReasonKind) {
 
     /** T257: the fix gave no accuracy. */
     NOT_GIVEN("not given", ReasonKind.MISSING),
+
+    /**
+     * T384: no GPS fix and the GPS is searching for one (the phone's own receiver, read beside the estimator, which does
+     * not know it): [ReadoutReasons.searching] puts it in place of [NO_FIX]; the estimator never gives it.
+     */
+    SEARCHING("searching", ReasonKind.MISSING),
     ;
 
     companion object {
@@ -157,6 +163,17 @@ object ReadoutReasons {
             else -> v.reason ?: ReadoutReason.NO_FIX
         }
     }
+
+    /**
+     * T384: the reason [reason] reads while the GPS [searching] for a fix: [ReadoutReason.SEARCHING] in place of
+     * [ReadoutReason.NO_FIX] (the same "no fix", with what is being done about it), every other reason as it is.
+     */
+    fun searching(reason: ReadoutReason?, searching: Boolean): ReadoutReason? =
+        if (searching && reason == ReadoutReason.NO_FIX) ReadoutReason.SEARCHING else reason
+
+    /** T384: every (entry, reason) a drawn value can show while the GPS searches: [POSSIBLE] with "no fix" read as [ReadoutReason.SEARCHING]. */
+    val WHILE_SEARCHING: Set<Pair<ReadoutEntry, ReadoutReason>> get() =
+        POSSIBLE.filter { it.second == ReadoutReason.NO_FIX }.map { it.first to ReadoutReason.SEARCHING }.toSet()
 
     /** The bar marks the value: its reason says the data is missing or stale, and the value does not read "?" already. */
     fun marked(reason: ReadoutReason?, readsUnknown: Boolean): Boolean =

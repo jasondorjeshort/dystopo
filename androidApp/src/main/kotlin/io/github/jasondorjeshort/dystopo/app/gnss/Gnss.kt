@@ -79,15 +79,49 @@ object Gnss {
     @Volatile var engineTtffMs: Long? = null
         private set
 
-    /** `MapController.startDeviceLocation` registered its listener (the first time counts). */
+    /** `MapController.startDeviceLocation` registered its listener (the first time counts for [ttffMs]; T384: each one for [searchSince]). */
     fun onDeviceStart() {
-        if (deviceStartAt == 0L) deviceStartAt = SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
+        if (deviceStartAt == 0L) deviceStartAt = now
+        lastStartAt = now
     }
 
     /** The map's listener heard a GPS fix. */
     fun onDeviceFix() {
-        if (ttffMs == null && deviceStartAt > 0) ttffMs = SystemClock.elapsedRealtime() - deviceStartAt
+        val now = SystemClock.elapsedRealtime()
+        if (ttffMs == null && deviceStartAt > 0) ttffMs = now - deviceStartAt
+        lastGpsFixAt = now
     }
+
+    // ---- T384: the search for a fix, for the glance view ----
+
+    /** Elapsed realtime of the last start of the map's device fixes (each start, unlike [deviceStartAt]); 0 before one. */
+    @Volatile var lastStartAt = 0L
+        private set
+
+    /** Elapsed realtime of the last GPS fix the map's listener heard; 0 before one. */
+    @Volatile var lastGpsFixAt = 0L
+        private set
+
+    /**
+     * T384: when the search running now began (elapsed realtime): the later of the last start of the device's fixes and
+     * the last GPS fix ([otherGpsAt]: a GPS fix the readout took another way, an injected one); null before any start. Not
+     * [ttffMs], which counts from the first start of the process: an outage after an hour of fixes counts from its last fix.
+     */
+    fun searchSince(otherGpsAt: Long = 0L): Long? = maxOf(lastStartAt, lastGpsFixAt, otherGpsAt).takeIf { lastStartAt > 0L || otherGpsAt > 0L }
+
+    /**
+     * T384: the GPS is searching: location permitted, the device's fixes started, and no GPS fix (the map's listener's, or
+     * [otherGpsAt]) for [gapMs]. Read with the status the glance view holds ([hold] `glance`, status-only).
+     */
+    fun searching(gapMs: Long, otherGpsAt: Long = 0L, now: Long = SystemClock.elapsedRealtime()): Boolean {
+        if (!permitted() || lastStartAt == 0L) return false
+        val last = maxOf(lastGpsFixAt, otherGpsAt)
+        return last == 0L || now - last > gapMs
+    }
+
+    /** The glance view's hold's name ([hold]): status only, taken while the view is open. */
+    const val GLANCE_HOLDER = "glance"
 
     // ---- holding ----
     val held: Boolean get() = synchronized(holders) { holders.isNotEmpty() }

@@ -1,6 +1,14 @@
 package io.github.jasondorjeshort.dystopo.app.readout
 
 import io.github.jasondorjeshort.dystopo.app.help.ReasonText
+import io.github.jasondorjeshort.dystopo.geo.CoordinateFormat
+import io.github.jasondorjeshort.dystopo.readout.ReadoutEntry
+import io.github.jasondorjeshort.dystopo.readout.ReadoutReason
+import io.github.jasondorjeshort.dystopo.readout.ReadoutReasons
+import io.github.jasondorjeshort.dystopo.readout.ReadoutText
+import io.github.jasondorjeshort.dystopo.readout.ValueState
+import io.github.jasondorjeshort.dystopo.render.ContourUnits
+import io.github.jasondorjeshort.dystopo.render.UnitFormat
 
 /**
  * T210: one line of the glance view ([GlanceView]): a small [caption] over the big [value] with its [unit], the
@@ -36,7 +44,16 @@ data class GlanceLine(
      */
     val reason: String? = null,
     val reasonCode: String? = null,
+    /**
+     * T384: the value's type size as a share of the figures' ([GlanceFit]): 1 for a figure; the position line's
+     * [GlanceText.POSITION_SHARE], drawn under the figures across the whole width, with no caption drawn (its [caption]
+     * is spoken), never counted in the columns, its size held to the width its template needs and to the smallest size.
+     */
+    val share: Float = 1f,
 ) {
+    /** T384: a line under the figures across the whole width (the position line). */
+    val wide: Boolean get() = share < 1f
+
     /** "1650 m", "↑320 m/h ± 40", "1 h 20 min": the value as one text. */
     val full: String get() = (if (unit.isEmpty()) value else "$value $unit") + (trend?.let { " $it" } ?: "") + (plusMinus?.let { " $it" } ?: "")
 
@@ -73,16 +90,135 @@ object GlanceText {
     const val DEADLINE_VALUE_TEMPLATE = "88 h 88"
     const val DEADLINE_CLOCK_TEMPLATE = io.github.jasondorjeshort.dystopo.nav.ClockText.LONGEST
 
-    /** The lines in order: the deadline when the clock runs, then the bar's entries. */
-    fun lines(items: List<StripItem>, deadline: GlanceLine? = null): List<GlanceLine> =
-        listOfNotNull(deadline) + items.map(::of)
+    /**
+     * The lines in order: the deadline when the clock runs, then the bar's entries; T384: while [gps] searches, "no fix"
+     * reads "searching" and the GPS area says how it goes ([gpsArea]); with [positionLine], the position line last
+     * ([position]: the readout's last fix, in [format], distances in [units]).
+     */
+    fun lines(
+        items: List<StripItem>, deadline: GlanceLine? = null, gps: Gps? = null, position: Position? = null, positionLine: Boolean = false,
+        units: ContourUnits = ContourUnits.METERS, format: CoordinateFormat = CoordinateFormat.DEFAULT,
+    ): List<GlanceLine> {
+        val searching = gps?.searching == true
+        val read = items.map { of(it, searching) }
+        val figures = if (gps != null && searching) gpsArea(read, gps) else read
+        return listOfNotNull(deadline) + figures + listOfNotNull(if (positionLine) position(position, gps, units, format) else null)
+    }
 
-    /** One bar item as a glance line, with its templates. */
-    fun of(it: StripItem): GlanceLine = GlanceLine(
-        kind = it.entry.code, caption = it.caption, value = it.value, unit = it.unit, trend = it.trend, plusMinus = it.plusMinus,
-        other = it.other, dimmed = it.dimmed, captionTemplate = it.captionTemplate, valueTemplate = it.template.text,
-        unitTemplate = it.template.unit, trendSlot = it.trendSlot, plusMinusTemplate = it.template.plusMinus, otherTemplate = it.otherTemplate,
-        reason = it.note, reasonCode = it.reason?.code, // T363
+    /** One bar item as a glance line, with its templates; T384: "no fix" read as "searching" while the GPS is [searching]. */
+    fun of(it: StripItem, searching: Boolean = false): GlanceLine {
+        val why = ReadoutReasons.searching(it.reason, searching)
+        val figure = it.state == StripItem.STATE_VALUE || it.state == StripItem.STATE_ZERO
+        val note = if (why == it.reason) it.note else ReasonText.sentence(it.entry, if (figure) ValueState.SHOWN else ValueState.DASH, why)
+        return GlanceLine(
+            kind = it.entry.code, caption = it.caption, value = it.value, unit = it.unit, trend = it.trend, plusMinus = it.plusMinus,
+            other = it.other, dimmed = it.dimmed, captionTemplate = it.captionTemplate, valueTemplate = it.template.text,
+            unitTemplate = it.template.unit, trendSlot = it.trendSlot, plusMinusTemplate = it.template.plusMinus, otherTemplate = it.otherTemplate,
+            reason = note, reasonCode = why?.code, // T363
+        )
+    }
+
+    // ---- T384: the GPS while it searches, and the position ----
+
+    /**
+     * T384: the phone's GPS receiver as the glance view reads it: [searching] while no GPS fix has come for the readout's
+     * gap ([io.github.jasondorjeshort.dystopo.readout.ReadoutTuning.GAP_S]) since the device's fixes started; [sinceMs] how
+     * long this search has run (from the last GPS fix, or from the start of the device's fixes when none came since; null
+     * when not known); [seen] and [used] the satellites heard and used in a fix, [bestCn0] the strongest signal heard
+     * (dB-Hz), from the status the view holds while open ([io.github.jasondorjeshort.dystopo.app.gnss.Gnss]).
+     */
+    data class Gps(val searching: Boolean, val sinceMs: Long?, val seen: Int, val used: Int, val bestCn0: Double?) {
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "searching" to searching, "sinceS" to sinceMs?.let { it / 1000 }, "seen" to seen, "used" to used,
+            "bestCn0" to bestCn0?.let { Math.round(it * 10) / 10.0 },
+        )
+    }
+
+    /**
+     * T384: the last fix the readout took ([LiveReadout.lastFix]): where, its [provider] (`gps`, `network`, `passive`, or
+     * `debug` for an injected one), its age and accuracy. A network or passive fix is not GPS ([network]).
+     */
+    data class Position(val lat: Double, val lon: Double, val provider: String, val ageMs: Long, val accuracyM: Double?) {
+        val network: Boolean get() = provider == "network" || provider == "passive"
+        val source: String get() = if (network) "network" else "gps"
+    }
+
+    /** The position line's kind. */
+    const val POSITION = "position"
+
+    /** The position's type size as a share of the figures' (held to the width and to the smallest size, [GlanceFit.wideValuePx]). */
+    const val POSITION_SHARE = 0.6f
+
+    /** A signal this strong or more reads "good" ([io.github.jasondorjeshort.dystopo.gnss.GnssHealth.HEALTHY_T4], the GPS view's own mark, dB-Hz). */
+    val GOOD_CN0: Double get() = io.github.jasondorjeshort.dystopo.gnss.GnssHealth.HEALTHY_T4
+
+    /**
+     * T384: the GPS area while it searches: the accuracy's and the fix age's reason rows, else (an entry switched off) the
+     * first other lines that read "searching", two rows at most: the first says for how long and the satellites
+     * ([searchingSentence]), the second the best signal ([signalSentence]). Rows T389 reserved, so nothing moves.
+     */
+    fun gpsArea(lines: List<GlanceLine>, gps: Gps): List<GlanceLine> {
+        val gpsKinds = listOf(ReadoutEntry.ACCURACY.code, ReadoutEntry.FIX_AGE.code)
+        val area = (lines.filter { it.kind in gpsKinds } + lines.filter { it.kind !in gpsKinds && it.reasonCode == ReadoutReason.SEARCHING.code })
+            .map { it.kind }.distinct().take(2)
+        val texts = listOf(searchingSentence(gps), signalSentence(gps))
+        return lines.map { l -> area.indexOf(l.kind).takeIf { it >= 0 }?.let { i -> l.copy(reason = texts[i], reasonCode = ReadoutReason.SEARCHING.code) } ?: l }
+    }
+
+    /** "GPS searching for 4 min 20 s: 11 seen, none used." (ADR 0031: ours; no surveyed source gave words for it). */
+    fun searchingSentence(g: Gps): String {
+        val time = g.sinceMs?.let { " for ${duration(it)}" } ?: ""
+        val sats = when {
+            g.seen == 0 -> "no satellites heard yet"
+            g.used == 0 -> "${g.seen} seen, none used"
+            else -> "${g.seen} seen, ${g.used} used"
+        }
+        return "GPS searching$time: $sats."
+    }
+
+    /** "Best signal 23 dB-Hz: weak (good is 35 or more)." */
+    fun signalSentence(g: Gps): String {
+        val c = g.bestCn0?.takeIf { g.seen > 0 && it > 0 } ?: return "Best signal: none heard yet."
+        val n = Math.round(c)
+        val good = Math.round(GOOD_CN0)
+        return if (c >= GOOD_CN0) "Best signal $n dB-Hz: good ($good or more)." else "Best signal $n dB-Hz: weak (good is $good or more)."
+    }
+
+    /** "20 s", "4 min 20 s", "1 h 05 min": how long a search has run. */
+    fun duration(ms: Long): String {
+        val s = ms.coerceAtLeast(0L) / 1000
+        return when {
+            s < 60 -> "$s s"
+            s < 3600 -> "${s / 60} min ${s % 60} s"
+            else -> "${s / 3600} h ${(s % 3600 / 60).toString().padStart(2, '0')} min"
+        }
+    }
+
+    /**
+     * T384: the position line: [p]'s latitude and longitude in [format] (a dash before any fix), and under it where it
+     * came from: "From GPS, 3 s ago.", or a network position marked "Not GPS" with its accuracy and age, or why there is
+     * none yet. Its template is the format's widest text, so the line's size holds as the figures change.
+     */
+    fun position(p: Position?, gps: Gps?, units: ContourUnits, format: CoordinateFormat = CoordinateFormat.DEFAULT): GlanceLine {
+        val reason = when {
+            p == null -> if (gps?.searching == true) "No position yet: GPS is searching." else "No position yet: shown with the first fix."
+            p.network -> "Not GPS: network position" + (p.accuracyM?.let { " ± " + UnitFormat.distance(it, units) } ?: "") + ", ${ReasonText.span(p.ageMs)} ago."
+            else -> "From GPS, ${ReasonText.span(p.ageMs)} ago."
+        }
+        return GlanceLine(
+            kind = POSITION, caption = POSITION, value = p?.let { format.format(it.lat, it.lon) } ?: ReadoutText.DASH, unit = "",
+            captionTemplate = "", valueTemplate = positionTemplate(format), share = POSITION_SHARE, reason = reason,
+        )
+    }
+
+    /** The widest text [format] gives: every digit an 8, the longest degrees. */
+    fun positionTemplate(format: CoordinateFormat): String = format.format(-88.8888888, -178.8888888).map { if (it.isDigit()) '8' else it }.joinToString("")
+
+    /** `GET /readout/glance` › `position`: the last fix as the line shows it ([line]). */
+    fun positionJson(p: Position?, line: GlanceLine?): Map<String, Any?> = if (p == null) linkedMapOf("source" to null, "text" to line?.value, "line" to line?.reason) else linkedMapOf(
+        "lat" to Math.round(p.lat * 100_000) / 100_000.0, "lon" to Math.round(p.lon * 100_000) / 100_000.0,
+        "source" to p.source, "provider" to p.provider, "ageS" to p.ageMs / 1000, "accuracyM" to p.accuracyM?.let { a -> Math.round(a * 10) / 10.0 },
+        "text" to line?.value, "line" to line?.reason,
     )
 
     /**
@@ -102,17 +238,23 @@ object GlanceText {
      * and why, [LiveReadout.pinEnded]), the bar's [dropped] entries and whether it is [hiddenForRoom]; distances in [units].
      */
     fun notes(r: io.github.jasondorjeshort.dystopo.readout.Readout?, pinEnded: Pair<Long, String?>?, dropped: List<String>, hiddenForRoom: Boolean,
-              units: io.github.jasondorjeshort.dystopo.render.ContourUnits): Notes {
+              units: io.github.jasondorjeshort.dystopo.render.ContourUnits, max: Int = MAX_RECENT): Notes {
         val recent = ArrayList<String>()
         if (r != null) {
             val pin = pinEnded?.takeIf { r.elapsedMs - it.first in 0..ReasonText.RECENT_MS }?.let { ReasonText.pinEnd(it.second, r.elapsedMs - it.first) }
             recent += listOfNotNull(pin) + ReasonText.recent(r.recent, r.elapsedMs, units)
         }
-        return Notes(ReasonText.leftOut(dropped, hiddenForRoom), recent.take(MAX_RECENT))
+        return Notes(ReasonText.leftOut(dropped, hiddenForRoom), recent.take(max))
     }
 
     /** At most this many last-minute lines. */
     const val MAX_RECENT = 4
+
+    /**
+     * T384: on its side, at most this many: the notes' reserved rows give way first, so the position line costs the
+     * figures nothing where the height is shortest (T389's verifier read the figures at 55 px there at font 2.0).
+     */
+    const val MAX_RECENT_SIDE = 2
 
     /**
      * The turn-around clock as a line, from its reading ([state] a `TurnState` key, [colour], [turnBackMs], [arrivalMs])
@@ -181,16 +323,26 @@ object GlanceFit {
 
     fun columns(n: Int, widthPx: Float, heightPx: Float): Int = if (n >= 3 && widthPx > heightPx) 2 else 1
 
-    /** A line's width and height at value size [v]. */
-    fun lineSize(l: GlanceLine, v: Float, m: Measure, reasonMinPx: Float = 0f): Pair<Float, Float> {
-        val cap = m.size(l.captionTemplate, v * CAPTION, false)
+    /**
+     * T384: a wide line's value size at the figures' size [v]: its share of [v], held to what its template needs to fit
+     * [widthPx] and never under [minPx] (the smallest legible size).
+     */
+    fun wideValuePx(l: GlanceLine, v: Float, widthPx: Float, m: Measure, minPx: Float): Float {
+        val atV = m.size(l.valueTemplate, v, true).first
+        val toWidth = if (atV > 0f) widthPx * v / atV else Float.MAX_VALUE
+        return maxOf(minPx, minOf(v * l.share, toWidth))
+    }
+
+    /** A line's width and height at value size [v]; T384: a wide line's value at [valuePx], with no caption. */
+    fun lineSize(l: GlanceLine, v: Float, m: Measure, reasonMinPx: Float = 0f, valuePx: Float = v): Pair<Float, Float> {
+        val cap = if (l.wide) 0f to 0f else m.size(l.captionTemplate, v * CAPTION, false)
         val capAlso = l.captionAlso?.let { m.size(it, v * CAPTION, false) }
-        val value = m.size(l.valueTemplate, v, true)
-        val valueAlso = l.valueAlso?.let { m.size(it, v, true) }
+        val value = m.size(l.valueTemplate, valuePx, true)
+        val valueAlso = l.valueAlso?.let { m.size(it, valuePx, true) }
         var w = value.first
-        if (l.unitTemplate.isNotEmpty()) w += m.size(" " + l.unitTemplate, v * UNIT, false).first
-        if (l.trendSlot) w += TREND_ARROWS.maxOf { m.size(" $it", v, true).first }
-        l.plusMinusTemplate?.let { w += m.size(" $it", v * UNIT, false).first }
+        if (l.unitTemplate.isNotEmpty()) w += m.size(" " + l.unitTemplate, valuePx * UNIT, false).first
+        if (l.trendSlot) w += TREND_ARROWS.maxOf { m.size(" $it", valuePx, true).first }
+        l.plusMinusTemplate?.let { w += m.size(" $it", valuePx * UNIT, false).first }
         val other = l.otherTemplate?.let { m.size(it, v * OTHER, false) }
         // T363: a reason's row, its height only: its type shrinks to the column's width when the sentence needs it.
         val reason = m.size("Ag", maxOf(v * REASON, reasonMinPx), false).second // always reserved: the layout never moves as a reason comes and goes
@@ -198,18 +350,23 @@ object GlanceFit {
             (maxOf(value.second, valueAlso?.second ?: 0f) + cap.second + (other?.second ?: 0f) + reason)
     }
 
-    /** Whether [lines] fit [widthPx] by [heightPx] at value size [v] in [cols] columns. */
+    /**
+     * Whether [lines] fit [widthPx] by [heightPx] at value size [v] in [cols] columns. T384: the wide lines (the position)
+     * go under the figures across the whole width, a gap before each.
+     */
     fun fitsAt(lines: List<GlanceLine>, widthPx: Float, heightPx: Float, v: Float, cols: Int, m: Measure, reasonMinPx: Float = 0f): Boolean {
         val colW = (widthPx - (cols - 1) * v * GAP) / cols
-        val sizes = lines.map { lineSize(it, v, m, reasonMinPx) }
+        val sizes = lines.filter { !it.wide }.map { lineSize(it, v, m, reasonMinPx) }
         if (sizes.any { it.first > colW }) return false
-        val rows = sizes.chunked(cols).map { r -> r.maxOf { it.second } }
+        val wide = lines.filter { it.wide }.map { lineSize(it, v, m, reasonMinPx, wideValuePx(it, v, widthPx, m, reasonMinPx)) }
+        if (wide.any { it.first > widthPx }) return false
+        val rows = sizes.chunked(cols).map { r -> r.maxOf { it.second } } + wide.map { it.second }
         return rows.sum() + (rows.size - 1).coerceAtLeast(0) * v * GAP <= heightPx
     }
 
     /** The largest value size between [minPx] and [maxPx] at which [lines] fit [widthPx] by [heightPx]. */
     fun fit(lines: List<GlanceLine>, widthPx: Float, heightPx: Float, minPx: Float, maxPx: Float, m: Measure): Fit {
-        val cols = columns(lines.size, widthPx, heightPx)
+        val cols = columns(lines.count { !it.wide }, widthPx, heightPx)
         if (lines.isEmpty() || widthPx <= 0f || heightPx <= 0f) return Fit(minPx, cols, lines.isEmpty())
         if (!fitsAt(lines, widthPx, heightPx, minPx, cols, m, minPx)) return Fit(minPx, cols, false)
         if (fitsAt(lines, widthPx, heightPx, maxPx, cols, m, minPx)) return Fit(maxPx, cols, true)

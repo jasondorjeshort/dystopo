@@ -159,6 +159,22 @@ class ReadoutReasonsTest {
         assertEquals("no height yet", ReadoutReason.NO_HEIGHT_YET.code)
     }
 
+    /** T384: while the GPS searches, "no fix" reads "searching"; every other reason, and "no fix" when it does not search, as it is. */
+    @Test
+    fun noFixReadsSearchingWhileTheGpsSearches() {
+        assertEquals(ReadoutReason.SEARCHING, ReadoutReasons.searching(ReadoutReason.NO_FIX, searching = true))
+        assertEquals(ReadoutReason.NO_FIX, ReadoutReasons.searching(ReadoutReason.NO_FIX, searching = false))
+        for (r in ReadoutReason.entries - ReadoutReason.NO_FIX) assertEquals(r, ReadoutReasons.searching(r, searching = true))
+        assertNull(ReadoutReasons.searching(null, searching = true), "a plain figure stays plain")
+        // Before the first readout (no value at all) the value reads "no fix", so "searching" while the GPS searches.
+        assertEquals(ReadoutReason.SEARCHING, ReadoutReasons.searching(ReadoutReasons.of(null, null), searching = true))
+        // The estimator never gives it: not among the reasons a fixture reaches; one per entry that can read "no fix".
+        assertTrue(ReadoutReasons.POSSIBLE.none { it.second == ReadoutReason.SEARCHING })
+        assertEquals(ReadoutReasons.POSSIBLE.count { it.second == ReadoutReason.NO_FIX }, ReadoutReasons.WHILE_SEARCHING.size)
+        // Marked with the bar's "?" like "no fix".
+        assertTrue(ReadoutReasons.marked(ReadoutReason.SEARCHING, readsUnknown = false))
+    }
+
     /** The pressure altitude's offset (m) at [s] seconds: 30, then a lift the GNSS does not see from 180 s (ReadoutBarometerModeTest's ramp). */
     private fun ramp(s: Double): Double {
         fun rate(x: Double) = 1.5 * when {
