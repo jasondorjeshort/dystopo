@@ -161,6 +161,12 @@
 # (stopping its own emulator) has 300 s of its own. Before device-boot (and the bothunits boot) the sweep waits up to
 # a minute for the console port pair to be free (a just-killed emulator lets go of it slowly), then fails the part
 # naming the PID that holds it; nothing it did not boot is stopped. Every boot goes through tools\android-emu.ps1.
+# T375 (ADR 0070): every boot passes -WaitForSlot (default 60 minutes), so at the machine's emulator cap it waits for a
+# slot, the oldest waiter first, instead of being refused: device-boot, the reboot of the sweep's emulator before a part
+# (it frees its slot first and may wait for it again), bothunits' second emulator and the matrix's. The ceilings of
+# device-boot, bothunits and matrix grow by the wait (one per boot), and the reboot's own 1500 s too. At the limit the
+# refusal reads cap-refused on device-boot's and bothunits' lines (two sweeps that each hold one emulator and wait for a
+# second end there).
 #
 # Ports and processes. The script starts its own servers (demo-server.py on -BasePort, serve on +1, serve
 # --live on +2, for the live part and then for the debug device parts) and its own emulator (-Avd, console -EmuPort, debug forward -Port, release probe -Port+1),
@@ -230,6 +236,8 @@ param(
     # overrides a part ('name=seconds', comma-separated works); the built-in overrides are below ($ceilings).
     [int]$PartTimeout = 900,
     [string[]]$PartTimeouts = @(),
+    # T375: minutes every boot waits for a free emulator slot at the cap (android-emu.ps1 -WaitForSlot); 0 refuses at once.
+    [double]$WaitForSlot = 60,
     # T191, for testing the ceiling only: the named part runs a child process tree that sleeps instead of its body.
     [string]$InjectHang = '',
     # T81: known defects (filed follow-ups) the android-ui.py parts report without failing; '' for none.
@@ -338,6 +346,12 @@ $ceilings['features-sky'] = 2100
 $ceilings['route-sheet'] = 600
 # T303: the phone's tour is one run of the device tour's views without the offline and card steps; a phone may be slower.
 $ceilings['phone-tour'] = 1200
+# T375: the parts that boot grow by the wait for a slot, one per boot (an explicit -PartTimeouts entry below still wins).
+$slotWaitS = [int][math]::Ceiling(60 * [math]::Max(0, $WaitForSlot))
+$ceilings['device-boot'] += $slotWaitS
+$ceilings['bothunits'] = $PartTimeout + $slotWaitS
+$ceilings['matrix'] += $slotWaitS * [math]::Max(1, @($MatrixDevices | ForEach-Object { $_ -split ',' } | Where-Object { $_ }).Count)
+# end T375
 foreach ($kv in @($PartTimeouts | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
     if ($kv -notmatch '^\s*([\w-]+)\s*=\s*(\d+)\s*$' -or $allParts -notcontains $Matches[1] -or [int]$Matches[2] -lt 1) {
         throw "-PartTimeouts entries are part=seconds with a known part (got '$kv')"
@@ -781,7 +795,7 @@ function Ensure-Emulator([string]$before, [string]$Retry = '') {
         Start-Sleep -Seconds 60
         $w = Wait-ConsolePorts $EmuPort $Avd
         $log = Join-Path $dev "emu-reboot$n-$try"
-        $c = if ($w) { $w } else { Run 'powershell.exe' ($emuArgs + $bootArgs) "$log.log" "$log.err.log" -Cleanup -TimeoutS 1500 }
+        $c = if ($w) { $w } else { Run 'powershell.exe' ($emuArgs + $bootArgs) "$log.log" "$log.err.log" -Cleanup -TimeoutS (1500 + $slotWaitS) } # T375: plus the wait for its slot
         $after = Read-EmuPrivate
         if ("$c" -eq '0' -and $null -ne $after) { break }
         $first = @(Get-Content "$log.err.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match '\S' }) | Select-Object -First 1
@@ -1187,6 +1201,7 @@ try {
     $emuArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $Avd, '-EmuPort', "$EmuPort", '-Port', "$Port", '-Owner', "sweep-$Date")
     if ($AvdHome) { $emuArgs += @('-AvdHome', $AvdHome) }
     $emuArgs += $emuMemoryArgs
+    $emuArgs += @('-WaitForSlot', "$WaitForSlot") # T375: device-boot and every reboot wait for a slot at the cap
     $dem = Join-Path $localOut 'rainier-dem.pmtiles'
     $osm = Join-Path $localOut 'rainier-outdoors.pmtiles'
     # T79: the device parts need a running emulator. When device-boot is not selected (-Only first-run, -Skip
@@ -1275,6 +1290,7 @@ try {
             $bArgs = @('-ExecutionPolicy', 'Bypass', '-File', 'tools\android-emu.ps1', '-Avd', $bAvd, '-EmuPort', "$bEmu", '-Port', "$bFwd", '-Owner', "sweep-$Date")
             if ($AvdHome) { $bArgs += @('-AvdHome', $AvdHome) }
             $bArgs += $emuMemoryArgs
+            $bArgs += @('-WaitForSlot', "$WaitForSlot") # T375
             # The same debug build as the first emulator's (built by device-boot); built here only when it is missing.
             $debugApk = Join-Path $repo 'androidApp\build\outputs\apk\debug\androidApp-debug.apk'
             $boot = $bArgs + @('-Dem', $dem, '-Osm', $osm, '-Server', $deviceServerArg) + $(if (Test-Path $debugApk) { @() } else { @('-Build') })
@@ -1282,6 +1298,12 @@ try {
             if ($why) { $script:partNote = "skipped: $why"; 'skip'; return }
             try {
                 $c = Run 'powershell.exe' $boot (Join-Path $bdir 'emu-b.log') (Join-Path $bdir 'emu-b.err.log')
+                # T375: refused at the cap after the wait (another sweep holding the other slot and waiting for this one's): cap-refused, as device-boot reads it.
+                if ($c -ne 0 -and (Select-String -Path (Join-Path $bdir 'emu-b.err.log'), (Join-Path $bdir 'emu-b.log') -Pattern 'emulator cap reached' -Quiet -ErrorAction SilentlyContinue)) {
+                    $script:partNote = "the second emulator $bSerial ($bAvd) was refused at the emulator cap after -WaitForSlot $WaitForSlot min: see ui\bothunits\emu-b.err.log for the holders"
+                    'cap-refused'
+                    return
+                }
                 if ($c -ne 0) {
                     $why = @(Get-Content (Join-Path $bdir 'emu-b.err.log') -ErrorAction SilentlyContinue | Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*(At |\+|CategoryInfo|FullyQualifiedErrorId)' }) | Select-Object -First 1
                     $script:partNote = "skipped: the second emulator $bSerial ($bAvd) did not start (android-emu.ps1 exit $c$(if ($why) { ": $($why.Trim())" }); ui\bothunits\emu-b.err.log)"
@@ -1496,6 +1518,7 @@ try {
                     '-Api', $api, '-Device', $devName, '-BootOnly')
                 if ([int]$api -lt 30) { $mArgs += @('-Feature', 'GLESDynamicVersion') } # images before 30 offer only GLES 2 otherwise
                 if ($loc) { $mArgs += @('-Locale', $loc) }
+                $mArgs += @('-WaitForSlot', "$WaitForSlot") # T375 (after index 7: the stop below takes $mArgs[0..7])
                 if ($AvdHome) { $mArgs += @('-AvdHome', $AvdHome) }
                 $mArgs += $emuMemoryArgs
                 try {
