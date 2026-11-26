@@ -21,3 +21,18 @@ runs when it starts and while it runs (another sweep's lock or servers, another 
 as advisory, not red, when the PC was shared; alone, it is red as today. The closing sweep stays the one run whose
 budgets count. Among the sweep's open ideas it comes before
 `2026-11-10-random-place-of-the-day-rendered-by-the-sweep.md`: it removes false reds that cost verifier passes now.
+
+Plan: one pass, tools only. Checked at triage: the `startup` part (`tools/sweep.ps1`, the `Part 'startup'` block) runs
+`tools/android-startup.py --budget tools/launch-budget.json`, which exits 1 on a median over its ceiling. (1)
+`tools/sweep.ps1` samples, at the part's start and every 30 s while it runs, what else holds the PC: emulator lock
+files other than its own under the policy's `emulators.lockDir` (read as `Get-EmuLockFile` already reads it; every
+sweep and verifier boots through `tools/android-emu.ps1`, which writes one), and the machine's CPU load beside it (a
+reading, no process matched by name, `CLAUDE.md`'s rule); it writes `sharedWith` (the other locks' checkouts, the load)
+into the part's line of `steps.tsv` and into `summary.json`.
+(2) `android-startup.py` gains `--shared` (the sweep passes it when anything was seen): a median over its ceiling is
+then `advisory` in the report with its reason and exits 0; an undeclared StrictMode kind stays red either way.
+(3) `tools/sweep-summary.py` prints advisory lines apart. Tests in `tools/test_android_startup.py` and
+`tools/test_sweep_summary.py`. Verify: a `-Only startup` sweep alone (red on an over-ceiling median as today, using a
+lowered copy of the budget) and beside a second emulator (advisory). Docs: the part's lines in `docs/reference/` where
+the sweep's parts are described. Out of scope: the closing sweep (stays alone, ADR 0070), other timed parts until
+they hold a budget.
