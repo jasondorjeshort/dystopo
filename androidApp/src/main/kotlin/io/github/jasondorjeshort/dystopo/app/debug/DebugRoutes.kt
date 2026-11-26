@@ -62,6 +62,11 @@ import java.io.File
  *   marker `no_backup/tiles.move`, the launch's that moved it. `POST /debug/cache/move?copy=1[&perFileMs=0..1000]` makes the
  *   next launch's move copy instead of renaming (the rename fails as `EXDEV` would), holding `perFileMs` after each file so the
  *   map can be watched meanwhile; `copy=0` forgets it. Answers `pendingCopyPerFileMs`.
+ * - T379 (ADR 0071): `GET /debug/cache` has `gate`, the process's rule for the walks (`workAllowed`: an activity on screen
+ *   or a job under its own notification; `why`: `on screen`, `under <job>`, `no screen and no notified job`; `notifiedWork`,
+ *   the jobs: `recording`, `area download <id>`), and each cache's `index.gate`: `open`, `why`, `held` (its index thread is
+ *   waiting on the gate now: nothing walked, read or moved meanwhile), `heldSinceMs`, `holds` (times it waited) and `heldMs`
+ *   (the waits that ended). A held walk is not a stall for the whole-index operations' 60 s clock.
  */
 object DebugRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
@@ -168,7 +173,9 @@ object DebugRoutes {
         val rt = Runtime.getRuntime()
         if (gc) rt.gc()
         val online = io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache
+        val fg = io.github.jasondorjeshort.dystopo.app.Foreground
         return linkedMapOf<String, Any?>() + (online.moveJson()?.filterKeys { it != "move" } ?: emptyMap()) + linkedMapOf( // T267: location, moveState, groupFixed
+            "gate" to linkedMapOf("workAllowed" to fg.workAllowed, "why" to fg.workWhy(), "notifiedWork" to fg.notifiedNow), // T379
             "online" to online.json(),
             "contours" to io.github.jasondorjeshort.dystopo.app.ContourCache.get(app).json(),
             "javaHeap" to linkedMapOf("usedBytes" to rt.totalMemory() - rt.freeMemory(), "maxBytes" to rt.maxMemory(), "gc" to gc),

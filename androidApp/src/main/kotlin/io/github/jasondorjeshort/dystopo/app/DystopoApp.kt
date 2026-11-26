@@ -88,7 +88,7 @@ class DystopoApp : Application() {
         }
         // T266: the cache's index (T267's move, then T242's walk, on the cache's own thread) is a slot of its own, never waited for here.
         launch.begin(Launch.CACHE_INDEX, "the cache's index thread")
-        online.cache.whenReady("launch-cacheIndex") { launch.end(Launch.CACHE_INDEX, online.cache) }
+        online.cache.whenReadyOrHeld("launch-cacheIndex") { launch.end(Launch.CACHE_INDEX, online.cache) } // T379: whole, or held for the screen (ADR 0071)
         published = launch.run(Launch.TILES_SERVICE) { tileService(packs) }
         launch.run(Launch.WATCHERS) {
             StartupTrace.mark("style-prime, watchdog, reports and cache budget start")
