@@ -342,8 +342,12 @@ object PlaceSearch {
      */
     fun estimateAreaBytes(tiles: Int): Long = estimateBytes(tiles.toLong() * AREA_BYTES_PER_TILE)
 
-    /** T377: an online vector tile's weight in [estimateAreaBytes] (a city's z14 tile is tens of KB unpacked). */
-    const val AREA_BYTES_PER_TILE = 48L shl 10
+    /**
+     * T377: an online vector tile's weight in [estimateAreaBytes]: the cache keeps them unpacked, and T377's measure on an API 35
+     * emulator (the Greenwich area of `areas.json` at medium detail: 122 tiles at z10, z12 and z14, 23.1 MB, about 190 KB a
+     * tile) grew the heap by 49 MB in a 5.1 s build, which this weight with the margin covers (52 MB); a rural tile is smaller.
+     */
+    const val AREA_BYTES_PER_TILE = 192L shl 10
 
     /** Drops a deleted pack's state (its index file is deleted by the pack manager). */
     @Synchronized
