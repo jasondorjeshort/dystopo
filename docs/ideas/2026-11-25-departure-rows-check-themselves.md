@@ -26,3 +26,17 @@ says which recorded departures are stale.
 
 - Rows that name a part of a file (a harness case, a policy block): the check can only say the file differs.
 - Whether this is the base's (`ownership.js`) or stays a project script.
+
+Plan: one pass, a project script, so no base-owned file changes and no new departure row: the table is this
+project's (ADR 0038), and the base can take the script later through its queue. `node tools/departure-check.js` reads
+the `Hatchery base:` line and the `## Departures` table of `docs/design/decisions/0038-adopted-from-hatchery-after-t121.md`
+and `.claude/hooks/ownership.json`, then prints one JSON object: `stale` (a rowed path whose working-tree file equals
+`git show <base line>:<path>`, so the row can go), `unrecorded` (a base-owned path, by the map, that differs from the
+base line's and has no row; `git diff --name-only <base line> -- <base-owned paths>` minus the rowed paths), and
+`partial` (rows naming part of a file, whose file differs: reported, never judged). It needs the `hatchery` remote
+fetched and says so when the base line's commit is missing. Tests in a `tools/test_departure_check.py` beside the
+others (a scratch repository with a fake table), run by `tools/run-tool-tests.py`. The `wave` skill's Close step 7
+runs it before and after the update and the report carries both lists. Verify: run on `main`; each `stale` or
+`unrecorded` line checked by hand against `git diff`. Out of scope: editing the table (the update's), the base's
+`ownership.js` and the `update-from-hatchery` and `triage` skills (base-owned).
+[no-check: the script and its test file are what the pass adds]
