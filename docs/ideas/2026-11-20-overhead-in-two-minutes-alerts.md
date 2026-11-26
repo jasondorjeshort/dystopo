@@ -30,15 +30,18 @@ background polling, against the rule that protects the 500-a-day quota and the b
 open (recommended, as one task after the replay feed measures how far a two-minute straight-line projection drifts);
 no background alerts.
 
-New: 2026-11-26, the coordinator (claude-fable-5-2): the measurement its plan asks for first exists (T365, `../findings/2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md`): a 2-minute projection is 0.18 km off at the median and 1.7 km at the 90th percentile for cruise, and 1.3 and about 10 km for climbing, descending and terminal traffic, so the alert's distance and its lead time are set by phase, and step (1) of the plan is done.
+2026-11-26 (triage, taking in the coordinator's `New:` of that day): the measurement the earlier plan asked for first
+exists (T365, `../findings/2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md`,
+`shared/.../aircraft/GuessError.kt` with `FlightPhase`): a 2-minute straight-line guess is 0.18 km off at the median
+and 1.7 km at the 90th percentile for cruise, 1.3 and about 10 km for climbing, descending and terminal traffic.
 
-Plan: one pass, the measurement first. (1) `devtool aircraft` gains a report over a replay file: each aircraft's
-position projected ahead in a straight line from its speed, track and vertical rate, against where the replay shows
-it one and two minutes later, as the median and the 90th percentile miss, level, climbing and turning apart. (2)
-`shared/.../aircraft/` gains a pure closest-approach rule over `AircraftTracker`'s moved-up positions: the time, the
-distance and the height above the phone at the closest point within two minutes; one alert per aircraft when the
-pass comes inside a distance or under a height that step 1's figures can carry (constants, each with its reason);
-none from a stale position, none for an aircraft on the ground. (3) The app shows one banner on the map while Flight
+Plan: one pass, the measurement done. (1) `shared/.../aircraft/` gains a pure closest-approach rule over
+`AircraftTracker`'s moved-up positions: the time, the distance and the height above the phone at the closest point
+within the lead time; the lead time and the alert distance set by `FlightPhase` from the finding's table (cruise up to
+two minutes; climbing, descending and terminal traffic a shorter lead and a distance that covers its 90th percentile,
+or no alert where the table says the guess cannot carry it), constants each with its reason citing the finding; one
+alert per aircraft, none from a stale position, none for an aircraft on the ground. Its tests replay fixtures cut from
+the recordings' shape (synthetic, no real flights). (2) The app shows one banner on the map while Flight
 tracking is on and the app is open ("<flight> passes 1.2 km north in about 2 min"; a tap selects the flight), placed
 by the layout rule (`shared/.../ui/OverlayLayout.kt`), one at a time; a synced setting turns it on, off by default
 with a help sentence (ADR 0044: a setting, since near an airport it would never stop and in the hills it is the
