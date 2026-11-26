@@ -238,6 +238,10 @@ object FlightReport {
     val HORIZONS_S = listOf(30.0, 120.0, 300.0, 600.0)
     val OBSERVERS_M = listOf(10_000.0, 50_000.0)
 
+    /** A cell with fewer aircraft or fixes than these is marked thin in the report (one aircraft's turn can make its p90). */
+    const val THIN_AIRCRAFT = 10
+    const val THIN_FIXES = 50
+
     private fun r1(v: Double) = if (v.isFinite()) Math.round(v * 10) / 10.0 else null
     private fun r2(v: Double) = if (v.isFinite()) Math.round(v * 100) / 100.0 else null
 
@@ -245,6 +249,10 @@ object FlightReport {
         val s = GuessError.stats(samples)
         val out = linkedMapOf<String, Any?>("aircraft" to s.aircraft, "fixes" to s.n, "medianM" to s.medianM.roundOrNull(), "p90M" to s.p90M.roundOrNull(), "p99M" to s.p99M.roundOrNull())
         for (o in OBSERVERS_M) out["deg${(o / 1000).toInt()}km"] = listOf(s.medianM, s.p90M, s.p99M).map { r2(GuessError.angleDeg(it, o)) }
+        when {
+            s.n == 0 -> out["note"] = "empty: no fixes in this cell"
+            s.aircraft < THIN_AIRCRAFT || s.n < THIN_FIXES -> out["note"] = "thin: fewer than $THIN_AIRCRAFT aircraft or $THIN_FIXES fixes, proves little"
+        }
         return out
     }
 
@@ -306,21 +314,33 @@ object FlightReport {
         ) + binned(samples)
     }
 
-    /** How many aircraft entries (with a position) carry `track_rate` and `roll`. */
+    /**
+     * How many aircraft entries (with a position) carry `track`, `true_heading`, `track_rate` and `roll`, all and airborne
+     * only (`alt_baro` not `ground`): the tracker moves a mark along `track` (else `true_heading`); the other two are what a
+     * turning guess would need.
+     */
     fun fields(raws: List<String>): Map<String, Any?> {
-        var entries = 0; var rate = 0; var roll = 0
+        val keys = linkedMapOf("track" to "track", "trueHeading" to "true_heading", "trackRate" to "track_rate", "roll" to "roll")
+        val all = IntArray(keys.size); val air = IntArray(keys.size)
+        var entries = 0; var airborne = 0
         for (t in raws) {
             val list = MiniJson.parseObject(t)["ac"] as? List<*> ?: continue
             for (e in list) {
                 val m = e as? Map<*, *> ?: continue
                 if (m["lat"] !is Number) continue
                 entries++
-                if (m["track_rate"] is Number) rate++
-                if (m["roll"] is Number) roll++
+                val up = m["alt_baro"] != "ground"
+                if (up) airborne++
+                for ((i, k) in keys.values.withIndex()) if (m[k] is Number) { all[i]++; if (up) air[i]++ }
             }
         }
-        fun pct(n: Int) = if (entries == 0) null else Math.round(n * 1000.0 / entries) / 10.0
-        return linkedMapOf("entries" to entries, "trackRate" to rate, "trackRatePct" to pct(rate), "roll" to roll, "rollPct" to pct(roll))
+        fun pct(n: Int, of: Int) = if (of == 0) null else Math.round(n * 1000.0 / of) / 10.0
+        val out = linkedMapOf<String, Any?>("entries" to entries)
+        for ((i, name) in keys.keys.withIndex()) { out[name] = all[i]; out[name + "Pct"] = pct(all[i], entries) }
+        val up = linkedMapOf<String, Any?>("entries" to airborne)
+        for ((i, name) in keys.keys.withIndex()) { up[name] = air[i]; up[name + "Pct"] = pct(air[i], airborne) }
+        out["airborne"] = up
+        return out
     }
 
     /** The whole report over [folder]: horizons (unless [ks] alone is wanted), every-k-th runs for [ks], the field counts. */

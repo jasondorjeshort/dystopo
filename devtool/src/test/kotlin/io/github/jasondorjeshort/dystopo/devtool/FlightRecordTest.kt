@@ -111,6 +111,14 @@ class FlightRecordTest {
         assertEquals(240, f["entries"])
         assertEquals(80, f["trackRate"])
         assertEquals(0, f["roll"])
+        assertEquals(240, f["track"])
+        assertEquals(0, f["trueHeading"])
+        assertEquals(240, f.m("airborne")["entries"])
+        assertEquals(33.3, f.m("airborne")["trackRatePct"])
+        // No aircraft is on the ground: that bin is empty and says so; one aircraft a phase is thin.
+        assertEquals(0, rows[0].m("ground")["fixes"])
+        assertTrue((rows[0].m("ground")["note"] as String).startsWith("empty"))
+        assertTrue((rows[0].m("cruise")["note"] as String).startsWith("thin"))
         assertTrue("syn10" !in JsonWriter.write(r), "the report names no aircraft")
     }
 
