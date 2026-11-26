@@ -293,23 +293,22 @@ private fun Figures(lines: List<GlanceLine>, ink: Color, muted: Color, night: Bo
  * sentence would not fit [colW] on one line, never under [MIN_DP] (it wraps to a second line there).
  */
 private fun reasonSize(l: GlanceLine, fit: GlanceFit.Fit, colW: Float, measurer: androidx.compose.ui.text.TextMeasurer, density: androidx.compose.ui.unit.Density): Float {
-    val text = l.reason ?: return 0f
+    val text = l.reason ?: ""
     val ref = with(density) { REF_DP.dp.toPx() }
     val wAtRef = measurer.measure(text, style(density, ref, false), softWrap = false, maxLines = 1, density = density).size.width.toFloat()
     val fits = if (wAtRef > 0) colW / wAtRef * ref else Float.MAX_VALUE
     return maxOf(with(density) { MIN_DP.dp.toPx() }, minOf(fit.valuePx * GlanceFit.REASON, fits))
 }
 
-/** T363: what the bar leaves out for room and what went wrong in the last minute, under the figures; nothing when neither. */
+/** T363: what the bar leaves out for room and what went wrong in the last minute, under the figures, in an area reserved at full height. */
 @Composable
 private fun Notes(n: GlanceText.Notes, ink: Color, muted: Color) {
-    if (n.empty) return
+    // The area is always reserved at its full height (left-out line, heading, the most recent lines), blank when empty, so nothing above it moves.
+    val blank = " "
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        n.leftOut?.let { BasicText(it, style = TextStyle(color = muted, fontSize = 14.sp)) }
-        if (n.recent.isNotEmpty()) {
-            BasicText(io.github.jasondorjeshort.dystopo.app.help.ReasonText.RECENT_HEADING, style = TextStyle(color = ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
-            for (line in n.recent) BasicText(line, style = TextStyle(color = ink, fontSize = 14.sp))
-        }
+        BasicText(n.leftOut ?: blank, style = TextStyle(color = muted, fontSize = 14.sp))
+        BasicText(if (n.recent.isNotEmpty()) io.github.jasondorjeshort.dystopo.app.help.ReasonText.RECENT_HEADING else blank, style = TextStyle(color = ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+        for (i in 0 until GlanceText.MAX_RECENT) BasicText(n.recent.getOrNull(i) ?: blank, style = TextStyle(color = ink, fontSize = 14.sp))
     }
 }
 
@@ -350,10 +349,9 @@ private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, ni
         }
         l.other?.let { BasicText(it, dim, style = style(density, fit.otherPx, false, muted), softWrap = false, maxLines = 1, onTextLayout = overflow("other")) }
         // T363: why the value is not a plain figure and what ends it, at full strength under the dimmed figure.
-        l.reason?.let {
-            SideEffect { Glance.reasonPx[l.kind] = reasonPx }
-            BasicText(it, style = style(density, reasonPx, false, valueColor), maxLines = 2, onTextLayout = overflow("reason"))
-        }
+        // Its row is always there (a blank one when the line has no reason) so the figures never move as a state comes and goes.
+        if (l.reason != null) SideEffect { Glance.reasonPx[l.kind] = reasonPx } else SideEffect { Glance.reasonPx.remove(l.kind) }
+        BasicText(l.reason ?: " ", style = style(density, reasonPx, false, valueColor), maxLines = 2, onTextLayout = overflow("reason"))
     }
 }
 

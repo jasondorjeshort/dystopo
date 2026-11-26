@@ -32,7 +32,7 @@ data class GlanceLine(
     val valueAlso: String? = null,
     /**
      * T363: the line under the value saying why it is not a plain figure and what would end it ([StripItem.note]), and
-     * its reason's code; null for a plain figure. The fit reserves its row only while it is there.
+     * its reason's code; null for a plain figure. The fit reserves its row always, so the layout holds still.
      */
     val reason: String? = null,
     val reasonCode: String? = null,
@@ -193,7 +193,7 @@ object GlanceFit {
         l.plusMinusTemplate?.let { w += m.size(" $it", v * UNIT, false).first }
         val other = l.otherTemplate?.let { m.size(it, v * OTHER, false) }
         // T363: a reason's row, its height only: its type shrinks to the column's width when the sentence needs it.
-        val reason = l.reason?.let { m.size("Ag", maxOf(v * REASON, reasonMinPx), false).second } ?: 0f
+        val reason = m.size("Ag", maxOf(v * REASON, reasonMinPx), false).second // always reserved: the layout never moves as a reason comes and goes
         return maxOf(maxOf(w, valueAlso?.first ?: 0f), maxOf(cap.first, capAlso?.first ?: 0f), other?.first ?: 0f) to
             (maxOf(value.second, valueAlso?.second ?: 0f) + cap.second + (other?.second ?: 0f) + reason)
     }

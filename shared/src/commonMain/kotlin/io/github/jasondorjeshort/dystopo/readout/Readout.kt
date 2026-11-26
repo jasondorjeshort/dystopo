@@ -488,6 +488,9 @@ class ReadoutEstimator(
     private var climbSpanS = 0.0
     private var climbSigmaMps: Double? = null
 
+    /** Called on every clock-back restart with the input's source ("fix" or "pressure:sensor"), its time, the latest time held and the elapsed time; the app logs it. */
+    var onClockBack: ((source: String, tMs: Long, latestMs: Long, elapsedMs: Long) -> Unit)? = null
+
     private val counts = linkedMapOf(
         "fixes" to 0L, "pressureSamples" to 0L, "lateInputs" to 0L, "spikesDropped" to 0L,
         "suspects" to 0L, "reopens" to 0L, "demTries" to 0L, "clockResets" to 0L,
@@ -580,7 +583,7 @@ class ReadoutEstimator(
      * out: the fix's time stands in.
      */
     fun onFix(fix: LocationFix, routeAlongM: Double? = null, elapsedMs: Long = fix.time) {
-        clockCheck(fix.time, elapsedMs)
+        clockCheck(fix.time, elapsedMs, "fix")
         lastElapsedIn = elapsedMs
         if (isJump(fix)) {
             val l = lastPos!!
@@ -692,7 +695,7 @@ class ReadoutEstimator(
     fun onPressure(sample: PressureSample, elapsedMs: Long = sample.timeMs) {
         if (!(sample.hPa in 300.0..1100.0)) return
         bump("pressureSamples")
-        clockCheck(sample.timeMs, elapsedMs)
+        clockCheck(sample.timeMs, elapsedMs, "pressure:" + sample.source.name.lowercase())
         lastElapsedIn = elapsedMs
         val lastT = baro.lastOrNull()?.first
         if (lastT != null && sample.timeMs < lastT) bump("lateInputs")
@@ -1165,10 +1168,11 @@ class ReadoutEstimator(
      * Without this every later input counts as late, the filter never predicts, the climb stays at zero and the
      * elevation lags.
      */
-    private fun clockCheck(tMs: Long, elapsedMs: Long) {
+    private fun clockCheck(tMs: Long, elapsedMs: Long, source: String) {
         val latest = listOfNotNull(fixes.lastOrNull()?.t, baro.lastOrNull()?.first, filter.timeMs).maxOrNull() ?: return
         if (tMs >= latest - CLOCK_BACK_MS) return
         bump("clockResets")
+        onClockBack?.invoke(source, tMs, latest, elapsedMs)
         // T362: the last height is held, dimmed, until the new filter has one or the hold passes.
         if (filter.heightKnown) {
             held = HeldHeight(filter.heightM, filter.heightSigmaM, heightSource(latest), elapsedMs)
