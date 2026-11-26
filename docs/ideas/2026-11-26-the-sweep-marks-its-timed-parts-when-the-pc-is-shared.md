@@ -1,7 +1,6 @@
 ---
 date: 2026-11-26
 kind: chore
-related: [2026-11-25-the-emulator-script-waits-for-a-free-slot.md]
 ---
 
 # The sweep marks its timed parts when the PC is shared
