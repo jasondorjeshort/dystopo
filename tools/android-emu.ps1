@@ -152,7 +152,20 @@ param(
     # position tools\android-firstrun.py uses), at 1629 m: about 1,650 m above sea level less the geoid's about 21 m.
     [string]$Fix = '46.7864,-121.7366,1629',
     # T287: send no fix (the emulator keeps its own default position, outside the public areas).
-    [switch]$NoFix
+    [switch]$NoFix,
+    # T375 (ADR 0070): while the emulator cap is reached, wait up to this many minutes for a free slot instead of refusing
+    # (0: refuse at once, as before). Both cap checks wait (the early one before the build, the real one before the boot)
+    # on one deadline; the oldest waiter goes first (a ticket in the lock folder, header of The emulator cap below).
+    [double]$WaitForSlot = 0,
+    # T375, for tests only: stop after the slot decision (the lock written in the lock folder, then exit 0; nothing is built,
+    # created or booted, and adb is never called). Only in this mode are -TestLockDir (a scratch lock folder in place of
+    # emulators.lockDir), -TestAdbSerials (the emulators adb would list, comma-separated) and -TestHoldSeconds (stay alive
+    # that long after taking the slot, so the lock reads live) honoured; given without it they are refused, so they can
+    # never steer a real boot past the cap.
+    [switch]$SlotDecisionOnly,
+    [string]$TestLockDir = '',
+    [string[]]$TestAdbSerials = @(),
+    [int]$TestHoldSeconds = 0
 )
 $ErrorActionPreference = 'Stop'
 # T65: progress lines go to the output stream, not the host (Write-Host is the information stream in
@@ -166,6 +179,14 @@ $env:ANDROID_SDK_ROOT = $sdk
 if ($AvdHome) { $env:ANDROID_AVD_HOME = [IO.Path]::GetFullPath($AvdHome) }
 elseif (-not $env:ANDROID_AVD_HOME) { $env:ANDROID_AVD_HOME = Join-Path $sdk 'avd' }
 if ($Delete -and -not $Stop) { throw '-Delete goes with -Stop' }
+$TestAdbSerials = @($TestAdbSerials | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if (($TestLockDir -or $TestAdbSerials.Count -or $TestHoldSeconds) -and -not $SlotDecisionOnly) {
+    throw '-TestLockDir, -TestAdbSerials and -TestHoldSeconds go only with -SlotDecisionOnly (a mode that stops after the slot decision and never boots)'
+}
+if ($SlotDecisionOnly -and ($Stop -or $Forward -or $NoEmulator -or $SnapshotLoad -or $SnapshotSave -or -not $EmuPort)) {
+    throw '-SlotDecisionOnly takes -Avd and -EmuPort, and not -Stop, -Forward, -NoEmulator or a snapshot'
+}
+if ($WaitForSlot -lt 0) { throw "-WaitForSlot is minutes, 0 or more (got $WaitForSlot)" }
 foreach ($n in @($SnapshotSave, $SnapshotLoad | Where-Object { $_ })) { if ($n -notmatch '^[\w.-]+$') { throw "a snapshot name is letters, digits, '.', '_' or '-' (got '$n')" } }
 if (($SnapshotSave -or $SnapshotLoad) -and ($NoEmulator -or $Stop -or $Forward)) { throw '-SnapshotSave and -SnapshotLoad go with an emulator, not with -NoEmulator, -Stop or -Forward' }
 if ($Fix -notmatch '^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*(?:,\s*(-?\d{1,4}(?:\.\d+)?)\s*)?$' -or
@@ -182,7 +203,7 @@ $emulator = Join-Path $sdk 'emulator\emulator.exe'
 $package = $DystopoDebugPackage
 $activity = Get-DystopoActivity $package
 $devicePort = $DystopoDebugTilePort
-foreach ($tool in @($adb, $emulator)) { if (-not (Test-Path $tool)) { throw "$tool missing; run tools\android-sdk.ps1" } }
+if (-not $SlotDecisionOnly) { foreach ($tool in @($adb, $emulator)) { if (-not (Test-Path $tool)) { throw "$tool missing; run tools\android-sdk.ps1" } } }
 if ($EmuPort -ne 0 -and ($EmuPort % 2 -ne 0 -or $EmuPort -lt 5554 -or $EmuPort -gt 5682)) { throw "-EmuPort must be even, 5554-5682 (got $EmuPort)" }
 
 # T87: programs that outlive this script (the emulator, a Gradle daemon a build starts) are started through
@@ -213,6 +234,7 @@ function Adb {
 # serial -> state ('device', 'offline', ...) for everything adb knows about.
 function Get-AdbDevices {
     $map = @{}
+    if ($SlotDecisionOnly) { foreach ($s in $TestAdbSerials) { $map[$s] = 'device' }; return $map } # T375: no adb in the test mode
     foreach ($line in (Native $adb devices)) {
         if ($line -match '^(\S+)\s+(device|offline|unauthorized|recovery|sideload|bootloader)\s*$') { $map[$Matches[1]] = $Matches[2] }
     }
@@ -221,6 +243,7 @@ function Get-AdbDevices {
 
 # The AVD an emulator serial runs (from its console), or '' if it does not answer.
 function Get-EmuAvdName([string]$s) {
+    if ($SlotDecisionOnly) { return 'test-avd' }
     $out = Native $adb -s $s emu avd name
     $name = $out | Where-Object { $_ -and $_.Trim() -ne 'OK' -and $_ -notmatch 'error|KO' } | Select-Object -First 1
     if ($name) { $name.Trim() } else { '' }
@@ -285,6 +308,18 @@ function Connect-DebugServer {
 # T231: a boot also waits for, then refuses without, enough free RAM (Test-EmuRam), and starts a guard beside the emulator
 # (tools\android-emu-guard.ps1, its PID in the lock as guardPid) that stops this emulator alone past a private-bytes limit
 # or under a free-RAM floor, and ends with it.
+# T375 (ADR 0070), the wait: with -WaitForSlot <minutes> a boot at the cap waits instead of refusing. Each try is one pass
+# under the mutex, which is released between tries (every 3 s), so other boots and waiters go on. A waiter keeps a
+# ticket in the lock folder, wait-<owner>.json (a name neither lock reader matches: emulator-*.json here,
+# ^emulator-\d+\.json$ in emulator-lock.js), with its first wait's time (since), its last try (seen) and its script's
+# PID. A requester takes a free slot only when fewer tickets older than its own (all of them, when it has none) are
+# waiting than slots are free, so the oldest waiter goes first. The ticket is keyed by -Owner, the PID only saying whether
+# the waiter lives: a waiter cut off (an agent's ten-minute foreground limit) that asks again within $ticketGraceS keeps
+# its place; a ticket whose script is gone and not seen for that long is reclaimed. It lasts from the first wait until the
+# lock is written (so through the build between the two checks) or the script ends. The wait is announced once, with the
+# holders; at the time limit the refusal is today's, naming the holders and the wait.
+$ticketGraceS = 120
+$slotPollS = 3
 $emuImage = '^(qemu-system-[\w.-]+|emulator\d*)(\.exe)?$'
 # T231: privateLimitGB, freeFloorGB and bootCostGB (defaults 8, 4 and 5; the reasoning is in
 # docs/reference/android-emulator.md, The emulator cap); -PrivateLimitGB, -FreeFloorGB and -BootCostGB override them
@@ -305,6 +340,7 @@ function Get-EmuPolicy {
     if ($PrivateLimitGB -gt 0) { $limit = $PrivateLimitGB }
     if ($FreeFloorGB -gt 0) { $floor = $FreeFloorGB }
     if ($BootCostGB -gt 0) { $cost = $BootCostGB }
+    if ($SlotDecisionOnly -and $TestLockDir) { $dir = $TestLockDir } # T375: honoured only in the mode that cannot boot
     if ($dir -eq '~' -or $dir -match '^~[\\/]') { $dir = Join-Path $env:USERPROFILE $dir.Substring(1).TrimStart('\', '/') }
     [pscustomobject]@{ Max = $max; Dir = [IO.Path]::GetFullPath($dir); LimitGB = $limit; FloorGB = $floor; CostGB = $cost }
 }
@@ -345,12 +381,46 @@ function Write-EmuLock([string]$file, [hashtable]$fields) {
 # Under a machine-wide mutex (two scripts booting at once must not both see a free slot): reclaim dead locks, then take
 # a lock for $serial (its file in $script:emuLock) or throw the refusal. -Adopt writes a lock for an emulator already running
 # without one (no cap check: it runs already); -CheckOnly refuses or returns without writing (the early check, before the
-# build and the AVD). Returns nothing: progress lines are output here (T65).
+# build and the AVD). Returns nothing: progress lines are output here (T65). T375: when the cap (or an older waiter) keeps
+# the slot and -WaitForSlot's time is not over, it sets $script:slotWait instead of throwing (Wait-EmulatorLock tries again).
+$script:ownerName = if ($Owner) { $Owner } else { $Avd -replace '^dystopo\d*-', '' }
+$script:ticketFile = ''
+$script:slotDeadline = $null
+$script:slotAnnounced = $false
+$script:slotWaitStarted = $null
+function Get-TicketPath([string]$dir) { Join-Path $dir ('wait-' + ($script:ownerName -replace '[^\w.-]', '_') + '.json') }
+# The waiters' tickets: live while the script's PID runs PowerShell, or for $ticketGraceS after its last try.
+function Get-EmuTickets([string]$dir) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter 'wait-*.json' -File -ErrorAction SilentlyContinue)) {
+        $t = $null
+        try { $t = Get-Content -Raw -LiteralPath $f.FullName | ConvertFrom-Json } catch { }
+        $live = $false; $why = 'unreadable'; $since = [datetime]::MaxValue
+        if ($t) {
+            try { $since = ([datetime]$t.since).ToUniversalTime() } catch { }
+            $seenAgo = [double]::MaxValue
+            try { $seenAgo = ((Get-Date).ToUniversalTime() - ([datetime]$t.seen).ToUniversalTime()).TotalSeconds } catch { }
+            $running = (Get-ProcImage ([int]$t.pid)) -match '^(powershell|pwsh)\.exe$'
+            $live = $running -or $seenAgo -lt $ticketGraceS
+            $why = if ($live) { '' } else { "its script (pid $($t.pid)) is gone and it was last seen $([math]::Round($seenAgo)) s ago" }
+        }
+        [pscustomobject]@{ File = $f.FullName; Ticket = $t; Live = $live; Why = $why; Since = $since; Owner = "$($t.owner)" }
+    }
+}
+function Remove-MyTicket {
+    if ($script:ticketFile) { Remove-Item -LiteralPath $script:ticketFile -Force -ErrorAction SilentlyContinue; $script:ticketFile = '' }
+}
 function Get-EmulatorLock([string]$serial, [string]$avd, [switch]$Adopt, [switch]$CheckOnly) {
     $pol = Get-EmuPolicy
     New-Item -ItemType Directory -Force $pol.Dir | Out-Null
-    $mutex = [System.Threading.Mutex]::new($false, 'Local\dystopo-emulator-locks')
+    # T375: a scratch folder of the test mode gets a mutex of its own, so a test never makes a real boot wait.
+    $mutexName = 'Local\dystopo-emulator-locks'
+    if ($SlotDecisionOnly) {
+        $h = [BitConverter]::ToString([Security.Cryptography.SHA1]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($pol.Dir.ToLowerInvariant())))
+        $mutexName += '-test-' + ($h -replace '-', '').Substring(0, 16)
+    }
+    $mutex = [System.Threading.Mutex]::new($false, $mutexName)
     $held = $false
+    $script:slotWait = $false
     try {
         try { $held = $mutex.WaitOne([TimeSpan]::FromMinutes(2)) } catch [System.Threading.AbandonedMutexException] { $held = $true }
         if (-not $held) { throw 'another android-emu.ps1 has held the emulator lock folder for 2 minutes' }
@@ -365,7 +435,7 @@ function Get-EmulatorLock([string]$serial, [string]$avd, [switch]$Adopt, [switch
         $mine = @($live | Where-Object { $_.Lock.serial -eq $serial })
         if ($mine) {
             if ($mine[0].Lock.avd -ne $avd) { throw "$serial is locked for AVD $($mine[0].Lock.avd): $(Format-EmuHolder $mine[0].Lock)" }
-            if (-not $CheckOnly) { $script:emuLock = $file }
+            if (-not $CheckOnly) { $script:emuLock = $file; Remove-MyTicket }
             return
         }
         if (-not $Adopt) {
@@ -373,12 +443,42 @@ function Get-EmulatorLock([string]$serial, [string]$avd, [switch]$Adopt, [switch
             $locked = @($live | ForEach-Object { $_.Lock.serial })
             $unlocked = @((Get-AdbDevices).Keys | Where-Object { $_ -match '^emulator-\d+$' -and $locked -notcontains $_ } | Sort-Object)
             $holders = @($live | ForEach-Object { Format-EmuHolder $_.Lock }) + @($unlocked | ForEach-Object { "$_ ($(Get-EmuAvdName $_), no lock)" })
-            if ($holders.Count -ge $pol.Max) {
-                throw ("emulator cap reached: $($holders.Count) of $($pol.Max) running (emulators.max in .claude/hooks/policy.json; locks in $($pol.Dir)): " +
-                    ($holders -join '; ') + ". Not booting $avd on $serial. Wait in the foreground until one is stopped (adb devices), or stop your own by serial (-Stop).")
+            # T375: the waiters ahead of this one (dead tickets reclaimed first).
+            $myTicketPath = Get-TicketPath $pol.Dir
+            $tickets = @()
+            foreach ($t in @(Get-EmuTickets $pol.Dir)) {
+                if ($t.Live -or $t.File -eq $myTicketPath) { $tickets += $t; continue }
+                Remove-Item -LiteralPath $t.File -Force -ErrorAction SilentlyContinue
+                Write-Host "reclaimed the waiting ticket of owner $(if ($t.Owner) { $t.Owner } else { Split-Path -Leaf $t.File }): $($t.Why)"
+            }
+            $myT = @($tickets | Where-Object { $_.File -eq $myTicketPath }) | Select-Object -First 1
+            $ahead = @($tickets | Where-Object { $_.File -ne $myTicketPath -and (-not $myT -or $_.Since -lt $myT.Since -or ($_.Since -eq $myT.Since -and $_.Owner -lt $script:ownerName)) } | Sort-Object Since)
+            $free = $pol.Max - $holders.Count
+            if ($free -le $ahead.Count) {
+                $aheadText = if ($ahead.Count) { "; $($ahead.Count) waiting before this one (owner $(@($ahead | ForEach-Object { $_.Owner }) -join ', '))" } else { '' }
+                $now = Get-Date
+                if ($WaitForSlot -gt 0 -and -not $script:slotDeadline) { $script:slotDeadline = $now.AddMinutes($WaitForSlot); $script:slotWaitStarted = $now }
+                if ($script:slotDeadline -and $now -lt $script:slotDeadline) {
+                    $since = if ($myT -and $myT.Ticket.since) { [string]$myT.Ticket.since } else { $now.ToUniversalTime().ToString('o') }
+                    Write-EmuLock $myTicketPath @{ owner = $script:ownerName; pid = $PID; avd = $avd; serial = $serial; checkout = $repoRoot; since = $since
+                        seen = $now.ToUniversalTime().ToString('o') }
+                    $script:ticketFile = $myTicketPath
+                    if (-not $script:slotAnnounced) {
+                        $script:slotAnnounced = $true
+                        Write-Host ("waiting up to $WaitForSlot min for an emulator slot (-WaitForSlot; ticket $myTicketPath$(if ($myT) { ', kept from ' + $since })): " +
+                            "$($holders.Count) of $($pol.Max) running: $($holders -join '; ')$aheadText")
+                    }
+                    $script:slotWait = $true
+                    return
+                }
+                Remove-MyTicket
+                $waited = if ($script:slotWaitStarted) { " Waited $([math]::Round(($now - $script:slotWaitStarted).TotalMinutes, 1)) min (-WaitForSlot $WaitForSlot)." } else { '' }
+                $capText = if ($holders.Count -ge $pol.Max) { "emulator cap reached: $($holders.Count) of $($pol.Max) running" } else { "emulator cap reached for this request: $($holders.Count) of $($pol.Max) running and $free free, held for older waiters" }
+                throw ("$capText (emulators.max in .claude/hooks/policy.json; locks in $($pol.Dir)): " +
+                    ($holders -join '; ') + "$aheadText. Not booting $avd on $serial.$waited Wait in the foreground until one is stopped (adb devices), or stop your own by serial (-Stop).")
             }
             # T231: admission by RAM, read again under the mutex (Wait-EmuRam waited outside it; the early check waits after).
-            if (-not $CheckOnly) {
+            if (-not $CheckOnly -and -not $SlotDecisionOnly) {
                 $short = Test-EmuRam $pol $serial $avd
                 if ($short) { throw $short }
             }
@@ -388,13 +488,27 @@ function Get-EmulatorLock([string]$serial, [string]$avd, [switch]$Adopt, [switch
         Write-EmuLock $file @{ serial = $serial; consolePort = [int]($serial -replace 'emulator-', ''); avd = $avd; owner = $script:emuLockOwner
             pid = $null; emulatorPid = $null; hostPort = $Port; checkout = $repoRoot; bootedBy = $PID; startedAt = (Get-Date).ToUniversalTime().ToString('o'); state = 'booting' }
         $count = if ($Adopt) { "adopted; $($live.Count + 1) locked" } else { "$($holders.Count + 1) of $($pol.Max) running" }
-        Write-Host "lock $file (owner $script:emuLockOwner; $count)"
+        $waitedNote = if ($script:slotWaitStarted) { "; waited $([math]::Round(((Get-Date) - $script:slotWaitStarted).TotalSeconds)) s for the slot" } else { '' }
+        Write-Host "lock $file (owner $script:emuLockOwner; $count$waitedNote)"
         $script:emuLock = $file
+        Remove-MyTicket # T375: the ticket ends when the lock is written
     } finally {
         if ($held) { $mutex.ReleaseMutex() }
         $mutex.Dispose()
     }
 }
+# T375: Get-EmulatorLock until it takes (or, with -CheckOnly, finds) a slot or throws the refusal; the mutex is free
+# between the tries.
+function Wait-EmulatorLock([string]$serial, [string]$avd, [switch]$CheckOnly) {
+    while ($true) {
+        Get-EmulatorLock $serial $avd -CheckOnly:$CheckOnly
+        if (-not $script:slotWait) { return }
+        Start-Sleep -Seconds $slotPollS
+    }
+}
+# A script that stops on an error (a failed build, a refusal) takes its waiting ticket with it; one killed outright leaves
+# it to be kept by its owner's next try or reclaimed after $ticketGraceS.
+trap { if ($script:ticketFile) { Remove-Item -LiteralPath $script:ticketFile -Force -ErrorAction SilentlyContinue }; break }
 # The qemu process listening on the console port, and its emulator.exe parent; written into the lock once seen
 # ($script:emuLockPid set then).
 function Update-EmulatorLockPid([string]$file, [int]$consolePort) {
@@ -612,9 +726,20 @@ if ($Forward) {
 
 # T190: refuse past the cap before building or creating anything (taken for real just before the boot, below).
 # T231: and wait for RAM, or refuse with the figures (read again just before the boot).
+# T375: with -WaitForSlot both checks wait for a slot (one deadline for the two).
+if ($SlotDecisionOnly) {
+    # T375, the test mode: the two checks against the scratch folder (no RAM admission, no adb), then stop. Nothing below
+    # this block runs in it: no build, no AVD, no boot.
+    $s = "emulator-$EmuPort"
+    Wait-EmulatorLock $s $Avd -CheckOnly
+    Wait-EmulatorLock $s $Avd
+    Write-Host "slot decision: $s taken for $Avd (lock $script:emuLock); -SlotDecisionOnly stops here: nothing built, created or booted"
+    if ($TestHoldSeconds -gt 0) { Start-Sleep -Seconds $TestHoldSeconds }
+    exit 0
+}
 if (-not $NoEmulator -and -not (Find-AvdSerial)) {
     $early = "emulator-$(if ($EmuPort) { $EmuPort } else { 'any' })"
-    Get-EmulatorLock $early $Avd -CheckOnly
+    Wait-EmulatorLock $early $Avd -CheckOnly
     Wait-EmuRam $early $Avd
 }
 
@@ -745,7 +870,7 @@ if ($NoEmulator) {
         if ($NetDelay) { $emuArgs += @('-netdelay', $NetDelay) }
         foreach ($f in @($Feature | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) { $emuArgs += @('-feature', $f) }
         Wait-EmuRam $script:serial $Avd # T231: waits for RAM outside the mutex; Get-EmulatorLock reads it again inside
-        Get-EmulatorLock $script:serial $Avd # T190: refuses past the cap, naming the holders
+        Wait-EmulatorLock $script:serial $Avd # T190: refuses past the cap, naming the holders (T375: after -WaitForSlot's wait)
         Write-Host ("starting emulator " + ($emuArgs -join ' ') + "  (log: $log)")
         $proc = Start-Detached $emulator $emuArgs $log
         Start-EmulatorGuard $script:emuLock $script:serial $Avd # T231
