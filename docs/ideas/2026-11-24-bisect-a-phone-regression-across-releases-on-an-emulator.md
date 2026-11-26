@@ -17,3 +17,11 @@ taps (`tools/android-ui.py`) and read screenshots or logcat; the two-maps fixtur
 emulator reproduces the fault only if the owner's own maps are not its cause. The owner installing v0.1.40 and v0.1.41
 on the phone with the same maps is cheaper and tests the real data. Wake it when the phone capture points at
 something an emulator could show.
+
+Question: build the release bisect now, or leave it until a phone capture shows a fault an emulator can reproduce?
+Options: (1) rest it until the capture script's first real capture points at an emulator-reproducible fault
+(recommended: the research found the owner's own phone with old releases cheaper and truer, and the two-maps fixture
+already passes on `main`); (2) build it now as one pass (`tools/` script driving each published release by taps on the
+two-maps fixture); (3) drop it.
+
+Answer:
