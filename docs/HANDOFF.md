@@ -1,20 +1,20 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at the commit that carries this file (wave 49: three merged, four implementers in flight), by the main session in the second clone
+Updated: 2026-11-26, at the commit that carries this file (wave 49: three merged, four in flight, the meter at the hold), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
 - **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged:** T389 (940365fa), T376 (9feb7f02), T375 (bd8f3741); each has its Status line on the board and its log entry.
-- **In flight, four Opus implementers launched 2026-11-26 about 21:55 UTC, no branch pushed yet:** T377 (`task/T377`), T379 (`task/T379`), T384 (`task/T384`), T381 (`task/T381`). A Haiku chore is making the tools' copy `dystopo-wt/tools-main` and cleaning up the three merged branches and their worktrees.
-- **Cost:** the 7-day meter read 94 at 21:53 UTC against the hold of 97; it resets 2026-11-27 04:00 UTC (this session's usage file). The owner: "Go now. We can just hold for a few hours when the hold hits." At the hold the gate refuses every new agent, a verifier included; a fix round may resume, by its id, an agent launched below the hold (T376).
+- **In flight (23:30 UTC):** T379 (`task/T379`, fa960abf, the implementer's report in, a Sonnet verifier running); T384 (`task/T384`, 90773e93, report in, **no verifier yet: the hold**); T377 and T381 (Opus implementers still running; `task/T381` shows 5349dcc6 on the remote, not yet reported). The implementers' reports are kept as `<scratchpad>/w49-plan/report-Tnn.txt` for the verifiers' briefs and the merge bodies. `dystopo-wt/tools-main` exists (at 8f3b36f0) and the merged branches are cleaned up.
+- **Cost: at the hold.** The 7-day meter read 97 at 23:25 UTC, the hold; it resets 2026-11-27 04:00 UTC (this session's usage file). The owner: "Go now. We can just hold for a few hours when the hold hits." Until the reset or a grant the gate refuses every new agent, a verifier included; a fix round may resume, by its id, an agent launched below the hold (T376); merges go on.
 - **On the PC:** the main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. Two phones of the owner's dropped off wireless adb during T389's verify (cause not found).
 
 ## Next
 
-1. As each implementer reports: a Sonnet verifier with the report in its brief, run from `dystopo-wt/tools-main` (T381's with `-SweepThrough two-maps`); at the hold the verifier waits for the reset. Then the merge sequence, and after a merge that touches `tools/` a chore moves `tools-main` to the new tip.
+1. After the reset (or a grant): a Sonnet verifier for T384 first (the readout chain waits on it), then for T377 and T381 as they report (T381's with `-SweepThrough two-maps`), each run from `dystopo-wt/tools-main` with the report in its brief. On each MERGE the merge sequence, and after a merge that touches `tools/` a chore moves `tools-main` to the new tip.
 2. Launch as slots free, each after the tasks in its brackets on the board: T382, T383, then T378, T390, T385, T386, T380, T387, T388. Every brief carries the wave paragraph's `GRADLE_OPTS`, `-WaitForSlot 60`, the fixture and the Hatchery sentence; the briefs of this session are the pattern (scratchpad, not kept).
 3. Before T385 launches: one read-only research agent (a fix's own time against its elapsed-realtime stamp: the platform's guidance, two open trackers); its answer goes into T385's entry.
 4. Timed runs go alone: hold launches for T379's and T387's start-up runs when their implementers report them as not judged.
