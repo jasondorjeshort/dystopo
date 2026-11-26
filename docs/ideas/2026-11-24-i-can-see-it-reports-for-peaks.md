@@ -21,3 +21,12 @@ measurable answer.
 - Kept on the phone only at first, or shared from the start (a new data flow, privacy rules apply: a report carries a
   position).
 - Where the tap lives without cluttering the Panorama.
+
+Question: build "I can see it" as a phone-only log first, or wait until there is something to calibrate against it?
+Options: (1) rest it until the refraction or view-range work needs ground truth (recommended: a log nobody reads
+calibrates nothing, and sharing is a new data flow carrying a position, which needs its own proposal); (2) one pass now,
+phone-only: "I can see it" and "It's hidden" on the List's picked peak line (`app/skylist/SkyListScreen.kt`), stored
+in the track database with place, time and the prediction, a debug route and an export; (3) a proposal now for the
+shared version (the data flow, privacy and what the server keeps).
+
+Answer:
