@@ -24,3 +24,15 @@ views disagreeing) gets a check that runs every sweep.
 
 - A route of its own, or a step reading the existing routes.
 - Which disagreements are faults and which are allowed (a coarser map ends sooner than the online source).
+
+Plan: one pass, tools only, reading the existing routes (no new route). Checked at triage: `tools/two-maps-part.py`
+already reads, at each of the fixture's rows with the network off and on, `GET /packs`, `GET /horizon`,
+`GET /panorama` and the rest, and says of itself that "the rows are the reports' evidence, not a verdict". The pass
+adds the verdict: a pure function in that file (or a module beside it) over a row's raw answers that names a
+disagreement and the view that differs, for three rules: the Horizon's or the Panorama's terrain from the online
+source while a map open at the place covers it; no peaks in a view where the map in use has peak names within the
+range; the Panorama blank where the Horizon has terrain. Allowed and listed, not red: a coarser map ending sooner than
+the online source; a view still working at its `?wait=`. A fault makes the part red and its line names the row and
+the view. Tests in `tools/test_two_maps.py` from saved raw answers (a clean row, each rule tripped once). Verify: the
+`two-maps` part on `main` (`tools/sweep.ps1 -Only two-maps`) green or red with each line read against the frames.
+Out of scope: the public areas of `areas.json` (a later step), the List's route, the in-app check (its own idea).
