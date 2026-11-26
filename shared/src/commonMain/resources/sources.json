@@ -590,7 +590,7 @@
       "licenseUrl": "https://opendatacommons.org/licenses/odbl/1-0/",
       "attribution": "Flights: ADSB.lol contributors (ODbL)",
       "attributionHtml": "Flights: <a href=\"https://www.adsb.lol\" target=\"_blank\">ADSB.lol</a> contributors (<a href=\"https://opendatacommons.org/licenses/odbl/1-0/\" target=\"_blank\">ODbL</a>)",
-      "allowedUses": "Use, commercial use included, with the credit; a derived database made public must be ODbL too (the app keeps the feed in memory only and publishes none).",
+      "allowedUses": "Use, commercial use included, with the credit; a derived database made public must be ODbL too (the app keeps the feed in memory only and publishes none). T365: a developer's recording for measurement (`devtool aircraft --record`) keeps each answer in out/flights/ on that machine only, never committed or published; the report over it prints counts and error figures, no aircraft; its requests are counted per UTC day in the cache and held to 240 of the address's 500.",
       "url": "https://api.adsb.lol/v2/lat/{lat}/lon/{lon}/dist/{nm}",
       "updateCadence": "Live. 500 requests a UTC day per IP address without a key; over that HTTP 429 with Retry-After (2026).",
       "notes": "T311: the Flights layer (off by default) asks for the map view's centre rounded to 0.1 degree and a radius reaching the view's corners, at most 250 nm, with a generic User-Agent and no key or device id. readsb JSON; alt_geom is above the WGS84 ellipsoid. Credited on the map's line while the layer draws. The adsblol/api repository was archived on 2026-11-19 (docs/findings/2026-11-20-aircraft-layer-sources-and-display.md)."
