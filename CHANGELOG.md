@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-26
 
+- T375: The emulator script waits for a free slot
 - T376: Work already launched can be resumed at the hold
 - T389: The glance view's lines hold their place; a log of the GPS clock (the branch `task/gps-clock-log`)
 - T365: A recorder for flight polls, and the error of a guessed position measured from it
