@@ -1,16 +1,16 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at the commit that carries this file (wave 49: thirteen merged; T378 in verification; T380 and T388 building), by the main session in the second clone
+Updated: 2026-11-27, at the commit that carries this file (wave 49: thirteen merged; the last three resumed after a power cut), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
 - **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged (thirteen of fifteen, and T389):** T389 (940365fa), T376 (9feb7f02), T375 (bd8f3741), T379 (bd1e3b7e), T384 (bee02156), T377 (47f65111), T381 (e1b568bf), T390 (4db7929e), T385 (44f8129c), T386 (841d0d60), T382 (9a4f0874), T383 (88016013), T387 (8d32fdad); each has its Status line on the board and its log entry.
-- **In flight (2026-11-27 10:04 UTC), the last two tasks and one verifier:** a Sonnet verifier on T378 (`task/T378`, a258d879; its implementer's report is `<scratchpad>/w49-plan/report-T378.txt`); Opus implementers on T380 (`task/T380`) and T388 (`task/T388`), neither pushed yet.
+- **In flight (2026-11-27 14:26 UTC), resumed by their ids after the PC lost power at about 12:25 UTC:** a Sonnet verifier on T378 (`task/T378`, a258d879), started again from the top; the Opus implementer of T380 (`task/T380` not yet on the remote; its worktree clean at 14c65857, seven commits ahead of `origin/main`); the Opus implementer of T388 (`task/T388` at d1bd347d on the remote; a fix-up that teaches the privacy scanner the new position formats is committed in its worktree as c5f5d6e5, to be tested and pushed). A Haiku chore is cleaning up the seven merged branches and worktrees and moving `dystopo-wt/tools-main` to the tip. Nothing merged or pushed was lost.
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
-- **On the PC:** the main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. Two phones of the owner's dropped off wireless adb during T389's verify (cause not found).
+- **On the PC:** restarted after the power cut, so the live viewer on 8765 and every emulator are down; stale locks and AVDs of the two cut-off emulators are their agents' to clear. The main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. The reports and verdicts for the merge bodies are in the first session's scratchpad folder, `w49-plan/` (it survived).
 
 ## Next
 
