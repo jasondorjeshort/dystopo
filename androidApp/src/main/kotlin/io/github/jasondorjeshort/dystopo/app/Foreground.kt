@@ -78,6 +78,15 @@ object Foreground {
         override fun why(): String = workWhy()
     }
 
+    /** T387: an activity has started in this process (the first change of [started] is to true); stays true after Home. */
+    val screenSeen: Boolean get() = transitions > 0
+
+    /** T387: blocks a plain thread until an activity has started in this process (at once after that); the launch's deferred stages. */
+    fun blockForFirstScreen() {
+        if (screenSeen) return
+        synchronized(lock) { while (transitions == 0L) lock.wait() }
+    }
+
     /** True while an activity of the app is started (visible). */
     val started: Boolean get() = state.value
 

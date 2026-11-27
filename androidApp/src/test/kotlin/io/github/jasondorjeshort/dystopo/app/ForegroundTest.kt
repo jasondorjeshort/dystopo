@@ -74,4 +74,24 @@ class ForegroundTest {
         assertTrue(woke)
         assertTrue(Foreground.block(1)) // at once in the foreground
     }
+
+    /** T387: the launch's deferred stages wait for the first activity; after Home they no longer wait (the stage is open for good). */
+    @Test
+    fun theFirstScreenOpensForGood() {
+        assertFalse(Foreground.screenSeen)
+        val t = Thread { Foreground.blockForFirstScreen() }
+        t.start()
+        Thread.sleep(50)
+        assertTrue(t.isAlive, "no activity yet: it waits")
+        Foreground.notifiedWork("recording", true)
+        Thread.sleep(50)
+        assertTrue(t.isAlive, "a notified job is not a screen")
+        Foreground.activityStarted()
+        t.join(5_000)
+        assertFalse(t.isAlive)
+        Foreground.activityStopped()
+        Foreground.notifiedWork("recording", false)
+        assertTrue(Foreground.screenSeen)
+        Foreground.blockForFirstScreen() // at once after Home
+    }
 }

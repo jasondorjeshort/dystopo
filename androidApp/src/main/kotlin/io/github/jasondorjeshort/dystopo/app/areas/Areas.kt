@@ -432,9 +432,8 @@ object Areas : VersionPins {
         // T151: the cache's keys as rows, for coverage; T242: once the index is whole, on its thread (it walked the keys here on the main thread)
         service.cache.whenReady("areas-rows") { rowsOf(service.cache) }
         AheadPrefetch.start()
-        TripCorridors.request("start") // T130: trips saved, synced or deleted while the app was not running
-        ResumeCheck.install() // T151: the foreground trigger
-        ResumeCheck.request(ResumeCheck.TRIGGER_START) // T151: interrupted downloads resume from their cursor
+        // T387 (ADR 0071): T130's corridors at the start and T151's resume check with its foreground trigger are the launch's
+        // `pending` stage (`DystopoApp.resumePendingWork`), at the first screen.
     }
 
     /**
