@@ -95,7 +95,12 @@ object Updater {
 
     private fun prefs() = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Called once from the application ([io.github.jasondorjeshort.dystopo.app.DystopoApp]): restores a verified download and, in release builds, starts the daily check. */
+    /**
+     * Called once from the application ([io.github.jasondorjeshort.dystopo.app.DystopoApp]): restores a verified download and, in release builds, starts the daily check.
+     * T387 (ADR 0071): the launch's `updater` stage runs it at the first screen, not at a start without one (the restore hashes
+     * the kept APK; the check goes to the network); Settings' row and `GET /update` start it themselves if it has not run. The
+     * daily check runs only while the app is on screen: in the background its thread waits for the screen.
+     */
     fun start(context: Context) {
         if (started) return
         started = true
@@ -107,6 +112,7 @@ object Updater {
                 try {
                     Thread.sleep(FIRST_CHECK_DELAY_MS)
                     while (true) {
+                        io.github.jasondorjeshort.dystopo.app.Foreground.block() // T387: no check unseen; it waits for the screen
                         if (due()) runCatching { check(manual = false).get() }.onFailure { Log.w(TAG, "update check", it) }
                         Thread.sleep(POLL_MS)
                     }

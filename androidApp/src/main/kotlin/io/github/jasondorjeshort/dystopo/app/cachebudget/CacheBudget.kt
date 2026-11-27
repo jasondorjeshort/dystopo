@@ -4,6 +4,7 @@ import android.util.Log
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.ContourCache
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.Foreground
 import io.github.jasondorjeshort.dystopo.app.LocalServer
 import io.github.jasondorjeshort.dystopo.app.MapViewport
 import io.github.jasondorjeshort.dystopo.app.nav.NavSession
@@ -72,8 +73,19 @@ object CacheBudget {
         return OnlineFetcher.DERIVED_FROM_DEM.any { route.startsWith(it) }
     }
 
+    /** T127, T387: the sources' own trim takes the budget's total as its ceiling from the process's start, before [start]. */
+    fun prime() {
+        DirectSources.budgetTotalBytes = AppSettings.cacheBudgetMb * BudgetPlan.MB
+    }
+
+    /** T387 (ADR 0071): the periodic check's passes skipped because no screen and no notified job was up. */
+    val tickSkips = AtomicLong()
+
     /**
-     * Hooks the caches up on this object's thread (the contour cache's index walks its directory) and checks once. T242:
+     * Hooks the caches up on this object's thread (the contour cache's index walks its directory) and checks once. T387: the
+     * launch's `budget` stage, at the first screen (ADR 0071); until then [engine] is null, `GET /storage`'s budget has no
+     * `usedBytes` and the Storage screen's percentages read the two caches' own byte counts, as while an index is built.
+     * The check every [TICK_S] seconds passes only while work is allowed (on screen, or a notified job). T242:
      * the check runs once both caches' indexes are whole ([indexed]), on this object's thread: a run reads and evicts over
      * the whole index, which waits for the walk (minutes over a large cache) and would hold this thread meanwhile.
      */
@@ -81,7 +93,7 @@ object CacheBudget {
     fun start(app: DystopoApp) {
         if (started) return
         started = true
-        DirectSources.budgetTotalBytes = AppSettings.cacheBudgetMb * BudgetPlan.MB // T127
+        prime() // T127
         executor.execute {
             try {
                 val online = OnlineService.get(app).cache
@@ -107,7 +119,12 @@ object CacheBudget {
             }
         }
         // A task that throws would cancel the schedule, so nothing escapes. T242: not while an index is built.
-        executor.scheduleWithFixedDelay({ runCatching { engine?.let { e -> if (indexed(e) && e.refreshedOverBytes() > 0) run(e) } } }, TICK_S, TICK_S, TimeUnit.SECONDS)
+        executor.scheduleWithFixedDelay({
+            runCatching {
+                if (!Foreground.workAllowed) tickSkips.incrementAndGet() // T387: nothing unseen (a write still pokes a run)
+                else engine?.let { e -> if (indexed(e) && e.refreshedOverBytes() > 0) run(e) }
+            }
+        }, TICK_S, TICK_S, TimeUnit.SECONDS)
     }
 
     /** T242: whether every tile cache of [e] has its whole index (a run before then would wait for the walk). */
@@ -190,6 +207,7 @@ object CacheBudget {
             "guard" to guard.json(),
             "loaded" to (e != null),
             "indexing" to building, // T242
+            "tickSkips" to tickSkips.get(), // T387: the periodic check's passes with no screen and no notified job (`loaded` false: the stage is deferred)
         )
     }
 }

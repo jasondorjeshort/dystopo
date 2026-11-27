@@ -264,10 +264,14 @@ class OnlineService private constructor(private val app: DystopoApp) {
     /** Indicator state: `none` (no server), `online`, `offline` or `unknown` (not checked yet). */
     fun state(): String = fetcher?.state ?: "none"
 
+    /** T387: the probe's passes skipped with no screen and no notified job (`GET /online` `probesSkipped`). */
+    val probesSkipped = AtomicLong()
+
     private fun probeLoop() {
         var next = PROBE_ONLINE_MS
         try {
-            val f = fetcher
+            // T387 (ADR 0071): no probe unseen (a notified download still has it); a skipped pass looks again in 2 s, a no-op.
+            val f = fetcher?.takeIf { io.github.jasondorjeshort.dystopo.app.Foreground.workAllowed.also { ok -> if (!ok) { probesSkipped.incrementAndGet(); next = PROBE_SKIPPED_MS } } }
             if (f != null) {
                 val stale = f.lastOkAt == 0L || System.currentTimeMillis() - f.lastOkAt > PROBE_ONLINE_MS
                 if (f.state != "online" || stale || info == null) {
@@ -751,7 +755,7 @@ class OnlineService private constructor(private val app: DystopoApp) {
         "shade" to mapOf("made" to shadeMade.get(), "cacheHits" to shadeCacheHits.get(), "incompleteNotCached" to shadeIncomplete.get()), // T74
         "versionReloads" to versionReloads.get(),
         "assetsVersion" to assetsVersion,
-        "unavailableServed" to unavailableServed.get(),
+        "unavailableServed" to unavailableServed.get(), "probesSkipped" to probesSkipped.get(), // T387
         "wider" to widerJson(), // T254: tiles cut from a wider zoom the phone holds
         "behind" to BehindRefresh.json(), // T368: the fetches behind what the phone holds and their batched refreshes
         "stalledOsm" to stalledOsm.json() + osmRefresh.json() + linkedMapOf("sourceRefreshes" to osmSourceRefreshes.get(), "lastSourceRefresh" to lastOsmRefresh), // T138; T144: settleMs, refreshes
@@ -789,6 +793,8 @@ class OnlineService private constructor(private val app: DystopoApp) {
         const val WIDER = "wider"
         const val PROBE_ONLINE_MS = 30_000L
         const val PROBE_OFFLINE_MS = 5_000L
+        /** T387: the next look after a pass skipped with no work allowed. */
+        const val PROBE_SKIPPED_MS = 2_000L
         /** T155: the gap before the next canary DEM try ([retryStalledDem]): after one that stalled, and the most after quick failures. */
         const val CANARY_MIN_GAP_MS = 2_000L
         const val CANARY_MAX_GAP_MS = 30_000L

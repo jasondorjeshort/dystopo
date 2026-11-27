@@ -1106,6 +1106,8 @@ class TileService(
             val t = plan[i]
             // Yield to the map: wait while any of its contour tiles is generating.
             val pauseStart = System.nanoTime()
+            // T387 (ADR 0071): no warm-up unseen; off screen it waits (a reload's close still ends it within a poll).
+            while (!Foreground.started && !closed) Foreground.block(WARMUP_GATE_POLL_MS)
             while ((foregroundContours.get() > 0 || System.nanoTime() - lastForegroundDone < WARMUP_QUIET_MS * 1_000_000L) && !closed) Thread.sleep(WARMUP_POLL_MS)
             if (closed) break
             val paused = System.nanoTime() - pauseStart
@@ -1267,6 +1269,8 @@ class TileService(
         const val WARMUP_ZOOMS = 2
         const val WARMUP_MAX_TILES = 256
         const val WARMUP_POLL_MS = 50L
+        /** T387: how often a warm-up held for the screen looks at its close. */
+        const val WARMUP_GATE_POLL_MS = 5_000L
         /** DEM pyramids kept at once (T41): 96 decoded tiles, 24 MB, each. */
         const val MAX_PYRAMIDS = 2
 

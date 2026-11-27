@@ -6,13 +6,17 @@ import android.os.StrictMode
 import android.os.SystemClock
 import io.github.jasondorjeshort.dystopo.app.BuildConfig
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
+import io.github.jasondorjeshort.dystopo.app.Foreground
 import io.github.jasondorjeshort.dystopo.app.StartupTrace
 import io.github.jasondorjeshort.dystopo.app.debug.StrictModeCounts
 import io.github.jasondorjeshort.dystopo.launch.Bound
 import io.github.jasondorjeshort.dystopo.launch.Launch
+import io.github.jasondorjeshort.dystopo.launch.LaunchGate
 import io.github.jasondorjeshort.dystopo.launch.Runs
 import io.github.jasondorjeshort.dystopo.launch.Stage
+import io.github.jasondorjeshort.dystopo.launch.StageState
 import io.github.jasondorjeshort.dystopo.launch.Value
+import io.github.jasondorjeshort.dystopo.launch.Waits
 import io.github.jasondorjeshort.dystopo.launch.Work
 import io.github.jasondorjeshort.dystopo.launch.markMatches
 import java.io.File
@@ -22,6 +26,9 @@ import java.io.File
  * `GET /debug/launch`. `DystopoApp.onCreate` and `MainActivity` bind each stage's body (the lines they ran before, in the
  * same order and on the same threads); `Tracking`, `OnlineService.get`, `PackManager.get` and the world overview's copy
  * read their slots here.
+ *
+ * T387 (ADR 0071): the stages that wait ([Waits]) wait on `Foreground`: for the first activity ([Foreground.blockForFirstScreen])
+ * or for allowed work ([Foreground.blockForWork]); `GET /debug/launch` gives each stage's `state` and `waits`, and `deferred`.
  */
 object AppLaunch {
     private fun isMain() = Looper.myLooper() == Looper.getMainLooper()
@@ -43,7 +50,39 @@ object AppLaunch {
             waiting = { s, begins -> StartupTrace.waitingFor(s?.name, begins) },
             mainRead = { slot, who, begins -> if (begins) StartupTrace.mainThreadRead(slot.name, who) },
         ),
+        awaitOpen = ::awaitOpen,
+        opened = ::opened,
     )
+
+    /** T387: whether [w] is open now ([LaunchGate.opens] over `Foreground`). */
+    fun opened(w: Waits): Boolean = LaunchGate.opens(w, Foreground.screenSeen, Foreground.workAllowed)
+
+    /** T387: blocks a deferred stage's own thread until [w] is open. */
+    private fun awaitOpen(w: Waits) {
+        when (w) {
+            Waits.NOTHING -> Unit
+            Waits.WORK -> if (!Foreground.screenSeen) Foreground.blockForWork()
+            Waits.SCREEN -> Foreground.blockForFirstScreen()
+        }
+    }
+
+    /**
+     * T387: [s]'s state now. The cache's index (observed; T379 ends the stage when the walk is held for the screen) reads
+     * `deferred` while its walk is held and not whole, `running` while it walks.
+     */
+    fun stateOf(s: Stage, app: DystopoApp?): StageState {
+        if (s.name == Launch.CACHE_INDEX.name && app != null && runner.span(s.name).boundAt >= 0) {
+            val cache = runCatching { io.github.jasondorjeshort.dystopo.app.online.OnlineService.get(app).cache }.getOrNull()
+            if (cache != null && !cache.ready) return cache.gateJson().let { g -> if (g["held"] == true || g["open"] == false) StageState.DEFERRED else StageState.RUNNING }
+        }
+        return runner.state(s)
+    }
+
+    /** T387: `GET /debug/startup`'s `launch.states`: each stage's state by name, and the deferred ones. */
+    fun states(app: DystopoApp?): Map<String, Any?> {
+        val by = Launch.stages.associate { it.name to stateOf(it, app).json }
+        return linkedMapOf("states" to by, "deferred" to by.filterValues { it == StageState.DEFERRED.json }.keys.toList(), "screenSeen" to Foreground.screenSeen, "workAllowed" to Foreground.workAllowed)
+    }
 
     fun <T : Any> slot(v: Value<*>): Slot<T> = runner.slot(v)
 
@@ -117,6 +156,7 @@ object AppLaunch {
         "lagMs" to runner.workerLagNs / 1e6,
         "madeMs" to madeNs / 1e6,
         "listMs" to listNs / 1e6,
+        "states" to states(runCatching { DystopoApp.instance }.getOrNull()), // T387
     )
 
     /** The observed MAIN stages' spans, from the start trace's marks: from the stage's first mark to the next mark not its own. */
@@ -144,7 +184,9 @@ object AppLaunch {
             val end = if (sp.endAt >= 0) ms(sp.endAt, origin) else obs?.second?.minus(origin)
             val counts = strict[s.name].orEmpty()
             linkedMapOf(
-                "name" to s.name, "runs" to s.runs.name, "bound" to s.bound.name, "thread" to (sp.threadName ?: if (obs != null) "main" else null),
+                "name" to s.name, "state" to stateOf(s, app).json, "waits" to s.waits.name, // T387
+                "deferredMs" to ms(sp.deferredAt, origin), "openedMs" to ms(sp.openedAt, origin), // T387
+                "runs" to s.runs.name, "bound" to s.bound.name, "thread" to (sp.threadName ?: if (obs != null) "main" else null),
                 "needs" to s.needs, "gate" to s.gate.name, "work" to s.work.map { it.name }, "marks" to s.marks,
                 "publishes" to s.publishes.map { it.name }, "reads" to s.reads.map { it.name }, "allowed" to s.allowed,
                 "boundMs" to ms(sp.boundAt, origin), "readyMs" to ms(sp.readyAt, origin), "startMs" to start, "endMs" to end,
@@ -157,6 +199,8 @@ object AppLaunch {
         }
         return linkedMapOf(
             "stages" to rows,
+            "deferred" to rows.filter { it["state"] == StageState.DEFERRED.json }.map { it["name"] }, // T387
+            "screenSeen" to Foreground.screenSeen, "workAllowed" to Foreground.workAllowed, // T387
             "overheadMs" to runner.overheadNs / 1e6, "mainMs" to runner.mainOverheadNs / 1e6, "madeMs" to madeNs / 1e6, "workerLagMs" to runner.workerLagNs / 1e6,
             "gates" to linkedMapOf("BEFORE_ACTIVITY" to linkedMapOf("atMs" to ms(runner.gateAt, origin), "waitMs" to runner.gateWaitNs / 1e6)),
             "firstFrameMs" to frameAt?.minus(origin),
