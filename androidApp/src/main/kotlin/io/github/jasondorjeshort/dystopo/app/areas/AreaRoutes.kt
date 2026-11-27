@@ -141,6 +141,17 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   `GET /areas/download` `resume`: `trigger`, `from` (the cursor it resumed from), `skippedTiles`, `failedAgain`, `stalled`,
  *   `stalledByNetwork`, `cursorSaves`, `cursor`. `DELETE /areas/{id}` answers `ms`; each area's `coverage` adds `rows` and `ms`
  *   (counted row by row).
+ * - T377, the fixture for "an area kept as tiles" (wave 49; T378 and T386 reuse it): `POST /areas/fixture/tiles?pack=<name>`
+ *   records a drawn area as a finished tile area from tiles already on the phone, with no request to the network: the area
+ *   (a polygon `ring=lat,lon;...`, by default a ring around Paradise on Mount Rainier; `detail=full|medium|less`, medium by
+ *   default; `name=`, "Paradise tiles" by default) gets the vector tiles of its download's rows that the pack <name>'s vector
+ *   archive holds, copied into the online cache under the keys an area download writes (`Areas.keyPrefixes`, the current
+ *   version), a manifest of those rows (the vector item only: tiles the pack lacks are left out, the elevation is not
+ *   seeded) and a record `done`, pinned, from the online source in use (409 without one). `skipOpen=1` copies as a download
+ *   does next to an open map (`AreaDownload.fetchTile`): a tile an open map answers is left out of the cache but stays in the
+ *   manifest, so the area holds fewer tiles than its shape (with the pack on, none). Answers `id`, `name`, `zooms`,
+ *   `copied`, `skippedOpenMap` and `outsidePack` per zoom, `bytes`, `ms`, `keyPrefix`, `network` false and the record.
+ *   `DELETE /areas/{id}` removes it with its tiles. The pack is read even while it is off (`POST /areas/rows/off`).
  */
 object AreaRoutes {
     private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss|/rename)?$")
@@ -196,6 +207,7 @@ object AreaRoutes {
                 val off = when (r.query["off"]) { "1", "true" -> true; "0", "false" -> false; else -> throw IllegalArgumentException("off=1|0") }
                 return Response.json(linkedMapOf("id" to OfflineMapList.PACK + name, "result" to io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(app).setOff(name, off)) + rowsJson())
             }
+            "POST" to "/areas/fixture/tiles" -> return Response.json(seedTileArea(app, r.query)) // T377: the wave's fixture
             "POST" to "/areas/rows/action" -> { // T234: a row's action, as its tap
                 val inputs = offlineMapInputs(app)
                 val id = r.query["id"] ?: throw IllegalArgumentException("id=<row id> (GET /areas/rows)")
@@ -354,6 +366,74 @@ object AreaRoutes {
     private fun planArea(a: AreaOfInterest): AreaOfInterest {
         val s = a.shape as? io.github.jasondorjeshort.dystopo.areas.AreaShape.Box ?: return a
         return regionArea(io.github.jasondorjeshort.dystopo.packs.PackBounds(s.west, s.south, s.east, s.north), a.maxZoom, a.name).let { it.withZooms(a.minZoom, a.maxZoom, a.demMaxZoom) }
+    }
+
+    /** T377: the fixture's default ring, around Paradise on Mount Rainier (a public place), inside the Rainier pack. */
+    internal const val FIXTURE_RING = "46.781,-121.752;46.781,-121.718;46.797,-121.718;46.797,-121.752"
+
+    /**
+     * T377: `POST /areas/fixture/tiles` (see the object comment): a drawn area recorded as a finished tile area from the vector
+     * tiles of the pack [q] names, copied into the online cache; nothing is fetched.
+     */
+    private fun seedTileArea(app: DystopoApp, q: Map<String, String>): Map<String, Any?> {
+        val t0 = System.currentTimeMillis()
+        val packName = q["pack"] ?: throw IllegalArgumentException("pack=<name> (GET /areas/rows: pack:<name>)")
+        val listed = io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(app).find(packName) ?: throw NoSuchElementException("no pack '$packName' on the phone")
+        val vector = listed.files.vector ?: throw IllegalArgumentException("pack '$packName' has no vector archive")
+        val service = OnlineService.get(app)
+        val fetcher = service.fetcher ?: throw IllegalStateException("no online source in use (an area's tiles are kept under its keys)")
+        val ring = (AreaOfInterest.fromQuery(mapOf("ring" to (q["ring"] ?: FIXTURE_RING))).shape as io.github.jasondorjeshort.dystopo.areas.AreaShape.Polygon).rings.single()
+        val detail = AreaDetail.byKey(q["detail"] ?: "medium") ?: throw IllegalArgumentException("detail must be ${DETAILS.joinToString(", ")}")
+        val name = q["name"]?.trim()?.ifEmpty { null } ?: "Paradise tiles"
+        val area = AreaOfInterest(io.github.jasondorjeshort.dystopo.areas.AreaShape.Polygon(listOf(ring)), AreaDetail.MIN_ZOOM, AreaDetail.MIN_ZOOM + 1).at(detail).withName(name)
+        val skipOpen = q["skipOpen"] == "1"
+        val item = AreaDownload.localManifest(area, fetcher.server).items.filterIsInstance<io.github.jasondorjeshort.dystopo.areas.TilesItem>()
+            .first { it.route == io.github.jasondorjeshort.dystopo.areas.AreaManifest.ROUTE_OSM }
+        val prefix = Areas.keyPrefixes(item.route, fetcher.server, held = false).first()
+        val packs = runCatching { app.tiles.packs }.getOrNull()
+        val held = HashMap<Int, io.github.jasondorjeshort.dystopo.areas.TileSet>()
+        val copied = sortedMapOf<Int, Int>()
+        val skipped = sortedMapOf<Int, Int>()
+        val outside = sortedMapOf<Int, Int>()
+        var bytes = 0L
+        io.github.jasondorjeshort.dystopo.app.FileRangeSource(vector).use { src ->
+            val reader = io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader.open(src, mapOf(io.github.jasondorjeshort.dystopo.pmtiles.Compression.GZIP to io.github.jasondorjeshort.dystopo.app.gunzip))
+            for ((z, set) in item.tiles) set.forEachRow { y, x0, x1 ->
+                for (x in x0..x1) {
+                    val tile = reader.tile(z, x, y)
+                    if (tile == null) {
+                        outside[z] = (outside[z] ?: 0) + 1
+                        continue
+                    }
+                    held.getOrPut(z) { io.github.jasondorjeshort.dystopo.areas.TileSet(z) }.add(x, y)
+                    // As AreaDownload.fetchTile: a tile an open map answers is not fetched (with the pack off, none is).
+                    if (skipOpen && packs?.osmFor(z, x, y) != null) {
+                        skipped[z] = (skipped[z] ?: 0) + 1
+                        continue
+                    }
+                    service.cache.put(prefix + "/" + z + "/" + x + "/" + y + "." + item.ext, tile)
+                    bytes += tile.size
+                    copied[z] = (copied[z] ?: 0) + 1
+                }
+            }
+        }
+        val tiles = io.github.jasondorjeshort.dystopo.areas.TilesItem(item.route, item.ext, item.url, held.toSortedMap(), bytes)
+        Areas.saveManifest(io.github.jasondorjeshort.dystopo.areas.AreaManifest(
+            area.id, name, area, io.github.jasondorjeshort.dystopo.areas.AreaManifest.STATUS_READY, listOf(tiles),
+            source = "phone (debug fixture from the pack $packName)", generatedAt = java.time.Instant.now().toString(),
+        ))
+        val old = Areas.get(area.id)
+        Areas.put(Areas.Record(
+            id = area.id, name = name, area = area, createdAt = old?.createdAt ?: System.currentTimeMillis(), pinned = true, state = "done",
+            source = fetcher.server, bytes = bytes, estimateBytes = bytes, tiles = copied.values.sum(), versions = fetcher.currentVersions(),
+            downloadMs = System.currentTimeMillis() - t0,
+        ))
+        return linkedMapOf(
+            "id" to area.id, "name" to name, "pack" to packName, "detail" to detail.key, "zooms" to held.keys.sorted(), "skipOpen" to skipOpen,
+            "copied" to copied.mapKeys { it.key.toString() }, "skippedOpenMap" to skipped.mapKeys { it.key.toString() },
+            "outsidePack" to outside.mapKeys { it.key.toString() },
+            "bytes" to bytes, "ms" to System.currentTimeMillis() - t0, "keyPrefix" to prefix, "network" to false, "area" to Areas.get(area.id)?.json(),
+        )
     }
 
     /** T106: Retry on an area card: the same corridor downloaded again (a pack-backed area is a region pack: 409). */

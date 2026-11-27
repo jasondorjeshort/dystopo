@@ -56,6 +56,7 @@ class TrackingService : Service() {
             return START_NOT_STICKY
         }
         t.onServiceForeground()
+        io.github.jasondorjeshort.dystopo.app.Foreground.notifiedWork(NOTIFIED, true) // T379 (ADR 0071): work under the recording's notification
         io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.setRecording(true) // T178: the trend's sampling
         return START_STICKY
     }
@@ -67,6 +68,7 @@ class TrackingService : Service() {
 
     override fun onDestroy() {
         creating = false
+        io.github.jasondorjeshort.dystopo.app.Foreground.notifiedWork(NOTIFIED, false) // T379
         Tracking.awaitReady(this).onServiceDestroyed()
         io.github.jasondorjeshort.dystopo.app.readout.PressureWatch.setRecording(false) // T178
         if (instance === this) instance = null
@@ -79,5 +81,8 @@ class TrackingService : Service() {
         /** T159: true from `onCreate` until `onStartCommand` has the [Tracking] (which then does not start the service again). */
         @Volatile var creating = false
             private set
+
+        /** T379: the recording's name among the notified jobs ([io.github.jasondorjeshort.dystopo.app.Foreground.notifiedWork]). */
+        const val NOTIFIED = "recording"
     }
 }

@@ -188,7 +188,8 @@ object OfflineMapList {
     const val HOLDS_ALL = "With routing and place search"
     const val HOLDS_VECTOR = "With routing and place search, no terrain"
     const val HOLDS_TERRAIN = "Terrain only"
-    const val HOLDS_TILES = "Map only"
+    /** T377 (ADR 0031): an area kept as tiles: its places are searchable, routes need an offline map (the owner, 2026-11-24). */
+    const val HOLDS_TILES = "Map and place search, no routes"
     const val NEVER_CLEARED = "Never cleared; outside the budget"
     const val IN_BUDGET = "Counts in the budget"
     const val CLEARED_FIRST = "Counts in the budget; cleared first when space runs short"

@@ -276,7 +276,8 @@ class OnlineUi(
         const val WIDER_ZOOM = "from a wider zoom"
         /** T255 (ADR 0031: listed for the owner): the card's source sentences that tell an offline map from kept tiles. */
         const val SAVED_OFFLINE_MAP = "This part of the map is saved on this phone as an offline map."
-        const val KEPT_TILES = "This part of the map is kept on this phone as map tiles only, so search and routes do not work here."
+        // T377: a downloaded area kept as tiles is searchable now; routes still need an offline map.
+        const val KEPT_TILES = "This part of the map is kept on this phone as map tiles, so routes do not work here; search finds places only inside a downloaded area."
         const val CUT_FROM_WIDER = "This part of the map is cut from a wider zoom kept on this phone, so it shows less detail."
         /** T264 (ADR 0031: listed for the owner): the chip's source and the card's sentence over the built-in world overview. */
         const val WORLD_OVERVIEW = "from the world overview"

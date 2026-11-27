@@ -26,6 +26,17 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   once the readout's refresh has come in (two refreshes, about 1 s), so a check's frame and its semantics read one scene
  *   (the last minute's "ago" times, a caption's "no fix N s" and a line's state no longer move between them); it answers
  *   once the view holds, and `GET` reports `hold` and `holding`. Closing the view ends the hold.
+ * - T384: `lines` ends with the position line (`kind` `position`: `value` the last fix's latitude and longitude in decimal
+ *   degrees, or a dash; `reason` where it came from and its age). `gps` is the receiver as the view read it: `searching`
+ *   (no GPS fix for the readout's 5 s gap since the device's fixes started; an injected fix that is not `provider=network`
+ *   stands in for one), `sinceS` (how long this search has run: from the last GPS fix, or the first start of the device's
+ *   fixes in this process: a restart does not start it again), `seen` and `used` (satellites heard, used in a fix), `bestCn0` (dB-Hz), `network` (`accuracyM`, `ageS`) while
+ *   the last fix is a network one, else null; read from the status the view holds while open (`gnssHold` true: [Gnss]'s
+ *   `glance` holder, status only; `POST /gnss?case=` replaces the satellites). While it searches, every `reasonCode` `no
+ *   fix` reads `searching`, and the accuracy's and the fix age's `reason` (else the first lines reading `searching`) say
+ *   for how long, the satellites and the best signal. `position` has `lat`, `lon`, `source` (`gps` or `network`),
+ *   `provider` (`gps`, `network`, `passive`, `debug` for an injected fix), `ageS`, `accuracyM`, `text` and `line` as drawn
+ *   (`source` null before any fix).
  */
 object GlanceRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {

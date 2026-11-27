@@ -42,6 +42,16 @@ walk finishes with the app on screen. The heap daemon's share is the walk's garb
 
 Not measured: how long a whole walk takes on this phone in the foreground, and how many files the store holds.
 
+**Reproduced and gated (T379, 2026-11-26, API 35 emulator, debug build, 200,007 files from `POST /debug/cache/fill`,
+the snapshot removed so a start must walk).** The start with no activity: `adb root`, then `adb shell content query
+--uri content://<package>.gpxshare/none` (the FileProvider starts the process: `am_proc_start` reason `content
+provider`, `curProcState=19`, cached and empty, as the phone's preload). On `main`, with the emulator's cached apps
+freezer on, the `tile-index-tiles` thread had 7.9 s of CPU when Android froze the process 12 s after its start; with the
+freezer off (`settings put global cached_apps_freezer disabled`, a reboot; the phone did not freeze it), the thread took
+16.4 s of CPU over 30 s and walked all 200,007 files in 21.8 s (`walkMs`), the process 28 s of CPU in all, with no
+screen. On the branch the same start: the `tile-index-tiles` thread took 0 ticks in 21 reads over 10 min 15 s (the process 1.2 s of CPU in all, its other threads and the debug reads), `GET /debug/cache` showing `state` `indexing`, `entries` 0, `index.gate` `open` false, `why` `no screen and no notified job`, `held` true, the snapshot not even read, and the launch stage `cacheIndex` ended at the hold. Home during a walk begun on screen (300,013 files): the thread stopped at 2.7 s of CPU and took 0 ticks in the 2.5 min after, held at 59,690 files filed; back on screen it went on and ended (`walkMs` 215,914 of which `heldMs` 202,670). With a recording running, Home did not stop it: the walk ended in the background (`why` `under recording`). Not tried on the device: the walk under an area download's notification (unit-tested); the phone's day in the background (ADR 0071's prediction, the owner's action). Since T379 the walk waits for the screen or a notified job
+(ADR 0071); the resumable walk and the journal (Next 1's last two parts) are T390's.
+
 ## Next
 
 1. The fix, for wave 49 (the owner, 2026-11-25), under the owner's rule that the app does no silent work in the

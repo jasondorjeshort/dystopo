@@ -3348,7 +3348,8 @@ def part_horizonflights(args):
 # ceiling): --features-half map runs install-map to drive, sky the sky views from horizon on; each half starts with
 # install-map, and every other step is in exactly one half (a new step not named in FEATURES_SKY goes to map).
 FEATURE_STEPS = ("install-map", "search", "route-to", "route", "routes-list", "waypoint", "track", "two-tracks", "gpx", "share-gpx",
-                 "sync", "sync-sheet", "share", "settings", "drive", "horizon", "panorama", "panorama-list", "flights", "horizonflights")
+                 "sync", "sync-sheet", "share", "settings", "search-tiles", "drive", "horizon", "panorama", "panorama-list", "flights",
+                 "horizonflights")  # T377: search-tiles
 FEATURES_SKY = ("horizon", "panorama", "panorama-list", "flights", "horizonflights")
 
 
@@ -3532,7 +3533,9 @@ def part_features(args):
     half = feature_half(getattr(args, "features_half", "all"))  # T353; test_android_ui.py checks FEATURE_STEPS is this list
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
-                     ("settings", settings), ("drive", lambda: drive_step(dev, args)), ("horizon", lambda: horizon_step(dev)),
+                     ("settings", settings), ("search-tiles", lambda: search_tiles_step(dev, args)),  # T377
+                     ("drive", lambda: drive_step(dev, args)),
+                     ("horizon", lambda: horizon_step(dev)),
                      ("panorama", lambda: panorama_step(dev)),  # T326
                      ("panorama-list", lambda: panorama_list_step(dev)),  # T344
                      ("flights", lambda: flights_step(dev)),  # T311: flights
@@ -5282,6 +5285,195 @@ def main():
             report.update(forwardRestores=len(FORWARD_RESTORES), forwardRestoreEvents=FORWARD_RESTORES[:20])
     print(json.dumps(report, indent=1))
     sys.exit(0 if report.get("ok") else 1)
+
+
+# T377
+# --- features: search inside an area kept as tiles (T377), and the wave's fixture for one (T378 and T386 reuse it) -------
+# The release build has no debug routes, so the step drives the DEBUG build installed beside it on the same emulator (the
+# boot installs it and pushes the Rainier pack; its own package id, its own files): it is brought to the front, the
+# fixture is seeded through its debug routes, the frames are its screens, and the release build is brought back after.
+TILE_AREA_NAME = "Paradise tiles"  # AreaRoutes.seedTileArea's default name
+SEARCH_TILES_AT = (46.7865, -121.7353)  # Paradise (the place point), inside the fixture's ring
+SEARCH_TILES_LINE = r"^Map and place search, no routes$"  # OfflineMapList.HOLDS_TILES
+DRAW_TILES_LINE = r"^A drawn area is kept as map tiles: place search works in it, routes do not\.$"  # AreaPicker.DRAW_TILES_LINE
+
+
+def _free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _paradise_pack(srv):
+    """The name of the pack on the debug build whose box holds Paradise (`GET /areas/rows`), or None."""
+    _, rows = srv.call("GET", "/areas/rows")
+    lat, lon = SEARCH_TILES_AT
+    names = []
+    for r in (rows or {}).get("rows") or []:
+        b = r.get("bounds")
+        if r.get("pack") and isinstance(b, list) and len(b) == 4 and b[0] <= lon <= b[2] and b[1] <= lat <= b[3]:
+            names.append(r["pack"])
+    return next((n for n in names if n == "rainier"), names[0] if names else None)
+
+
+def _area_status(srv, area_id, timeout=180):
+    """The area's entry of `GET /search/status` once it is no longer busy (or the time is up), and the whole index state."""
+    deadline = time.time() + timeout
+    entry, index = None, None
+    while True:
+        _, st = srv.call("GET", "/search/status")
+        index = (st or {}).get("index") or {}
+        entry = next((a for a in index.get("areas") or [] if a.get("areaId") == area_id), None)
+        if entry and entry.get("status") in ("ready", "error", "refused") or time.time() >= deadline:
+            return entry, index
+        time.sleep(1)
+
+
+def tile_area_fixture(dev, args, body, skip_open_case=None):
+    """T377: the wave's fixture for "an area kept as tiles", for T378 and T386 too. On the debug build beside the release
+    one: brought to the front at Paradise, `body(fx)` runs with the Rainier pack OFF (`POST /areas/rows/off`, T342) and a
+    drawn area around Paradise recorded as a finished tile area from the pack's own vector tiles (`POST
+    /areas/fixture/tiles`, no network). `fx` is a dict: `srv` (DebugServer), `pack`, `area` (the seeding's answer, `id`
+    among it) and `dev`. With `skip_open_case(fx)` given, it runs first with the pack ON and the area seeded as a download
+    beside an open map would be (`skipOpen=1`: the tiles the pack answers are left out), before the pack goes off and the
+    area is seeded whole. Always after: the area deleted, the pack on again, the debug build stopped if it was not running,
+    the release build back at Paradise. Returns body's result."""
+    pkg = debug.DEBUG_PACKAGE
+    if pkg not in dev.shell("pm", "list", "packages", pkg, check_ok=False):
+        return fail(f"the debug build ({pkg}) is not installed on {args.serial}: the step seeds its fixture through debug routes")
+    exe = debug.adb_path()
+    was_running = debug.app_pid(exe, args.serial, pkg) is not None
+    lat, lon = SEARCH_TILES_AT
+    uri = f"'dystopo://map?lat={lat}&lon={lon}&z=13'"
+    # A cold start: the part cleared logcat (release_with_pack), so a running debug build's port line is gone.
+    dev.shell("am", "force-stop", pkg, check_ok=False)
+    dev.shell("am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", uri, "-n", debug.activity(pkg), timeout=60)
+    port = args.port or _free_port()
+    srv = DebugServer(port, args.serial)
+    fx = {"srv": srv, "dev": dev, "pack": None, "area": None}
+    pack = None
+    result = None
+    try:
+        pack = _paradise_pack(srv)
+        if not pack:
+            return fail("no pack on the debug build covers Paradise (GET /areas/rows): the fixture copies its tiles")
+        fx["pack"] = pack
+        if skip_open_case is not None:
+            srv.call("POST", f"/areas/rows/off?id=pack:{urllib.parse.quote(pack)}&off=0")
+            code, seeded = srv.call("POST", f"/areas/fixture/tiles?pack={urllib.parse.quote(pack)}&skipOpen=1")
+            if code != 200:
+                return fail(f"POST /areas/fixture/tiles?skipOpen=1: {code} {seeded}")
+            fx["area"] = seeded
+            r = skip_open_case(fx)
+            fx["skipOpenCase"] = r
+            if not (r or {}).get("ok", True):
+                return r
+        code, off = srv.call("POST", f"/areas/rows/off?id=pack:{urllib.parse.quote(pack)}&off=1")
+        if code != 200:
+            return fail(f"POST /areas/rows/off: {code} {off}")
+        code, seeded = srv.call("POST", f"/areas/fixture/tiles?pack={urllib.parse.quote(pack)}")
+        if code != 200:
+            return fail(f"POST /areas/fixture/tiles: {code} {seeded}")
+        fx["area"] = seeded
+        result = body(fx)
+    finally:
+        try:
+            if fx.get("area") and fx["area"].get("id"):
+                srv.call("DELETE", f"/areas/{fx['area']['id']}")
+            if pack:
+                srv.call("POST", f"/areas/rows/off?id=pack:{urllib.parse.quote(pack)}&off=0")
+                _, rows = srv.call("GET", "/areas/rows")
+                fx["packsOffAfter"] = [x.get("pack") for x in (rows or {}).get("rows") or [] if x.get("off") is True]
+            srv.call("POST", "/areas/picker/close")
+            srv.call("POST", "/areas/ui?open=0")
+            srv.call("POST", "/search/clear")
+        except Exception as e:  # the cleanup is reported by the step's own checks; never raised over its result
+            print(f"[ui] tile area fixture cleanup: {type(e).__name__}: {e}", file=sys.stderr)
+        if not was_running:
+            dev.shell("am", "force-stop", pkg, check_ok=False)
+        if not args.port:
+            dev.adb("forward", "--remove", f"tcp:{port}", check_ok=False)
+        open_map(dev, *PARADISE, 13)  # the release build in front again
+    if isinstance(result, dict):
+        result["packsOffAfter"] = fx.get("packsOffAfter")
+        if fx.get("packsOffAfter"):
+            result.update(ok=False, error=f"maps left off after the step: {fx['packsOffAfter']}")
+    return result
+
+
+def search_tiles_step(dev, args):
+    """T377: search inside an area kept as tiles. With the pack on and the area seeded as a download beside it (skipOpen),
+    `GET /search/status` names the area's tiles missing; then, the pack off and the area seeded whole: `GET /search` at
+    Paradise answers `found` from the area, the status shows it ready with no tile missing, a route there still answers
+    `tiles-only`; frames of the search box (`search-tiles-box`), the Offline maps row (`search-tiles-row`) and Draw an area
+    (`search-tiles-draw`). The pack is on again after it."""
+    lat, lon = SEARCH_TILES_AT
+
+    def missing_case(fx):
+        srv = fx["srv"]
+        code, r = srv.call("GET", f"/search?q=Paradise&lat={lat}&lon={lon}")
+        entry, _ = _area_status(srv, fx["area"]["id"])
+        missing = (entry or {}).get("tilesMissing")
+        ok = bool(entry) and (missing or 0) > 0
+        return {"ok": ok, "searchCode": code, "reason": (r or {}).get("reason"), "searchFrom": (r or {}).get("searchFrom"),
+                "skipped": fx["area"].get("skippedOpenMap"), "status": entry and {k: entry.get(k) for k in (
+                    "status", "tilesPlanned", "tilesPresent", "tilesMissing", "missingByZoom", "deepestZoom")},
+                **({} if ok else {"error": f"with the pack on, the area seeded beside it names no tiles missing: {entry}"})}
+
+    def body(fx):
+        srv, area = fx["srv"], fx["area"]
+        aid = area["id"]
+        out = {"pack": fx["pack"], "seeded": {k: area.get(k) for k in ("id", "copied", "outsidePack", "bytes", "ms", "network")},
+               "missingCase": fx.get("skipOpenCase")}
+        errors = []
+        code, r = srv.call("GET", f"/search?q=Paradise&lat={lat}&lon={lon}")
+        if code == 503:  # no index ready yet: the area's is the only one with the pack off
+            time.sleep(2)
+        entry, index = _area_status(srv, aid)
+        code, r = srv.call("GET", f"/search?q=Paradise&lat={lat}&lon={lon}")
+        hits = (r or {}).get("hits") or []
+        out["search"] = {"code": code, "reason": (r or {}).get("reason"), "coverage": (r or {}).get("coverage"),
+                         "routeCoverage": (r or {}).get("routeCoverage"), "searchFrom": (r or {}).get("searchFrom"),
+                         "top": [(h.get("name"), h.get("kind"), h.get("pack")) for h in hits[:3]]}
+        out["status"] = entry and {k: entry.get(k) for k in ("status", "buildMs", "loadMs", "entries", "bytes", "peakHeapBytes", "heapStartBytes",
+                                                             "tilesPlanned", "tilesPresent", "tilesMissing", "zooms", "deepestZoom", "scanMs")}
+        if (r or {}).get("reason") != "found" or not hits or hits[0].get("pack") != TILE_AREA_NAME:
+            errors.append(f"GET /search?q=Paradise: {out['search']}")
+        if not entry or entry.get("status") != "ready" or entry.get("tilesMissing") != 0:
+            errors.append(f"the area's index is not ready with no tile missing: {out['status']}")
+        code, route = srv.call("POST", f"/route?from={lat},{lon}&to=46.8024,-121.7289&mode=hike")
+        out["route"] = {"code": code, "reason": ((route or {}).get("details") or {}).get("reason") or (route or {}).get("reason"),
+                        "message": (route or {}).get("message")}
+        if "tiles-only" not in json.dumps(route or {}):
+            errors.append(f"a route inside the area does not answer tiles-only: {out['route']}")
+        srv.call("POST", "/route/clear")
+        # The frames: the search box with its results, the area's row in Offline maps, and Draw an area.
+        srv.call("POST", f"/search/ui?focus=1&q=Paradise")
+        n, nodes = dev.wait_for("^Paradise$", 15)
+        out["box"] = [t for t in dev.texts(nodes) if "Paradise" in t or "Indexing" in t or "Search" in t][:8]
+        out["boxPng"] = dev.screencap("search-tiles-box")[0]
+        if not n:
+            errors.append("the search box lists no 'Paradise'")
+        srv.call("POST", "/search/ui?focus=0")
+        srv.call("POST", "/search/clear")
+        srv.call("POST", f"/areas/ui?open=1&detail=area:{aid}")
+        n, nodes = dev.wait_for(SEARCH_TILES_LINE, 15)
+        out["row"] = [t for t in dev.texts(nodes) if TILE_AREA_NAME in t or "search" in t.lower()][:8]
+        out["rowPng"] = dev.screencap("search-tiles-row")[0]
+        if not n:
+            errors.append("the area's row does not read 'Map and place search, no routes'")
+        srv.call("POST", "/areas/ui?open=0")
+        srv.call("POST", "/areas/draw")
+        n, nodes = dev.wait_for(DRAW_TILES_LINE, 15)
+        out["drawPng"] = dev.screencap("search-tiles-draw")[0]
+        if not n:
+            errors.append("Draw an area does not say what a drawn area brings")
+        srv.call("POST", "/areas/picker/close")
+        return {"ok": not errors, **out, "png": out["boxPng"], **({"error": "; ".join(errors)} if errors else {})}
+
+    return tile_area_fixture(dev, args, body, skip_open_case=missing_case)
+# end T377
 
 
 if __name__ == "__main__":

@@ -49,7 +49,7 @@ class MapCoverageTest {
         assertEquals("No places match", MapCoverage.searchSentence(MapCoverage.VECTOR, 0))
         // Hits of a map elsewhere do not hide why nothing here is searched.
         assertEquals("tiles-only", MapCoverage.searchReason(MapCoverage.TILES_ONLY, 2))
-        assertEquals("Search needs an offline map here; this area has map tiles only", MapCoverage.searchSentence(MapCoverage.TILES_ONLY, 2))
+        assertEquals("Search needs an offline map or a downloaded area here; this view has map tiles only", MapCoverage.searchSentence(MapCoverage.TILES_ONLY, 2)) // T377
         assertEquals("no-map", MapCoverage.searchReason(MapCoverage.NO_MAP, 0))
         assertEquals("No map data here to search", MapCoverage.searchSentence(MapCoverage.NO_MAP, 0))
     }

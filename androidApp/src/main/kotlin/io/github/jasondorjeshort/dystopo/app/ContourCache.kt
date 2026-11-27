@@ -17,6 +17,11 @@ import java.util.concurrent.atomic.AtomicLong
  * request, off the main thread (the index walks the directory). T242: the index is built on a thread of its own, as the
  * online cache's is ([TileCache.state]): [collectGarbage] waits for it on its thread, [json] answers without the directories
  * meanwhile, [resize] applies once it is whole.
+ *
+ * T379 (ADR 0071): this cache keeps no snapshot, so it walks its directory at every start (the cache budget's start and
+ * the contour collection after the packs open make it). Its walk takes the online cache's rule ([TileCache]'s gate): none without a screen or a
+ * notified job, a pause at Home. [collectGarbage] waits for the whole index as an action queued on it
+ * ([TileCache.whenReady]), not as a thread parked in a wait holding its lock while the walk is held.
  */
 object ContourCache {
     /** Bump when contour generation changes what it writes; part of every directory name. */
@@ -92,10 +97,13 @@ object ContourCache {
      * the other's stdlib walk had just found: the launch crash of the sweeps' `a11y` part after the guard's reboot.
      */
     fun collectGarbage(app: DystopoApp, identities: Set<String>) {
-        Thread({
-            val n = synchronized(gcLock) { collectGarbage(root(app), get(app), identities) }
-            staleFilesDeleted.addAndGet(n.toLong())
-        }, "contour-cache-gc").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+        // T379: once the index is whole (a held walk parks no thread here); then on a low-priority thread of its own.
+        get(app).whenReady("contour-cache-gc-wait") {
+            Thread({
+                val n = synchronized(gcLock) { collectGarbage(root(app), get(app), identities) }
+                staleFilesDeleted.addAndGet(n.toLong())
+            }, "contour-cache-gc").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+        }
     }
 
     fun resize(mb: Long) = cache?.resize(mb * MB)

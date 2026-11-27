@@ -1600,6 +1600,87 @@ def end_coverage_panel(c):
     c.srv.call("POST", f"/camera?lat={RAINIER_VIEW[0]}&lon={RAINIER_VIEW[1]}&zoom={RAINIER_VIEW[2]}")
 # end T360
 
+
+# T384
+GLANCE_GPS_CASE = "indoors"  # GnssCases: four satellites heard, none used, 17 to 23 dB-Hz
+GLANCE_GPS_SEEN = 4
+GLANCE_SEARCH_WAIT_S = 6.0  # past the readout's 5 s gap with no GPS fix: the GPS searches
+
+
+def glance_gps_settings(c):
+    """T384: the glance view's lines for the two screens: the barometer Never and the pressure off (T372's reasons: the
+    emulator's barometer comes and goes), the GPS accuracy and the fix age on (the GPS area's own rows), the readout reset.
+    Every setting as found is put back by end_glance_gps."""
+    found = c.srv.ok("GET", "/settings") or {}
+    r = found.get("readout") or {}
+    c.glance_gps_found = {"readoutBarometer": found.get("readoutBarometer"), "pressure": pressure_shown(r.get("pressure")),
+                          "accuracy": pressure_shown(r.get("accuracy")), "fixAge": pressure_shown(r.get("fixAge"))}
+    c.srv.ok("POST", "/settings?readoutBarometer=never")
+    c.srv.ok("POST", "/settings?readout.pressure=shown=0")
+    c.srv.ok("POST", "/settings?readout.accuracy=shown=1")
+    c.srv.ok("POST", "/settings?readout.fixAge=shown=1")
+    c.srv.ok("POST", "/readout/reset")
+
+
+def scr_glance_searching(c):
+    """T384: the glance view while the GPS searches: the satellites of GnssCases' `indoors` sky (four heard, none used), no
+    GPS fix for longer than the readout's gap, and a network position at Paradise (`provider=network`, no height, 38 m):
+    "GPS searching for ...: 4 seen, none used." and the best signal in the accuracy's and the fix age's rows, the
+    position marked "Not GPS". Opened held (T372), so the running times read one scene in the frame and the semantics."""
+    glance_gps_settings(c)
+    c.srv.ok("POST", f"/gnss?case={GLANCE_GPS_CASE}")
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=38&provider=network")
+    time.sleep(GLANCE_SEARCH_WAIT_S)
+    c.srv.ok("POST", f"/location?lat={PARADISE[0]:.6f}&lon={PARADISE[1]}&accuracy=38&provider=network")
+    time.sleep(0.5)
+    g = c.srv.ok("POST", "/readout/glance?open=1&hold=1") or {}
+    why = glance_gps_scene(g, searching=True)
+    if why:
+        raise RuntimeError(f"the glance view does not show the search: {why}")
+
+
+def scr_glance_position(c):
+    """T384: the glance view with a GPS fix (injected fixes at Paradise stand in for GPS ones): the position line in decimal
+    degrees with "From GPS, 0 s ago." under it, the GPS not searching. Opened held (T372)."""
+    glance_gps_settings(c)
+    for k in range(4):
+        c.srv.ok("POST", f"/location?lat={PARADISE[0] + k * 0.00002:.6f}&lon={PARADISE[1]}&accuracy=5&ele=1650")
+        time.sleep(1.0)
+    g = c.srv.ok("POST", "/readout/glance?open=1&hold=1") or {}
+    why = glance_gps_scene(g, searching=False)
+    if why:
+        raise RuntimeError(f"the glance view does not show the GPS position: {why}")
+
+
+def glance_gps_scene(g, searching):
+    """T384: what is wrong with the held glance view's GPS state (`GET /readout/glance`), or None when it is the screen's."""
+    if not g.get("holding"):
+        return "the view does not hold"
+    gps = g.get("gps") or {}
+    pos = g.get("position") or {}
+    lines = [l.get("kind") for l in g.get("lines") or []]
+    if not lines or lines[-1] != "position":
+        return f"no position line last: {lines}"
+    if bool(gps.get("searching")) != searching:
+        return f"gps.searching {gps.get('searching')!r}"
+    if searching and (gps.get("seen"), gps.get("used")) != (GLANCE_GPS_SEEN, 0):
+        return f"satellites seen {gps.get('seen')!r}, used {gps.get('used')!r}"
+    want = "network" if searching else "gps"
+    if pos.get("source") != want:
+        return f"position.source {pos.get('source')!r}, not {want}"
+    return None
+
+
+def end_glance_gps(c):
+    c.srv.call("POST", "/readout/glance?open=0")
+    c.srv.call("POST", "/gnss?clear=1")
+    found = getattr(c, "glance_gps_found", None) or {}
+    c.srv.call("POST", f"/settings?readoutBarometer={found.get('readoutBarometer') or 'auto'}")
+    for entry, default in (("pressure", "1"), ("accuracy", "0"), ("fixAge", "0")):
+        c.srv.call("POST", f"/settings?readout.{entry}=shown={found.get(entry) or default}")
+# end T384
+
+
 # T381
 HOLD_S = 8.0  # the layout must stand still this long (GET /layout read every HOLD_STEP_S) before the frame
 HOLD_STEP_S = 0.5
@@ -1753,6 +1834,10 @@ SCREENS = [
     # T360
     ("coverage-panel", scr_coverage_panel, end_coverage_panel, "map"),
     # end T360
+    # T384
+    ("glance-searching", scr_glance_searching, end_glance_gps, "screen"),
+    ("glance-position", scr_glance_position, end_glance_gps, "screen"),
+    # end T384
     # T381
     ("recording-stale-unfolded", scr_recording_stale_unfolded, end_recording_stale_unfolded, "map"),
     ("activity-covered", scr_activity_covered, end_activity_covered, "map"),

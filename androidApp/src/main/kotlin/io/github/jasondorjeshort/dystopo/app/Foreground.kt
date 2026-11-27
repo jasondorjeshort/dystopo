@@ -16,12 +16,67 @@ import java.util.concurrent.atomic.AtomicInteger
  * with [block]. One shared flag rather than `repeatOnLifecycle(STARTED)` in each effect: the thread loops have no lifecycle
  * owner, a paused loop keeps its local state (a restarted effect would redo its first pass and re-attach its listeners),
  * and the flag is a plain object the JVM tests drive and `GET /debug/cpu` reports ([json]).
+ *
+ * T379 (ADR 0071): **work the user can see.** Besides the screen, work may run under an ongoing notification that names it:
+ * an area download's (`areas/DownloadWorker.kt`, while it holds the foreground) and a recording's
+ * (`tracking/TrackingService.kt`) mark it with [notifiedWork]. [workAllowed] is the screen or such a job, and [walkGate] is
+ * that rule as the tile caches' index walk asks it (`online/TileCache.kt`): no walk at a start without a screen, a pause at
+ * Home unless a notified job runs. No notification is added for the walk (ADR 0071, decision 5).
  */
 object Foreground {
     private val state = MutableStateFlow(false)
     private val activities = AtomicInteger()
     private val lock = Object()
     private val paused = AtomicInteger()
+
+    /** T379: the notified jobs running now, by name (under [lock]). */
+    private val notified = LinkedHashSet<String>()
+
+    /** T379: [started] or a notified job; written under [lock]. */
+    @Volatile var workAllowed: Boolean = false
+        private set
+
+    /**
+     * T379: a job under an ongoing notification of its own began ([on] true) or ended; idempotent per [name] (`download`,
+     * `recording`). Wakes [blockForWork].
+     */
+    fun notifiedWork(name: String, on: Boolean) = synchronized(lock) {
+        val changed = if (on) notified.add(name) else notified.remove(name)
+        if (changed) {
+            workAllowed = state.value || notified.isNotEmpty()
+            lock.notifyAll()
+        }
+    }
+
+    /** T379: the notified jobs running now. */
+    val notifiedNow: List<String> get() = synchronized(lock) { notified.toList() }
+
+    /** T379: why work may run or not, in words for the debug JSON. */
+    fun workWhy(): String = synchronized(lock) {
+        when {
+            state.value -> "on screen"
+            notified.isNotEmpty() -> "under ${notified.joinToString(", ")}"
+            else -> "no screen and no notified job"
+        }
+    }
+
+    /** T379: blocks a plain thread until [workAllowed] (at once when it is). Throws [InterruptedException] as `Object.wait` does. */
+    fun blockForWork() {
+        if (workAllowed) return
+        paused.incrementAndGet()
+        try {
+            synchronized(lock) { while (!workAllowed) lock.wait() }
+        } finally {
+            paused.decrementAndGet()
+        }
+    }
+
+    /** T379: [workAllowed] as the tile caches' walk asks it. */
+    val walkGate: io.github.jasondorjeshort.dystopo.app.online.WalkGate = object : io.github.jasondorjeshort.dystopo.app.online.WalkGate {
+        override val open: Boolean get() = workAllowed
+        override fun awaitOpen() = blockForWork()
+        override fun why(): String = workWhy()
+    }
 
     /** True while an activity of the app is started (visible). */
     val started: Boolean get() = state.value
@@ -45,6 +100,7 @@ object Foreground {
     private fun set(on: Boolean): Boolean = synchronized(lock) {
         if (state.value == on) return false
         state.value = on
+        workAllowed = on || notified.isNotEmpty() // T379
         transitions++
         lock.notifyAll()
         true
@@ -92,12 +148,18 @@ object Foreground {
     /** `GET /debug/cpu` `foreground`: the flag, the started activities, the loops waiting now, the changes. */
     fun json(): Map<String, Any?> = linkedMapOf(
         "started" to started, "activities" to activities.get(), "pausedLoops" to paused.get(), "transitions" to transitions,
+        "workAllowed" to workAllowed, "notifiedWork" to notifiedNow, // T379
     )
 
     /** Tests: back to the state at process start. */
     internal fun reset() {
         activities.set(0)
+        synchronized(lock) {
+            notified.clear()
+            workAllowed = state.value
+        }
         set(false)
+        workAllowed = false
         transitions = 0
     }
 }

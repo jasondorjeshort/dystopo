@@ -43,6 +43,8 @@ Came up again: 2026-11-24, the owner (v0.1.43-alpha, Horizon and Panorama screen
 
 Priority: first in wave 49, by the owner's choice of 2026-11-24 (multiple choice); the pass takes the Horizon view's peaks from the same tile read, and the routing graph from tiles is measured and planned in it.
 
+New: 2026-11-26, T377 (claude-opus-5-5): built search inside an area kept as tiles (an index from the area's cached vector tiles, search's own coverage, the rewritten sentences, the debug fixture `POST /areas/fixture/tiles`); left: the peaks from an area's tiles (T378) and the routing graph from tiles, still wanted (the owner, 2026-11-24), its projected size in T377's merge commit.
+
 Plan: one pass, search first. Measure, on the emulator, a city-sized tile area saved by "Download this region" as
 tiles: the tile count at the index's zooms, the time and heap to build `search/PlaceSearch.kt`'s index by decoding
 those tiles from the online cache (the same decode `ensure` runs over a pack's archive), and the index's size; then

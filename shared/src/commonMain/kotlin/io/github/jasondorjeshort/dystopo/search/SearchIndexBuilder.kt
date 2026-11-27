@@ -8,7 +8,6 @@ import io.github.jasondorjeshort.dystopo.mvt.Value
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesHeader
 import io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader
 import io.github.jasondorjeshort.dystopo.pmtiles.TileIds
-import io.github.jasondorjeshort.dystopo.pmtiles.TileType
 import kotlin.math.PI
 import kotlin.math.atan
 import kotlin.math.cos
@@ -47,13 +46,19 @@ data class SearchBuildStats(
  *
  * Rank (0..255) = kind weight + for point kinds 5 per zoom the place shows below max zoom (up to 20) +
  * for peaks and volcanoes 1 per 250 m of elevation (up to 20).
+ *
+ * T377: the tiles come from a [TileSetSource]: a pack's archive ([PmtilesTileSource], the constructor that takes a reader)
+ * or an area kept as tiles in the online cache ([TileListSource]).
  */
 class SearchIndexBuilder(
-    private val reader: PmtilesReader,
+    private val source: TileSetSource,
     private val fileName: String,
     /** Called after each tile: (done, total). */
     private val progress: (Int, Int) -> Unit = { _, _ -> },
 ) {
+    /** A pack's vector archive (throws IllegalArgumentException for a raster one). */
+    constructor(reader: PmtilesReader, fileName: String, progress: (Int, Int) -> Unit = { _, _ -> }) : this(PmtilesTileSource(reader), fileName, progress)
+
     private class Occurrence(
         val name: String, val alt: String?, val kind: PlaceKind,
         val lon: Double, val lat: Double, val zoom: Int, val ele: Int?,
@@ -65,17 +70,16 @@ class SearchIndexBuilder(
         private set
 
     fun build(builtAtMs: Long = 0L): SearchIndex {
-        val h = reader.header
-        require(h.tileType == TileType.MVT) { "not a vector archive (tile type ${h.tileType.label})" }
-        val zooms = zoomsFor(h)
-        val ids = zooms.flatMap { z -> tileIdsAt(z) }
+        val zooms = zoomsFor(source.minZoom, source.maxZoom)
+        require(zooms.isNotEmpty()) { "no zoom to scan (zooms ${source.minZoom} to ${source.maxZoom})" }
+        val ids = zooms.flatMap { z -> source.tileIds(z) }
         val occurrences = ArrayList<Occurrence>()
         var features = 0
         var errors = 0
         ids.forEachIndexed { i, id ->
             val t = TileIds.toZxy(id)
             try {
-                val bytes = reader.tile(t.z, t.x, t.y)
+                val bytes = source.tile(t.z, t.x, t.y)
                 if (bytes != null) {
                     val tile = MvtDecoder.decode(LayerFilter.filter(bytes, PlaceClassifier.LAYERS))
                     for (layer in tile.layers) {
@@ -92,26 +96,10 @@ class SearchIndexBuilder(
             progress(i + 1, ids.size)
         }
         val maxZ = zooms.last()
-        val entries = merge(occurrences, maxZ, h)
-        val index = SearchIndex.of(entries, SearchSource(fileName, fingerprint(h), zooms, builtAtMs))
+        val entries = merge(occurrences, maxZ, source.midLat)
+        val index = SearchIndex.of(entries, SearchSource(fileName, source.fingerprint, zooms, builtAtMs))
         stats = SearchBuildStats(zooms, ids.size, errors, features, occurrences.size, entries.size, index.tokenCount)
         return index
-    }
-
-    /** Tile ids present at zoom [z] (run-length entries expanded), in id order. */
-    private fun tileIdsAt(z: Int): List<Long> {
-        val start = TileIds.zoomStart(z)
-        val end = TileIds.zoomStart(z + 1)
-        val out = ArrayList<Long>()
-        for (e in reader.tileEntries()) {
-            if (e.tileId >= end) break
-            if (e.tileId + e.runLength <= start) continue
-            for (k in 0 until e.runLength) {
-                val id = e.tileId + k
-                if (id in start until end) out += id
-            }
-        }
-        return out
     }
 
     private fun occurrencesOf(layer: String, f: Feature, z: Int, x: Int, y: Int, extent: Int): List<Occurrence> {
@@ -140,8 +128,7 @@ class SearchIndexBuilder(
         return out
     }
 
-    private fun merge(occurrences: List<Occurrence>, maxZ: Int, h: PmtilesHeader): List<SearchEntry> {
-        val midLat = (h.minLat + h.maxLat) / 2
+    private fun merge(occurrences: List<Occurrence>, maxZ: Int, midLat: Double): List<SearchEntry> {
         val tileKm = 40075.0 * cos(midLat * PI / 180) / (1 shl maxZ)
         // Rivers and streams are one family (OSM often tags pieces of one waterway differently), and so
         // are trails and the hiking routes that share their name.
@@ -249,9 +236,12 @@ class SearchIndexBuilder(
         const val MAX_NAME = 120
 
         /** Max zoom scanned (z14 holds every feature in both schemas), plus two and four zooms lower for prominence. */
-        fun zoomsFor(h: PmtilesHeader): List<Int> {
-            val hi = min(h.maxZoom, 14)
-            return listOf(hi - 4, hi - 2, hi).filter { it >= h.minZoom }.distinct()
+        fun zoomsFor(h: PmtilesHeader): List<Int> = zoomsFor(h.minZoom, h.maxZoom)
+
+        /** T377: the same for any tile set from [minZoom] to [maxZoom] (an area at less detail, to z13, scans 9, 11 and 13). */
+        fun zoomsFor(minZoom: Int, maxZoom: Int): List<Int> {
+            val hi = min(maxZoom, 14)
+            return listOf(hi - 4, hi - 2, hi).filter { it >= minZoom && it >= 0 }.distinct()
         }
 
         /** Identifies the archive's content: the index is rebuilt when this changes. */
