@@ -5507,19 +5507,46 @@ def peaks_tiles_step(dev, args):
     Horizon view's names line reads "Names from the offline map Paradise tiles." (`peaks-tiles-horizon`), the Panorama's
     route names the area as its peaks' map (`peaks-tiles-panorama`) and the List names the same peaks
     (`peaks-tiles-list`); then the pack on beside the area: each peak named once, the pack's own count reported. The pack
-    is on again after it (the fixture)."""
+    is on again after it (the fixture). The area is seeded with its elevation too (`dem=1`) and the reads run in airplane
+    mode, so the terrain and the names come from the phone whatever the sweep's server mode; the step first asserts a
+    terrain horizon read from the area (`terrainPackOff`)."""
     lat, lon = SEARCH_TILES_AT
 
     def body(fx):
-        srv, area = fx["srv"], fx["area"]
+        srv = fx["srv"]
         errors = []
-        out = {"pack": fx["pack"], "seeded": {k: area.get(k) for k in ("id", "zooms", "copied", "bytes", "network")}}
+        # The terrain from the phone too, never the network (the sweep's live server, direct sources or none, or no network at
+        # all): the same area seeded again with the pack's elevation tiles (`dem=1`; same ring, detail and name, so the same id).
+        code, area = srv.call("POST", f"/areas/fixture/tiles?pack={urllib.parse.quote(fx['pack'])}&dem=1")
+        if code != 200 or not (area or {}).get("demCopied"):
+            return fail(f"POST /areas/fixture/tiles?dem=1: {code} {area}")
+        fx["area"] = area
+        out = {"pack": fx["pack"], "seeded": {k: area.get(k) for k in ("id", "zooms", "copied", "demCopied", "bytes", "network")}}
+        # What the network could add here now (the online elevation's state), for a reader of a failure.
+        _, hd = srv.call("GET", f"/holdings?lat={lat}&lon={lon}&z=13")
+        dem = (hd or {}).get("dem") or {}
+        out["demHere"] = {"serves": dem.get("serves"), "members": [m.get("name") for m in dem.get("members") or []],
+                          "network": dem.get("network")}
+        # The reads below run with no network at all (airplane mode, as the flights steps set it; off again after): the area's
+        # own tiles must give the terrain and the names whatever the sweep's server mode.
         _, before = srv.call("GET", "/horizon")
         peaks_was = ((before or {}).get("layers") or {}).get("peaks")
         if peaks_was is not True:
             srv.call("POST", "/horizon?peaks=1")
         try:
+            airplane(dev, True)
+            time.sleep(2)
             h = _open_sky_at(srv, lat, lon)
+            # What the peaks need first: a terrain horizon at the point, with the area among its sources.
+            hz = (h or {}).get("horizon") or {}
+            terrain = hz.get("terrain") or {}
+            out["terrainPackOff"] = {"horizonReason": (h or {}).get("horizonReason"), "source": hz.get("source"),
+                                     "maps": terrain.get("maps"), "online": terrain.get("online"), "complete": terrain.get("complete")}
+            if not hz:
+                errors.append(f"with the pack off, no terrain horizon at Paradise from the area's elevation: {out['terrainPackOff']}")
+                return {"ok": False, **out, "error": "; ".join(errors)}
+            if not any(TILE_AREA_NAME in str(m) for m in terrain.get("maps") or []):
+                errors.append(f"with the pack off, the terrain horizon does not read the area's elevation: {out['terrainPackOff']}")
             off = _peaks_of(h)
             out["horizonPackOff"] = off
             kinds = {s.get("kind") for s in off.get("sources") or []}
@@ -5578,6 +5605,7 @@ def peaks_tiles_step(dev, args):
                              "packOnly": len(alone.get("names") or []),
                              "areaNamesInPackOnly": len(set(off.get("names") or []) & set(alone.get("names") or []))}
         finally:
+            airplane(dev, False)
             srv.call("POST", "/horizon/ui?open=0")
             if peaks_was is False:
                 srv.call("POST", "/horizon?peaks=0")
