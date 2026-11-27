@@ -229,6 +229,10 @@ class HelpRegistryTest {
             // T360: the coverage panel.
             "online.coverage",
             // end T360
+            // T383: each kind of mark the long-press card names.
+            "map.marks.track", "map.marks.trip", "map.marks.route", "map.marks.water", "map.marks.nav", "map.marks.search",
+            "map.marks.viewshed", "map.marks.wayDown",
+            // end T383
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
@@ -439,4 +443,17 @@ class HelpRegistryTest {
         assertEquals(setOf("AreasScreen.kt"), references["areas.startHere"])
     }
     // end T361
+
+    // T383: every mark the long-press card names has its kind's help in the registry, beside its line in MapMarks.kt.
+    @Test
+    fun everyMarkHasItsKindsHelp() {
+        val marks = io.github.jasondorjeshort.dystopo.app.tracking.MapMarks.ALL
+        val helps = marks.mapNotNull { it.help }.toSet()
+        for (k in helps) assertTrue(HelpRegistry.byKey(k) != null, "mark help $k has no text")
+        val kinds = keys.filter { it.startsWith("map.marks.") }.toSet()
+        assertEquals(kinds, helps - "map.marks", "map.marks.* texts no mark uses, or marks with no text")
+        for (k in kinds) assertEquals(setOf("MapMarks.kt"), references[k], k)
+        assertTrue(HelpRegistry.byKey("map.marks.water")!!.text(ContourUnits.METERS).startsWith("Blue marks"))
+    }
+    // end T383
 }

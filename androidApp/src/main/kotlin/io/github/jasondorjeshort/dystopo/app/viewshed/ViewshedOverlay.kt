@@ -189,10 +189,10 @@ class ViewshedOverlay {
         private fun layerId(i: Int) = "dystopo-viewshed-layer-$i"
         private const val SHAPES = "dystopo-viewshed-shapes"
         private const val RING = "dystopo-viewshed-ring"
-        private const val OBSERVER = "dystopo-viewshed-observer"
+        const val OBSERVER = "dystopo-viewshed-observer"
         private const val PEAK = "dystopo-viewshed-peak"
-        private const val PEAK_DOT = "dystopo-viewshed-peak-dot"
-        private const val PEAK_NAME = "dystopo-viewshed-peak-name"
+        const val PEAK_DOT = "dystopo-viewshed-peak-dot"
+        const val PEAK_NAME = "dystopo-viewshed-peak-name"
 
         /** ([lat], [lon]) moved [east], [north] metres (the local scale; the circle's points). */
         fun offset(lat: Double, lon: Double, east: Double, north: Double): Pair<Double, Double> {
