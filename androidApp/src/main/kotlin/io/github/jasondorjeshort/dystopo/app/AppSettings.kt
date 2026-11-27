@@ -714,6 +714,24 @@ object AppSettings {
     const val KEY_MAP_FLIGHTS = "mapFlights"
     val MAP_FLIGHTS = flag(KEY_MAP_FLIGHTS, true, synced = true)
     // end T364
+    // T388: "Coordinate format", how every position the app prints for the user reads (the glance view, the long-press
+    // card, the route's origin line, the track controls): `dd` decimal degrees (the default for every install, never
+    // seeded by region), `dm` degrees and minutes, `dms` degrees minutes seconds or `utm`; WGS 84 throughout, no datum
+    // choice ([io.github.jasondorjeshort.dystopo.geo.CoordinateFormat]). A setting by ADR 0044: the surveyed apps all offer
+    // the four as one app-wide choice and users split by habit and by the tools they pair the app with (survey of
+    // 2026-11-26). Synced (ADR 0033: one key added); a stored value this build does not know reads as the default, and a
+    // synced one is skipped (the phone keeps its own). Row: Settings › Units and display, after Text size (no existing
+    // order moves). Debug routes' JSON stays numeric.
+    const val KEY_COORDINATE_FORMAT = "coordinateFormat"
+    val COORDINATE_FORMAT = add(Setting(KEY_COORDINATE_FORMAT, io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DEFAULT, true,
+        Setting.Type.code({ it.key }, { io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.of(it) }),
+        { io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.of(it.toString()) },
+        { "$KEY_COORDINATE_FORMAT must be dd, dm, dms or utm (got $it)" }))
+    val coordinateFormat: io.github.jasondorjeshort.dystopo.geo.CoordinateFormat get() = COORDINATE_FORMAT.value
+
+    /** T388: [lat], [lon] as text in the user's [coordinateFormat] (every place that prints a position reads it here). */
+    fun position(lat: Double, lon: Double): String = coordinateFormat.format(lat, lon)
+    // end T388
 }
 
 /**

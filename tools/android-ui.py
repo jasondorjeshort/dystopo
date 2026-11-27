@@ -1292,7 +1292,16 @@ def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None, export=False):
 
 
 # T243: the long-press card's first line, its coordinates ("46.80241, -121.72892"); its nodes run from it to Cancel.
-CARD_COORDS = r"^-?\d+\.\d{5}, -?\d+\.\d{5}$"
+# T388: or in the Coordinate format setting's form (the app's CoordinateFormat.line: a no-break space inside each part):
+# "46.80241° N, 121.72892° W", "46° 48.145' N, 121° 43.735' W", "46° 48' 08.7\" N, 121° 43' 44.1\" W", "10T 596991 5183990".
+_CS = r"[ \xa0]"
+CARD_COORDS = ("^(?:" + "|".join([
+    r"-?\d+\.\d{5}, -?\d+\.\d{5}",  # before T388
+    rf"\d+\.\d{{5}}°{_CS}[NS], \d+\.\d{{5}}°{_CS}[EW]",
+    rf"\d+°{_CS}\d{{2}}\.\d{{3}}'{_CS}[NS], \d+°{_CS}\d{{2}}\.\d{{3}}'{_CS}[EW]",
+    rf"\d+°{_CS}\d{{2}}'{_CS}\d{{2}}\.\d\"{_CS}[NS], \d+°{_CS}\d{{2}}'{_CS}\d{{2}}\.\d\"{_CS}[EW]",
+    rf"\d{{1,2}}[C-X]{_CS}\d+ \d+",
+]) + ")$")
 
 
 def card_intruders(nodes):

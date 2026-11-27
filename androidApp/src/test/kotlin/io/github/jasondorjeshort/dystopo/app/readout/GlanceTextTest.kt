@@ -308,7 +308,7 @@ class GlanceTextTest {
         assertEquals("From GPS, 1 s ago.", by.getValue("position").reason)
         assertFalse(by.values.any { it.dimmed }, "the fix is used: nothing dimmed")
         val lasted = GlanceText.lines(StripText.items(walk, withGps, ContourUnits.METERS), gps = fixed, position = here, positionLine = true, clock = u.copy(lasted = true)).associateBy { it.kind }
-        assertEquals("Still wrong: try Reset assistance data in Horizon view.", lasted.getValue("fixAge").reason)
+        assertEquals("Horizon view: Satellites menu, Reset assistance data.", lasted.getValue("fixAge").reason) // T388: where the action sits
         // The figures hold still: the clock's lines go in rows already reserved.
         val plain = GlanceText.lines(StripText.items(walk, withGps, ContourUnits.METERS), gps = fixed, position = here, positionLine = true)
         assertEquals(GlanceFit.fit(plain, 1000f, 2000f, 10f, 2000f, fake), GlanceFit.fit(lasted.values.toList(), 1000f, 2000f, 10f, 2000f, fake))

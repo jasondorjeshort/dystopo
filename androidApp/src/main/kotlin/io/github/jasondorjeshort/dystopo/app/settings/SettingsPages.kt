@@ -123,6 +123,15 @@ private fun RowContent(row: SettingsRow, change: (SettingsRoutes.Parsed.Ok) -> U
                 Option("+", false) { change(SettingsRoutes.Parsed.Ok(stepScale(scale, 1), false, null, null)) }
             }
         }
+        // T388: how every position the app prints reads (decimal degrees by default, never seeded by region).
+        SettingsRow.COORDINATE_FORMAT -> {
+            @Suppress("UNUSED_VARIABLE") val rev = SettingsUi.revision
+            val v = AppSettings.coordinateFormat
+            Setting(row.label, COORDINATE_FORMAT_LINE, help = "settings.coordinateFormat") {
+                for (f in io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.entries) Option(coordinateFormatLabel(f), v == f) { change(SettingsRoutes.Parsed.Ok.of(AppSettings.COORDINATE_FORMAT, f)) }
+            }
+        }
+        // end T388
         SettingsRow.ROUTE_SNAP -> {
             // T57: how far a long-pressed route start or end may be from the nearest trail or road.
             val snap = AppSettings.routeSnapM
@@ -997,6 +1006,11 @@ internal val SETTINGS_HELP: List<HelpText> = run {
             PRESSURE_UNIT_HELP
         },
         // end T337
+        // T388
+        HelpText("settings.coordinateFormat", "Coordinate format", at(SettingsGroup.DISPLAY, "Coordinate format"), show = page(SettingsGroup.DISPLAY)) {
+            COORDINATE_FORMAT_HELP
+        },
+        // end T388
     )
 }
 
@@ -1016,6 +1030,25 @@ internal fun pressurePerClimb(p: io.github.jasondorjeshort.dystopo.render.Pressu
     return "$amount ${p.symbol} every ${io.github.jasondorjeshort.dystopo.render.UnitFormat.elevation(metres, units)}"
 }
 // end T337
+
+// T388: the Coordinate format row's choices, line and help (WGS 84 named once; the examples are Paradise at Mount Rainier).
+internal fun coordinateFormatLabel(f: io.github.jasondorjeshort.dystopo.geo.CoordinateFormat): String = when (f) {
+    io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DECIMAL -> "Decimal degrees"
+    io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DEGREES_MINUTES -> "Degrees, minutes"
+    io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DMS -> "Deg, min, sec"
+    io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.UTM -> "UTM"
+}
+internal const val COORDINATE_FORMAT_LINE = "how a position reads on the glance view, a long press and a waypoint"
+
+/** The help's examples are the formatter's own text at Paradise, so they cannot drift from what the app shows. */
+internal val COORDINATE_FORMAT_HELP: String = run {
+    val f = io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.entries.associateWith { it.format(46.786, -121.735) }
+    "Every position the app shows reads in this format, in WGS 84, the GPS standard. Paradise at Mount Rainier reads " +
+        "${f[io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DECIMAL]}; ${f[io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DEGREES_MINUTES]}; " +
+        "${f[io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DMS]}; or ${f[io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.UTM]} " +
+        "(UTM: zone, band, metres east, metres north)."
+}
+// end T388
 
 /** T57: the snap distances the sheet offers (any value in [AppSettings.ROUTE_SNAP_RANGE] through `/settings`). */
 private val SNAP_CHOICES = listOf(300, 500, 1000)

@@ -69,4 +69,34 @@ class CoordinateFormatTest {
         assertTrue(CoordinateFormat.UTM.format(0.0, 180.0).startsWith("1N 166021 "), CoordinateFormat.UTM.format(0.0, 180.0))
         assertTrue(CoordinateFormat.UTM.format(0.0, 179.9).startsWith("60N "), CoordinateFormat.UTM.format(0.0, 179.9))
     }
+
+    // T388
+    /**
+     * T388: [CoordinateFormat.line] breaks only between latitude and longitude (a UTM text before its northing), and reads
+     * as [CoordinateFormat.format] with the spaces put back; at Paradise, in the southern hemisphere (Aconcagua, an
+     * `areas.json` area) and beside the antimeridian (Taveuni, on both sides of it).
+     */
+    @Test
+    fun aLineBreaksOnlyBetweenLatitudeAndLongitude() {
+        val places = listOf(lat to lon, -32.653 to -70.011, -16.84 to 179.95, -16.84 to -179.95)
+        for ((la, lo) in places) for (f in CoordinateFormat.entries) {
+            val line = f.line(la, lo)
+            assertEquals(f.format(la, lo), line.replace(CoordinateText.NBSP, ' '), "$f at $la, $lo")
+            val breaks = line.count { it == ' ' }
+            assertEquals(1, breaks, "one place to break: '$line'")
+            if (f != CoordinateFormat.UTM) assertTrue(", " in line, line) else assertTrue(Regex("^\\d+[C-X]" + CoordinateText.NBSP + "\\d+ \\d+$").matches(line), line)
+        }
+        assertEquals("46°_47'_09.6\"_N, 121°_44'_06.0\"_W", CoordinateFormat.DMS.line(lat, lon).replace(CoordinateText.NBSP, '_'))
+        // The southern hemisphere and the antimeridian read with their letters and zones.
+        assertEquals("32.65300° S, 70.01100° W", CoordinateFormat.DECIMAL.format(-32.653, -70.011))
+        assertTrue(CoordinateFormat.UTM.format(-32.653, -70.011).startsWith("19H "), CoordinateFormat.UTM.format(-32.653, -70.011))
+        assertEquals("16° 50.400' S, 179° 57.000' E", CoordinateFormat.DEGREES_MINUTES.format(-16.84, 179.95))
+        assertEquals("16° 50' 24.0\" S, 179° 57' 00.0\" W", CoordinateFormat.DMS.format(-16.84, -179.95))
+        assertTrue(CoordinateFormat.UTM.format(-16.84, 179.95).startsWith("60K "), CoordinateFormat.UTM.format(-16.84, 179.95))
+        assertTrue(CoordinateFormat.UTM.format(-16.84, -179.95).startsWith("1K "), CoordinateFormat.UTM.format(-16.84, -179.95))
+        // Outside UTM the decimal fallback breaks at its comma too.
+        assertEquals("85.00000°_N, 10.00000°_E", CoordinateFormat.UTM.line(85.0, 10.0).replace(CoordinateText.NBSP, '_'))
+        assertEquals("10T_597271 5181898".substring(0, 4), CoordinateFormat.UTM.line(lat, lon).replace(CoordinateText.NBSP, '_').substring(0, 4))
+    }
+    // end T388
 }

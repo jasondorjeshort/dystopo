@@ -100,6 +100,9 @@ import io.github.jasondorjeshort.dystopo.render.ContourUnits
  *   T337: `pressureUnit=mbar|hpa|inhg|mmhg` (default mbar whatever `units` says; the symbols `hPa`, `inHg`, `mmHg` read
  *   too), synced as `app.pressureUnit`: the unit every shown pressure reads in (the readout bar, the warning card and the
  *   help); the bar and the card follow at once. `GET /readout` reports it (`pressureUnit`, `bar.pressure.unit` and `text`).
+ *   T388: `coordinateFormat=dd|dm|dms|utm` (default dd, decimal degrees, never seeded by region), synced as
+ *   `app.coordinateFormat`: how every position the app prints reads (the glance view, the long-press card, a waypoint's
+ *   panel, `GET /route`'s end `label`); `GET /readout/glance` › `position.text` shows it. Debug JSON stays numeric.
  *   T248: the keys with one stored value each are the registry's ([AppSettings.PLAIN], one line per setting: parsed,
  *   refused, stored, reported and synced from that line); the others are [COMPOSITE_KEYS], each with its code here.
  * - `POST /settings/ui?open=1|0`: opens or closes the settings sheet ([SettingsSheet]); opening keeps the page shown.
@@ -222,6 +225,8 @@ class SettingsRoutes(private val app: DystopoApp) {
         if (given(AppSettings.TIME_ESTIMATE_FORM)) runCatching { app.map.onMain { SettingsUi.revision++ } }
         // T337: the pressure unit; the readout bar and the warning card's lines follow at once.
         if (given(AppSettings.PRESSURE_UNIT)) { io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.refresh(); runCatching { app.map.onMain { SettingsUi.revision++ } } }
+        // T388: the coordinate format; the glance view and the open cards follow at once.
+        if (given(AppSettings.COORDINATE_FORMAT)) { io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.refresh(); runCatching { app.map.onMain { SettingsUi.revision++ } } }
         // T203: the terrain estimate's switch; the source starts or stops watching at once.
         if (given(AppSettings.ESTIMATE_POSITION)) io.github.jasondorjeshort.dystopo.app.tracking.TerrainSource.update()
         // T213: the trail disagreements' layer switch; the markers follow at once.

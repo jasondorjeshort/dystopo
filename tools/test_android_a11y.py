@@ -1306,6 +1306,25 @@ assert _srv.calls == ["/map/marks"], "the screen fails before it presses"
 assert {s[0]: s[1] for s in a11y.SCREENS}["longpress"] is a11y.scr_longpress_named
 # end T383
 
+
+# T388: the coordinate-format screen opens Units and display, then the row's help, and is the last screen.
+class PathSrv:
+    def __init__(self):
+        self.calls = []
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        return {}
+
+
+cf = a11y.SCREENS[-1]
+assert cf[0] == "coordinate-format" and cf[2] is None and cf[3] == "screen", cf
+_ps = PathSrv()
+cf[1](type("C", (), {"srv": _ps})())
+assert _ps.calls == [("POST", "/settings/open?group=display"), ("POST", "/help/open?key=settings.coordinateFormat")], _ps.calls
+assert [s[0] for s in a11y.SCREENS].count("coordinate-format") == 1
+# end T388
+
 # T380: the kept folder's confirm: the screen opened on All, the tree staged with ask=, Cancel and close after; a row with no
 # confirm fails the screen.
 class KeptSrv:
