@@ -20,7 +20,8 @@ import java.util.concurrent.atomic.AtomicLong
  * only schedules; T229's rule, nothing of it runs on the main thread), a thread of its own (`dystopo-sampler`) writes one
  * line ([DumpFormat.sampleLine]) [PERIOD_S] seconds apart, the first [FIRST_S] seconds after the process starts, while the
  * process lives (in the background too, so a recording with the screen off is covered; a frozen or sleeping process takes
- * no samples), to the ring file `files/diagnostics/samples.txt`: the newest [KEEP] lines, about a day; the file is cut
+ * no samples; T387, ADR 0071: a pass with no screen and no notified job writes nothing, [skipped], and the launch's
+ * `sampler` stage starts it only once work is allowed), to the ring file `files/diagnostics/samples.txt`: the newest [KEEP] lines, about a day; the file is cut
  * back to them once it holds [KEEP] + [SLACK] lines, so it is rewritten about once an hour.
  *
  * A line's keys (`docs/reference/diagnostic-dump.md`): `t` (epoch ms), `up` (seconds since the process started), `pid`,
@@ -48,6 +49,8 @@ object MemorySampler {
     val samples = AtomicLong()
     val errors = AtomicLong()
     val rewrites = AtomicLong()
+    /** T387: passes that found no screen and no notified job (nothing read, nothing written). */
+    val skipped = AtomicLong()
     private val cpuNsTotal = AtomicLong()
     @Volatile var lastCpuUs = 0L
         private set
@@ -64,7 +67,7 @@ object MemorySampler {
         if (exec != null) return
         file = File(app.filesDir, "$DIR/$FILE")
         exec = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "dystopo-sampler").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
-            .also { it.scheduleWithFixedDelay({ runCatching { sample(app) }.onFailure { e -> errors.incrementAndGet(); Log.w(TAG, "sample failed", e) } }, FIRST_S, PERIOD_S, TimeUnit.SECONDS) }
+            .also { it.scheduleWithFixedDelay({ if (!io.github.jasondorjeshort.dystopo.app.Foreground.workAllowed) skipped.incrementAndGet() else runCatching { sample(app) }.onFailure { e -> errors.incrementAndGet(); Log.w(TAG, "sample failed", e) } }, FIRST_S, PERIOD_S, TimeUnit.SECONDS) }
     }
 
     /** One sample now, on the sampler's thread, waited for (`POST /debug/dump/sample`); the line written. */
@@ -141,7 +144,7 @@ object MemorySampler {
         return linkedMapOf(
             "started" to (exec != null), "periodS" to PERIOD_S, "firstS" to FIRST_S, "keep" to KEEP, "slack" to SLACK,
             "file" to f?.path, "fileBytes" to f?.length(), "fileLines" to synchronized(lock) { lineCount },
-            "samples" to n, "errors" to errors.get(), "rewrites" to rewrites.get(),
+            "samples" to n, "errors" to errors.get(), "rewrites" to rewrites.get(), "skipped" to skipped.get(), // T387
             "cpuUsLast" to lastCpuUs, "cpuUsMax" to maxCpuUs, "cpuUsMean" to if (n > 0) cpuNsTotal.get() / n / 1000 else null,
             "wallMsLast" to lastWallMs, "lastAt" to lastAt.takeIf { it > 0 },
         )

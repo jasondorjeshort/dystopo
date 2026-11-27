@@ -54,12 +54,28 @@ screen. On the branch the same start: the `tile-index-tiles` thread took 0 ticks
 
 **A kill no longer costs a whole walk (T390, 2026-11-27, the same emulator and fill, 200,040 files).** Changes are journalled beside the snapshot (`tiles.index.journal`) and replayed at the next start; the walk writes checkpoints and resumes after a kill (`android-app.md` › The online tile cache's index). A whole walk with the screen on took 16.9 s (`walkMs`, five checkpoints of 56 to 92 ms each). After 500 tiles rewritten at a new size and a `kill -9` on screen, the next start read the snapshot and replayed 2,500 journal records in 127 ms, walked nothing (`walkedThisLaunch` 0), and was ready 1.85 s after the cache's construction, its byte total equal to before; after a change, Home and `am kill`, the stop's write had folded the journal and the start read the snapshot alone (ready at 1.9 s). A `kill -9` at 137,277 files walked resumed from the checkpoint at 136,552 and walked the other 63,488 (6.7 s); Home at 83,048 files wrote a checkpoint of all of them before the walk waited, and after `am kill` the next start walked the other 116,992; both ended equal to the disk (200,040 files, 57,196,733 B, counted with `find`). A start with no activity read neither the snapshot nor the journal. The contour cache, which walked at every start, keeps a snapshot by the same code: 50,016 files walked in 4.7 s, read from its snapshot in 1.6 s at the next start. A journal append cost 76 µs a record on the emulator against 4.4 ms for the put it belongs to (2,000 synced puts). Not tried on the device: a device stop (the boot check), unit-tested.
 
+**The other launch stages (T387, 2026-11-27, the same emulator, the debug build, `cached_apps_freezer` off, a start with
+no activity read for 300 s after its first 3 s).** On `main` the whole process took 0.20 % of a core over the 300 s (no
+thread above 0.09 %: the online probe's thread, which probes the sources every 30 s, then the UI watchdog's 1 s beat
+and the memory sampler's line a minute) and 6.7 s of CPU from its start, most of it the launch itself; but every
+stage ran: the world overview's check, the updater, the cache budget's engine, the memory sampler (five lines written),
+the areas' resume check (`start` trigger) and the trips' corridors (a 2.2 s reconcile), and the contour warm-up of the
+tile service, which wrote 11 contour tiles (up to 256 on a fresh pack). On the branch the same start: 0.17 % of a core
+(the probe's thread 0.08 %, its 1 s and 2 s map checks; the probe itself skips), 4.2 s of CPU from the start, nothing of
+the app's data written but the start trace's own report, `GET /debug/launch` reading `world`, `cacheIndex`, `updater`,
+`budget`, `sampler` and `pending` deferred. A recording restarted by the system (`kill -9`, `am_proc_start` reason
+`service`) resumed under its notification with the sampler and the walk running under it and the rest deferred; an
+area download cut by `kill -9` resumed from its cursor when its WorkManager job started the process (reason `service`,
+`SystemJobService`), under its notification, with `pending` still deferred; an activity arriving in such a process opened
+every deferred stage at once (`openedMs` 32.0 s, all done by 32.04 s) and the map drew. The stage table is T387's report (merge commit). Since T387 a start
+without a screen runs only the settings, the tracker, the packs, the online and tile services and the servers.
+
 ## Next
 
 1. Done (T379: no walk without a screen; T390: the resumable walk and the journal). The fix, for wave 49 (the owner, 2026-11-25), under the owner's rule that the app does no silent work in the
-   background (`docs/ideas/2026-11-25-no-silent-background-work.md`): no walk at a start without a screen (wait for
+   background (`docs/ideas/2026-11-25-no-silent-background-work.md`, deleted by T387; ADR 0071) [no-check: the idea is deleted]: no walk at a start without a screen (wait for
    an activity, or run it under an ongoing notification); a walk that writes its progress so a kill resumes it; a
    kill after a change that does not cost a whole walk (record the changes since the snapshot instead of discarding it).
 2. A test on the phone after the fix: exit-info and batterystats over a day with the app left in the background.
-3. Whether other launch stages (downloads' resume, the updater, the memory sampler, the cache budget) do work at a
+3. Done (T387). Whether other launch stages (downloads' resume, the updater, the memory sampler, the cache budget) do work at a
    start without a screen, by the same reads.

@@ -5,6 +5,7 @@ import io.github.jasondorjeshort.dystopo.launch.Gate.BEFORE_STYLE
 import io.github.jasondorjeshort.dystopo.launch.Gate.FIRST_FRAME
 import io.github.jasondorjeshort.dystopo.launch.Gate.LATER
 import io.github.jasondorjeshort.dystopo.launch.Runs.WORKER
+import io.github.jasondorjeshort.dystopo.launch.Waits.SCREEN
 import io.github.jasondorjeshort.dystopo.launch.Work.BINDER
 import io.github.jasondorjeshort.dystopo.launch.Work.DISK
 import io.github.jasondorjeshort.dystopo.launch.Work.NATIVE
@@ -47,8 +48,8 @@ object Launch {
         "tracking", listOf("Tracking.start"), needs = listOf("settings"), runs = WORKER, work = setOf(DISK, BINDER), gate = LATER,
         publishes = listOf(TRACKER),
     )
-    /** T264: the world overview's copy out of the APK, off the main thread. */
-    val WORLD_COPY = Stage("world", runs = WORKER, work = setOf(DISK, BINDER), gate = LATER, publishes = listOf(WORLD))
+    /** T264: the world overview's copy out of the APK, off the main thread; T387: at the first screen (it reloads the tiles once copied). */
+    val WORLD_COPY = Stage("world", runs = WORKER, work = setOf(DISK, BINDER), gate = LATER, publishes = listOf(WORLD), waits = SCREEN)
     val ASSETS = Stage("assets", listOf("BundledAssets.install"), work = setOf(DISK, BINDER), gate = BEFORE_STYLE, allowed = STEP_2)
     val PACKS = Stage(
         "packs", listOf("PackSet.open", "collectContourGarbage's identities", "ContourCache.collectGarbage"),
@@ -68,20 +69,29 @@ object Launch {
         needs = listOf("packs", "online", "assets"), gate = BEFORE_STYLE, publishes = listOf(TILES),
     )
     val WATCHERS = Stage(
-        "watchers", listOf("style-prime, watchdog, reports and cache budget start", "MemorySampler.start"),
+        "watchers", listOf("style-prime, watchdog and reports"),
         needs = listOf("tiles", "online"), work = setOf(DISK), gate = LATER, allowed = "starts threads; the crash handler's install reads its files",
     )
     val DOWNLOADS_STAGE = Stage(
-        "downloads", listOf("PackManager.get", "resumePending"), needs = listOf("tiles"), work = setOf(DISK), gate = FIRST_FRAME,
+        "downloads", listOf("PackManager.get"), needs = listOf("tiles"), work = setOf(DISK), gate = FIRST_FRAME,
         publishes = listOf(DOWNLOADS), allowed = STEP_2,
     )
     val SERVER = Stage(
         "server", listOf("Routes and the loopback servers"), needs = listOf("tiles", "settings"), work = setOf(SOCKET, DISK), gate = BEFORE_STYLE,
         allowed = STEP_2,
     )
-    val UPDATER = Stage(
-        "updater", listOf("Updater.start"), needs = listOf("settings"), work = setOf(DISK), gate = LATER, allowed = "one preference read, then its own thread",
-    )
+    /** T83's update check and the restore of a verified download (it hashes the file); T387: at the first screen. */
+    val UPDATER = Stage("updater", needs = listOf("settings"), runs = WORKER, work = setOf(DISK, SOCKET), gate = LATER, waits = SCREEN)
+    /** T112's cache budget: its engine over the caches and its first run (which waits for the indexes); T387: at the first screen. */
+    val BUDGET = Stage("budget", needs = listOf("online"), runs = WORKER, work = setOf(DISK), gate = LATER, waits = SCREEN)
+    /** T258's memory sampler, a line a minute; T387: once work is allowed (a recording's notification covers it with the screen off). */
+    val SAMPLER = Stage("sampler", needs = listOf("settings"), runs = WORKER, work = setOf(DISK), gate = LATER, waits = Waits.WORK)
+    /**
+     * T387: the pending map work: T29's interrupted pack downloads, T151's resume check of the areas (and its foreground
+     * trigger) and T130's trip corridors. At the first screen; an area download's own job (`DownloadWorker`, under its
+     * notification) runs the resume check by itself at a start without one.
+     */
+    val PENDING = Stage("pending", needs = listOf("downloads", "online"), runs = WORKER, work = setOf(DISK, SOCKET), gate = LATER, waits = SCREEN)
 
     // ---------- MainActivity ----------
     val VIEWPORT = Stage("viewport", listOf("MapViewport.prepare"), gate = BEFORE_ACTIVITY)
@@ -115,7 +125,7 @@ object Launch {
 
     val stages: List<Stage> = listOf(
         PREPARE, MAPLIBRE, SETTINGS, TRACKING, WORLD_COPY, ASSETS, PACKS, ONLINE_SERVICE, CACHE_INDEX, TILES_SERVICE, WATCHERS, DOWNLOADS_STAGE,
-        SERVER, UPDATER, VIEWPORT, CAMERA, MAPVIEW, ACTIVITY, START, RESUME, COMPOSITION, STYLE,
+        SERVER, UPDATER, BUDGET, SAMPLER, PENDING, VIEWPORT, CAMERA, MAPVIEW, ACTIVITY, START, RESUME, COMPOSITION, STYLE,
     )
 
     /** The trace's own marks at the lifecycle's edges (`StartupTrace`): no stage's work, so no stage owns them. */
@@ -129,4 +139,89 @@ object Launch {
     fun stageOf(mark: String): Stage? = stages.firstOrNull { s -> s.marks.any { markMatches(it, mark) } }
 
     fun stage(name: String): Stage? = stages.firstOrNull { it.name == name }
+}
+
+/**
+ * T387 (ADR 0071, decisions 1 and 2): what a launch stage waits for besides its needs. A process started by a preload, a job
+ * or a broadcast runs only what that start needs; the rest waits here. Ordered: a stage waits for at least what each of its
+ * needs waits for ([LaunchGate.problems]).
+ */
+enum class Waits {
+    /** Every start runs it. */
+    NOTHING,
+
+    /** Once work is allowed: an activity on screen, or a job under an ongoing notification of its own (a recording, an area download). */
+    WORK,
+
+    /** Once an activity of the app has started in this process (it stays open after that: Home pauses the work itself, not the stage). */
+    SCREEN,
+}
+
+/** T387: a stage's state as `GET /debug/launch` reports it ([LaunchGate.state]). */
+enum class StageState(val json: String) {
+    /** Not reached in this process: an activity's stage before any activity. */
+    NOT_REACHED("not reached"),
+
+    /** Bound; a stage it needs has not ended. */
+    WAITING("waiting"),
+
+    /** Its needs are done and it waits for its [Waits] (a start without a screen). */
+    DEFERRED("deferred"),
+    RUNNING("running"),
+    DONE("done"),
+    FAILED("failed"),
+}
+
+/**
+ * T387 (ADR 0071): the launch's gate as a pure rule. [opens] says whether a stage's wait is over; [state] reads a stage's
+ * figures as one word; [problems] is the declaration's rule, read by `LaunchTest` beside [LaunchCheck]:
+ * - a stage that waits runs on a worker, is bound by the runner and has the gate [Gate.LATER] (the main thread never waits
+ *   for a screen, and nothing earlier reads what it publishes);
+ * - a stage waits for at least what each of its needs waits for, so no stage at a start without a screen waits for one
+ *   that is deferred.
+ */
+object LaunchGate {
+    /** Whether [waits] is over: [screenSeen], an activity has started in this process; [workAllowed], on screen or a notified job now. */
+    fun opens(waits: Waits, screenSeen: Boolean, workAllowed: Boolean): Boolean = when (waits) {
+        Waits.NOTHING -> true
+        Waits.WORK -> workAllowed || screenSeen
+        Waits.SCREEN -> screenSeen
+    }
+
+    /**
+     * One stage's state from its figures: [bound] (the runner or its owner reached it), [needsDone], [started], [ended],
+     * [failed]; [waits] with [screenSeen] and [workAllowed] for a stage whose needs are done and that has not started.
+     */
+    fun state(
+        bound: Boolean, needsDone: Boolean, started: Boolean, ended: Boolean, failed: Boolean,
+        waits: Waits, screenSeen: Boolean, workAllowed: Boolean,
+    ): StageState = when {
+        failed -> StageState.FAILED
+        ended -> StageState.DONE
+        started -> StageState.RUNNING
+        !bound -> StageState.NOT_REACHED
+        !needsDone -> StageState.WAITING
+        !opens(waits, screenSeen, workAllowed) -> StageState.DEFERRED
+        else -> StageState.RUNNING // its wait is over and its thread is starting it
+    }
+
+    /** The stages a start without a screen and without a notified job leaves deferred. */
+    fun deferredWithoutScreen(stages: List<Stage>): List<Stage> = stages.filter { !opens(it.waits, screenSeen = false, workAllowed = false) }
+
+    fun problems(stages: List<Stage>): List<String> {
+        val out = ArrayList<String>()
+        val byName = stages.associateBy { it.name }
+        for (s in stages) {
+            if (s.waits != Waits.NOTHING) {
+                if (s.runs != Runs.WORKER) out += "${s.name}: waits for ${s.waits} on the main thread"
+                if (s.bound != Bound.RUNNER) out += "${s.name}: waits for ${s.waits} but the runner does not run it"
+                if (s.gate != Gate.LATER) out += "${s.name}: waits for ${s.waits} with gate ${s.gate}, not LATER"
+            }
+            for (n in s.needs) {
+                val need = byName[n] ?: continue // LaunchCheck names an undeclared need
+                if (need.waits > s.waits) out += "${s.name}: waits for ${s.waits} but needs $n, which waits for ${need.waits}"
+            }
+        }
+        return out
+    }
 }
