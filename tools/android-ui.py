@@ -5562,8 +5562,18 @@ def kept_row_menu(dev, name, action):
 
 
 def kept_rename(dev, name, new_name):
-    """A row's Rename: the name field cleared, [new_name] typed, Save."""
+    """A row's Rename: the name field tapped (it opens unfocused) and cleared, [new_name] typed, Save."""
     kept_row_menu(dev, name, "Rename")
+    field, nodes = None, []
+    for _ in range(5):
+        nodes = dev.nodes()
+        field = next((n for n in nodes if n["cls"].endswith("EditText") and n["bounds"]), None)
+        if field:
+            break
+        time.sleep(1)
+    if not field:
+        raise RuntimeError(f"no name field after Rename (texts: {dev.texts(nodes)[:25]})")
+    dev.tap(field)
     dev.shell("input", "keyevent", "KEYCODE_MOVE_END")
     for _ in range(2):
         dev.shell("input", "keyevent", *(["KEYCODE_DEL"] * 40))
@@ -5589,6 +5599,11 @@ def kept_folder_step(dev):
 
     # 1. Keep a folder, the picker, the confirm with its count.
     nodes = tracks_list(dev)
+    for _ in range(2):  # a settings sheet left over the screen (seen on a run of this step alone) takes the tap
+        if not dev.find("^‹ Settings$", nodes):
+            break
+        close_sheet(dev)
+        nodes = tracks_list(dev)
     keep = dev.find("^Keep a folder$", nodes)
     out["rowPng"] = dev.screencap("kept-folder-row")[0]
     if not keep:

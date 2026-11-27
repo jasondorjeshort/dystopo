@@ -412,6 +412,11 @@ internal data class KeptUi(
     val ask: KeptAsk? = null,
 )
 
+/** T380: the row's Compose state, made and changed on the main thread (T240: a `*UiState` object). */
+internal object KeptUiState {
+    var ui by mutableStateOf(KeptUi())
+}
+
 /** T380: the confirm after a pick: the folder, what would be written. */
 internal data class KeptAsk(val tree: String, val folderName: String, val tracks: Int, val routes: Int, val again: Boolean, val changes: Int)
 
@@ -431,8 +436,16 @@ object KeptFolder {
     private var loaded: KeptState? = null
     private val state: KeptState get() = loaded ?: load().also { loaded = it }
 
-    internal var ui by mutableStateOf(KeptUi())
-        private set
+    /** The row's state: Compose state, read and written on the main thread only ([KeptUiState]). */
+    internal val ui: KeptUi get() = KeptUiState.ui
+
+    /** The confirm, mirrored for the worker's JSON (which never touches Compose state). */
+    @Volatile private var askNow: KeptAsk? = null
+
+    private fun setUi(u: KeptUi) { // main thread
+        KeptUiState.ui = u
+        askNow = u.ask
+    }
 
     @Volatile private var started = false
     @Volatile private var scheduled = false
@@ -569,7 +582,7 @@ object KeptFolder {
             mode = when { s.tree == null -> "off"; s.lost -> "lost"; else -> "keeping" },
             folderName = s.folderName, files = s.entries.size, waiting = waiting,
         )
-        main.post { ui = u.copy(ask = ui.ask) }
+        main.post { setUi(u.copy(ask = ui.ask)) }
     }
 
     // ---- the user's actions (main thread) ----
@@ -592,14 +605,14 @@ object KeptFolder {
                 keptPlan(src.items(), s.entries, src::tombstone, src.deviceId, ZoneId.systemDefault()).size
             } else 0
             val a = KeptAsk(tree, folderName(uri), items.count { it.kind == "track" }, items.count { it.kind == "route" }, again, changes)
-            main.post { ui = ui.copy(ask = a) }
+            main.post { setUi(ui.copy(ask = a)) }
         }
     }
 
     /** The confirm's answer: [yes] keeps the folder and writes; no lets go of a folder that is not the one kept. */
     internal fun confirm(yes: Boolean) {
         val a = ui.ask ?: return
-        ui = ui.copy(ask = null)
+        setUi(ui.copy(ask = null))
         worker.execute {
             val s = state
             if (yes) {
@@ -663,7 +676,7 @@ object KeptFolder {
 
     private fun jsonNow(): Map<String, Any?> {
         val s = state
-        val u = ui
+        val ask = askNow
         return linkedMapOf(
             "state" to when { s.tree == null -> "off"; s.lost -> "lost"; else -> "keeping" },
             "folder" to s.tree, "folderName" to s.folderName, "routesDir" to s.routesDir, "stoppedFolder" to s.stoppedTree,
@@ -671,9 +684,9 @@ object KeptFolder {
             "waiting" to waiting, "waitingFor" to waitingFor, "gate" to linkedMapOf("open" to gateOpen(), "why" to Foreground.workWhy()),
             "passes" to passes, "lastPassMs" to lastPassMs,
             "entries" to s.entries.map { linkedMapOf("kind" to it.kind, "id" to it.id, "name" to it.name, "asked" to it.asked, "folder" to it.folder) },
-            "ask" to u.ask?.let { linkedMapOf("folderName" to it.folderName, "tracks" to it.tracks, "routes" to it.routes, "again" to it.again, "changes" to it.changes, "count" to keptCount(it.tracks, it.routes, it.folderName, it.again, it.changes)) },
+            "ask" to ask?.let { linkedMapOf("folderName" to it.folderName, "tracks" to it.tracks, "routes" to it.routes, "again" to it.again, "changes" to it.changes, "count" to keptCount(it.tracks, it.routes, it.folderName, it.again, it.changes)) },
             "row" to when {
-                u.ask != null -> KEPT_SETUP
+                ask != null -> KEPT_SETUP
                 s.tree == null -> KEPT_OFF_LINE
                 s.lost -> keptLost(s.folderName ?: "", waiting)
                 else -> keptLine(s.folderName ?: "", s.entries.size, waiting)
