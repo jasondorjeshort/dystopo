@@ -62,8 +62,13 @@ import java.util.concurrent.TimeUnit
  *   weather stations' settings for a whole-degree box around the view and [recompute] hands the chosen one to the
  *   estimator as a prior (applied once per report); `GET /readout` › `seaLevelPressure` shows it.
  *
- * The estimator reads on its own clock (the fixes' times): [refresh] reads it at the wall clock moved by the last fix's
- * offset from it, so a replay's file times and a device's GPS times both see gaps in real time. T362: each fix and sample
+ * T385: the estimator reads on the readout's clock ([ReadoutClock], `docs/PLANNING.md` › the readout's time base): device
+ * fixes and the barometer's samples are ordered on elapsed realtime, with a base taken from the phone's clock at the first
+ * device fix after a start, a [reset] or injected fixes, so a fix's own time never moves it (before T385 every fix's own
+ * time set the offset, and one fix with a wrong time put every later sample that far back and restarted the estimator
+ * each time: the finding of 2026-11-26); injected fixes and replays keep their own times (in the past by design), the
+ * clock following each. A device fix whose own time is off the phone's is flagged ([ClockLog], the glance view's line)
+ * and still used. [debugSkew] moves device fixes' own time for a test (`POST /readout/skew`). T362: each fix and sample
  * is passed with `SystemClock.elapsedRealtime` beside it and the read takes it too, so gaps, the dim and the hold after a
  * clock going back are measured on a clock that no wall-clock change moves; the jump rule is the estimator's
  * ([ReadoutEstimator.isJump]: the position restarts, the height stays); `GET /readout` › `readout` adds `dimReason`,
@@ -107,15 +112,37 @@ object LiveReadout {
     private var est: ReadoutEstimator? = null
     private var routeHint: Double? = null
     private var lastFed: LocationFix? = null
-    /** A fix has set [offsetMs] since the start or the last [reset]. */
-    private var clockKnown = false
+    /** T385: the readout's clock (worker thread); [offsetMs] mirrors its offset for other threads. */
+    private val clock = io.github.jasondorjeshort.dystopo.readout.ReadoutClock()
 
     /** What the strip draws and `GET /readout` reports, from the last [refresh]. */
     @Volatile var snapshot: Snapshot? = null
         private set
 
-    /** The fixes' clock minus the wall clock at the last fix. */
+    /** T385: the readout's clock minus elapsed realtime ([ReadoutClock.offsetMs], set on the worker thread). */
     @Volatile private var offsetMs = 0L
+
+    /** T385: the readout's clock now. */
+    private fun clockNow(): Long = SystemClock.elapsedRealtime() + offsetMs
+
+    /** T385: the readout's clock minus the phone's clock, now (the station prior and the pin's clock text convert by it). */
+    private fun minusWall(): Long = offsetMs - (System.currentTimeMillis() - SystemClock.elapsedRealtime())
+
+    // T385: the debug skew of device fixes' own time (`POST /readout/skew`), until elapsed [skewUntil].
+    @Volatile private var skewMs = 0L
+    @Volatile private var skewUntil = 0L
+
+    /** T385: device fixes' own time moved by [ms] for [forS] seconds (debug builds' route; 0 ends it); what is set now. */
+    fun debugSkew(ms: Long, forS: Long): Map<String, Any?> {
+        skewMs = ms
+        skewUntil = if (ms == 0L || forS <= 0) 0L else SystemClock.elapsedRealtime() + forS * 1000
+        return skewJson()
+    }
+
+    fun skewJson(): Map<String, Any?> {
+        val left = skewUntil - SystemClock.elapsedRealtime()
+        return linkedMapOf("skewMs" to if (left > 0) skewMs else 0L, "leftS" to if (left > 0) left / 1000 else 0L)
+    }
     @Volatile private var lastInjectedAt = 0L
     @Volatile private var lastGpsAt = 0L
     @Volatile private var lastReplayPressureAt = 0L
@@ -137,10 +164,15 @@ object LiveReadout {
         val provider = loc.provider ?: LocationManager.GPS_PROVIDER
         if (provider == LocationManager.GPS_PROVIDER) lastGpsAt = now
         else if (lastGpsAt != 0L && now - lastGpsAt < GPS_PRECEDENCE_MS) { bump("networkFixesSkipped"); return }
-        ClockLog.onFix(loc)
-        val fix = GpsLocationSource.toFix(loc, provider)
+        val wall = System.currentTimeMillis()
+        // T385: the debug skew of the fix's own time, then the clock check; the fix is used whatever it says.
+        val l = if (skewUntil != 0L && now < skewUntil) Location(loc).apply { time += skewMs } else loc
+        val flag = ClockLog.onFix(l, now, wall)
+        if (flag?.off == true) bump("fixesFlaggedUsed")
+        val fix = GpsLocationSource.toFix(l, provider)
+        val stamp = l.elapsedRealtimeNanos / 1_000_000
         bump("mapFixes")
-        post { feedFix(fix, now) }
+        post { feedFix(fix.copy(time = clock.deviceFix(stamp, now, wall)), now) }
     }
 
     /** An injected fix (`POST /location`, a replay), from the recorder's injected source (any thread). */
@@ -149,7 +181,7 @@ object LiveReadout {
         lastInjectedAt = now
         if (fix.source != "network" && fix.source != "passive") lastInjectedGpsAt = now // T384: a stand-in for a GPS fix
         bump("injectedFixes")
-        post { feedFix(fix, now) }
+        post { feedFix(fix.copy(time = clock.injectedFix(fix.time, now)), now) } // T385: its own time
     }
 
     // T257: the last pressure sample as read (any thread writes, the readout's thread reads).
@@ -198,14 +230,18 @@ object LiveReadout {
         post { ensure().onPressure(PressureSample(timeMs, hPa, PressureSampleSource.REPLAY), now) } // T204: the source, so a switch is a new offset; T362: elapsed
     }
 
-    /** A barometer sample ([Barometer], its own thread); [wallMs] on the wall clock. */
+    /**
+     * A barometer sample ([Barometer], its own thread); [wallMs] on the wall clock. T385: taken back to elapsed realtime
+     * (the sensor event's own clock, which [Barometer] moved to the wall clock) and stamped on the readout's clock.
+     */
     fun onSensorPressure(wallMs: Long, hPa: Double) {
         if (SystemClock.elapsedRealtime() - lastInjectedAt < INJECTED_PRECEDENCE_MS) { bump("sensorPressureIgnored"); return }
         raw(hPa, "sensor") // T257
         val now = SystemClock.elapsedRealtime() // T362
+        val at = now - (System.currentTimeMillis() - wallMs)
         post {
-            if (!clockKnown) bump("sensorPressureBeforeClock")
-            else { bump("sensorPressure"); ensure().onPressure(PressureSample(wallMs + offsetMs, hPa, PressureSampleSource.SENSOR), now) }
+            if (!clock.known) bump("sensorPressureBeforeClock")
+            else { bump("sensorPressure"); ensure().onPressure(PressureSample(clock.at(at), hPa, PressureSampleSource.SENSOR), now) }
         }
     }
 
@@ -240,7 +276,7 @@ object LiveReadout {
         est = null
         routeHint = null
         lastFed = null
-        clockKnown = false
+        clock.reset() // T385
         snapshot = null
         offsetMs = 0L
         lastInjectedAt = 0L
@@ -319,7 +355,9 @@ object LiveReadout {
             "route" to route,
             "inputs" to linkedMapOf(
                 "counts" to counts.toSortedMap(),
-                "clockOffsetMs" to offsetMs,
+                "clockOffsetMs" to minusWall(), // the readout's clock minus the phone's
+                "clockBase" to if (clock.deviceBase) "device" else if (clock.known) "injected" else null, // T385: whose time the clock runs on
+                "skew" to skewJson(), // T385: the debug skew of device fixes' own time
                 "clockLog" to ClockLog.json(), // why the clock goes back: the chip's time against the phone's, each restart's source
                 "injectedRecently" to (lastInjectedAt != 0L && SystemClock.elapsedRealtime() - lastInjectedAt < INJECTED_PRECEDENCE_MS),
                 "composed" to composed, "foreground" to Foreground.started,
@@ -355,8 +393,7 @@ object LiveReadout {
             routeHint = null
             bump("jumpResets")
         }
-        offsetMs = fix.time - System.currentTimeMillis()
-        clockKnown = true
+        offsetMs = clock.offsetMs // T385: the clock was set as the fix was stamped (onMapFix, onInjectedFix)
         e.onFix(fix, routeAlong(fix), elapsedMs)
     }
 
@@ -400,14 +437,14 @@ object LiveReadout {
         val profile = AppSettings.trackProfile(a)
         val options = AppSettings.readoutOptions(a)
         val e = est
-        if (e == null) return ReadoutEstimator(profile, options, dem).also { it.onClockBack = { src, t, latest, el -> ClockLog.onClockBack(src, t, latest, el, offsetMs) }; est = it }
+        if (e == null) return ReadoutEstimator(profile, options, dem).also { it.onClockBack = { src, t, latest, el -> ClockLog.onClockBack(src, t, latest, el, minusWall()) }; est = it }
         if (e.profile != profile) e.setProfile(profile, options) else if (e.options != options) e.options = options
         return e
     }
 
     private fun recompute() {
         val e = ensure()
-        val r = e.readout(System.currentTimeMillis() + offsetMs, SystemClock.elapsedRealtime()) // T362: gaps on elapsed time
+        val r = e.readout(clockNow(), SystemClock.elapsedRealtime()) // T362: gaps on elapsed time; T385: the readout's clock
         val units = AppSettings.units
         val pressureUnit = AppSettings.pressureUnit // T337
         val o = e.options
@@ -417,7 +454,7 @@ object LiveReadout {
         val wanted = fusing || (visible && o.pressure.shown && Barometer.present)
         Barometer.want(wanted)
         // T173: the weather station prior, fetched and fed only while the barometer serves the shown strip.
-        PressureSource.tick(fusing && Barometer.present, lastFed, offsetMs)?.let { e.onStationPressure(it) }
+        PressureSource.tick(fusing && Barometer.present, lastFed, minusWall())?.let { e.onStationPressure(it) }
         if (STATION_SOURCE_ID in r.provenance) PressureSource.credited = true
         val both = io.github.jasondorjeshort.dystopo.app.controls.ScaleBarSettings.bothUnits // T177 (T161's follow-up)
         // T257: the pressure as last read, the declination at the last fix for a magnetic course.
@@ -503,7 +540,7 @@ object LiveReadout {
     @Volatile private var lastPin: Map<String, Any?>? = null
 
     /** The last fix when it is at most [FIX_FRESH_MS] old on the fixes' clock, else null. */
-    fun freshFix(): LocationFix? = lastFix?.takeIf { System.currentTimeMillis() + offsetMs - it.time <= FIX_FRESH_MS }
+    fun freshFix(): LocationFix? = lastFix?.takeIf { clockNow() - it.time <= FIX_FRESH_MS }
 
     /** A fix older than this is not "here" for the long-press card's "I am at". */
     const val FIX_FRESH_MS = 120_000L
@@ -516,7 +553,7 @@ object LiveReadout {
      * clock moved to the fixes' clock, and refreshes the bar. [via] (`menu`, `settings`, `route`) is reported.
      */
     fun pin(name: String?, eleM: Double, sigmaM: Double, via: String): io.github.jasondorjeshort.dystopo.readout.PinResult = call {
-        val r = ensure().pin(name, eleM, sigmaM, System.currentTimeMillis() + offsetMs)
+        val r = ensure().pin(name, eleM, sigmaM, clockNow())
         bump("pins.$via")
         lastPin = linkedMapOf<String, Any?>(
             "via" to via, "name" to name, "eleM" to eleM, "sigmaM" to sigmaM, "atWallMs" to System.currentTimeMillis(),
@@ -568,7 +605,7 @@ object LiveReadout {
         val b = s?.readout?.barometer ?: return null
         val at = b.pinnedAt ?: return null
         val ele = b.pinnedEleM ?: return null
-        return KnownHeights.markDetail(b.pinnedName, clockText(at - offsetMs), ele, s.units)
+        return KnownHeights.markDetail(b.pinnedName, clockText(at - minusWall()), ele, s.units)
     }
 
     /** The phone's clock text for [wallMs] ("10:42", or "10:42 AM" by the phone's setting). */

@@ -45,7 +45,9 @@ import kotlin.math.sinh
  *   fixes, the pressure and (from the first poor fix) the compass, so the minute before an estimate can be caught up.
  * - **Fixes** come from the recorder's sources ([Tracking]: the GPS while recording, injected fixes and replays) and the
  *   map's device listener ([onMapFix]); network, passive and terrain fixes are left out. Good means within the activity's
- *   accuracy bound. The sensor's samples are put on the fixes' clock by the last fix's offset from the wall clock; while a
+ *   accuracy bound. T385: the clock is the readout's rule ([ReadoutClock]): a device fix and the sensor's samples are
+ *   ordered on elapsed realtime (a device fix at its receipt), with a base taken from the phone's clock at the first
+ *   device fix, so a receiver's wrong time never moves it; an injected fix or a replay keeps its own time. While a
  *   replay's pressure column flows the sensor is ignored, as the readout does.
  * - **The heading** is the compass ([Heading], asked for from the first poor fix: [Heading.setTerrainWanted]); a debug
  *   run (`POST /location/terrain`, `compass=course`) takes it from the replay's own bearing instead, as the measurement's
@@ -80,7 +82,7 @@ object TerrainSource : LocationSource {
 
     // Worker thread only.
     private val live = TerrainLive(options, ::graphAt, dem)
-    private var offsetMs = 0L
+    private val clock = io.github.jasondorjeshort.dystopo.readout.ReadoutClock() // T385
     private var lastReplayPressureAt = 0L
     private var lastInjected: LocationFix? = null
     private var debugHeading: Double? = null
@@ -143,10 +145,12 @@ object TerrainSource : LocationSource {
         if (!watching) return
         if (fix.source == SOURCE || fix.source == "network" || fix.source == "passive") return
         val receivedWall = System.currentTimeMillis()
+        val receivedAt = SystemClock.elapsedRealtime()
         val injected = fix.source != "gps"
         worker.execute {
             safely {
-                offsetMs = fix.time - receivedWall
+                // T385: a device fix at its receipt on elapsed realtime; an injected one at its own time.
+                val t = if (injected) clock.injectedFix(fix.time, receivedAt) else clock.deviceFix(receivedAt, receivedAt, receivedWall)
                 if (injected) {
                     val prev = lastInjected
                     if (debugCompass && prev != null && TrackStats.distanceM(prev.lat, prev.lon, fix.lat, fix.lon) > 0.5) {
@@ -156,7 +160,7 @@ object TerrainSource : LocationSource {
                     lastInjected = fix
                     debugHeading?.let { if (debugCompass) live.onHeading(fix.time, it) }
                 }
-                after(live.onFix(fix.time, fix.lat, fix.lon, fix.accuracyM, boundM()), fixAt = fix.time)
+                after(live.onFix(t, fix.lat, fix.lon, fix.accuracyM, boundM()), fixAt = t)
             }
         }
     }
@@ -172,13 +176,14 @@ object TerrainSource : LocationSource {
         onFix(GpsLocationSource.toFix(loc, "gps"))
     }
 
-    /** The barometer (its thread): [wallMs] on the wall clock. */
+    /** The barometer (its thread): [wallMs] on the wall clock (T385: taken back to elapsed realtime, the sensor's own clock). */
     fun onSensorPressure(wallMs: Long, hPa: Double) {
         sensorSamples++
+        val at = SystemClock.elapsedRealtime() - (System.currentTimeMillis() - wallMs)
         worker.execute {
             safely {
                 if (SystemClock.elapsedRealtime() - lastReplayPressureAt < REPLAY_PRECEDENCE_MS) { sensorIgnored++; return@safely }
-                val t = wallMs + offsetMs
+                val t = if (clock.known) clock.at(at) else wallMs // before any fix as before T385: the wall clock
                 compassSample(t)
                 after(live.onPressure(t, Altimeter.pressureAltitudeM(hPa)))
             }

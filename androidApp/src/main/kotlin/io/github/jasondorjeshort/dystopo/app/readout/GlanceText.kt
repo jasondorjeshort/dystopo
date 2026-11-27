@@ -93,16 +93,41 @@ object GlanceText {
     /**
      * The lines in order: the deadline when the clock runs, then the bar's entries; T384: while [gps] searches, "no fix"
      * reads "searching" and the GPS area says how it goes ([gpsArea]); with [positionLine], the position line last
-     * ([position]: the readout's last fix, in [format], distances in [units]).
+     * ([position]: the readout's last fix, in [format], distances in [units]). T385: while the GPS clock is off ([clock])
+     * and the GPS is not searching, the GPS area says so ([clockArea]).
      */
     fun lines(
         items: List<StripItem>, deadline: GlanceLine? = null, gps: Gps? = null, position: Position? = null, positionLine: Boolean = false,
-        units: ContourUnits = ContourUnits.METERS, format: CoordinateFormat = CoordinateFormat.DEFAULT,
+        units: ContourUnits = ContourUnits.METERS, format: CoordinateFormat = CoordinateFormat.DEFAULT, clock: Clock? = null,
     ): List<GlanceLine> {
         val searching = gps?.searching == true
         val read = items.map { of(it, searching) }
         val figures = if (gps != null && searching) gpsArea(read, gps) else read
-        return listOfNotNull(deadline) + figures + listOfNotNull(if (positionLine) position(position, gps, units, format) else null)
+        val all = listOfNotNull(deadline) + figures + listOfNotNull(if (positionLine) position(position, gps, units, format) else null)
+        return if (clock != null && !searching) clockArea(all, clock) else all
+    }
+
+    // ---- T385: the GPS clock ----
+
+    /**
+     * T385: the GPS clock fault going on ([io.github.jasondorjeshort.dystopo.readout.GpsClockCheck]): its [kind], how far
+     * the fix's time is off the phone's ([offMs], unsigned), and whether it has [lasted] long enough to name the reset.
+     */
+    data class Clock(val kind: io.github.jasondorjeshort.dystopo.readout.GpsClockFault, val offMs: Long, val lasted: Boolean) {
+        fun json(): Map<String, Any?> = linkedMapOf("kind" to kind.code, "offS" to offMs / 1000, "lasted" to lasted)
+    }
+
+    /**
+     * T385: the GPS area while the clock is off: the accuracy's reason row says so ([ReasonText.clock]), and once an
+     * unreliable receiver's fault has lasted the fix age's names the reset ([ReasonText.CLOCK_RESET]); with either
+     * entry switched off, the position line's row stands in. Rows T389 reserved, so nothing moves; the fix is still used,
+     * so no value is dimmed or marked.
+     */
+    fun clockArea(lines: List<GlanceLine>, c: Clock): List<GlanceLine> {
+        val area = listOf(ReadoutEntry.ACCURACY.code, ReadoutEntry.FIX_AGE.code, POSITION).filter { k -> lines.any { it.kind == k } }.take(2)
+        val texts = listOfNotNull(ReasonText.clock(c.kind, c.offMs), if (c.lasted) ReasonText.CLOCK_RESET else null)
+        val code = ReadoutReason.GPS_CLOCK.code
+        return lines.map { l -> area.indexOf(l.kind).takeIf { it in texts.indices }?.let { i -> l.copy(reason = texts[i], reasonCode = code) } ?: l }
     }
 
     /** One bar item as a glance line, with its templates; T384: "no fix" read as "searching" while the GPS is [searching]. */
@@ -238,14 +263,18 @@ object GlanceText {
 
     /**
      * The notes from [r] (its record of faults, read at its elapsed time), [pinEnded] (when the known height's mark went
-     * and why, [LiveReadout.pinEnded]), the bar's [dropped] entries and whether it is [hiddenForRoom]; distances in [units].
+     * and why, [LiveReadout.pinEnded]), the bar's [dropped] entries and whether it is [hiddenForRoom]; distances in [units];
+     * T385: the GPS clock's faults that ended ([ClockLog.ended]).
      */
     fun notes(r: io.github.jasondorjeshort.dystopo.readout.Readout?, pinEnded: Pair<Long, String?>?, dropped: List<String>, hiddenForRoom: Boolean,
-              units: io.github.jasondorjeshort.dystopo.render.ContourUnits, max: Int = MAX_RECENT): Notes {
+              units: io.github.jasondorjeshort.dystopo.render.ContourUnits, max: Int = MAX_RECENT,
+              clockEnded: List<io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.Fault> = emptyList()): Notes {
         val recent = ArrayList<String>()
         if (r != null) {
             val pin = pinEnded?.takeIf { r.elapsedMs - it.first in 0..ReasonText.RECENT_MS }?.let { ReasonText.pinEnd(it.second, r.elapsedMs - it.first) }
-            recent += listOfNotNull(pin) + ReasonText.recent(r.recent, r.elapsedMs, units)
+            // T385: one note per GPS clock fault that ended in the last minute ([clockEnded], newest first), never one per fix.
+            val clock = clockEnded.reversed().mapNotNull { ReasonText.clockEnded(it, r.elapsedMs) }
+            recent += listOfNotNull(pin) + clock + ReasonText.recent(r.recent, r.elapsedMs, units)
         }
         return Notes(ReasonText.leftOut(dropped, hiddenForRoom), recent.take(max))
     }

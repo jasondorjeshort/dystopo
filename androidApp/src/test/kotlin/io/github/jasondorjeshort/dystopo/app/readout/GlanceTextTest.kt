@@ -292,4 +292,50 @@ class GlanceTextTest {
         val o = withGps
         assertEquals(shape(GlanceText.lines(noFix(o), gps = searching.copy(searching = false), positionLine = true)), shape(GlanceText.lines(noFix(o), gps = searching, positionLine = true)))
     }
+
+    // ---- T385: the GPS clock in the GPS area, and one note per fault ----
+
+    private val fixed = searching.copy(searching = false)
+    private val here = GlanceText.Position(paradise.first, paradise.second, "gps", 1_000, 4.0)
+
+    @Test
+    fun theGpsAreaSaysTheClockIsUnreliableAndNamesTheResetOnceItHasLasted() {
+        val u = GlanceText.Clock(io.github.jasondorjeshort.dystopo.readout.GpsClockFault.UNRELIABLE, io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.ROLLOVER_MS, lasted = false)
+        val by = GlanceText.lines(StripText.items(walk, withGps, ContourUnits.METERS), gps = fixed, position = here, positionLine = true, clock = u).associateBy { it.kind }
+        assertEquals("GPS clock unreliable: fixes used, times from the phone.", by.getValue("accuracy").reason)
+        assertEquals("gps clock", by.getValue("accuracy").reasonCode)
+        assertFalse(by.getValue("fixAge").reasonCode == "gps clock", "the reset is not named before the fault has lasted")
+        assertEquals("From GPS, 1 s ago.", by.getValue("position").reason)
+        assertFalse(by.values.any { it.dimmed }, "the fix is used: nothing dimmed")
+        val lasted = GlanceText.lines(StripText.items(walk, withGps, ContourUnits.METERS), gps = fixed, position = here, positionLine = true, clock = u.copy(lasted = true)).associateBy { it.kind }
+        assertEquals("Still wrong: try Reset assistance data in Horizon view.", lasted.getValue("fixAge").reason)
+        // The figures hold still: the clock's lines go in rows already reserved.
+        val plain = GlanceText.lines(StripText.items(walk, withGps, ContourUnits.METERS), gps = fixed, position = here, positionLine = true)
+        assertEquals(GlanceFit.fit(plain, 1000f, 2000f, 10f, 2000f, fake), GlanceFit.fit(lasted.values.toList(), 1000f, 2000f, 10f, 2000f, fake))
+        // With the accuracy and the fix age off (the bar's defaults on foot), the position line's row says it.
+        val bare = GlanceText.lines(StripText.items(walk, bar, ContourUnits.METERS), gps = fixed, position = here, positionLine = true, clock = u)
+        assertEquals("GPS clock unreliable: fixes used, times from the phone.", bare.single { it.kind == "position" }.reason)
+        // While the GPS searches, the search's own lines stand (no fix, nothing to judge).
+        val s = GlanceText.lines(noFix(withGps), gps = searching, positionLine = true, clock = u).associateBy { it.kind }
+        assertEquals("searching", s.getValue("accuracy").reasonCode)
+    }
+
+    @Test
+    fun aDisagreementIsANeutralLineAndEachFaultIsOneNote() {
+        val d = GlanceText.Clock(io.github.jasondorjeshort.dystopo.readout.GpsClockFault.DISAGREE, 46 * 60_000L + 1_200, lasted = false)
+        val by = GlanceText.lines(StripText.items(walk, withGps, ContourUnits.METERS), gps = fixed, position = here, positionLine = true, clock = d).associateBy { it.kind }
+        assertEquals("GPS and phone clocks differ by 46 min: fixes still used.", by.getValue("accuracy").reason)
+        assertFalse(by.getValue("fixAge").reasonCode == "gps clock", "a disagreement never names the reset")
+        assertEquals("GPS and phone clocks differ by 18 s: fixes still used.", io.github.jasondorjeshort.dystopo.app.help.ReasonText.clock(d.kind, 18_000))
+        // The last minute: one note per fault that ended (newest first), never one per fix; a fault still going is the area's.
+        val now = 1_000_000L
+        val f = { k: io.github.jasondorjeshort.dystopo.readout.GpsClockFault, since: Long, delta: Long, endElapsedMs: Long -> io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.Fault(k, since, delta, endElapsedMs) }
+        val ended = listOf(
+            f(io.github.jasondorjeshort.dystopo.readout.GpsClockFault.DISAGREE, now - 300_000, -2_760_000, now - 200_000), // over a minute ago
+            f(io.github.jasondorjeshort.dystopo.readout.GpsClockFault.UNRELIABLE, now - 190_000, -1L, now - 50_000),
+            f(io.github.jasondorjeshort.dystopo.readout.GpsClockFault.DISAGREE, now - 40_000, -18_000, now - 10_000),
+        )
+        val notes = GlanceText.notes(walk.copy(elapsedMs = now), null, emptyList(), false, ContourUnits.METERS, clockEnded = ended)
+        assertEquals(listOf("GPS and phone clocks differed for 30 s, 10 s ago", "GPS clock unreliable for 2 min, 50 s ago"), notes.recent)
+    }
 }

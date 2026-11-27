@@ -1,6 +1,7 @@
 ---
 date: 2026-11-26
-status: open
+status: resolved (T385)
+promoted_to: docs/PLANNING.md
 area: android / readout / GPS clock
 ---
 
@@ -36,11 +37,24 @@ fix, and `onSensorPressure` stamps each barometer sample `wall + offsetMs`. The 
 - The "Reset assistance data" action (T307: `delete_aiding_data`, `force_time_injection`, `force_psds_injection`) is the
   only way the app can ask the chip to reset its time; some phones refuse (`Gnss.resetAssistance`, `lastReset`).
 
+## Resolution
+
+T385 (2026-11-27). The readout orders device fixes and barometer samples on elapsed realtime with a base taken once from
+the phone's clock (`ReadoutClock`; `docs/PLANNING.md` › The readout's time base), so a fix's own time can no longer move
+it; replays and injected fixes keep their own times. A GPS fix more than 5 s off the phone's time is flagged and still
+used (`GpsClockCheck`); the glance view's GPS area says "GPS clock unreliable" only when the fix's time is impossible on
+its own, otherwise that the two clocks differ, and names "Reset assistance data" (never run by itself) once an
+unreliable fault has lasted 60 s; the last minute keeps one note per fault. On the emulator at Paradise with the
+barometer on and device fixes through the console, `POST /readout/skew` put the receiver 1024 weeks back for 90 s:
+`clockLog` counted 76 fixes off, 76 implausible, one fault and 0 `readoutClockBacks`; the estimator's `clockResets` 0
+and `lateInputs` 0 over 328 barometer samples; the position and the height kept updating, undimmed. 46 min and 18 s back
+read as the neutral line with no restart; a phone clock set 10 min back with the receiver right read the same.
+
 ## Next
 
-- Read `GET /readout` › `inputs.clockLog` and `adb logcat -s DystopoClock` the next time it happens (counts,
-  `chipVsPhoneMs`, the `source` of each `readoutClockBack`): `chipClockOff` lines mean the chip's time is wrong;
+- The owner's check on a phone: read `GET /readout` › `inputs.clockLog` and `adb logcat -s DystopoClock` the next time it happens (counts,
+  `chipVsPhoneMs`, the `source` of each `readoutClockBack`): `chipClockOff` lines mean the chip's and the phone's clocks disagree (`kind` `unreliable`: the chip's);
   restarts from `pressure:sensor` without them mean our offset logic is.
-- A fix, for wave 49: stamp barometer samples on elapsed-realtime (not the last fix's time), and drop or flag a fix whose
-  time disagrees with its own elapsed-realtime stamp by more than `ClockLog.OFF_MS`, with a visible "GPS clock
-  unreliable" line instead of restarts. Optionally run the assistance reset by itself on a sustained `chipClockOff`.
+  With T385, `fault.kind` says which line the glance view shows, and `readoutClockBacks` should stay 0 for device inputs.
+- Built by T385 (above): flagged, never dropped; the assistance reset is offered, not run by itself (an automatic reset
+  is the owner's to ask for). Left: the receiver's raw time kept beside a recorded point (a track database migration).
