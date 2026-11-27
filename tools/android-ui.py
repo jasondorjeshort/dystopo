@@ -5820,7 +5820,7 @@ def peaks_tiles_step(dev, args):
             out["terrainPackOff"] = {"horizonReason": (h or {}).get("horizonReason"), "source": hz.get("source"),
                                      "maps": terrain.get("maps"), "online": terrain.get("online"), "complete": terrain.get("complete"),
                                      "cells": terrain.get("cells"), "fetcherBefore": f0.get("state"), "fetcherAfter": f1.get("state"),
-                                     "fetcherDelta": net}
+                                     "fetcherDelta": net, "read": {k: v for k, v in terrain.items() if k not in ("text",)}}
             if not hz:
                 errors.append(f"with the pack off and no network, no terrain horizon at Paradise: {out['terrainPackOff']}; {out['demHere']}")
                 return {"ok": False, **out, "error": "; ".join(errors)}
