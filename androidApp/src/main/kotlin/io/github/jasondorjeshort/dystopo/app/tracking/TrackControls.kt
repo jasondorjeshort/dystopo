@@ -602,7 +602,7 @@ private fun WaypointSheet(w: io.github.jasondorjeshort.dystopo.store.StoredWaypo
         )
         val wp = w.waypoint
         BasicText(
-            String.format(Locale.US, "%.5f, %.5f", wp.lat, wp.lon) + (wp.ele?.let { "  " + UnitFormat.elevation(it, AppSettings.units) } ?: ""),
+            AppSettings.coordinateFormat.line(wp.lat, wp.lon) + (wp.ele?.let { "  " + UnitFormat.elevation(it, AppSettings.units).replace(' ', io.github.jasondorjeshort.dystopo.geo.CoordinateText.NBSP) } ?: ""), // T388: wraps only between latitude, longitude and height
             style = TextStyle(color = Ink, fontSize = 11.sp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {

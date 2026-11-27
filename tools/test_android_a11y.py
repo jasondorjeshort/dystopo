@@ -1306,4 +1306,60 @@ assert _srv.calls == ["/map/marks"], "the screen fails before it presses"
 assert {s[0]: s[1] for s in a11y.SCREENS}["longpress"] is a11y.scr_longpress_named
 # end T383
 
+
+# T388: the coordinate-format screen opens Units and display, then the row's help, and is the last screen.
+class PathSrv:
+    def __init__(self):
+        self.calls = []
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        return {}
+
+
+cf = a11y.SCREENS[-1]
+assert cf[0] == "coordinate-format" and cf[2] is None and cf[3] == "screen", cf
+_ps = PathSrv()
+cf[1](type("C", (), {"srv": _ps})())
+assert _ps.calls == [("POST", "/settings/open?group=display"), ("POST", "/help/open?key=settings.coordinateFormat")], _ps.calls
+assert [s[0] for s in a11y.SCREENS].count("coordinate-format") == 1
+# end T388
+
+# T380: the kept folder's confirm: the screen opened on All, the tree staged with ask=, Cancel and close after; a row with no
+# confirm fails the screen.
+class KeptSrv:
+    def __init__(self, ask):
+        self.ask = ask
+        self.calls = []
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        return {"ask": self.ask} if path.startswith("/tracks/keptfolder") else {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+kf = next(s for s in a11y.SCREENS if s[0] == "kept-folder")
+assert kf[3] == "screen", kf
+a11y.time.sleep = lambda s: None
+try:
+    ks = KeptSrv({"count": "3 tracks and 1 route will be written to DystopoKept."})
+    kctx = type("C", (), {"srv": ks})()
+    kf[1](kctx)
+    assert ks.calls[0] == ("POST", "/tracks/ui?open=1&filter=all"), ks.calls
+    assert ks.calls[1][1].startswith("/tracks/keptfolder?ask=content%3A%2F%2F"), ks.calls
+    ks.calls.clear()
+    kf[2](kctx)
+    assert ks.calls == [("POST", "/tracks/keptfolder?confirm=0"), ("POST", "/tracks/ui?open=0")], ks.calls
+    try:
+        kf[1](type("C", (), {"srv": KeptSrv(None)})())
+        raise AssertionError("a row with no confirm should fail kept-folder")
+    except RuntimeError as e:
+        assert "no confirm" in str(e), e
+finally:
+    a11y.time.sleep = _sleep
+# end T380
+
 print("test_android_a11y: ok")

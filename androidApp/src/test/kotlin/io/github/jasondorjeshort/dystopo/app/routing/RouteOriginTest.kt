@@ -52,7 +52,7 @@ class RouteOriginTest {
         val e = RouteOrigin.End(panorama.first, panorama.second)
         assertFalse(e.isFix)
         assertFalse(e.stale)
-        assertEquals("46.80240, -121.72890", e.label)
+        assertEquals("46.80240° N, 121.72890° W", e.label) // T388: in the coordinate format (decimal degrees by default)
         assertEquals("point", e.json()["kind"])
         assertNull(e.json()["stale"])
         val f = RouteOrigin.end(RouteOrigin.Fix(paradise.first, paradise.second, 0, "recorder"), 200_000)

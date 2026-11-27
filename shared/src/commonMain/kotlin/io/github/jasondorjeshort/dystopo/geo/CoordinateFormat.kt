@@ -8,7 +8,8 @@ import kotlin.math.roundToLong
  * T384: a position as text, in the four formats the survey of 2026-11-26 found every outdoor app offering (pure; no
  * `java.*`; `CoordinateFormatTest`). WGS 84 throughout, no datum choice. The decimals are the survey's: decimal degrees to
  * five places (about 1 m), degrees and minutes to three, degrees minutes seconds to one; the hemisphere as N, S, E or W.
- * [key] is what a setting stores (T388 adds the setting; the glance view uses [DECIMAL] until then).
+ * [key] is what the synced setting `coordinateFormat` stores (T388: one choice for the whole app, read through
+ * `AppSettings.coordinateFormat`); [line] is the text for a place that may wrap.
  *
  * - [DECIMAL]: "46.78600° N, 121.73500° W"
  * - [DEGREES_MINUTES]: "46° 47.160' N, 121° 44.100' W"
@@ -29,6 +30,13 @@ enum class CoordinateFormat(val key: String) {
 
     /** [lat], [lon] in degrees (WGS 84) as text in this format. */
     fun format(lat: Double, lon: Double): String = CoordinateText.format(lat, lon, this)
+
+    /**
+     * T388: [format] for a line that may wrap: every space inside the latitude or the longitude is a no-break space, so a
+     * line too narrow for both breaks only at the gap between them ("46° 47' 09.6\" N," over "121° 44' 06.0\" W"), never
+     * inside a number; a UTM text keeps its zone with the easting and may break before the northing.
+     */
+    fun line(lat: Double, lon: Double): String = CoordinateText.wrapping(format(lat, lon))
 
     companion object {
         val DEFAULT = DECIMAL
@@ -51,6 +59,17 @@ object CoordinateText {
             CoordinateFormat.DMS -> "${seconds(la, 'N', 'S')}, ${seconds(lo, 'E', 'W')}"
             CoordinateFormat.UTM -> utm(la, lo) ?: format(la, lo, CoordinateFormat.DECIMAL)
         }
+    }
+
+    /** The no-break space [CoordinateFormat.line] puts inside each part. */
+    val NBSP: Char = Char(0xA0)
+
+    /** T388: [text] with a break allowed only at the ", " between latitude and longitude, or before a UTM northing. */
+    fun wrapping(text: String): String {
+        val comma = text.indexOf(", ")
+        if (comma >= 0) return text.substring(0, comma).replace(' ', NBSP) + ", " + text.substring(comma + 2).replace(' ', NBSP)
+        val last = text.lastIndexOf(' ')
+        return if (last < 0) text else text.substring(0, last).replace(' ', NBSP) + text.substring(last)
     }
 
     /** [lon] in [-180, 180). */

@@ -6,6 +6,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-27
 
+- T380: Keep tracks and routes as GPX files in a folder you pick
+- T388: A coordinate format setting
 - T387: No launch stage works at a start without a screen
 - T383: A long press names every mark the map draws
 - T382: A first launch with no map takes a fix that comes after four seconds

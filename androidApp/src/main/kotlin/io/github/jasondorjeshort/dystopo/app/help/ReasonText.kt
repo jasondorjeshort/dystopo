@@ -104,8 +104,11 @@ object ReasonText {
     /** The receiver's time is impossible on its own: its clock is the wrong one. */
     const val CLOCK_UNRELIABLE = "GPS clock unreliable: fixes used, times from the phone."
 
-    /** Named once an unreliable receiver's fault has lasted (GpsClockCheck.LASTED_MS); the action is the Horizon view's menu item. */
-    const val CLOCK_RESET = "Still wrong: try Reset assistance data in Horizon view."
+    /**
+     * Named once an unreliable receiver's fault has lasted (GpsClockCheck.LASTED_MS). T388 (T385's follow-up): it says where
+     * the action sits, the item of the menu beside the Horizon view's "Satellites" heading, in the words on screen.
+     */
+    const val CLOCK_RESET = "Horizon view: Satellites menu, Reset assistance data."
 
     /**
      * The GPS area's line for a fault of [kind]: "GPS clock unreliable" only when the receiver's time is impossible on its

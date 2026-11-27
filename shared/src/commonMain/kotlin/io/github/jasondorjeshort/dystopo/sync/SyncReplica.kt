@@ -185,6 +185,9 @@ interface SyncStore : TrackStore, SyncReplica {
      * false if the entity does not exist or the field is unknown.
      */
     fun setField(kind: EntityKind, id: String, field: String, value: String?, now: Long): Boolean
+
+    /** T380: the newest delete of entity [id] the log holds (its tombstone, with the deleting device), or null: a delete read, never inferred. */
+    fun tombstoneOf(kind: EntityKind, id: String): Hlc? = null
 }
 
 /** The gap rule of [Bundle], shared by every replica. */

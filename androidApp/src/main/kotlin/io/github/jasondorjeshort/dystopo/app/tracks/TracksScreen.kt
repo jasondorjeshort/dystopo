@@ -89,6 +89,9 @@ object TracksUi {
     /** T272: opens the folder picker for the select bar's Export GPX (set while the screen is composed). */
     internal var pickFolder: (() -> Unit)? = null
 
+    /** T380: opens the folder picker for Keep a folder (set while the screen is composed). */
+    internal var pickKept: (() -> Unit)? = null
+
     /** T272: the rows a folder pick is for (their keys, taken when the picker opened). */
     internal var exportKeys: List<String> = emptyList()
 
@@ -147,6 +150,9 @@ private val Line = Color(0xFFE2D8C6)
 private val Link = Color(0xFF2C7BB6)
 private val Violet = Color(0xFF7B3294)
 private val Bad = Color(0xFFB0302A)
+
+/** T380: the kept folder row's links, darker than [Link] so they read at 4.5 to 1 on the row's white. */
+private val KeptLink = Color(0xFF1D5E8C)
 
 /** A row's kind ("track" or "route"), and the key its menu, rename and delete state go by ("track:<id>"). */
 internal fun rowKey(kind: String, id: String): String = "$kind:$id"
@@ -319,6 +325,8 @@ internal val TRACKS_LIST_HELP: List<HelpText> = listOf(
             "one stays here, marked Hidden. A tap opens its card; the dots hold Rename, Export GPX, Share GPX, Statistics and " +
             "Delete. Select, or a long press, ticks several to show, hide, export, share or delete together."
     },
+    // T380: the kept folder's row.
+    HelpText("tracks.keptFolder", KEEP_FOLDER, "Tracks and routes, under the sort", show = { TracksUi.show(TracksUi.Filter.ALL) }) { KEPT_HELP },
 )
 
 /**
@@ -350,6 +358,12 @@ fun TracksScreen() {
     DisposableEffect(folder) {
         TracksUi.pickFolder = { folder.launch(null) }
         onDispose { TracksUi.pickFolder = null }
+    }
+    // T380: Keep a folder: the same picker, its answer to the kept folder (the permission, then the confirm).
+    val kept = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? -> KeptFolder.picked(uri) }
+    DisposableEffect(kept) {
+        TracksUi.pickKept = { kept.launch(null) }
+        onDispose { TracksUi.pickKept = null }
     }
     BackHandler { if (TracksUi.selecting) TracksUi.select(false) else TracksUi.close() }
     LaunchedEffect(tracking) { tracking?.refreshUi() }
@@ -414,6 +428,7 @@ fun TracksScreen() {
                 BasicText(SORT_WORD, Modifier.align(Alignment.CenterVertically).padding(end = 2.dp), style = TextStyle(color = Muted, fontSize = 13.sp))
                 for (o in TracksUi.Sort.entries) SortChip(sortLabel(o), o == sort) { TracksUi.sort = o }
             }
+            KeptFolderRow() // T380
             ui.message?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)) }
             if (filter == TracksUi.Filter.ROUTES) io.github.jasondorjeshort.dystopo.app.routing.RouteImportPicker.line?.let { BasicText(it, style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)) } // T219
             if (ActivityPicker.target != null && ActivityPicker.target != ActivityPicker.NEW) io.github.jasondorjeshort.dystopo.app.tracking.ActivityPickerPanel { } // T172: a track's activity
@@ -422,6 +437,53 @@ fun TracksScreen() {
                 items(rows, key = { it.key }) { r -> ItemRow(r) }
             }
             if (TracksUi.selecting) SelectBar(rows, all) // T272
+        }
+    }
+}
+
+/**
+ * T380: the kept folder's row, under the sort: "Keep a folder" with its line while none is kept; after a pick, the setup
+ * sentence, the count and the confirm; while kept, the folder, its files and Stop keeping; when the folder is lost, the
+ * line that says so, with Pick it again and Stop keeping. The help icon beside it holds the layout ([KEPT_HELP]).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun KeptFolderRow() {
+    val k = KeptFolder.ui
+    val ask = k.ask
+    Column(
+        Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).border(1.dp, if (k.mode == "lost" && ask == null) Bad else Line, RoundedCornerShape(8.dp))
+            .padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+    ) {
+        when {
+            ask != null -> {
+                BasicText(KEPT_SETUP, Modifier.padding(top = 6.dp, end = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp))
+                BasicText(keptCount(ask.tracks, ask.routes, ask.folderName, ask.again, ask.changes), Modifier.padding(top = 4.dp, end = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+                Row(Modifier.fillMaxWidth().padding(end = 6.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.End)) {
+                    Action(KEEP_THIS, KeptLink) { KeptFolder.confirm(true) }
+                    Action(CANCEL, KeptLink) { KeptFolder.confirm(false) }
+                }
+            }
+            k.mode == "lost" -> {
+                BasicText(keptLost(k.folderName ?: "", k.waiting), Modifier.padding(top = 6.dp, end = 6.dp), style = TextStyle(color = Bad, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+                FlowRow(Modifier.fillMaxWidth().padding(end = 6.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.End)) {
+                    Action(PICK_AGAIN, KeptLink) { TracksUi.pickKept?.invoke() }
+                    Action(STOP_KEEPING, KeptLink) { KeptFolder.stop() }
+                    HelpIcon("tracks.keptFolder")
+                }
+            }
+            k.mode == "keeping" -> FlowRow(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center) {
+                BasicText(keptLine(k.folderName ?: "", k.files, k.waiting), Modifier.align(Alignment.CenterVertically).padding(end = 12.dp), style = TextStyle(color = Ink, fontSize = 13.sp))
+                Action(STOP_KEEPING, KeptLink) { KeptFolder.stop() }
+                HelpIcon("tracks.keptFolder")
+            }
+            else -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Action(KEEP_FOLDER, KeptLink) { TracksUi.pickKept?.invoke() }
+                    BasicText(KEPT_OFF_LINE, Modifier.padding(bottom = 4.dp), style = TextStyle(color = Muted, fontSize = 12.sp))
+                }
+                HelpIcon("tracks.keptFolder")
+            }
         }
     }
 }

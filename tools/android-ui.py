@@ -1292,7 +1292,16 @@ def plan_and_keep(dev, a=PARADISE, b=PANORAMA, z=13, shots=None, export=False):
 
 
 # T243: the long-press card's first line, its coordinates ("46.80241, -121.72892"); its nodes run from it to Cancel.
-CARD_COORDS = r"^-?\d+\.\d{5}, -?\d+\.\d{5}$"
+# T388: or in the Coordinate format setting's form (the app's CoordinateFormat.line: a no-break space inside each part):
+# "46.80241° N, 121.72892° W", "46° 48.145' N, 121° 43.735' W", "46° 48' 08.7\" N, 121° 43' 44.1\" W", "10T 596991 5183990".
+_CS = r"[ \xa0]"
+CARD_COORDS = ("^(?:" + "|".join([
+    r"-?\d+\.\d{5}, -?\d+\.\d{5}",  # before T388
+    rf"\d+\.\d{{5}}°{_CS}[NS], \d+\.\d{{5}}°{_CS}[EW]",
+    rf"\d+°{_CS}\d{{2}}\.\d{{3}}'{_CS}[NS], \d+°{_CS}\d{{2}}\.\d{{3}}'{_CS}[EW]",
+    rf"\d+°{_CS}\d{{2}}'{_CS}\d{{2}}\.\d\"{_CS}[NS], \d+°{_CS}\d{{2}}'{_CS}\d{{2}}\.\d\"{_CS}[EW]",
+    rf"\d{{1,2}}[C-X]{_CS}\d+ \d+",
+]) + ")$")
 
 
 def card_intruders(nodes):
@@ -3348,8 +3357,8 @@ def part_horizonflights(args):
 # ceiling): --features-half map runs install-map to drive, sky the sky views from horizon on; each half starts with
 # install-map, and every other step is in exactly one half (a new step not named in FEATURES_SKY goes to map).
 FEATURE_STEPS = ("install-map", "search", "route-to", "route", "routes-list", "waypoint", "track", "two-tracks", "gpx", "share-gpx",
-                 "sync", "sync-sheet", "share", "settings", "search-tiles", "drive", "horizon", "panorama", "panorama-list", "flights",
-                 "horizonflights", "peaks-tiles")  # T377: search-tiles; T378: peaks-tiles
+                 "sync", "sync-sheet", "share", "settings", "search-tiles", "kept-folder", "drive", "horizon", "panorama", "panorama-list", "flights",
+                 "horizonflights", "peaks-tiles")  # T377: search-tiles; T380: kept-folder; T378: peaks-tiles
 FEATURES_SKY = ("horizon", "panorama", "panorama-list", "flights", "horizonflights", "peaks-tiles")
 
 
@@ -3534,6 +3543,7 @@ def part_features(args):
     for name, fn in (("install-map", setup), ("search", search), ("route-to", route_to), ("route", route), ("routes-list", trips),
                      ("waypoint", waypoint), ("track", track), ("two-tracks", two_tracks), ("gpx", gpx), ("share-gpx", share_gpx), ("sync", sync), ("sync-sheet", sync_sheet), ("share", share),
                      ("settings", settings), ("search-tiles", lambda: search_tiles_step(dev, args)),  # T377
+                     ("kept-folder", lambda: kept_folder_step(dev)),  # T380
                      ("drive", lambda: drive_step(dev, args)),
                      ("horizon", lambda: horizon_step(dev)),
                      ("panorama", lambda: panorama_step(dev)),  # T326
@@ -5475,6 +5485,260 @@ def search_tiles_step(dev, args):
 
     return tile_area_fixture(dev, args, body, skip_open_case=missing_case)
 # end T377
+
+
+# T380
+# --- features: the kept folder, through the system's folder picker by taps ------------------------------------------
+# Keep a folder on Tracks and routes opens the system's folder picker (DocumentsUI): the step picks a folder of its own
+# under Documents by taps (the roots drawer, the phone's storage, Documents, the folder, Use this folder, Allow), confirms
+# the count, then lists the folder with `adb shell ls` after each change: the first write, a recording replayed at
+# Paradise, a rename, a delete (a file the app did not write stays), a restart and a second recording; then the folder is
+# removed to bring up the lost-folder line, made again and picked again (what waited is written), and Stop keeping leaves
+# the files. Frames: the row, the confirm, the kept line, the lost line.
+KEPT_DIR = "DystopoKept"
+KEPT_PATH = f"/sdcard/Documents/{KEPT_DIR}"
+KEPT_NAME = re.compile(r"^\d{4}-\d\d-\d\d \d{4} .+\.gpx$")  # tracks/KeptFolder.kt keptFileName: date first
+KEPT_FOREIGN = "notes.txt"
+KEPT_ROUTES = "routes"  # tracks/KeptFolder.kt ROUTES_DIR
+
+
+def kept_listing(dev, sub=""):
+    """The kept folder's files (`adb shell ls`), or its routes folder's."""
+    out = dev.shell("ls", "-1", KEPT_PATH + (f"/{sub}" if sub else ""), check_ok=False)
+    return sorted(t.strip() for t in out.splitlines() if t.strip() and "No such file" not in t)
+
+
+def kept_wait(dev, pred, timeout=25):
+    """The listing once [pred] holds of it (a pass waits 1.5 s for the change to settle), or the last one read."""
+    deadline = time.time() + timeout
+    while True:
+        files = kept_listing(dev)
+        if pred(files) or time.time() > deadline:
+            return files
+        time.sleep(1.5)
+
+
+def pick_tree(dev, folders):
+    """T380: drives the system's folder picker to /sdcard/<folders...> and grants it: the roots drawer, the phone's own
+    storage (named after the model), each folder by name, Use this folder, then Allow. Returns the taps made."""
+    taps = []
+    deadline = time.time() + 20
+    nodes = []
+    while True:
+        nodes = dev.nodes()
+        if any("documentsui" in (n.get("pkg") or "") for n in nodes):
+            break
+        if time.time() > deadline:
+            raise RuntimeError(f"no folder picker (texts: {dev.texts(nodes)[:20]})")
+        time.sleep(1)
+    time.sleep(1)
+    nodes = dev.nodes()
+    # The picker opens where it was last (the folder itself, from a second pick) or at the storage's top.
+    if dev.find("^Files in " + re.escape(folders[-1]) + "$", nodes):
+        taps.append(f"(opened in {folders[-1]})")
+        folders = []
+    elif not dev.find("^" + re.escape(folders[0]) + "$", nodes):
+        model = dev.shell("getprop", "ro.product.model").strip()
+        roots = dev.find("^Show roots$", nodes)
+        if not roots:
+            raise RuntimeError(f"no '{folders[0]}' and no roots drawer in the picker (texts: {dev.texts(nodes)[:25]})")
+        dev.tap(roots)
+        taps.append("Show roots")
+        n, nodes = dev.wait_for("^" + re.escape(model) + "$", 10)
+        if not n:
+            raise RuntimeError(f"no '{model}' among the picker's roots (texts: {dev.texts(nodes)[:25]})")
+        dev.tap(n)
+        taps.append(model)
+    for f in folders:
+        n, nodes = dev.wait_for("^" + re.escape(f) + "$", 10)
+        if not n:
+            raise RuntimeError(f"no folder '{f}' in the picker (texts: {dev.texts(nodes)[:25]})")
+        dev.tap(n)
+        taps.append(f)
+        time.sleep(1)
+    n = None
+    for _ in range(3):  # a tap while the list still loads is lost: tap again until Allow asks
+        use, nodes = dev.wait_for("(?i)^use this folder$", 10)
+        if not use:
+            raise RuntimeError(f"no 'Use this folder' (texts: {dev.texts(nodes)[:25]})")
+        time.sleep(1)
+        dev.tap(use)
+        taps.append("Use this folder")
+        n, nodes = dev.wait_for("(?i)^allow$", 6)
+        if n:
+            break
+    if not n:
+        raise RuntimeError(f"no Allow after Use this folder (texts: {dev.texts(nodes)[:25]})")
+    dev.tap(n)
+    taps.append("Allow")
+    return taps
+
+
+def kept_row_menu(dev, name, action):
+    """A track row's dots on Tracks and routes, then [action] ("Rename" or "Delete")."""
+    nodes = tracks_list(dev)
+    dots = dev.find("^More actions for " + re.escape(name) + "$", nodes)
+    if not dots:
+        raise RuntimeError(f"no row '{name}' (texts: {dev.texts(nodes)[:25]})")
+    dev.tap(dots)
+    dev.tap_text("^" + action + "$", timeout=5)
+
+
+def kept_rename(dev, name, new_name):
+    """A row's Rename: the name field tapped (it opens unfocused) and cleared, [new_name] typed, Save."""
+    kept_row_menu(dev, name, "Rename")
+    field, nodes = None, []
+    for _ in range(5):
+        nodes = dev.nodes()
+        field = next((n for n in nodes if n["cls"].endswith("EditText") and n["bounds"] and n["text"] == name), None)  # not the map's search box under the screen
+        if field:
+            break
+        time.sleep(1)
+    if not field:
+        raise RuntimeError(f"no name field after Rename (texts: {dev.texts(nodes)[:25]})")
+    dev.tap(field)
+    dev.shell("input", "keyevent", "KEYCODE_MOVE_END")
+    for _ in range(2):
+        dev.shell("input", "keyevent", *(["KEYCODE_DEL"] * 40))
+    type_text(dev, new_name.replace(" ", "%s"))  # input text: %s is a space
+    hide_keyboard(dev)
+    dev.tap_text("^Save$", timeout=5)
+
+
+def newest_track_name(dev):
+    rows = track_rows(dev)
+    return rows[0][0] if rows else None
+
+
+def kept_folder_step(dev):
+    out = {"listings": {}}
+    errors = []
+    dev.shell(f"rm -rf {KEPT_PATH} && mkdir -p {KEPT_PATH} && echo foreign > {KEPT_PATH}/{KEPT_FOREIGN}", check_ok=False)
+
+    def ls(label):
+        files = kept_listing(dev)
+        out["listings"][label] = {"files": files, KEPT_ROUTES: kept_listing(dev, KEPT_ROUTES)}
+        return files
+
+    # 1. Keep a folder, the picker, the confirm with its count.
+    nodes = tracks_list(dev)
+    for _ in range(2):  # a settings sheet left over the screen (seen on a run of this step alone) takes the tap
+        if not dev.find("^‹ Settings$", nodes):
+            break
+        close_sheet(dev)
+        nodes = tracks_list(dev)
+    keep = dev.find("^Keep a folder$", nodes)
+    out["rowPng"] = dev.screencap("kept-folder-row")[0]
+    if not keep:
+        return fail("no Keep a folder row on Tracks and routes", texts=dev.texts(nodes)[:25])
+    dev.tap(keep)
+    out["pickerTaps"] = pick_tree(dev, ["Documents", KEPT_DIR])
+    n, nodes = dev.wait_for("^Keep this folder$", 15)
+    if not n:
+        return fail("no confirm after the picker", texts=dev.texts(nodes)[:25], **out)
+    texts = dev.texts(nodes)
+    out["count"] = next((t for t in texts if re.search(r"will be written to|^Nothing to write", t)), None)
+    out["setup"] = next((t for t in texts if t.startswith("Every track and route on this phone")), None)
+    out["confirmPng"] = dev.screencap("kept-folder-confirm")[0]
+    m = re.match(r"^(?:(\d+) tracks?)?(?: and )?(?:(\d+) routes?)? will be written", out["count"] or "")
+    want_t, want_r = (int(m.group(1) or 0), int(m.group(2) or 0)) if m else (0, 0)
+    dev.tap(n)
+    files = kept_wait(dev, lambda f: len([x for x in f if KEPT_NAME.match(x)]) >= want_t and len(kept_listing(dev, KEPT_ROUTES)) >= want_r)
+    files = ls("first")
+    kept_line, _ = dev.wait_for("^Kept in " + KEPT_DIR, 10)
+    out["keptLine"] = kept_line and kept_line["text"]
+    out["keptPng"] = dev.screencap("kept-folder-kept")[0]
+    gpx = [x for x in files if KEPT_NAME.match(x)]
+    routes = out["listings"]["first"][KEPT_ROUTES]
+    if len(gpx) != want_t:
+        errors.append(f"first write: {len(gpx)} track files for {want_t} tracks")
+    if len([x for x in routes if KEPT_NAME.match(x)]) != want_r:
+        errors.append(f"first write: {routes} in routes for {want_r} routes")
+    if KEPT_FOREIGN not in files:
+        errors.append("the foreign file went at the first write")
+
+    # 2. A recording replayed at Paradise is written when it ends.
+    before = set(files)
+    record_track(dev, walk(*PARADISE, 46.7890, -121.7340, 10))
+    kept_wait(dev, lambda f: len(set(f) - before) == 1)
+    files = ls("recorded")
+    new = sorted(set(files) - before)
+    out["recordedFile"] = new[0] if new else None
+    if len(new) != 1 or not KEPT_NAME.match(new[0]):
+        errors.append(f"after a recording: new files {new}")
+    name = newest_track_name(dev)
+    out["recordedTrack"] = name
+
+    # 3. A rename moves the file: the old name gone, one new file, nothing doubled.
+    if name and len(new) == 1:
+        kept_rename(dev, name, "Kept walk")
+        kept_wait(dev, lambda f: any(x.endswith(" Kept walk.gpx") for x in f))
+        files = ls("renamed")
+        renamed = [x for x in files if x.endswith(" Kept walk.gpx")]
+        out["renamedFile"] = renamed[0] if renamed else None
+        if len(renamed) != 1 or new[0] in files or len(files) != len(before) + 1:
+            errors.append(f"after a rename: {files}")
+
+        # 4. A delete removes the file the app wrote; the foreign file stays.
+        kept_row_menu(dev, "Kept walk", "Delete")
+        dev.tap_text("^Delete$", timeout=5)
+        kept_wait(dev, lambda f: not any(x.endswith(" Kept walk.gpx") for x in f))
+        files = ls("deleted")
+        if any(x.endswith(" Kept walk.gpx") for x in files) or KEPT_FOREIGN not in files or set(files) != before:
+            errors.append(f"after a delete: {files}")
+
+    # 5. A restart, then a second recording is still written.
+    close_tracks(dev)
+    dev.shell("am", "force-stop", PACKAGE)
+    time.sleep(2)
+    open_map(dev, *PARADISE, 13, cold=True)
+    map_settled(dev, "kept-restarted")
+    before = set(kept_listing(dev))
+    record_track(dev, walk(46.7880, -121.7280, 46.7872, -121.7290, 10))
+    kept_wait(dev, lambda f: len(set(f) - before) == 1)
+    files = ls("restarted-recorded")
+    new = sorted(set(files) - before)
+    if len(new) != 1:
+        errors.append(f"after a restart and a recording: new files {new}")
+    second = newest_track_name(dev)
+
+    # 6. The folder removed: a change brings the lost line; picked again, what waited is written.
+    dev.shell(f"rm -rf {KEPT_PATH}", check_ok=False)
+    if second:
+        kept_rename(dev, second, "Kept again")
+    lost, nodes = dev.wait_for("can't be reached", 20)
+    out["lostLine"] = lost and lost["text"]
+    out["lostPng"] = dev.screencap("kept-folder-lost")[0]
+    if not lost:
+        errors.append("no lost-folder line after the folder went")
+    else:
+        dev.shell(f"mkdir -p {KEPT_PATH}", check_ok=False)
+        dev.tap_text("^Pick it again$", timeout=5)
+        out["pickerTapsAgain"] = pick_tree(dev, ["Documents", KEPT_DIR])
+        n, nodes = dev.wait_for("^Keep this folder$", 15)
+        out["countAgain"] = next((t for t in dev.texts(nodes) if "will be written to" in t or t.startswith("Nothing waits")), None)
+        if n:
+            dev.tap(n)
+        kept_wait(dev, lambda f: any(x.endswith(" Kept again.gpx") for x in f))
+        files = ls("picked-again")
+        if not any(x.endswith(" Kept again.gpx") for x in files):
+            errors.append(f"after picking the folder again: {files}")
+
+    # 7. Stop keeping: the line, the files left.
+    nodes = tracks_list(dev)
+    stop = dev.find("^Stop keeping$", nodes)
+    if stop:
+        kept_now = kept_listing(dev)
+        dev.tap(stop)
+        n, _ = dev.wait_for("^Stopped keeping " + KEPT_DIR, 10)
+        out["stopLine"] = n and n["text"]
+        if not n or kept_listing(dev) != kept_now:
+            errors.append("Stop keeping: no line, or the files changed")
+    else:
+        errors.append("no Stop keeping")
+    close_tracks(dev)
+    return {"ok": not errors, **out, "png": out.get("confirmPng"), **({"error": "; ".join(errors)} if errors else {})}
+# end T380
 
 
 # T378

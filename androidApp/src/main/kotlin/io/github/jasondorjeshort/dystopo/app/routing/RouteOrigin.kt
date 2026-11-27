@@ -1,7 +1,5 @@
 package io.github.jasondorjeshort.dystopo.app.routing
 
-import java.util.Locale
-
 /**
  * T114: where "Route to here" starts, and how the route card names the route's two ends. The origin is the phone's
  * position: the newer of the recorder's last fix (injected or GPS) and the map's last device fix, the recorder's on a
@@ -63,8 +61,8 @@ object RouteOrigin {
         else -> "${s / 86_400} days ago"
     }
 
-    /** A point as the long-press card shows it: "46.80240, -121.72890". */
-    fun coords(lat: Double, lon: Double): String = String.format(Locale.US, "%.5f, %.5f", lat, lon)
+    /** A point as the long-press card shows it, in the user's coordinate format (T388): "46.80240° N, 121.72890° W". */
+    fun coords(lat: Double, lon: Double): String = io.github.jasondorjeshort.dystopo.app.AppSettings.coordinateFormat.format(lat, lon)
 
     /** The card's lines while a route to here waits for its origin (no fix yet, or location off). */
     const val WAITING = "Waiting for your location..."

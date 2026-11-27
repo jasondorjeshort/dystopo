@@ -1874,6 +1874,27 @@ def scr_longpress_named(c, timeout=30.0):
 # end T383
 
 
+# T380
+KEPT_TREE = "content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FDystopoKept"
+
+
+def scr_kept_folder(c):
+    """T380: Tracks and routes with the kept folder's row on its confirm, as after a pick: the setup sentence, the count and
+    Keep this folder (`POST /tracks/keptfolder?ask=`, a tree the debug call stages with no grant: nothing is written).
+    end_kept_folder answers Cancel and closes the screen."""
+    c.srv.ok("POST", "/tracks/ui?open=1&filter=all")
+    k = c.srv.ok("POST", "/tracks/keptfolder?ask=" + urllib.parse.quote(KEPT_TREE, safe="")) or {}
+    if not (k.get("ask") or {}).get("count"):
+        raise RuntimeError(f"no confirm on the kept folder's row: {json.dumps(k)[:300]}")
+    time.sleep(1)
+
+
+def end_kept_folder(c):
+    c.srv.call("POST", "/tracks/keptfolder?confirm=0")
+    c.srv.call("POST", "/tracks/ui?open=0")
+# end T380
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1960,10 +1981,24 @@ SCREENS = [
     # T386
     ("area-detail", scr_area_detail, end_area_detail, "screen"),
     # end T386
+    # T380
+    ("kept-folder", scr_kept_folder, end_kept_folder, "screen"),
+    # end T380
 ]
 # T383: the long-press screen checks that every point layer is named first (scr_longpress_named).
 SCREENS = [(n, scr_longpress_named if f is scr_longpress else f, t, l) for n, f, t, l in SCREENS]
 # end T383
+
+
+# T388: Settings > Units and display with the Coordinate format row (its four choices) and the row's help open (`POST
+# /help/open` brings the page up; close_all's `/help/close` closes both). The sweep's settings step reads the row too.
+def scr_coordinate_format(c):
+    c.srv.ok("POST", "/settings/open?group=display")
+    c.srv.ok("POST", "/help/open?key=settings.coordinateFormat")
+
+
+SCREENS = SCREENS + [("coordinate-format", scr_coordinate_format, None, "screen")]
+# end T388
 
 
 def find_node(sem, pred):

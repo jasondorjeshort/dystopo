@@ -54,6 +54,9 @@ import io.github.jasondorjeshort.dystopo.sync.SyncStore
  * T184: the route card's time (`app.timeEstimateForm`, `range` or `one`); a [SettingsRoutes] key.
  * T364: "Show flights" on the map (`app.mapFlights`, `on` or `off`); a plain registry key (T248's rule below), so a second
  * phone hides or shows the map's flights with the first. Builds before T364 skip it (ADR 0033).
+ * T388: the coordinate format (`app.coordinateFormat`: `dd`, `dm`, `dms` or `utm`); a plain registry key, so every
+ * position on a second phone reads as on the first. Builds before T388 skip the key; a value this build does not know (a
+ * later build's) is skipped by [pull]'s one-by-one check and the phone keeps its own (ADR 0033).
  * T248: every plain setting the registry marks synced ([AppSettings.PLAIN], `synced = true`) is in [current] and [publish]
  * from its registry line alone, as `app.<key>` with [io.github.jasondorjeshort.dystopo.app.Setting.syncValue]'s value
  * (`on`/`off` for a switch, the digits of a number, a choice's code); the constants below name the older ones for their

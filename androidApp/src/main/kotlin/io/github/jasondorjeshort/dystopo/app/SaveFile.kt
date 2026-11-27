@@ -128,10 +128,11 @@ internal fun saved(name: String): String = "Saved $name as a GPX file"
 internal fun saveFailed(name: String, why: String): String = "Could not save $name: $why"
 
 /** T219: what the save dialog offers as the file's name: [name] without the characters file systems refuse, ".gpx" after it. Pure, tested. */
-internal fun gpxFileName(name: String): String {
-    val safe = name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]+"), "-").trim(' ', '.', '-').take(80).trimEnd(' ', '.', '-')
-    return safe.ifEmpty { "route" } + ".gpx"
-}
+internal fun gpxFileName(name: String): String = safeFileStem(name).ifEmpty { "route" } + ".gpx"
+
+/** T219, shared with T380's kept folder (`tracks/KeptFolder.kt`): [name] without the characters file systems refuse (each run "-"), trimmed, at most [max] characters. Pure, tested. */
+internal fun safeFileStem(name: String, max: Int = 80): String =
+    name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]+"), "-").trim(' ', '.', '-').take(max).trimEnd(' ', '.', '-')
 
 /** T272: one GPX file to share or export: the item's name (the file is named after it) and the file's text. */
 class GpxItem(val name: String, val gpx: String)

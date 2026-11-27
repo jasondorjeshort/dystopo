@@ -236,6 +236,12 @@ class HelpRegistryTest {
             "map.marks.track", "map.marks.trip", "map.marks.route", "map.marks.water", "map.marks.nav", "map.marks.search",
             "map.marks.viewshed", "map.marks.wayDown",
             // end T383
+            // T388: Coordinate format.
+            "settings.coordinateFormat",
+            // end T388
+            // T380: the kept folder's row on Tracks and routes.
+            "tracks.keptFolder",
+            // end T380
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
@@ -470,4 +476,27 @@ class HelpRegistryTest {
         assertTrue(HelpRegistry.byKey("map.marks.water")!!.text(ContourUnits.METERS).startsWith("Blue marks"))
     }
     // end T383
+
+    // T388: the Coordinate format help names WGS 84 once and shows Paradise in each of the four formats, as the app prints it.
+    @Test
+    fun theCoordinateFormatHelpNamesTheDatumOnceAndShowsEachFormat() {
+        val h = HelpRegistry.byKey("settings.coordinateFormat")!!
+        assertEquals("Coordinate format", h.title)
+        val t = h.text(ContourUnits.FEET)
+        assertEquals(1, Regex("WGS 84").findAll(t).count(), t)
+        for (f in io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.entries) assertTrue(f.format(46.786, -121.735) in t, "$f: $t")
+        assertFalse("MGRS" in t || "NAD" in t, t)
+    }
+    // end T388
+
+    // T380: the kept folder's help says how files are named, where routes go, what a rename and a delete do, and that a hidden one keeps its file.
+    @Test
+    fun theKeptFolderHelpSaysTheLayout() {
+        val h = HelpRegistry.byKey("tracks.keptFolder")!!
+        assertEquals("Keep a folder", h.title)
+        val t = h.text(ContourUnits.METERS)
+        assertTrue("date and time" in t && "routes" in t && "renames the file" in t && "keeps its file" in t && "overwritten" in t && "Stop keeping" in t, t)
+        assertEquals(setOf("TracksScreen.kt"), references["tracks.keptFolder"])
+    }
+    // end T380
 }
