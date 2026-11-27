@@ -91,7 +91,9 @@ kept APK), the cache budget's engine, the memory sampler and the pending map wor
 areas' resume check, the trips' corridors) wait on their own threads for the first activity, the sampler for allowed
 work (`GET /debug/launch`: `state` `deferred`, `deferred` lists them; `android-debug-routes.md`, T387's line). An area
 download that was running still resumes when its WorkManager job runs, under its notification (the job runs the resume
-check itself). After Home the budget's 30 s check and the sampler's minute pass skip while no work is allowed, and the
+check itself). Two pieces of work outside the stages follow the rule too: the tile service's contour warm-up waits for
+the screen (`GET /stats` `contourGeneration.warmup`), and the online service's source probe skips while no work is allowed (`GET /online`
+`probesSkipped`; its 1 s and 2 s map checks still tick, about 0.08 % of a core). After Home the budget's 30 s check and the sampler's minute pass skip while no work is allowed, and the
 daily update check waits for the screen. The check: the start with no activity above, `GET /debug/cpu` read twice five
 minutes apart and the threads' ticks from `/proc`; the Done-when is no thread of ours above 1 % of a core.
 

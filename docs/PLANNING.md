@@ -328,7 +328,8 @@ start waits on a deferred one); the runner parks a deferred stage's own thread o
 from the wait's end, so the start-up budget reads the body's time. With an activity every stage runs as before, the
 deferred ones from its `onStart`. Work that has a notification of its own goes on without the screen: a recording, and an
 area download's WorkManager job, which runs the resume check itself. Periodic work started by a stage pauses while no
-work is allowed (the budget's check, the sampler's pass, the daily update check). No notification was added (decision 5).
+work is allowed (the budget's check, the sampler's pass, the daily update check, the online service's source probe), and the
+tile service's contour warm-up waits for the screen. No notification was added (decision 5).
 
 ### Concurrency
 - Kotlin coroutines + Flow throughout.
