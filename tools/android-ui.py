@@ -5521,9 +5521,17 @@ def pick_tree(dev, folders):
         if time.time() > deadline:
             raise RuntimeError(f"no folder picker (texts: {dev.texts(nodes)[:20]})")
         time.sleep(1)
-    model = dev.shell("getprop", "ro.product.model").strip()
-    roots = dev.find("^Show roots$", nodes)
-    if roots:
+    time.sleep(1)
+    nodes = dev.nodes()
+    # The picker opens where it was last (the folder itself, from a second pick) or at the storage's top.
+    if dev.find("^Files in " + re.escape(folders[-1]) + "$", nodes):
+        taps.append(f"(opened in {folders[-1]})")
+        folders = []
+    elif not dev.find("^" + re.escape(folders[0]) + "$", nodes):
+        model = dev.shell("getprop", "ro.product.model").strip()
+        roots = dev.find("^Show roots$", nodes)
+        if not roots:
+            raise RuntimeError(f"no '{folders[0]}' and no roots drawer in the picker (texts: {dev.texts(nodes)[:25]})")
         dev.tap(roots)
         taps.append("Show roots")
         n, nodes = dev.wait_for("^" + re.escape(model) + "$", 10)
@@ -5538,12 +5546,17 @@ def pick_tree(dev, folders):
         dev.tap(n)
         taps.append(f)
         time.sleep(1)
-    n, nodes = dev.wait_for("(?i)^use this folder$", 10)
-    if not n:
-        raise RuntimeError(f"no 'Use this folder' (texts: {dev.texts(nodes)[:25]})")
-    dev.tap(n)
-    taps.append("Use this folder")
-    n, nodes = dev.wait_for("(?i)^allow$", 10)
+    n = None
+    for _ in range(3):  # a tap while the list still loads is lost: tap again until Allow asks
+        use, nodes = dev.wait_for("(?i)^use this folder$", 10)
+        if not use:
+            raise RuntimeError(f"no 'Use this folder' (texts: {dev.texts(nodes)[:25]})")
+        time.sleep(1)
+        dev.tap(use)
+        taps.append("Use this folder")
+        n, nodes = dev.wait_for("(?i)^allow$", 6)
+        if n:
+            break
     if not n:
         raise RuntimeError(f"no Allow after Use this folder (texts: {dev.texts(nodes)[:25]})")
     dev.tap(n)
@@ -5567,7 +5580,7 @@ def kept_rename(dev, name, new_name):
     field, nodes = None, []
     for _ in range(5):
         nodes = dev.nodes()
-        field = next((n for n in nodes if n["cls"].endswith("EditText") and n["bounds"]), None)
+        field = next((n for n in nodes if n["cls"].endswith("EditText") and n["bounds"] and n["text"] == name), None)  # not the map's search box under the screen
         if field:
             break
         time.sleep(1)
