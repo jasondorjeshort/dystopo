@@ -1,6 +1,6 @@
 ---
 date: 2026-11-25
-status: open
+status: resolved (T381)
 area: android / map layout, the track bar and the cards at large font
 ---
 
@@ -74,3 +74,24 @@ v0.1.43-alpha very likely has it. The queue's entry:
    fails when the layout does not hold for some seconds, and make `unsteady` a line of the part's summary.
 4. On a phone at the system's largest font, with a recording older than its last fix and the panel open: does the bar
    move by itself?
+
+## Resolution (T381, 2026-11-26)
+
+The input that fed back, logged from `MapLayout.ruleNow` in the scene (about a hundred rule passes a second, not one flip
+every second or two: the semantics reads only sampled it): the track bar's row. `TrackControls.kt` capped the bar's
+`FlowRow` at `TopChips.onlineRightPx`, the online column's drawn right edge. Shown, the column narrowed the row to
+179 dp, which wrapped to 180 dp tall; the bar's column (297 dp wide, the recording panel's width) then reached the online
+column, which had no room for the chips under it and was hidden; hidden, its edge went to 0, the row took the window
+(339 by 92 dp), the column fitted above the bar again and was shown. With no server set the column still draws its chip
+and "Already on this phone", which is why the flip did not need a server: the first reading that the online column was
+not the cause was wrong.
+
+Fixed by construction: the rule flows the row itself (`OverlayLayout.placeWithRow`) from the chips' own sizes and the
+online column's own width, both measured whatever arrangement was chosen, and the bar's column draws the row at the
+rule's width (`android-app.md`, The map screen's layout). On the emulator at Paradise, `GET /semantics` read each second
+for 60 s with a frame every 2 s, then five taps on "Hide" as drawn: font 2.0 unfolded with the turn-back card and a
+server, the same with no server, a plain recording unfolded, font 1.0 unfolded: 0 changes of "Hide"'s left edge, 0
+frames that disagree, 5 of 5 taps folded the panel; folded: 0 frames that disagree; on its side at 2.0 with both cards
+the rule hides the bar for want of room, steadily (no "Hide" to tap). A pure test drives the old exchange round and the
+new one to rest (`OverlayLayoutTest`), and the a11y part's `recording-stale-unfolded` screen fails unless the layout holds
+8 s. Left to the owner: step 4, a phone at the system's largest font.
