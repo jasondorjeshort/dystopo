@@ -44,6 +44,7 @@ class TileStoreMoveTest {
             now += 60_000
         }
         assertEquals("written", c.saveSnapshot("test"))
+        c.simulateKill() // T390: that process ends (its journal closed: Windows keeps an open file from moving)
         return want
     }
 
@@ -216,7 +217,7 @@ class TileStoreMoveTest {
         assertEquals(20_123, g["otherGidSeen"])
         assertTrue(fake.gid.values.all { it == 10_123 })
         assertEquals(10_123, fake.gid[File(root, "no_backup/tiles.index").path], "the snapshot carried beside the tree too")
-        assertEquals(1L, g["besideFixed"])
+        assertEquals(2L, g["besideFixed"], "T390: the snapshot and its journal")
         assertTrue(fake.setgid.isEmpty())
         assertEquals("done", m.readMarker(newDir)["group"])
 
