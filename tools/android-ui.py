@@ -5786,10 +5786,11 @@ def peaks_tiles_step(dev, args):
             return fail(f"POST /areas/fixture/tiles?dem=1: {code} {area}")
         fx["area"] = area
         out = {"pack": fx["pack"], "seeded": {k: area.get(k) for k in ("id", "zooms", "copied", "demCopied", "bytes", "network")}}
-        # What the network could add here now (the online elevation's state), for a reader of a failure.
-        _, hd = srv.call("GET", f"/holdings?lat={lat}&lon={lon}&z=13")
+        # Who holds the elevation at the point (`GET /holdings`' lookup: the elevation tile one zoom under z, so z=12 asks the
+        # area's deepest, z13) and what the network could add now, for a reader of a failure.
+        _, hd = srv.call("GET", f"/holdings?lat={lat}&lon={lon}&z=12")
         dem = (hd or {}).get("dem") or {}
-        out["demHere"] = {"serves": dem.get("serves"), "members": [m.get("name") for m in dem.get("members") or []],
+        out["demHere"] = {"tile": dem.get("tile"), "serves": dem.get("serves"), "members": [m.get("name") for m in dem.get("members") or []],
                           "network": dem.get("network")}
         # The reads below run with no network at all (airplane mode, as the flights steps set it; off again after): the area's
         # own tiles must give the terrain and the names whatever the sweep's server mode.
@@ -5800,17 +5801,35 @@ def peaks_tiles_step(dev, args):
         try:
             airplane(dev, True)
             time.sleep(2)
+
+            def fetcher():
+                _, o = srv.call("GET", "/online")
+                f = (o or {}).get("fetcher") or {}
+                return {k: f.get(k) for k in ("state", "requests", "cacheHits", "fetches", "notFound", "errors")}
+            f0 = fetcher()
             h = _open_sky_at(srv, lat, lon)
-            # What the peaks need first: a terrain horizon at the point, with the area among its sources.
+            f1 = fetcher()
+            # What the peaks need first: a complete terrain horizon at the point, read with no network (airplane mode on and the
+            # online fetcher's network counters unchanged across the read: every tile it gave came from the phone's cache), where
+            # the lookup names the area as the holder of the elevation and the fixture copied the area's elevation tiles. Which
+            # reader handed the area's cached tiles to the sweep (the area's own source, or the online source reading the same
+            # cache keys, ahead of it by depth while the fetcher reads online: ADR 0066) is reported, not asserted.
             hz = (h or {}).get("horizon") or {}
             terrain = hz.get("terrain") or {}
+            net = {k: (f1.get(k) or 0) - (f0.get(k) or 0) for k in ("requests", "cacheHits", "fetches", "notFound", "errors")}
             out["terrainPackOff"] = {"horizonReason": (h or {}).get("horizonReason"), "source": hz.get("source"),
-                                     "maps": terrain.get("maps"), "online": terrain.get("online"), "complete": terrain.get("complete")}
+                                     "maps": terrain.get("maps"), "online": terrain.get("online"), "complete": terrain.get("complete"),
+                                     "cells": terrain.get("cells"), "fetcherBefore": f0.get("state"), "fetcherAfter": f1.get("state"),
+                                     "fetcherDelta": net}
             if not hz:
-                errors.append(f"with the pack off, no terrain horizon at Paradise from the area's elevation: {out['terrainPackOff']}")
+                errors.append(f"with the pack off and no network, no terrain horizon at Paradise: {out['terrainPackOff']}; {out['demHere']}")
                 return {"ok": False, **out, "error": "; ".join(errors)}
-            if not any(TILE_AREA_NAME in str(m) for m in terrain.get("maps") or []):
-                errors.append(f"with the pack off, the terrain horizon does not read the area's elevation: {out['terrainPackOff']}")
+            if terrain.get("complete") is not True:
+                errors.append(f"with the pack off and no network, the terrain horizon is not complete: {out['terrainPackOff']}")
+            if net["fetches"] or net["notFound"] or net["errors"]:
+                errors.append(f"the terrain read went to the network (airplane mode on): {net}")
+            if TILE_AREA_NAME not in out["demHere"]["members"]:
+                errors.append(f"the lookup does not name the area as holding the elevation at Paradise: {out['demHere']}")
             off = _peaks_of(h)
             out["horizonPackOff"] = off
             kinds = {s.get("kind") for s in off.get("sources") or []}
