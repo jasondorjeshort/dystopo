@@ -40,6 +40,16 @@ import java.util.regex.Pattern;
  * DECIMAL rule, which reads log timestamps (13:36:46.123) and timings (avg=78.48ms) as coordinates. Input whose first
  * line is not a dump's exits 2. scan --local FILE reads FILE in place of devtool.local.json (tests on fixtures).
  *
+ * T388: positions in the forms the app prints (shared/.../geo/CoordinateFormat.kt) are read too, as pairs: decimal degrees
+ * with N, S, E or W before or after the number (the degree sign optional), degrees and decimal minutes, degrees minutes
+ * seconds (the prime and double prime, or a plain apostrophe and quote), and UTM ("10T 596555 5182160": zone, band,
+ * easting, northing, turned into latitude and longitude by the same series as shared/.../geo/Utm.kt). Each is checked
+ * like a signed pair: inside (or within 0.1 degrees of) a local bbox blocks the hooks and counts in scan's
+ * coordinatePairHits, with formPairHits beside it saying how many of those were in one of these forms; outside every
+ * public area it counts in pairsOutsidePublicAreas. An angle needs its hemisphere letter and a partner on the other axis
+ * within 24 characters, a decimal needs two fraction digits, minutes and seconds need their marks, and a UTM easting six
+ * digits, so a time (12:47' 09.6"), a version ("10T") or a bare number pair is no hit.
+ *
  * devtool.local.json may include  "privateTerms": ["Some Peak", "Some Range", ...]  at top level.
  */
 public class PrivacyCheck {
@@ -124,6 +134,7 @@ public class PrivacyCheck {
             String reason = null;
             for (String t : terms) if (norm.contains(t)) { reason = "private term"; break; }
             if (reason == null) reason = coordinateHit(l[1], boxes);
+            if (reason == null) for (double[] q : formPairs(l[1])) if (inAny(q[0], q[1], boxes, MARGIN_DEG)) { reason = "coordinate pair"; break; } // T388
             if (reason != null) {
                 String text = l[1].strip();
                 hits.add("  " + l[0] + " (" + reason + "): " + (text.length() > 120 ? text.substring(0, 120) + "..." : text));
@@ -164,7 +175,7 @@ public class PrivacyCheck {
                 publicBoxes.add(b);
             }
         }
-        long lineCount = 0, termHits = 0, valueHits = 0, pairHits = 0, outsidePairs = 0, logcatLines = 0;
+        long lineCount = 0, termHits = 0, valueHits = 0, pairHits = 0, outsidePairs = 0, logcatLines = 0, formHits = 0;
         String section = null; // --dump: the section being read; null in the header and between sections
         Set<String> hitCommits = new LinkedHashSet<>();
         Set<String> outside = new java.util.TreeSet<>();
@@ -190,6 +201,7 @@ public class PrivacyCheck {
             if ((logcat ? loneHit(line, boxes) : coordinateHit(line, boxes)) != null) { valueHits++; hit = true; }
             Matcher p = PAIR.matcher(line);
             while (p.find()) {
+                if (HEMI_AFTER.matcher(line).region(p.end(1), line.length()).lookingAt()) continue; // T388: a lettered pair, formPairs' to read
                 double a = Double.parseDouble(p.group(1)), b = Double.parseDouble(p.group(2));
                 if (inAny(a, b, boxes, MARGIN_DEG) || inAny(b, a, boxes, MARGIN_DEG)) { pairHits++; hit = true; continue; }
                 boolean plausible = (Math.abs(a) <= 90 && Math.abs(b) <= 180) || (Math.abs(b) <= 90 && Math.abs(a) <= 180);
@@ -198,16 +210,97 @@ public class PrivacyCheck {
                 outsidePairs++;
                 outside.add(p.group(1) + " " + p.group(2));
             }
+            // T388: the forms the app prints (hemisphere letters, minutes, seconds, UTM), as pairs.
+            for (double[] q : formPairs(line)) {
+                if (inAny(q[0], q[1], boxes, MARGIN_DEG)) { pairHits++; formHits++; hit = true; continue; }
+                if (inAny(q[0], q[1], publicBoxes, 1.0)) continue;
+                outsidePairs++;
+                outside.add(String.format(Locale.ROOT, "%.5f %.5f", q[0], q[1]));
+            }
             if (hit) hitCommits.add(commit);
         }
         if (pairsOut != null) Files.write(pairsOut, outside, StandardCharsets.UTF_8);
         System.out.println("{\"lines\": " + lineCount + ", \"privateTerms\": " + terms.size() + ", \"privateBoxes\": " + boxes.size()
-            + ", \"termHits\": " + termHits + ", \"coordinateValueHits\": " + valueHits + ", \"coordinatePairHits\": " + pairHits
+            + ", \"termHits\": " + termHits + ", \"coordinateValueHits\": " + valueHits + ", \"coordinatePairHits\": " + pairHits + ", \"formPairHits\": " + formHits
             + ", \"commitsWithHits\": " + hitCommits.size() + ", \"publicAreas\": " + publicBoxes.size()
             + ", \"pairsOutsidePublicAreas\": " + outsidePairs + ", \"distinctPairsOutsidePublicAreas\": " + outside.size()
             + (dump ? ", \"dump\": true, \"logcatLines\": " + logcatLines + ", \"logcatValueRule\": \"lone\"" : "")
             + ", \"localFile\": " + haveLocal + ", \"note\": \"" + (haveLocal ? terms.size() + " private terms configured" : "0 private terms configured: no devtool.local.json") + "\"}");
         if (termHits + pairHits + valueHits > 0) System.exit(1);
+    }
+
+    // ---- T388: positions as the app prints them ----
+
+    private static final String D = "(\\d{1,3}\\.\\d{2,})\\s*°?";
+    private static final String DM = "(\\d{1,3})(?:\\s*°\\s*|\\s+)(\\d{1,2}(?:\\.\\d+)?)\\s*['′]";
+    private static final String DMS = "(\\d{1,3})(?:\\s*°\\s*|\\s+)(\\d{1,2})\\s*['′]\\s*(\\d{1,2}(?:\\.\\d+)?)\\s*[\"″]";
+    /** One angle and its hemisphere letter, before (group 1) or after it (group 8); groups 2-4 DMS, 5-6 DM, 7 D. */
+    private static final Pattern ANGLE = Pattern.compile("(?:(?<![A-Za-z])([NSEW])\\s*)?(?<![\\d.])(?:" + DMS + "|" + DM + "|" + D + ")"
+        + "(?:\\s*([NSEW])(?![A-Za-z]))?");
+    /** A hemisphere letter right after a number: PAIR leaves that pair to formPairs, so it is counted once, with its sign. */
+    private static final Pattern HEMI_AFTER = Pattern.compile("\\s*°?\\s*[NSEW](?![A-Za-z])");
+    private static final Pattern UTM = Pattern.compile("(?<![\\w.])([1-9]|[1-5]\\d|60)([C-HJ-NP-X])\\s+(\\d{6})(?:\\.\\d+)?\\s+(\\d{6,7})(?:\\.\\d+)?(?![\\w.])");
+
+    /** T388: every (lat, lon) the line writes in a form CoordinateFormat prints (not the signed pairs PAIR reads). */
+    static List<double[]> formPairs(String line) {
+        List<double[]> out = new ArrayList<>();
+        List<double[]> angles = new ArrayList<>(); // {signed degrees, axis 0 lat / 1 lon, start, end}
+        Matcher m = ANGLE.matcher(line);
+        while (m.find()) {
+            String before = m.group(1), after = m.group(8);
+            if ((before == null) == (after == null)) continue; // exactly one hemisphere letter
+            char h = (before != null ? before : after).charAt(0);
+            double v;
+            if (m.group(2) != null) {
+                double min = Double.parseDouble(m.group(3)), sec = Double.parseDouble(m.group(4));
+                if (min >= 60 || sec >= 60) continue;
+                v = Integer.parseInt(m.group(2)) + min / 60 + sec / 3600;
+            } else if (m.group(5) != null) {
+                double min = Double.parseDouble(m.group(6));
+                if (min >= 60) continue;
+                v = Integer.parseInt(m.group(5)) + min / 60;
+            } else v = Double.parseDouble(m.group(7));
+            boolean lat = h == 'N' || h == 'S';
+            if (v > (lat ? 90 : 180)) continue;
+            angles.add(new double[]{(h == 'S' || h == 'W') ? -v : v, lat ? 0 : 1, m.start(), m.end()});
+        }
+        for (int i = 0; i + 1 < angles.size(); i++) {
+            double[] a = angles.get(i), b = angles.get(i + 1);
+            if (a[1] == b[1]) continue;
+            String gap = line.substring((int) a[3], (int) b[2]);
+            if (gap.length() > 24 || gap.chars().anyMatch(Character::isDigit)) continue;
+            out.add(a[1] == 0 ? new double[]{a[0], b[0]} : new double[]{b[0], a[0]});
+            i++;
+        }
+        m = UTM.matcher(line);
+        while (m.find()) {
+            int zone = Integer.parseInt(m.group(1));
+            char band = m.group(2).charAt(0);
+            double e = Double.parseDouble(m.group(3)), n = Double.parseDouble(m.group(4));
+            if (e < 100_000 || e > 900_000 || n > 9_400_000) continue;
+            out.add(utmInverse(e, n, zone, band >= 'N'));
+        }
+        return out;
+    }
+
+    /** T388: UTM to (lat, lon) in degrees: the Kruger series of shared/.../geo/Utm.kt (GRS80/WGS 84), re-written here. */
+    static double[] utmInverse(double easting, double northing, int zone, boolean north) {
+        double f = 1 / 298.257222101, n = f / (2 - f), k0 = 0.9996;
+        double radius = 6_378_137.0 / (1 + n) * (1 + n * n / 4 + n * n * n * n / 64);
+        double[] beta = {n / 2 - 2 * n * n / 3 + 37 * n * n * n / 96, n * n / 48 + n * n * n / 15, 17 * n * n * n / 480};
+        double[] delta = {2 * n - 2 * n * n / 3 - 2 * n * n * n, 7 * n * n / 3 - 8 * n * n * n / 5, 56 * n * n * n / 15};
+        double xi = (northing - (north ? 0 : 10_000_000.0)) / (k0 * radius), eta = (easting - 500_000.0) / (k0 * radius);
+        double xiP = xi, etaP = eta;
+        for (int j = 1; j <= 3; j++) {
+            xiP -= beta[j - 1] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+            etaP -= beta[j - 1] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+        }
+        double chi = Math.asin(Math.sin(xiP) / Math.cosh(etaP)), phi = chi;
+        for (int j = 1; j <= 3; j++) phi += delta[j - 1] * Math.sin(2 * j * chi);
+        double lon = Math.toDegrees((zone * 6 - 183) * Math.PI / 180 + Math.atan(Math.sinh(etaP) / Math.cos(xiP)));
+        if (lon >= 180) lon -= 360;
+        if (lon < -180) lon += 360;
+        return new double[]{Math.toDegrees(phi), lon};
     }
 
     /** True when (lat, lon) lies in one of the [west, south, east, north] boxes grown by margin degrees. */

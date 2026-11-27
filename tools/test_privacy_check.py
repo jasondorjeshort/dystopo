@@ -123,6 +123,9 @@ def main():
         code, r, err = scan("not a dump\n" + "\n".join(LOGCAT) + "\n", local, "--dump")
         check("a file that is not a dump exits 2", code == 2 and r is None, f"exit {code}, {err.strip()[:200]}")
 
+        # T388
+        t388(tmp, check)
+        # end T388
         print(f"fixture: {len(clean.splitlines())} lines, plain scan {old} value hits, --dump 0")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -130,6 +133,54 @@ def main():
         print(f"{len(failures)} failed: {', '.join(failures)}")
         sys.exit(1)
     print("all passed")
+
+
+# T388: positions in the forms the app prints (tools/privacy-check-coordinates.txt, CoordinateFormat's own text) read as
+# pairs: a made-up private box in the open South Pacific around the fixture's private point; public places stay quiet.
+PRIVATE_LOCAL = {"areas": {"made-up": {"bbox": [-130.2, -30.2, -129.8, -29.8]}}, "privateTerms": ["Zzyzxfixtureterm"]}
+NL = chr(10)
+LOOK_ALIKES = ["finished at 12:47' 09.6\" by the clock", "built with 10T on the bench", "| 404758 | 6679441 |"]
+
+
+def fixtures():
+    rows = []
+    with open(os.path.join(here, "privacy-check-coordinates.txt"), encoding="utf-8") as f:
+        for line in f:
+            if line.strip() and not line.startswith("#"):
+                place, lat, lon, fmt, text = line.rstrip(NL).split("|")
+                rows.append((place, fmt, text))
+    return rows
+
+
+def t388(tmp, check):
+    local = os.path.join(tmp, "private.json")
+    with open(local, "w", encoding="utf-8") as f:
+        json.dump(PRIVATE_LOCAL, f)
+    rows = fixtures()
+    check("T388: four places in four formats", len(rows) == 16, f"{len(rows)} rows")
+    for place, fmt, text in rows:
+        code, r, err = scan(text + NL, local)
+        if r is None:
+            check(f"T388: {place} {fmt} scans", False, err.strip()[:200])
+            continue
+        if place == "private-fixture":
+            check(f"T388: {place} {fmt} inside the private box is a hit", r["formPairHits"] == 1 and r["coordinatePairHits"] >= 1
+                  and code == 1, f"exit {code}, {r}")
+        elif place == "outside":
+            check(f"T388: {place} {fmt} outside every box is no hit, one pair to review", hits(r) == 0 and code == 0
+                  and r["pairsOutsidePublicAreas"] == 1, f"exit {code}, {r}")
+        else:
+            check(f"T388: {place} {fmt} in a public area is no hit", hits(r) == 0 and code == 0
+                  and r["pairsOutsidePublicAreas"] == 0, f"exit {code}, {r}")
+    # The same private point written other ways the forms allow: the letter first, no degree sign, prime marks.
+    for text in ["S 30.01230, W 129.98760", "30.0123S 129.9876W", "30°00′44.3″S, 129°59′15.4″W", "W 129° 59.256', S 30° 00.738'"]:
+        code, r, _ = scan(text + NL, local)
+        check(f"T388: {ascii(text)} is a hit", r is not None and r["formPairHits"] == 1 and code == 1, f"exit {code}, {r}")
+    for text in LOOK_ALIKES:
+        code, r, _ = scan(text + NL, local)
+        check(f"T388: look-alike {ascii(text)} stays quiet", r is not None and hits(r) == 0 and r["formPairHits"] == 0
+              and r["pairsOutsidePublicAreas"] == 0 and code == 0, f"exit {code}, {r}")
+# end T388
 
 
 if __name__ == "__main__":
