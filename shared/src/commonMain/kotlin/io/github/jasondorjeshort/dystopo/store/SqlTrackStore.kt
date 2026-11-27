@@ -182,6 +182,8 @@ class SqlTrackStore(
 
     private fun tombstone(kind: EntityKind, id: String): Hlc? = q.tombstoneOf(kind.code.toLong(), id).executeAsOneOrNull()?.let(Hlc::parse)
 
+    override fun tombstoneOf(kind: EntityKind, id: String): Hlc? = tombstone(kind, id) // T380
+
     /**
      * Writes ops for the rows of a version-2 database (tracks in creation order with their segments,
      * then every waypoint in its order), stamped by this device. Returns false when there was nothing.

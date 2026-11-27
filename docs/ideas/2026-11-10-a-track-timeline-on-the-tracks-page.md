@@ -1,7 +1,6 @@
 ---
 date: 2026-11-10
 kind: feature
-related: [2026-11-07-tracks-and-routes-manager-and-the-missing-track.md]
 ---
 
 # A timeline of recordings on the tracks page

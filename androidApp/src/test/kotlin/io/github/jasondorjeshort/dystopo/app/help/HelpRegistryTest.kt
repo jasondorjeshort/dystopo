@@ -239,6 +239,9 @@ class HelpRegistryTest {
             // T388: Coordinate format.
             "settings.coordinateFormat",
             // end T388
+            // T380: the kept folder's row on Tracks and routes.
+            "tracks.keptFolder",
+            // end T380
         )
         assertEquals(want.sorted(), keys.sorted())
         assertEquals(setOf("StorageScreen.kt"), references["storage.pinned"])
@@ -485,4 +488,15 @@ class HelpRegistryTest {
         assertFalse("MGRS" in t || "NAD" in t, t)
     }
     // end T388
+
+    // T380: the kept folder's help says how files are named, where routes go, what a rename and a delete do, and that a hidden one keeps its file.
+    @Test
+    fun theKeptFolderHelpSaysTheLayout() {
+        val h = HelpRegistry.byKey("tracks.keptFolder")!!
+        assertEquals("Keep a folder", h.title)
+        val t = h.text(ContourUnits.METERS)
+        assertTrue("date and time" in t && "routes" in t && "renames the file" in t && "keeps its file" in t && "overwritten" in t && "Stop keeping" in t, t)
+        assertEquals(setOf("TracksScreen.kt"), references["tracks.keptFolder"])
+    }
+    // end T380
 }

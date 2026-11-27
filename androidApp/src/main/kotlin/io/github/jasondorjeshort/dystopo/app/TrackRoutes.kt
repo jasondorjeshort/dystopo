@@ -80,6 +80,18 @@ import io.github.jasondorjeshort.dystopo.store.TrackSummary
  *   `bulkDeleteAsk` and `bulkDeleteQuestion`, each row's `lengthM` and `ticked`, and `share`
  *   ([io.github.jasondorjeshort.dystopo.app.ShareGpx.json]: `launches`, `last` with `files`, `bytes`, `uris`, `mime`,
  *   `action`, or a folder export's `saved`).
+ *   T380, the kept folder ([io.github.jasondorjeshort.dystopo.app.tracks.KeptFolder]): `GET /tracks/ui` `keptFolder` has `state`
+ *   (`off`, `keeping`, `lost`), `folder` (the tree uri), `folderName`, `routesDir`, `stoppedFolder`, `files`, `tracks`, `routes`,
+ *   `entries` (`kind`, `id`, `name` the folder gave, `asked`, `folder`), `waiting` (changes not yet written) and `waitingFor`
+ *   (`the screen`, `a folder picked again`, or null), `gate` (`open`, `why`: ADR 0071), `passes`, `lastPassMs`, `ask` (the
+ *   confirm after a pick: `folderName`, `tracks`, `routes`, `again`, `changes`, `count`), `row` (the row's sentence as drawn), and
+ *   the counts `writes`, `renames`, `deletedByUser`, `deletedByPeer`, `overwrittenEdits`, `keptEdited`, `recreated`, `errors`,
+ *   `lastError`. `POST /tracks/keptfolder`: `pick=1` opens the system's folder picker as the row does (the screen must be
+ *   open); `ask=<tree uri>` is the picker's answer (the permission taken when it can be, then the confirm with its count), and
+ *   `confirm=1|0` answers it; `tree=<tree uri>` keeps a folder with no picker and no confirm; `stop=1` is Stop keeping;
+ *   `pass=1` runs a pass now. A debug call cannot grant a tree permission: `ask=` and `tree=` reach only a tree the picker
+ *   granted before (a same folder picked again, a lost folder's line, the confirm's frame); the grant, the provider's rename,
+ *   delete and " (1)" are the picker's (`tools/android-ui.py`'s `kept-folder` step).
  * - `GET /tracks/settings`; `POST /tracks/settings?gapS=600`: the automatic new-segment gap in
  *   seconds (0 = never split on time), persisted.
  * - `GET /tracks/{id}` (summary, stats, waypoints, T159 `gaps`), `GET /tracks/{id}.gpx` (the GPX export, ids in
@@ -172,6 +184,7 @@ object TrackRoutes {
             "GET" to "/tracks" -> return Response.json(Tracking.readiness() + overview(t) + mapOf("weakSignal" to t.weakJson(), "stale" to t.staleJson())) // T229: ready first; T333; T348
             "GET" to "/tracks/ui" -> return Response.json(screenJson(t))
             "POST" to "/tracks/ui" -> return screenPost(app, t, p) // T262 (T219's sheet before)
+            "POST" to "/tracks/keptfolder" -> return keptPost(app, p) // T380
             "POST" to "/waypoint" -> {
                 val lat = p.d("lat")
                 val lon = p.d("lon")
@@ -502,6 +515,31 @@ object TrackRoutes {
         return Response.json(screenJson(t))
     }
 
+    /** T380: `POST /tracks/keptfolder` (see the class comment). */
+    private fun keptPost(app: DystopoApp, p: Params): Response {
+        val kept = io.github.jasondorjeshort.dystopo.app.tracks.KeptFolder
+        fun tree(key: String): android.net.Uri? = p.s(key)?.let { android.net.Uri.parse(it) }?.takeIf { runCatching { android.provider.DocumentsContract.getTreeDocumentId(it) }.isSuccess }
+        when {
+            p.s("pick") == "1" -> {
+                val opened = app.map.onMain { io.github.jasondorjeshort.dystopo.app.tracks.TracksUi.pickKept?.let { it(); true } ?: false }
+                if (!opened) return Response.json(mapOf("error" to "open Tracks and routes first (POST /tracks/ui?open=1)"), 409)
+            }
+            p.s("ask") != null -> {
+                val u = tree("ask") ?: return Response.json(mapOf("error" to "ask takes a tree uri"), 400)
+                app.map.onMain { kept.picked(u) }
+                kept.passNow() // the confirm is staged on the worker before this answers
+                app.map.onMain { }
+            }
+            p.s("confirm") != null -> { app.map.onMain { kept.confirm(p.s("confirm") == "1") }; kept.passNow() }
+            p.s("tree") != null -> kept.keepNow(tree("tree") ?: return Response.json(mapOf("error" to "tree takes a tree uri"), 400))
+            p.s("stop") == "1" -> { app.map.onMain { kept.stop() }; kept.passNow() }
+            p.s("pass") == "1" -> kept.passNow()
+            else -> return Response.json(mapOf("error" to "pass one of pick=1, ask=, confirm=, tree=, stop=1, pass=1"), 400)
+        }
+        Thread.sleep(200) // the row's state reaches the main thread
+        return Response.json(kept.json())
+    }
+
     /** T272: the `bulk=` words of `POST /tracks/ui` and the select bar's actions they tap. */
     private val BULK_ACTIONS = linkedMapOf(
         "show" to io.github.jasondorjeshort.dystopo.app.tracks.SHOW, "hide" to io.github.jasondorjeshort.dystopo.app.tracks.HIDE,
@@ -522,6 +560,7 @@ object TrackRoutes {
     /** T262: `GET /tracks/ui`: the Tracks and routes screen as drawn. */
     private fun screenJson(t: Tracking): Map<String, Any?> {
         settle(t)
+        val kept = io.github.jasondorjeshort.dystopo.app.tracks.KeptFolder.json() // T380: off the main thread (it waits for the folder's worker)
         return DystopoApp.instance.map.onMain {
             val tu = io.github.jasondorjeshort.dystopo.app.tracks.TracksUi
             val ui = t.ui
@@ -564,6 +603,7 @@ object TrackRoutes {
                 },
                 "saveFile" to io.github.jasondorjeshort.dystopo.app.SaveFile.json(),
                 "share" to io.github.jasondorjeshort.dystopo.app.ShareGpx.json(),
+                "keptFolder" to kept, // T380
                 // T253: the unfolded bar and its record group (Hide first, the group last), and Discard's question.
                 "bar" to linkedMapOf(
                     "open" to io.github.jasondorjeshort.dystopo.app.tracking.TrackBar.open,

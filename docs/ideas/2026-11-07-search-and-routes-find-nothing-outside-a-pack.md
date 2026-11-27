@@ -1,7 +1,7 @@
 ---
 date: 2026-11-07
 kind: bug
-related: [2026-11-07-downloads-as-a-synchronisation-in-cells.md, 2026-11-07-tracks-and-routes-manager-and-the-missing-track.md]
+related: [2026-11-07-downloads-as-a-synchronisation-in-cells.md]
 ---
 
 # Search and routing find nothing where the map draws plenty: both index packs only, never the downloaded tiles

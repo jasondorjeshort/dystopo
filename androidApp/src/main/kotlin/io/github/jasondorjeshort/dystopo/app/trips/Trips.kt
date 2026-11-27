@@ -160,6 +160,7 @@ object Trips {
         val open = readId?.let { id -> store { it.routePlan(id) } }
         if (items != lastItems) {
             lastItems = items
+            io.github.jasondorjeshort.dystopo.app.tracks.KeptFolder.changed(routes = items) // T380: the kept folder's change signal
             io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.request("routes changed") // T130: synced, imported, renamed
             tracking.refreshOverlay(force = true) // T262: the shown routes' lines follow
         }
