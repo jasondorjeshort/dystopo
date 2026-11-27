@@ -39,7 +39,6 @@ import io.github.jasondorjeshort.dystopo.gpx.TrackStats
 import io.github.jasondorjeshort.dystopo.horizon.HorizonPlace
 import io.github.jasondorjeshort.dystopo.horizon.SightKind
 import io.github.jasondorjeshort.dystopo.horizon.SightLine
-import java.util.Locale
 
 /**
  * T91: what a long-press on the map offers. Before, a long-press always started a route (T45); now it
@@ -456,7 +455,7 @@ internal fun LongPressCard() {
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(String.format(Locale.US, "%.5f, %.5f", p.first, p.second), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 12.sp))
+            BasicText(AppSettings.coordinateFormat.line(p.first, p.second), Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 12.sp))
             HelpIcon("longPress.menu") // T109: dropping a waypoint, which was hard to find
         }
         LongPressMenu.sight?.let { s -> // T334: "Can I see it from here?", with a fix

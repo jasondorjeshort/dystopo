@@ -87,7 +87,8 @@ class GpsLocationSource(
         if (!hasPermission()) return false
         val m = manager
         if (!m.allProviders.contains(provider)) return false
-        val l = locationListener { loc -> listener(toFix(loc, name)) }
+        // T388: the recorder's fixes go through [recorderTimes], so a phone clock set back never makes it drop good fixes.
+        val l = locationListener { loc -> listener(recorderTimes.fix(toFix(loc, name), loc.elapsedRealtimeNanos / 1_000_000, android.os.SystemClock.elapsedRealtime())) }
         return try {
             m.requestLocationUpdates(provider, intervalMs, distanceM, l, looper)
             this.listener = l
@@ -105,6 +106,9 @@ class GpsLocationSource(
     }
 
     companion object {
+        /** T388: the device fixes' times on their way to the recorder, one for every provider (the GPS and its fallbacks). */
+        val recorderTimes = TrackTimes()
+
         /** The thread location updates arrive on (T159). */
         val looper: Looper by lazy { android.os.HandlerThread("dystopo-location").apply { start() }.looper }
 
@@ -124,6 +128,39 @@ class GpsLocationSource(
                 verticalAccuracyM = if (Build.VERSION.SDK_INT >= 26 && loc.hasVerticalAccuracy()) loc.verticalAccuracyMeters.toDouble() else null,
             )
         }
+    }
+}
+
+/**
+ * T388 (T385's follow-up): a device fix's time for the recorder, which drops a fix not newer than its last kept one
+ * (`TrackRecorder.rejectedTime`). T385 stamps a flagged fix at the phone's time ([GpsLocationSource.toFix]); when the
+ * phone's clock was the wrong one (fast) and is then set back in mid-recording, the good fixes that follow carry their own
+ * times, earlier than the points already kept, and every one would be dropped until the real time caught up. So while a
+ * fix's time is not after the last time handed on and the fix itself is newer on the monotonic clock (its elapsed stamp
+ * later than the last one's), it is stamped at the last time plus the elapsed time between them: the track goes on at the
+ * pace it was recorded at and its times never go backwards. A fix with no newer elapsed stamp (a duplicate, or an
+ * out-of-order report) keeps its own time, so the recorder still drops it. Pure; `TrackTimesTest`.
+ */
+class TrackTimes {
+    private var lastTime: Long? = null
+    private var lastElapsed = 0L
+
+    /** Fixes stamped on the monotonic continuation since the start (for a report or a test). */
+    @Volatile var continued = 0L
+        private set
+
+    /** A new recording: the fixes' own times again (a continuation never carries into the next track). */
+    @Synchronized
+    fun reset() { lastTime = null; lastElapsed = 0L }
+
+    /** [fix] as the recorder should take it; [stampElapsedMs] is its elapsed-realtime stamp (receipt when unusable), [nowElapsedMs] now. */
+    @Synchronized
+    fun fix(fix: LocationFix, stampElapsedMs: Long?, nowElapsedMs: Long): LocationFix {
+        val elapsed = io.github.jasondorjeshort.dystopo.readout.ReadoutClock.fixElapsed(stampElapsedMs, nowElapsedMs) ?: nowElapsedMs
+        val last = lastTime
+        val time = if (last != null && fix.time <= last && elapsed > lastElapsed) { continued++; last + (elapsed - lastElapsed) } else fix.time
+        if (last == null || time > last) { lastTime = time; lastElapsed = elapsed }
+        return if (time == fix.time) fix else fix.copy(time = time)
     }
 }
 

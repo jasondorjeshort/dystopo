@@ -11,7 +11,7 @@ import io.github.jasondorjeshort.dystopo.app.firstrun.Screens
 enum class SettingsGroup(val id: String, val title: String, val summary: String) {
     DATA("data", Screens.DATA_AND_STORAGE, "Sources (server, mobile data), offline maps, storage, flight tracking"), // T115: titles from Screens; T370: flight tracking
     MAP("map", Screens.MAP_OPTIONS, "Hillshade, slope, shade, contours, labels, layers, drainage, night, scale bar, flights, position button, north up, view range, print, trail disagreements"), // T223: names what the page holds; T370: Flight tracking's rows moved to DATA, "flights" is Show flights (T364)
-    DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, pressure units, text size"), // T337: pressure units
+    DISPLAY("display", Screens.UNITS_AND_DISPLAY, "Feet or metres, pressure units, text size, coordinate format"), // T337: pressure units; T388: coordinate format
     NAVIGATION("navigation", Screens.NAVIGATION_AND_TRACKING, "Route snap, spoken directions, GPS fix, off-route snooze, route times, turn-back time, recording, readout, pressure warning, water, shade, position estimate, drive planning, Horizon view, sky range, Panorama steering"), // T223: names what the page holds; T308: Horizon view; T312: sky range; T330: Panorama steering
     SYNC("sync", Screens.SYNC_AND_SHARING, "Sync status, sharing with a nearby phone"),
     ABOUT("about", Screens.ABOUT_AND_ADVANCED, "Version and updates, technical details, problem reports, contour warm-up, credits"),
@@ -39,6 +39,9 @@ enum class SettingsRow(val id: String, val group: SettingsGroup, val label: Stri
     PRESSURE_UNIT(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_PRESSURE_UNIT, SettingsGroup.DISPLAY, "Pressure units", "SettingsPages", "T337"),
     // end T337
     TEXT_SIZE("textSize", SettingsGroup.DISPLAY, "Text size", "SettingsPages", "T33"),
+    // T388: how every position reads, after Text size (the controls manifest's next free order: no existing order moves)
+    COORDINATE_FORMAT(io.github.jasondorjeshort.dystopo.app.AppSettings.KEY_COORDINATE_FORMAT, SettingsGroup.DISPLAY, "Coordinate format", "SettingsPages", "T388"),
+    // end T388
     ROUTE_SNAP("routeSnap", SettingsGroup.NAVIGATION, "Route snap", "SettingsPages", "T57"),
     NAV_SPEECH("navSpeech", SettingsGroup.NAVIGATION, "Navigation: Spoken directions", "SettingsPages", "T126"),
     NAV_STALE("navStale", SettingsGroup.NAVIGATION, "Navigation: GPS fix stale after", "SettingsPages", "T91"),

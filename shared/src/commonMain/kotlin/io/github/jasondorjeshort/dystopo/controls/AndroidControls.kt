@@ -93,6 +93,10 @@ object AndroidControls {
         // T314: Flight tracking: Route lines (after the Flights rows; T370: on the Data page with them)
         row("aircraftRouteLines", "data", 11),
         // end T314
+        // T388: Coordinate format, the Units and display page's last row after Text size (3): its next free order, and last in
+        // this list, so no existing order or entry moves (T346's warning: an insert renumbers the map orders in three files)
+        row("coordinateFormat", "display", 4),
+        // end T388
     )
 
     /**

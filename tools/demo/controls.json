@@ -1228,6 +1228,19 @@
       }
     },
     {
+      "id": "coordinateFormat",
+      "kind": "setting",
+      "platforms": ["android"],
+      "placement": {
+        "android": {
+          "category": "display",
+          "order": 4,
+          "zone": "settings",
+          "row": "coordinateFormat"
+        }
+      }
+    },
+    {
       "id": "settingsAndPacks",
       "kind": "link",
       "platforms": ["android"],

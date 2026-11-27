@@ -72,6 +72,7 @@ class SettingsRegistryTest {
         "panoramaSteering" to "follow", // T330
         "pressureUnit" to "inhg", // T337
         "mapFlights" to false, // T364
+        "coordinateFormat" to "utm", // T388
     )
 
     /** Maps sorted at every depth, so the text does not depend on insertion order. */
@@ -126,6 +127,9 @@ class SettingsRegistryTest {
     // T364 (ADR 0033: one key added, synced): "Show flights" on the map.
     private val t364Keys = listOf("mapFlights")
     // end T364
+    // T388 (ADR 0033: one key added, synced): Coordinate format.
+    private val t388Keys = listOf("coordinateFormat")
+    // end T388
     private val laterKeys = setOf("tripDetailsOpen", "recordAskActivity", "app.recordAskActivity", "drivePreference", "app.drivePreference", "skyPlot", "app.skyPlot") +
         t308Keys + t308Keys.map { "app.$it" } +
         // T311 (ADR 0033: three keys added, synced): Flight tracking, its refresh and airport names.
@@ -147,8 +151,11 @@ class SettingsRegistryTest {
         t346Keys.map { "app.$it" } +
         // end T346
         // T364
-        t364Keys + t364Keys.map { "app.$it" }
+        t364Keys + t364Keys.map { "app.$it" } +
         // end T364
+        // T388
+        t388Keys + t388Keys.map { "app.$it" }
+        // end T388
     private fun beforeT257(m: Map<String, Any?>): Map<String, Any?> =
         m.filterKeys { k -> !(k.startsWith("app.readout.") && t257Entries.any { k.endsWith(".$it") }) && k !in laterKeys }
             .mapValues { (k, v) -> if (k == "readout" && v is Map<*, *>) v.filterKeys { it !in t257Entries } else v }
@@ -159,11 +166,12 @@ class SettingsRegistryTest {
     fun aSeededStoreSyncsAndReportsAsBefore() {
         AppSettings.load(FakePrefs(seed))
         assertEquals(SEEDED_SYNCED, canon(beforeT257(SettingsSync.current())))
-        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one, T337 one, T346 one, T364 one")
-        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1, t257Synced().size)
+        assertEquals(68 + 18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1 + 1, SettingsSync.current().size, "every synced key, none lost; T257 added 18, T263 one, T282 one, T307 one, T308 three, T311 three, T312 two, T314 one, T330 one, T337 one, T346 one, T364 one, T388 one")
+        assertEquals(18 + 1 + 1 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1 + 1, t257Synced().size)
+        assertEquals("utm", SettingsSync.current()["app.coordinateFormat"], "T388: the seeded utm syncs as utm")
         assertEquals("off", SettingsSync.current()["app.mapFlights"], "T364: the seeded off syncs as off")
         assertEquals("on", SettingsSync.current()["app.scaleBar.zoom"], "T346: nothing stored, the default (on)")
-        assertTrue(t257Synced().filterKeys { it != "app.scaleBar.zoom" && it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys && it.removePrefix("app.") !in t337Keys && it.removePrefix("app.") !in t364Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
+        assertTrue(t257Synced().filterKeys { it != "app.scaleBar.zoom" && it != "app.recordAskActivity" && it != "app.drivePreference" && it != "app.skyPlot" && it.removePrefix("app.") !in t308Keys && it.removePrefix("app.") !in t311Keys && it.removePrefix("app.") !in t312Keys && it.removePrefix("app.") !in t314Keys && it.removePrefix("app.") !in t330Keys && it.removePrefix("app.") !in t337Keys && it.removePrefix("app.") !in t364Keys && it.removePrefix("app.") !in t388Keys }.values.all { it == null }, "nothing stored for the new entries: their defaults")
         assertEquals("all", SettingsSync.current()["app.aircraftRouteLines"], "T314: the seeded all syncs as all")
         assertEquals("follow", SettingsSync.current()["app.panoramaSteering"], "T330: the seeded follow syncs as follow")
         assertEquals("inhg", SettingsSync.current()["app.pressureUnit"], "T337: the seeded inhg syncs as inhg")
@@ -579,4 +587,52 @@ class SettingsRegistryTest {
         assertEquals(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.SHOW_DIVERGENCE, rows.last(), "T370: the Flight tracking rows moved to Data and storage; Show flights stays in Map options")
     }
     // end T364
+
+    // T388
+    /**
+     * T388: Coordinate format is decimal degrees for every install, whatever the units or the region (no seeding: the
+     * survey found none), synced as `app.coordinateFormat`, posted and read back in each of the four; a value outside them
+     * is refused with the key named; a stored value this build does not know (an `mgrs` from a later build) reads as the
+     * default, and a synced one is skipped by `POST /settings`' check, so the phone keeps what it had. Its row is the Units
+     * and display page's last, after Text size, so no existing manifest order moves.
+     */
+    @Test
+    fun coordinateFormatIsDecimalDegreesForEveryInstallAndSynced() {
+        val dd = io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DECIMAL
+        for (store in listOf(mapOf<String, Any>("server" to ""), mapOf("server" to "", "units" to "ft", "unitsSource" to "user"), mapOf("server" to "", "units" to "m", "unitsSource" to "pack:rainier"))) {
+            val p = FakePrefs(store)
+            AppSettings.load(p)
+            assertEquals(dd, AppSettings.coordinateFormat, "$store")
+            assertEquals("dd", AppSettings.json()["coordinateFormat"], "$store")
+            assertEquals("dd", SettingsSync.current()["app.coordinateFormat"], "$store")
+            assertTrue(p.writes.none { it.first == "coordinateFormat" }, "loading writes no format: $store")
+        }
+        java.util.Locale.setDefault(java.util.Locale.UK)
+        AppSettings.load(FakePrefs(mapOf("server" to "")))
+        assertEquals(dd, AppSettings.coordinateFormat, "not seeded by region")
+        assertTrue(AppSettings.COORDINATE_FORMAT.synced)
+        for ((raw, want) in listOf("dd" to "DECIMAL", "dm" to "DEGREES_MINUTES", "DMS" to "DMS", " utm " to "UTM")) {
+            val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("coordinateFormat" to raw)), raw)
+            assertEquals(want, posted[AppSettings.COORDINATE_FORMAT]!!.name, raw)
+        }
+        val posted = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(mapOf("coordinateFormat" to "dms")))
+        for ((s, v) in posted.plain) @Suppress("UNCHECKED_CAST") AppSettings.set(s as Setting<Any>, v)
+        assertEquals(io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.DMS, AppSettings.coordinateFormat)
+        assertEquals("dms", AppSettings.json()["coordinateFormat"])
+        assertEquals("46° 47' 09.6\" N, 121° 44' 06.0\" W", AppSettings.position(46.786, -121.735))
+        for (bad in listOf("mgrs", "nad27", "")) {
+            val refused = assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(mapOf("coordinateFormat" to bad)), bad)
+            assertTrue("coordinateFormat" in refused.message, refused.message)
+        }
+        AppSettings.load(FakePrefs(mapOf("server" to "", "coordinateFormat" to "mgrs")))
+        assertEquals(dd, AppSettings.coordinateFormat, "an unknown stored value reads as the default")
+        val back = assertIs<SettingsRoutes.Parsed.Ok>(SettingsRoutes.parse(SettingsSync.plan(mapOf("app.coordinateFormat" to "utm"), emptyMap(), SettingsRoutes.KEYS).params))
+        assertEquals(io.github.jasondorjeshort.dystopo.geo.CoordinateFormat.UTM, back[AppSettings.COORDINATE_FORMAT])
+        val later = SettingsSync.plan(mapOf("app.coordinateFormat" to "mgrs"), emptyMap(), SettingsRoutes.KEYS)
+        assertIs<SettingsRoutes.Parsed.Error>(SettingsRoutes.parse(later.params), "a synced value this build does not know is refused, so the phone keeps its own")
+        val rows = io.github.jasondorjeshort.dystopo.app.settings.SettingsLayout.rows(io.github.jasondorjeshort.dystopo.app.settings.SettingsGroup.DISPLAY)
+        assertEquals(io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.COORDINATE_FORMAT, rows.last())
+        assertEquals("Coordinate format", io.github.jasondorjeshort.dystopo.app.settings.SettingsRow.COORDINATE_FORMAT.label)
+    }
+    // end T388
 }
