@@ -879,6 +879,8 @@ class MapController {
         @Volatile var fixesInWindow = 0
         /** T382: rests taken as the app's own placement under a world open (the window kept open). */
         @Volatile var restsKept = 0
+        /** T382: a fix that came in the window before the map existed (a slow cold start), taken at the map's first rest. */
+        @Volatile var fixBeforeMap: LastFix.Fix? = null
         /** T382: the camera's moves and rests in the first [EVENTS_MAX] after open, each with its time since open. */
         val events: MutableList<Map<String, Any?>> = java.util.Collections.synchronizedList(ArrayList())
         fun event(what: String, sinceMs: Long) {
@@ -927,11 +929,15 @@ class MapController {
         if (since > o.windowMs) { endOpenWindow("expired"); return }
         o.fixesInWindow++
         if (!OpenView.recentres(o.choice.view, fix, since, System.currentTimeMillis())) return
-        val m = map ?: return
+        val m = map ?: run { o.fixBeforeMap = fix; return } // T382: it was dropped; the map's first rest takes it
+        recentreOnOpen(o, m, fix, since)
+    }
+
+    private fun recentreOnOpen(o: Opened, m: MapLibreMap, fix: LastFix.Fix, since: Long, beforeMap: Boolean = false) {
         placed = ViewAt(fix.lat, fix.lon, m.cameraPosition.zoom, 0.0, fix.at)
         lastCameraAt = SystemClock.elapsedRealtime()
         m.moveCamera(CameraUpdateFactory.newLatLng(LatLng(fix.lat, fix.lon)))
-        o.recentredTo = linkedMapOf("lat" to fix.lat, "lon" to fix.lon, "afterMs" to since)
+        o.recentredTo = linkedMapOf("lat" to fix.lat, "lon" to fix.lon, "afterMs" to since, "fixBeforeMap" to beforeMap)
         endOpenWindow("recentred")
     }
 
@@ -946,6 +952,12 @@ class MapController {
             val since = SystemClock.elapsedRealtime() - o.atElapsed
             o.event("rest", since)
             if (o.window == "open" && since > o.windowMs) endOpenWindow("expired")
+            val early = o.fixBeforeMap
+            if (early != null && o.window == "open") {
+                o.fixBeforeMap = null
+                recentreOnOpen(o, m, early, since, beforeMap = true) // the map exists now (the rest under it was the open's own settling)
+                return
+            }
             if (OpenView.restIsOwnPlacement(o.choice.source, o.window == "open", since, o.windowMs)) {
                 o.restsKept++ // the world view settling, not the user's move: not saved, the window stays open
                 placed = ViewAt(t.latitude, t.longitude, c.zoom, c.bearing, System.currentTimeMillis())
