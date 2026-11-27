@@ -16,6 +16,7 @@ import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaPins
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
 import io.github.jasondorjeshort.dystopo.areas.AssetItem
+import io.github.jasondorjeshort.dystopo.areas.DetailChange
 import io.github.jasondorjeshort.dystopo.areas.LocalItem
 import io.github.jasondorjeshort.dystopo.areas.ManifestItem
 import io.github.jasondorjeshort.dystopo.areas.TileCover
@@ -88,6 +89,12 @@ import java.util.concurrent.atomic.AtomicLong
  * the phone keeps its tiles, says the sentence and is not resumed by itself ([AutoResume.STOP_CAP]). The bytes are counted as
  * the vector tiles are fetched, and a run that reaches the second stops there ([Job.capStopped], [CAP_STOPPED]: partial, its
  * tiles kept, not resumed by itself). With a server set neither applies.
+ *
+ * T386 (a saved area's detail, [changeDetail]): a lower re-keys the record and frees the dropped zooms ([Areas.applyDetail]); a
+ * raise re-keys it with its [Areas.Record.Raise] and downloads the added tiles alone: [start] of such a record takes its raise
+ * manifest ([Areas.raiseManifest]) as the job's ([Job.raise]), so the cap counts only those ([raiseCapRefusalLine]), its own
+ * bytes are not counted against the budget twice, and the run's end ([raiseEnded]) counts the area's bytes again. A raise left
+ * for later is not resumed by itself ([ResumeCheck]).
  */
 object AreaDownload {
     private val app: DystopoApp get() = DystopoApp.instance
@@ -98,6 +105,8 @@ object AreaDownload {
         val trigger: String = TRIGGER_USER,
         /** T151: the record's cursor it may resume from (over [planned0], the saved manifest); dropped when the source's versions moved. */
         val cursor0: DownloadCursor? = null,
+        /** T386: a raise of detail: [planned0] is the added tiles alone ([Areas.raiseManifest]), the record's bytes are counted again after. */
+        val raise: Boolean = false,
     ) {
         @Volatile var state = "starting" // starting, manifest, tiles, retry, contours, done, partial, failed, refused, cancelled
         /** T95: what the area held before and after (versions per source), and the tiles deleted after a refresh. */
@@ -201,6 +210,7 @@ object AreaDownload {
                     "pausedBy" to pausedBy, // T156
                 ),
                 "cap" to capJson(), // T369
+                "raise" to raise, // T386
             )
         }
     }
@@ -376,16 +386,20 @@ object AreaDownload {
         check(old?.opaque == null) { "area ${old?.name}: ${io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp.USER_SENTENCE}" }
         // T152 (ADR 0041 §3's T152 note): no heap check; the pinned budget is the one limit.
         // T151: an unfinished (or cancelled) download goes on from its cursor over the manifest it was made with.
+        // T386: a record whose raise of detail waits or runs downloads the added tiles alone (its raise manifest), its own
+        // bytes not counted against the budget twice.
+        val raise = old?.raise != null && old.opaque == null
         val cursor = old?.takeIf { manifest == null && (unfinished(it) || it.state == "cancelled") }?.cursor
-        val saved = cursor?.let { Areas.manifest(area.id) }?.takeIf { it.id == area.id }
-        val planned = manifest?.takeIf { it.id == area.id } ?: saved
+        val saved = cursor?.let { if (raise) Areas.raiseManifest(area.id) else Areas.manifest(area.id) }?.takeIf { it.id == area.id }
+        val planned = manifest?.takeIf { it.id == area.id } ?: saved ?: if (raise) Areas.raiseManifest(area.id)?.takeIf { it.id == area.id } ?: raiseManifestOf(old!!, fetcher.server) else null
         val from = cursor?.takeIf { saved != null && planned === saved }
-        planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, pinnedOwn(old), AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) } }
+        val own = if (raise) 0L else pinnedOwn(old)
+        planned?.let { m -> budgetRefusal(area, service.cache.pinnedBytes, m.bytes, own, AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) } }
         // T369: no server set, the public vector source's cap, on every start (the user's, a Retry, an Update, the resume
         // check's): over it nothing starts; a record already here keeps its tiles, says why and is not resumed by itself.
         val direct = fetcher.server == DirectSources.SERVER
         val checked = if (direct) planned ?: localManifest(area, fetcher.server) else planned
-        if (direct) capRefusalLine(checked!!.vectorTileCount.toLong(), lessDetailHelps(area))?.let { why ->
+        if (direct) (if (raise) raiseCapRefusalLine(checked!!.vectorTileCount.toLong()) else capRefusalLine(checked!!.vectorTileCount.toLong(), lessDetailHelps(area)))?.let { why -> // T386: a raise's own sentence
             if (old != null) Areas.update(area.id) { it.copy(error = why, autoResume = (it.autoResume ?: AutoResume()).copy(stopped = AutoResume.STOP_CAP, nextAt = 0L)) }
             throw CapRefused(why)
         }
@@ -393,7 +407,7 @@ object AreaDownload {
         val label = name ?: area.name ?: defaultName(area, java.time.LocalDate.now())
         // T170 (T151's follow-up): a download started with contours keeps them on its resume, Retry and Download again.
         val withContours = contours || old?.contours == true
-        val j = Job(area.id, label, area, fetcher.server, withContours, checked, isNew = old == null, trigger = trigger, cursor0 = from).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L; it.direct = direct } // T369: the manifest checked
+        val j = Job(area.id, label, area, fetcher.server, withContours, checked, isNew = old == null, trigger = trigger, cursor0 = from, raise = raise).also { it.stateBefore = old?.state; it.bytes0 = old?.bytes ?: 0L; it.direct = direct } // T369: the manifest checked
         job = j
         // T106 (a T95 follow-up): an unpinned area stays unpinned until the budget lets its download go on ([run]); an
         // Update the budget refused used to leave it pinned, with its tiles counted against that budget.
@@ -408,6 +422,7 @@ object AreaDownload {
                 estimateBytes = old?.estimateBytes ?: 0L, tiles = old?.tiles ?: 0, versions = old?.versions.orEmpty(), // T95: held until it completes
                 downloadMs = old?.downloadMs, cursor = from, cancelled = false, autoResume = resumeState, // T151
                 contours = withContours, // T170
+                off = old?.off ?: false, raise = old?.raise?.copy(deferred = false), // T386: started, so no longer deferred
             ),
         )
         Thread({ run(j, fetcher) }, "area-download").apply { isDaemon = true }.start()
@@ -446,10 +461,10 @@ object AreaDownload {
             j.manifestFrom = if (j.planned0 != null) "plan" else if (fromServer != null) "server" else "phone"
             j.manifestMs = System.currentTimeMillis() - t0
             j.manifest = m
-            Areas.saveManifest(m)
+            if (j.raise) Areas.saveRaiseManifest(m) else Areas.saveManifest(m) // T386: the area's whole manifest stays as the change wrote it
             // T91: pinned tiles have their own budget (pinnedCacheMb, Settings › Storage); refuse a download that would pass it.
             OnlineService.get(app).cache.awaitReady("AreaDownload's pinned budget check") // T242: the pinned bytes are partial until then
-            budgetRefusal(j.area, OnlineService.get(app).cache.pinnedBytes, m.bytes, pinnedOwn(Areas.get(j.id)), AppSettings.pinnedCacheMb)?.let { throw Refused(it) }
+            budgetRefusal(j.area, OnlineService.get(app).cache.pinnedBytes, m.bytes, if (j.raise) 0L else pinnedOwn(Areas.get(j.id)), AppSettings.pinnedCacheMb)?.let { throw Refused(it) }
             // T106: it fits, so it is pinned now, before any tile is fetched (nothing fetched for it is evicted on the way).
             Areas.update(j.id) { if (it.pinned) it else it.copy(pinned = true) }
             // T152: the manifest's rows in the walk's order (zoom, route, row), never a list of every tile.
@@ -497,7 +512,7 @@ object AreaDownload {
                 j.failed.get() > 0 || j.stalled != null || j.capStopped -> "partial" // T151: a walk stopped by a stall did not reach the end; T369: nor one stopped by the cap
                 else -> "done"
             }
-            if (j.state == "done") refreshed(j, fetcher, m, changesAtStart)
+            if (j.state == "done" && !j.raise) refreshed(j, fetcher, m, changesAtStart) // T386: a raise's manifest is not the area's
         } catch (e: Refused) {
             j.error = e.message
             j.state = "refused"
@@ -512,11 +527,12 @@ object AreaDownload {
             if (j.state == "refused" && j.isNew) {
                 // T95: a new area the budget refused leaves nothing behind (an area already on the phone keeps its tiles).
                 runCatching { Areas.remove(j.id) }
-            } else Areas.update(j.id) { r ->
+            } else if (j.raise) raiseEnded(j) else Areas.update(j.id) { r ->
                 val ms = j.finishedAt - j.startedAt
                 r.copy(
                     state = when (j.state) { "done" -> "done"; "refused" -> j.stateBefore ?: "partial"; else -> j.state },
                     error = j.error ?: when {
+                        j.capStopped && !lessDetailHelps(j.area) -> capStoppedLine(lessHelps = false) // T386 (T369's follow-up): the remedy that fits
                         j.capStopped -> CAP_STOPPED // T369
                         j.pausedBy != null && j.state == "partial" -> RESUME_PAUSED // T156
                         j.stalled != null && j.state == "partial" -> RESUME_STALLED // T151
@@ -582,6 +598,158 @@ object AreaDownload {
             AreaPins.tileOf(k)?.let { (z, x, y) -> cover.contains(z, x, y) && !held.contains(z, x, y) } == true
         }
     }
+
+    // T386
+    /**
+     * T386: the end of a raise's run, written over the record: done, the raise is over (its manifest file goes); cancelled,
+     * refused or failed, the area stays at the detail it holds whole with the raise left to Start (deferred, the reason kept for
+     * a refusal or a failure); partial (a stall, a pause, failures, the cap's 50 MB), the raise goes on from the cursor as any
+     * unfinished download does. The record's bytes are counted again from the cache when its index is whole (the manifest is
+     * no longer the whole area), else the earlier bytes plus what this run fetched.
+     */
+    private fun raiseEnded(j: Job) {
+        val r0 = Areas.get(j.id) ?: return
+        val done = j.state == "done"
+        val partial = j.state == "partial"
+        val counted = if (OnlineService.get(app).cache.ready) Areas.countBytes(r0) else null
+        val whole = Areas.manifest(j.id)
+        val ms = j.finishedAt - j.startedAt
+        Areas.update(j.id) { r ->
+            r.copy(
+                state = if (partial) "partial" else "done",
+                raise = if (done) null else r.raise?.copy(deferred = !partial),
+                error = when {
+                    done || j.state == "cancelled" -> null
+                    !partial -> j.error
+                    j.capStopped -> capStoppedLine(lessHelps = false)
+                    j.pausedBy != null -> RESUME_PAUSED
+                    j.stalled != null -> RESUME_STALLED
+                    j.failed.get() > 0 -> failedTilesLine(j.failed.get())
+                    else -> null
+                },
+                cancelled = false,
+                bytes = counted ?: (j.bytes0 + j.bytes.get()),
+                estimateBytes = whole?.bytes ?: r.estimateBytes, tiles = whole?.tileCount ?: r.tiles,
+                downloadMs = (r.downloadMs ?: 0L) + ms,
+                cursor = if (partial && j.manifest != null) cursorNow(j, keepEarlier = !j.againDone) else null,
+                autoResume = if (!partial) null else afterRun(r.autoResume, j.state, progressed = j.fetched.get() > 0, stalled = j.stalled != null && j.stalledByNetwork, now = j.finishedAt, budgetMb = AppSettings.pinnedCacheMb)
+                    .let { a -> if (j.capStopped) (a ?: AutoResume()).copy(stopped = AutoResume.STOP_CAP, nextAt = 0L) else a },
+            )
+        }
+        if (done) Areas.raiseManifestFile(j.id).delete()
+    }
+
+    /** T386: the elevation's lowest zoom of [server]'s tiles (the public sources' z8, a server's z6), as [zooms] takes it. */
+    fun demLo(server: String?): Int = if (server == DirectSources.SERVER) DirectSources.DEM_MIN_ZOOM else OnlineTiles.DEM_MIN_ZOOM
+
+    /** T386: [r] changed to [to]: from the zooms it holds whole ([Areas.Record.heldArea]) and as recorded, its shape and name kept. */
+    fun changeOf(r: Areas.Record, to: AreaDetail, server: String?): DetailChange.Change = DetailChange.of(r.heldArea, r.area.at(to), demLo(server), current = r.area)
+
+    /** T386: the added tiles of [r]'s raise, made again when its file is gone. */
+    private fun raiseManifestOf(r: Areas.Record, server: String?): AreaManifest =
+        DetailChange.raiseManifest(DetailChange.of(r.heldArea, r.area, demLo(server)), source = "phone", generatedAt = java.time.Instant.now().toString())
+
+    /** T386: why [r] offers no Detail, or null when it does (a drawn area or a disc kept whole, or one whose raise waits or runs). */
+    fun detailRefusal(r: Areas.Record): String? = when {
+        r.opaque != null -> io.github.jasondorjeshort.dystopo.areas.NeedsNewerApp.USER_SENTENCE
+        r.pack != null || r.area.shape is AreaShape.Box -> DETAIL_PACK
+        r.tripId != null -> TRIP_DETAIL_LINE
+        job?.let { it.id == r.id && it.running } == true -> DETAIL_BUSY
+        Areas.lowerings.any { it.id == r.id } -> DETAIL_BUSY
+        r.state != "done" && r.raise == null -> DETAIL_NOT_SAVED
+        else -> null
+    }
+
+    /**
+     * T386: one choice of the Detail sheet for a record: [detail], its [label] ([detailLabel]), whether it is what the area holds
+     * [now] or the detail a raise waits for ([pending]); its [bytes] after the change and [delta] against today's (the record's
+     * bytes); for a lower [freedBytes] (what leaves the phone: tiles another area or a pin holds stay) and [counted] (from the cache,
+     * else an estimate); for a raise the added tiles ([addedBytes], [addedTiles], [addedVectorTiles]) and [refusal] (the cap's or
+     * the budget's sentence: no Start then).
+     */
+    class DetailOption(
+        val detail: AreaDetail, val label: String, val now: Boolean, val pending: Boolean, val change: DetailChange.Change,
+        val bytes: Long, val delta: Long, val freedBytes: Long, val counted: Boolean, val ownBytes: Long,
+        val addedBytes: Long, val addedTiles: Int, val addedVectorTiles: Int, val refusal: String?, val overCap: Boolean, heldLabel: String,
+    ) {
+        val line: String = detailOptionLine(now, pending, bytes, delta, addedBytes, raise = change.raise)
+        val note: String? = if (detail == AreaDetail.LESS) LESS_SEARCH_NOTE else null
+        val confirm: String? = if (now) null else detailConfirmLine(change, label, heldLabel, freedBytes, addedBytes, addedTiles, ownBytes)
+
+        fun json(): Map<String, Any?> = linkedMapOf(
+            "detail" to detail.key, "label" to label, "now" to now, "pending" to pending, "line" to line, "note" to note, "confirm" to confirm,
+            "bytes" to bytes, "delta" to delta, "freedBytes" to freedBytes, "ownBytes" to ownBytes, "counted" to counted,
+            "added" to linkedMapOf("bytes" to addedBytes, "tiles" to addedTiles, "vectorTiles" to addedVectorTiles), "refusal" to refusal, "overCap" to overCap,
+            "change" to change.json(), "id" to change.target.id,
+        )
+    }
+
+    /**
+     * T386: the Detail sheet's three choices for record [id] (Less, Medium, Full), off the main thread: the lower's freed bytes
+     * from the cache when its index is whole (else the estimate), a raise's tiles planned (its cap and budget checked).
+     */
+    fun detailOptions(id: String): List<DetailOption> {
+        val r = Areas.get(id) ?: throw NoSuchElementException("no area '$id'")
+        detailRefusal(r)?.let { throw IllegalStateException(it) }
+        val service = OnlineService.get(app)
+        val fetcher = service.fetcher ?: throw IllegalStateException(NO_SOURCE)
+        val direct = fetcher.server == DirectSources.SERVER
+        val old = Areas.manifest(r.id) ?: localManifest(r.area, fetcher.server)
+        val heldLabel = detailLabel(r.heldArea)
+        return AreaDetail.entries.reversed().map { d -> // Less, Medium, Full
+            val c = changeOf(r, d, fetcher.server)
+            val dropped = Areas.droppedBytes(r, DetailChange.droppedItems(old, c))
+            val own = dropped["own"] as Long
+            val added = if (c.raise) DetailChange.raiseManifest(c) else null
+            val addedBytes = added?.bytes ?: 0L
+            val cap = if (direct && added != null) raiseCapRefusalLine(added.vectorTileCount.toLong()) else null
+            val refusal = cap ?: added?.let { budgetRefusal(c.target, service.cache.pinnedBytes, it.bytes, 0L, AppSettings.pinnedCacheMb) }
+            val now = c.target.id == r.heldArea.id
+            // the area's figure is the row's: the record's bytes, counted from the cache (a part-fetched raise's tiles in it)
+            val bytes = if (now) r.bytes else (r.bytes - own).coerceAtLeast(0L) + addedBytes
+            DetailOption(
+                d, detailLabel(c.target), now = now, pending = r.raise != null && c.target.id == r.area.id, c,
+                bytes, bytes - r.bytes, dropped["freed"] as Long, dropped["counted"] == true, own,
+                addedBytes, added?.tileCount ?: 0, added?.vectorTileCount ?: 0, refusal, cap != null, heldLabel,
+            )
+        }
+    }
+
+    /**
+     * T386: changes record [id] to [to] with its shape kept (the Detail sheet's choice, `POST /areas/{id}/detail`). A lower (or the
+     * held detail chosen again while a raise waits) frees what it drops ([Areas.applyDetail]) and fetches nothing. A raise is
+     * refused before anything changes when the public source's cap or the budget refuses its added tiles; else the record is
+     * re-keyed with its [Areas.Record.Raise], the added tiles' manifest saved, and with [start] the download of those alone begins
+     * (the area usable at its old detail meanwhile); without it, "Later", the raise waits on the row for Start, through a restart.
+     */
+    fun changeDetail(id: String, to: AreaDetail, start: Boolean = true, chunkDelayMs: Long = 0): Map<String, Any?> {
+        val r = Areas.get(id) ?: throw NoSuchElementException("no area '$id'")
+        detailRefusal(r)?.let { throw IllegalStateException(it) }
+        val service = OnlineService.get(app)
+        val fetcher = service.fetcher ?: throw IllegalStateException(NO_SOURCE)
+        val change = changeOf(r, to, fetcher.server)
+        if (change.none) return linkedMapOf("id" to r.id, "unchanged" to true, "change" to change.json())
+        if (!change.raise) return Areas.applyDetail(r, change, raise = null, chunkDelayMs).second + ("change" to change.json())
+        val m = DetailChange.raiseManifest(change, source = if (fetcher.server == DirectSources.SERVER) "phone (public sources)" else "phone", generatedAt = java.time.Instant.now().toString())
+        if (fetcher.server == DirectSources.SERVER) raiseCapRefusalLine(m.vectorTileCount.toLong())?.let { throw CapRefused(it) }
+        budgetRefusal(change.target, service.cache.pinnedBytes, m.bytes, 0L, AppSettings.pinnedCacheMb)?.let { throw BudgetRefused(it) }
+        if (start) check(job?.running != true) { "an area download is already running (${job?.name}); DELETE /areas/download first" }
+        val (n, out) = Areas.applyDetail(r, change, Areas.Record.Raise.of(change.held, deferred = !start), chunkDelayMs)
+        Areas.saveRaiseManifest(m)
+        val result = LinkedHashMap(out)
+        result["change"] = change.json()
+        result["raise"] = linkedMapOf("tiles" to m.tileCount, "vectorTiles" to m.vectorTileCount, "bytes" to m.bytes, "perRoute" to m.items.filterIsInstance<TilesItem>().associate { it.route to it.tiles.keys.sorted() }, "deferred" to !start)
+        if (start) result["download"] = start(n.area, n.name, n.tripId)["download"]
+        return result
+    }
+
+    /** T386: the row's Start on a raise that waits (or Retry on one that stopped): the added tiles' download, from its cursor. */
+    fun startRaise(id: String): Map<String, Any?> {
+        val r = Areas.get(id) ?: throw NoSuchElementException("no area '$id'")
+        check(r.raise != null) { "area ${r.name} has no raise of detail waiting" }
+        return start(r.area, r.name, r.tripId)
+    }
+    // end T386
 
     /** T152: a row of the walk being fetched: its index in the walk and the tiles of it not finished yet. */
     private class RowInFlight(val index: Int, val row: TileRow) {
@@ -1007,6 +1175,83 @@ internal val CAP_SERVER_PLACE = "${io.github.jasondorjeshort.dystopo.app.firstru
 /** T369 (ADR 0031): the line of a download that reached the cap's 50 MB and stopped there, its tiles kept. */
 internal val CAP_STOPPED = "Stopped at 50 MB, the most the public map source allows a download; the tiles fetched so far are kept. " + capRemedies(true)
 // end T369
+
+// T386
+/**
+ * T386 (T369's follow-up): the line of a download that reached the cap's 50 MB, with the remedies that fit its case: less detail
+ * only where it would cut the vector tiles ([lessHelps]); a raise of detail never offers it. [CAP_STOPPED] is the one with it.
+ */
+internal fun capStoppedLine(lessHelps: Boolean): String =
+    "Stopped at 50 MB, the most the public map source allows a download; the tiles fetched so far are kept. " + capRemedies(lessHelps)
+
+/**
+ * T386 (ADR 0031): a raise of detail over the public vector source's cap, counted on the added tiles alone: "Adding this detail
+ * needs about 4,600 map tiles, and the public map source allows 3,000 a download. Make the area smaller, or set a server in
+ * Settings › Sources." (a server or a smaller shape, never less detail). Null within the cap. Pure, tested.
+ */
+internal fun raiseCapRefusalLine(vectorTiles: Long): String? {
+    if (!AreaLimit.overDirectCap(vectorTiles)) return null
+    fun n(v: Long) = String.format(java.util.Locale.US, "%,d", v)
+    return "Adding this detail needs about ${n(roundTiles(vectorTiles))} map tiles, and the public map source allows ${n(AreaLimit.DIRECT_MAX_TILES)} a download. " + capRemedies(false)
+}
+
+/** T386: a detail's name as the app writes it everywhere (wave 48's one function, [io.github.jasondorjeshort.dystopo.packs.HeldHere.detailOf], through [DetailOutline]): "Less detail". */
+internal fun detailLabel(area: AreaOfInterest): String = DetailOutline.levelOf(area.maxZoom, area.demMaxZoom ?: area.maxZoom).label
+
+/** T386 (ADR 0031): the Detail action on an area's row, its sheet's title and its words. */
+internal const val DETAIL = "Detail"
+internal const val DETAIL_INTRO = "The area keeps its shape. Less detail frees space; more detail downloads only what it adds."
+internal const val LESS_SEARCH_NOTE = "Search finds fewer places at this detail."
+internal const val TRIP_DETAIL_LINE = "Its detail follows the trip."
+internal const val DETAIL_PACK = "A map from a file or a server keeps the detail it was made with."
+internal const val DETAIL_BUSY = "Wait until the download or the change running now is over."
+internal const val DETAIL_NOT_SAVED = "Its download has to finish first."
+internal const val DETAIL_TAKEN = "This shape is already saved at that detail."
+internal const val START_NOW = "Start now"
+internal const val LATER = "Later"
+internal const val LOWER = "Lower"
+internal const val DROP_DOWNLOAD = "Drop the download"
+internal const val CANCEL = "Cancel"
+
+/** T386: a size in the Detail sheet, as the row writes it ([OfflineMapList.sizeText]: "705 kB", "4.9 MB", "17 MB"). */
+internal fun detailSize(bytes: Long): String = OfflineMapList.sizeText(bytes)
+
+/**
+ * T386: a Detail choice's size line, its figures as the row's ([detailSize]): "On this phone now: 17 MB" (the record's bytes, the
+ * row's figure); a lower "About 12 MB, 4.9 MB less", or "About 12 MB, nothing to download" when none of what it drops is on the
+ * phone; a raise "About 19 MB, 7.6 MB more to download"; the detail a raise waits for "Waiting: about 7.6 MB more to download".
+ * Never a zero figure. Pure, tested.
+ */
+internal fun detailOptionLine(now: Boolean, pending: Boolean, bytes: Long, delta: Long, addedBytes: Long, raise: Boolean = addedBytes > 0): String = when {
+    now -> "On this phone now: ${detailSize(bytes)}"
+    pending -> "Waiting: about ${detailSize(addedBytes)} more to download"
+    raise -> "About ${detailSize(bytes)}, ${detailSize(addedBytes)} more to download"
+    delta < 0 -> "About ${detailSize(bytes)}, ${detailSize(-delta)} less"
+    else -> "About ${detailSize(bytes)}, nothing to download"
+}
+
+/** T386: why a lower frees nothing, in place of a zero figure ([ownBytes]: the dropped tiles of the area on the phone). */
+internal fun nothingFreedLine(ownBytes: Long): String =
+    if (ownBytes > 0) "Nothing is freed: another saved map uses these tiles." else "Nothing is freed: none of these tiles are on this phone."
+
+/**
+ * T386: what choosing [label] asks before it runs. A lower: "Lower to Less detail? This frees about 4.9 MB. Tiles another saved
+ * map uses stay on the phone.", or with nothing to free "Lower to Less detail? Nothing is freed: another saved map uses these
+ * tiles." ([nothingFreedLine]). The held detail chosen again while a raise waits: "Keep Medium detail and drop the download
+ * that waits? This frees about 2.3 MB." A raise: "Full detail downloads about 7.6 MB more (50 tiles). The map stays at Medium
+ * detail until it is done.", with " It also frees about 2.3 MB." when it drops what an earlier raise fetched. Sizes as the
+ * row's ([detailSize]); never a zero figure. Pure, tested.
+ */
+internal fun detailConfirmLine(change: DetailChange.Change, label: String, heldLabel: String, freedBytes: Long, addedBytes: Long, addedTiles: Int, ownBytes: Long = freedBytes): String {
+    val frees = if (freedBytes > 0) "This frees about ${detailSize(freedBytes)}." else nothingFreedLine(ownBytes)
+    return when {
+        change.raise -> "$label downloads about ${detailSize(addedBytes)} more (${String.format(java.util.Locale.US, "%,d", addedTiles)} ${if (addedTiles == 1) "tile" else "tiles"}). " +
+            "The map stays at $heldLabel until it is done." + if (change.lower && freedBytes > 0) " It also frees about ${detailSize(freedBytes)}." else ""
+        change.target.id == change.held.id -> "Keep $label and drop the download that waits? $frees"
+        else -> "Lower to $label? $frees" + if (freedBytes > 0) " Tiles another saved map uses stay on the phone." else ""
+    }
+}
+// end T386
 
 /** T221: why a download came up short, "1 tile could not be fetched." or "3 tiles could not be fetched.". Pure, tested. */
 internal fun failedTilesLine(n: Int): String = if (n == 1) "1 tile could not be fetched." else "$n tiles could not be fetched."
