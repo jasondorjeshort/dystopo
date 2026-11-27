@@ -147,6 +147,7 @@ object LiveReadout {
     fun onInjectedFix(fix: LocationFix) {
         val now = SystemClock.elapsedRealtime()
         lastInjectedAt = now
+        if (fix.source != "network" && fix.source != "passive") lastInjectedGpsAt = now // T384: a stand-in for a GPS fix
         bump("injectedFixes")
         post { feedFix(fix, now) }
     }
@@ -245,6 +246,8 @@ object LiveReadout {
         lastInjectedAt = 0L
         lastReplayPressureAt = 0L
         lastFix = null // T197
+        lastFixAt = 0L // T384
+        lastInjectedGpsAt = 0L
         lastPin = null
         pinEnded = null // T363
         rawHPa = null // T257
@@ -346,6 +349,7 @@ object LiveReadout {
     private fun feedFix(fix: LocationFix, elapsedMs: Long) {
         lastFed = fix
         lastFix = fix // T197
+        lastFixAt = elapsedMs // T384
         val e = ensure()
         if (e.isJump(fix)) {
             routeHint = null
@@ -474,6 +478,22 @@ object LiveReadout {
     /** The last fix fed to the estimator (any thread reads it). */
     @Volatile var lastFix: LocationFix? = null
         private set
+
+    /** T384: when [lastFix] came (elapsed realtime), for its age in the glance view's position line. */
+    @Volatile var lastFixAt = 0L
+        private set
+
+    /** T384: when the last injected fix that stands in for a GPS fix came (`POST /location` without a network provider, a replay); 0 before one. */
+    @Volatile var lastInjectedGpsAt = 0L
+        private set
+
+    /**
+     * T384: the glance view's position: [lastFix] with its provider (`gps`, `network`, `passive`, `debug` for an injected
+     * one) and its age; null before any fix.
+     */
+    fun position(now: Long = SystemClock.elapsedRealtime()): GlanceText.Position? = lastFix?.let {
+        GlanceText.Position(it.lat, it.lon, it.source, (now - lastFixAt).coerceAtLeast(0L), it.accuracyM)
+    }
 
     /** T363: when the mark last went (elapsed realtime) and why (`pinEnd`), for the glance view's last minute; null before. */
     @Volatile var pinEnded: Pair<Long, String?>? = null

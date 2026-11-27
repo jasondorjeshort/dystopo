@@ -53,15 +53,25 @@ object ReasonText {
         put(ReadoutEntry.PRESSURE to ReadoutReason.SILENT, "Barometer silent: shown again when it reads.")
         put(ReadoutEntry.ACCURACY to ReadoutReason.NOT_GIVEN, "This fix gave no accuracy: shown when one does.")
         put(ReadoutEntry.FIX_AGE to ReadoutReason.NO_FIX, "No GPS fix yet: counts from the first fix.")
+        // T384: "no fix" while the GPS searches for one (ReadoutReasons.searching); the glance view's GPS area says how it goes.
+        for (k in io.github.jasondorjeshort.dystopo.readout.ReadoutReasons.WHILE_SEARCHING) put(k, "GPS is searching: shown once it has a fix.")
+        put(ReadoutEntry.FIX_AGE to ReadoutReason.SEARCHING, "GPS is searching: counts from the first fix.")
     }
 
     /** A dimmed figure in a gap: the value is the last fix's. */
     const val NO_FIX_FIGURE = "No GPS fix: the value at the last fix, until one comes."
 
+    /** T384: a dimmed figure while the GPS searches: the value is the last fix's. */
+    const val SEARCHING_FIGURE = "GPS is searching: the value at the last fix till then."
+
+    /** T384: the elevation's dimmed figure while the GPS searches. */
+    const val SEARCHING_HEIGHT = "GPS is searching: the last height until it has a fix."
+
     /** The sentence under [entry]'s value in [state] for [reason], or null where the table has none. */
     fun sentence(entry: ReadoutEntry, state: ValueState?, reason: ReadoutReason?): String? {
         reason ?: return null
         val figure = state == ValueState.SHOWN || state == ValueState.ZERO
+        if (reason == ReadoutReason.SEARCHING && figure && entry != ReadoutEntry.FIX_AGE) return if (entry == ReadoutEntry.ELEVATION) SEARCHING_HEIGHT else SEARCHING_FIGURE
         if (reason == ReadoutReason.NO_FIX && entry != ReadoutEntry.ELEVATION) return if (figure) NO_FIX_FIGURE else TABLE[entry to reason]
         if (reason == ReadoutReason.NO_FIX && !figure) return TABLE[ReadoutEntry.SPEED to reason] // the elevation's before any readout
         return TABLE[entry to reason]
@@ -85,6 +95,7 @@ object ReasonText {
         ReadoutReason.NO_SAMPLES -> "no reading yet"
         ReadoutReason.SILENT -> "barometer silent"
         ReadoutReason.NOT_GIVEN -> "not given"
+        ReadoutReason.SEARCHING -> "GPS searching" // T384
     }
 
     /** "8 s", "3 min", "2 h": a time span as the lines say it. */

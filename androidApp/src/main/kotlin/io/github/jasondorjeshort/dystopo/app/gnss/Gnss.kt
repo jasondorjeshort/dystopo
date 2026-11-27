@@ -79,15 +79,51 @@ object Gnss {
     @Volatile var engineTtffMs: Long? = null
         private set
 
-    /** `MapController.startDeviceLocation` registered its listener (the first time counts). */
+    /** `MapController.startDeviceLocation` registered its listener (the first time counts for [ttffMs]; T384: each one for [searchSince]). */
     fun onDeviceStart() {
-        if (deviceStartAt == 0L) deviceStartAt = SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
+        if (deviceStartAt == 0L) deviceStartAt = now
+        lastStartAt = now
     }
 
     /** The map's listener heard a GPS fix. */
     fun onDeviceFix() {
-        if (ttffMs == null && deviceStartAt > 0) ttffMs = SystemClock.elapsedRealtime() - deviceStartAt
+        val now = SystemClock.elapsedRealtime()
+        if (ttffMs == null && deviceStartAt > 0) ttffMs = now - deviceStartAt
+        lastGpsFixAt = now
     }
+
+    // ---- T384: the search for a fix, for the glance view ----
+
+    /** Elapsed realtime of the last start of the map's device fixes (each start, unlike [deviceStartAt]); 0 before one. */
+    @Volatile var lastStartAt = 0L
+        private set
+
+    /** Elapsed realtime of the last GPS fix the map's listener heard; 0 before one. */
+    @Volatile var lastGpsFixAt = 0L
+        private set
+
+    /**
+     * T384: when this outage began (elapsed realtime): the last GPS fix (the map's listener's, or [otherGpsAt]: a GPS fix
+     * the readout took another way, an injected one), else the first start of the device's fixes in this process; null
+     * before any. Not [ttffMs], which stops at the first fix: an outage after an hour of fixes counts from its last fix. A
+     * restart of the device's fixes (the activity made again at a font or a rotation change, or back from the background)
+     * does not start it again: the outage goes on (the emulator showed the time falling back to 0 at a font change).
+     */
+    fun searchSince(otherGpsAt: Long = 0L): Long? = maxOf(deviceStartAt, lastGpsFixAt, otherGpsAt).takeIf { it > 0L }
+
+    /**
+     * T384: the GPS is searching: location permitted, the device's fixes started, and no GPS fix (the map's listener's, or
+     * [otherGpsAt]) for [gapMs]. Read with the status the glance view holds ([hold] `glance`, status-only).
+     */
+    fun searching(gapMs: Long, otherGpsAt: Long = 0L, now: Long = SystemClock.elapsedRealtime()): Boolean {
+        if (!permitted() || lastStartAt == 0L) return false
+        val last = maxOf(lastGpsFixAt, otherGpsAt)
+        return last == 0L || now - last > gapMs
+    }
+
+    /** The glance view's hold's name ([hold]): status only, taken while the view is open. */
+    const val GLANCE_HOLDER = "glance"
 
     // ---- holding ----
     val held: Boolean get() = synchronized(holders) { holders.isNotEmpty() }

@@ -32,15 +32,19 @@ class ReasonTextTest {
             assertTrue(ReasonText.TABLE.keys.any { it.second == r }, "no sentence for ${r.code}")
             assertTrue(ReasonText.words(r).isNotBlank())
         }
+        // T384: every value that can read "no fix" reads "searching" while the GPS searches, in every state.
+        for ((e, r) in ReadoutReasons.WHILE_SEARCHING) for (s in ValueState.entries + listOf(null)) {
+            assertNotNull(ReasonText.sentence(e, s, r), "no sentence for ${e.code} ${s?.code} ${r.code}")
+        }
         // Nothing in the table that no value can show.
-        assertEquals(emptySet(), ReasonText.TABLE.keys.filter { it.second.kind != ReasonKind.NONE }.toSet() - ReadoutReasons.POSSIBLE -
+        assertEquals(emptySet(), ReasonText.TABLE.keys.filter { it.second.kind != ReasonKind.NONE }.toSet() - ReadoutReasons.POSSIBLE - ReadoutReasons.WHILE_SEARCHING -
             ReadoutEntry.entries.flatMap { e -> listOf(e to ReadoutReason.NO_FIX, e to ReadoutReason.RESUMING, e to ReadoutReason.ACTIVITY) }.toSet())
         assertNull(ReasonText.sentence(ReadoutEntry.ELEVATION, ValueState.SHOWN, null))
     }
 
     @Test
     fun eachSentenceIsOneShortLine() {
-        val all = ReasonText.TABLE.values + ReasonText.NO_FIX_FIGURE
+        val all = ReasonText.TABLE.values + ReasonText.NO_FIX_FIGURE + ReasonText.SEARCHING_FIGURE + ReasonText.SEARCHING_HEIGHT
         for (t in all) {
             assertTrue(t.length <= ReasonText.MAX_SENTENCE, "${t.length} characters: $t")
             assertTrue(t.endsWith("."), t)
@@ -59,6 +63,17 @@ class ReasonTextTest {
         assertEquals("No GPS fix: shown once fixes come.", ReasonText.sentence(ReadoutEntry.SPEED, ValueState.HIDDEN, ReadoutReason.NO_FIX))
         assertEquals("No GPS fix: the last height, until a fix comes.", ReasonText.sentence(ReadoutEntry.ELEVATION, ValueState.SHOWN, ReadoutReason.NO_FIX))
         assertEquals("No GPS fix: shown once fixes come.", ReasonText.sentence(ReadoutEntry.ELEVATION, null, ReadoutReason.NO_FIX), "before the first readout")
+    }
+
+    /** T384: while the GPS searches, "no fix" says so: a dimmed figure, the elevation's and a dash each their own words. */
+    @Test
+    fun searchingSaysTheGpsIsSearching() {
+        assertEquals(ReasonText.SEARCHING_FIGURE, ReasonText.sentence(ReadoutEntry.SPEED, ValueState.SHOWN, ReadoutReason.SEARCHING))
+        assertEquals(ReasonText.SEARCHING_HEIGHT, ReasonText.sentence(ReadoutEntry.ELEVATION, ValueState.SHOWN, ReadoutReason.SEARCHING))
+        assertEquals("GPS is searching: shown once it has a fix.", ReasonText.sentence(ReadoutEntry.ELEVATION, null, ReadoutReason.SEARCHING))
+        assertEquals("GPS is searching: shown once it has a fix.", ReasonText.sentence(ReadoutEntry.ACCURACY, ValueState.DASH, ReadoutReason.SEARCHING))
+        assertEquals("GPS is searching: counts from the first fix.", ReasonText.sentence(ReadoutEntry.FIX_AGE, ValueState.SHOWN, ReadoutReason.SEARCHING))
+        assertEquals("GPS searching", ReasonText.words(ReadoutReason.SEARCHING))
     }
 
     @Test

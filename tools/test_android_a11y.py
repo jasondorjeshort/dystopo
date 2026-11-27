@@ -1089,4 +1089,66 @@ finally:
     a11y.FixFeed = _feed
 # end T360
 
+
+# T384: the glance view's two GPS screens: the settings they set and put back, the search's network fixes and wait, the
+# GPS position's fixes, each opened held, and the scene's check (the search, the satellites, the position's source).
+class GpsSrv:
+    def __init__(self, glance):
+        self.calls = []
+        self.glance = glance
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/settings":
+            return {"readoutBarometer": "always", "readout": {"pressure": "shown=1;pace=0", "accuracy": "shown=0", "fixAge": "shown=1"}}
+        if path.startswith("/readout/glance?open=1"):
+            return self.glance
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+SEARCHING = {"holding": True, "lines": [{"kind": "elevation"}, {"kind": "accuracy"}, {"kind": "fixAge"}, {"kind": "position"}],
+             "gps": {"searching": True, "seen": 4, "used": 0}, "position": {"source": "network"}}
+GPS_FIX = dict(SEARCHING, gps={"searching": False, "seen": 0, "used": 0}, position={"source": "gps"})
+gy = {s[0]: s for s in a11y.SCREENS if s[0] in ("glance-searching", "glance-position")}
+assert gy["glance-searching"][3] == "screen" and gy["glance-position"][3] == "screen", gy
+assert a11y.glance_gps_scene(SEARCHING, searching=True) is None and a11y.glance_gps_scene(GPS_FIX, searching=False) is None
+assert "hold" in a11y.glance_gps_scene(dict(SEARCHING, holding=False), searching=True)
+assert "searching" in a11y.glance_gps_scene(GPS_FIX, searching=True)
+assert "seen" in a11y.glance_gps_scene(dict(SEARCHING, gps={"searching": True, "seen": 0, "used": 0}), searching=True)
+assert "network" in a11y.glance_gps_scene(dict(SEARCHING, position={"source": "gps"}), searching=True)
+assert "position line" in a11y.glance_gps_scene(dict(SEARCHING, lines=[{"kind": "elevation"}]), searching=True)
+a11y.time.sleep = lambda s: None
+try:
+    gs = GpsSrv(SEARCHING)
+    gctx = type("C", (), {"srv": gs})()
+    gy["glance-searching"][1](gctx)
+    assert gs.calls[:6] == [("GET", "/settings"), ("POST", "/settings?readoutBarometer=never"), ("POST", "/settings?readout.pressure=shown=0"),
+                            ("POST", "/settings?readout.accuracy=shown=1"), ("POST", "/settings?readout.fixAge=shown=1"), ("POST", "/readout/reset")], gs.calls
+    assert ("POST", "/gnss?case=indoors") in gs.calls and sum(1 for c in gs.calls if "provider=network" in c[1]) == 2, gs.calls
+    assert gs.calls[-1] == ("POST", "/readout/glance?open=1&hold=1"), gs.calls
+    gs.calls.clear()
+    gy["glance-searching"][2](gctx)
+    assert gs.calls == [("POST", "/readout/glance?open=0"), ("POST", "/gnss?clear=1"), ("POST", "/settings?readoutBarometer=always"),
+                        ("POST", "/settings?readout.pressure=shown=1"), ("POST", "/settings?readout.accuracy=shown=0"),
+                        ("POST", "/settings?readout.fixAge=shown=1")], gs.calls
+    gs = GpsSrv(GPS_FIX)
+    gctx = type("C", (), {"srv": gs})()
+    gy["glance-position"][1](gctx)
+    fixes = [c[1] for c in gs.calls if c[1].startswith("/location?")]
+    assert len(fixes) == 4 and not any("provider=" in f for f in fixes) and gs.calls[-1] == ("POST", "/readout/glance?open=1&hold=1"), gs.calls
+    # A scene that is not the screen's fails it with the reason.
+    gs = GpsSrv(GPS_FIX)
+    try:
+        gy["glance-searching"][1](type("C", (), {"srv": gs})())
+        raise AssertionError("a view that does not search should fail glance-searching")
+    except RuntimeError as e:
+        assert "searching" in str(e), e
+finally:
+    a11y.time.sleep = _sleep
+# end T384
+
 print("test_android_a11y: ok")

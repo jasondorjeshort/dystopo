@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.Foreground
 import io.github.jasondorjeshort.dystopo.app.controls.ScaleBarLayout
+import io.github.jasondorjeshort.dystopo.app.gnss.Gnss
 import io.github.jasondorjeshort.dystopo.app.help.HelpIcon
 import io.github.jasondorjeshort.dystopo.app.help.HelpText
 import io.github.jasondorjeshort.dystopo.app.nav.NavSession
@@ -72,6 +73,8 @@ object Glance {
     // What the view drew last (main thread): the lines, the fit, where they sit, and texts that overflowed.
     internal var lines: List<GlanceLine> = emptyList()
     internal var notes: GlanceText.Notes = GlanceText.Notes(null, emptyList()) // T363
+    internal var gps: GlanceText.Gps? = null // T384
+    internal var position: GlanceText.Position? = null
     internal var reasonPx = LinkedHashMap<String, Float>() // T363: each reason line's type size as drawn
     internal var deadlineSource: String? = null
     internal var fit: GlanceFit.Fit? = null
@@ -123,6 +126,10 @@ object Glance {
             "count" to if (open) lines.size else 0,
             "description" to if (open) GlanceText.description(lines) else null,
             "notes" to if (open) notes.json() else null, // T363
+            // T384: the GPS receiver as the view read it (the network position too, while the last fix is one), and the position line.
+            "gps" to if (open) gps?.let { g -> g.json() + mapOf("network" to position?.takeIf { it.network }?.let { p -> linkedMapOf("accuracyM" to p.accuracyM, "ageS" to p.ageMs / 1000) }) } else null,
+            "position" to if (open) GlanceText.positionJson(position, lines.firstOrNull { it.kind == GlanceText.POSITION }) else null,
+            "gnssHold" to Gnss.holders().contains(Gnss.GLANCE_HOLDER),
             "reasonPx" to if (open) reasonPx.mapValues { r1(it.value) } else null,
             "deadline" to linkedMapOf("shown" to (open && lines.any { it.kind == GlanceLine.DEADLINE }), "source" to deadlineSource),
             "fit" to f?.let {
@@ -181,14 +188,17 @@ fun GlanceView() {
         view.keepScreenOn = true
         Glance.view = WeakReference(view)
         Glance.composed = true
+        // T384: the satellites' figures while the view is open: the status callback alone (no location request of its own).
+        Gnss.hold(Gnss.GLANCE_HOLDER, true, statusOnly = true)
         onDispose {
+            Gnss.hold(Gnss.GLANCE_HOLDER, false)
             view.keepScreenOn = was
             Glance.composed = false
             Glance.laidOut = false
         }
     }
     BackHandler { Glance.close("back") }
-    var lines by remember { mutableStateOf(GlanceText.lines(LiveReadout.snapshot?.items ?: LiveReadout.placeholder())) }
+    var lines by remember { mutableStateOf(currentLines(LiveReadout.snapshot?.items ?: LiveReadout.placeholder(), null).first) }
     var source by remember { mutableStateOf<String?>(null) }
     var notes by remember { mutableStateOf(currentNotes()) } // T363
     var night by remember { mutableStateOf(ScaleBarLayout.night) } // the map's night style, as the scale bar last drew it
@@ -209,7 +219,10 @@ fun GlanceView() {
             val runs = if (navigating) NavUiState.ui?.turnBack != null else NavUiState.wayBack != null
             val d = if (!runs) null else withContext(Dispatchers.Default) { deadlineNow(navigating) }
             source = d?.let { if (navigating) "navigation" else "recording" }
-            lines = GlanceText.lines(items, d)
+            val (now, gps, position) = currentLines(items, d)
+            lines = now
+            Glance.gps = gps
+            Glance.position = position
             notes = currentNotes()
             night = ScaleBarLayout.night
             Foreground.delay(REFRESH_MS)
@@ -259,15 +272,7 @@ private fun Figures(lines: List<GlanceLine>, ink: Color, muted: Color, night: Bo
         val shape = lines.map { it.copy(caption = "", value = "", unit = "", trend = null, plusMinus = null, other = null, dimmed = false, colour = "", reason = it.reason?.let { "" }, reasonCode = null) }
         val fit = remember(shape, w, h, density.density, density.fontScale) {
             // A text's size grows in proportion to its type size on one line: each text is measured once, at REF_DP.
-            val ref = with(density) { REF_DP.dp.toPx() }
-            val cache = HashMap<Pair<String, Boolean>, Pair<Float, Float>>()
-            val m = GlanceFit.Measure { text, px, bold ->
-                val at = cache.getOrPut(text to bold) {
-                    val r = measurer.measure(text, style(density, ref, bold), softWrap = false, maxLines = 1, density = density)
-                    r.size.width.toFloat() to r.size.height.toFloat()
-                }
-                at.first * px / ref to at.second * px / ref
-            }
+            val m = measure(measurer, density)
             GlanceFit.fit(shape, w * WIDTH_SAFETY, h * HEIGHT_SAFETY, with(density) { MIN_DP.dp.toPx() }, with(density) { MAX_DP.dp.toPx() }, m)
         }
         SideEffect {
@@ -276,7 +281,7 @@ private fun Figures(lines: List<GlanceLine>, ink: Color, muted: Color, night: Bo
             Glance.fontScale = density.fontScale
         }
         val gap = with(density) { fit.gapPx.toDp() }
-        val rows = lines.chunked(fit.columns)
+        val rows = lines.filter { !it.wide }.chunked(fit.columns)
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap, Alignment.CenterVertically)) {
             for (row in rows) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
@@ -284,7 +289,25 @@ private fun Figures(lines: List<GlanceLine>, ink: Color, muted: Color, night: Bo
                     if (row.size < fit.columns) Box(Modifier.weight(1f))
                 }
             }
+            // T384: the position, under the figures across the whole width, at its share of their size (held to the width).
+            for (l in lines.filter { it.wide }) {
+                val valuePx = GlanceFit.wideValuePx(l, fit.valuePx, w * WIDTH_SAFETY, measure(measurer, density), with(density) { MIN_DP.dp.toPx() })
+                Line(l, fit, ink, muted, night, Modifier.fillMaxWidth(), reasonSize(l, fit, w * WIDTH_SAFETY, measurer, density), valuePx)
+            }
         }
+    }
+}
+
+/** A text's size at a type size, measured once at [REF_DP] (a text's size grows in proportion to its type size on one line). */
+private fun measure(measurer: androidx.compose.ui.text.TextMeasurer, density: androidx.compose.ui.unit.Density): GlanceFit.Measure {
+    val ref = with(density) { REF_DP.dp.toPx() }
+    val cache = HashMap<Pair<String, Boolean>, Pair<Float, Float>>()
+    return GlanceFit.Measure { text, px, bold ->
+        val at = cache.getOrPut(text to bold) {
+            val r = measurer.measure(text, style(density, ref, bold), softWrap = false, maxLines = 1, density = density)
+            r.size.width.toFloat() to r.size.height.toFloat()
+        }
+        at.first * px / ref to at.second * px / ref
     }
 }
 
@@ -304,23 +327,48 @@ private fun reasonSize(l: GlanceLine, fit: GlanceFit.Fit, colW: Float, measurer:
 @Composable
 private fun Notes(n: GlanceText.Notes, ink: Color, muted: Color) {
     // The area is always reserved at its full height (left-out line, heading, the most recent lines), blank when empty, so nothing above it moves.
-    val blank = " "
+    // T384: fewer recent rows on its side (recentRows); a blank row is no text node a screen reader or a check reads.
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        BasicText(n.leftOut ?: blank, style = TextStyle(color = muted, fontSize = 14.sp))
-        BasicText(if (n.recent.isNotEmpty()) io.github.jasondorjeshort.dystopo.app.help.ReasonText.RECENT_HEADING else blank, style = TextStyle(color = ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
-        for (i in 0 until GlanceText.MAX_RECENT) BasicText(n.recent.getOrNull(i) ?: blank, style = TextStyle(color = ink, fontSize = 14.sp))
+        NoteRow(n.leftOut, TextStyle(color = muted, fontSize = 14.sp))
+        NoteRow(if (n.recent.isNotEmpty()) io.github.jasondorjeshort.dystopo.app.help.ReasonText.RECENT_HEADING else null, TextStyle(color = ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+        for (i in 0 until recentRows()) NoteRow(n.recent.getOrNull(i), TextStyle(color = ink, fontSize = 14.sp))
     }
+}
+
+/** T384: a reserved row of the notes: [text], or a blank of one line's height that carries no semantics (T389's blank rows read as text nodes). */
+@Composable
+private fun NoteRow(text: String?, style: TextStyle) {
+    if (text != null) BasicText(text, style = style) else BasicText(" ", Modifier.clearAndSetSemantics { }, style = style)
+}
+
+/** T384: the recent rows the notes reserve: [GlanceText.MAX_RECENT], or [GlanceText.MAX_RECENT_SIDE] on its side (the notes give way first there). */
+private fun recentRows(): Int =
+    if (io.github.jasondorjeshort.dystopo.app.DystopoApp.instance.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) GlanceText.MAX_RECENT_SIDE else GlanceText.MAX_RECENT
+
+/**
+ * T384: the lines with the GPS's state and the position line ([GlanceText.lines]), and the two as read (main thread): the
+ * search from [Gnss] (the readout's gap; an injected fix stands in for a GPS one), the satellites from the status the
+ * view holds, the position from the readout's last fix, in decimal degrees (T388 adds the setting).
+ */
+private fun currentLines(items: List<StripItem>, deadline: GlanceLine?): Triple<List<GlanceLine>, GlanceText.Gps, GlanceText.Position?> {
+    val now = android.os.SystemClock.elapsedRealtime()
+    val gap = (io.github.jasondorjeshort.dystopo.readout.ReadoutTuning.GAP_S * 1000).toLong()
+    val other = LiveReadout.lastInjectedGpsAt
+    val s = io.github.jasondorjeshort.dystopo.gnss.GnssHealth.summarize(Gnss.satellites)
+    val gps = GlanceText.Gps(Gnss.searching(gap, other, now), Gnss.searchSince(other)?.let { now - it }, s.inView, s.used, s.best4.firstOrNull())
+    val position = LiveReadout.position(now)
+    return Triple(GlanceText.lines(items, deadline, gps, position, positionLine = true, units = io.github.jasondorjeshort.dystopo.app.AppSettings.units), gps, position)
 }
 
 /** T363: the notes now: the readout's record, the known height's end, the bar's room (main thread). */
 private fun currentNotes(): GlanceText.Notes {
     val hidden = !StripLayout.shown && StripLayout.hiddenBecause in setOf(StripLayout.NO_ROOM_BELOW_WARNING_CARD, StripLayout.NO_ROOM_BESIDE_CHIPS)
     val dropped = if (StripLayout.shown) StripLayout.droppedItems else emptyList()
-    return GlanceText.notes(LiveReadout.snapshot?.readout, LiveReadout.pinEnded, dropped, hidden, io.github.jasondorjeshort.dystopo.app.AppSettings.units)
+    return GlanceText.notes(LiveReadout.snapshot?.readout, LiveReadout.pinEnded, dropped, hidden, io.github.jasondorjeshort.dystopo.app.AppSettings.units, recentRows())
 }
 
 @Composable
-private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, night: Boolean, modifier: Modifier, reasonPx: Float = 0f) {
+private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, night: Boolean, modifier: Modifier, reasonPx: Float = 0f, valuePx: Float = fit.valuePx) {
     val accent = when (l.colour) {
         "red" -> if (night) NightRed else DayRed
         "amber" -> if (night) NightAmber else DayAmber
@@ -340,18 +388,19 @@ private fun Line(l: GlanceLine, fit: GlanceFit.Fit, ink: Color, muted: Color, ni
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        BasicText(l.caption, dim, style = style(density, fit.captionPx, false, captionColor), softWrap = false, maxLines = 1, onTextLayout = overflow("caption"))
+        if (!l.wide) BasicText(l.caption, dim, style = style(density, fit.captionPx, false, captionColor), softWrap = false, maxLines = 1, onTextLayout = overflow("caption")) // T384: the position has none drawn
         Row(dim) {
-            BasicText(l.value, Modifier.alignBy(FirstBaseline), style = style(density, fit.valuePx, true, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("value"))
-            if (l.unit.isNotEmpty()) BasicText(" ${l.unit}", Modifier.alignBy(FirstBaseline), style = style(density, fit.unitPx, false, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("unit"))
-            l.trend?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = style(density, fit.valuePx, true, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("trend")) }
-            l.plusMinus?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = style(density, fit.unitPx, false, muted), softWrap = false, maxLines = 1, onTextLayout = overflow("plusMinus")) }
+            BasicText(l.value, Modifier.alignBy(FirstBaseline), style = style(density, valuePx, true, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("value"))
+            if (l.unit.isNotEmpty()) BasicText(" ${l.unit}", Modifier.alignBy(FirstBaseline), style = style(density, valuePx * GlanceFit.UNIT, false, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("unit"))
+            l.trend?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = style(density, valuePx, true, valueColor), softWrap = false, maxLines = 1, onTextLayout = overflow("trend")) }
+            l.plusMinus?.let { BasicText(" $it", Modifier.alignBy(FirstBaseline), style = style(density, valuePx * GlanceFit.UNIT, false, muted), softWrap = false, maxLines = 1, onTextLayout = overflow("plusMinus")) }
         }
         l.other?.let { BasicText(it, dim, style = style(density, fit.otherPx, false, muted), softWrap = false, maxLines = 1, onTextLayout = overflow("other")) }
         // T363: why the value is not a plain figure and what ends it, at full strength under the dimmed figure.
         // Its row is always there (a blank one when the line has no reason) so the figures never move as a state comes and goes.
         if (l.reason != null) SideEffect { Glance.reasonPx[l.kind] = reasonPx } else SideEffect { Glance.reasonPx.remove(l.kind) }
-        BasicText(l.reason ?: " ", style = style(density, reasonPx, false, valueColor), maxLines = 2, onTextLayout = overflow("reason"))
+        // T384: a blank row is no text node a screen reader or a check reads (T389 baselined them as textOutside).
+        BasicText(l.reason ?: " ", if (l.reason == null) Modifier.clearAndSetSemantics { } else Modifier, style = style(density, reasonPx, false, valueColor), maxLines = 2, onTextLayout = overflow("reason"))
     }
 }
 
