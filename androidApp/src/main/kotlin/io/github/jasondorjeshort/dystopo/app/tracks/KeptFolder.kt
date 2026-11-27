@@ -533,6 +533,7 @@ object KeptFolder {
         val s = state
         val tracking = Tracking.readyOrNull
         if (s.tree == null || tracking == null) { waiting = 0; waitingFor = null; publish(); return }
+        if (!gateOpen()) { waitingFor = "the screen"; publish(); return } // ADR 0071: not even the store is read unseen
         val src = Source(tracking)
         val steps = plan(s, src)
         waiting = steps.size
