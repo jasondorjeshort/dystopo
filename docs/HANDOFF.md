@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-27, at the commit that carries this file (wave 49: every task merged but T378, which is in a fix round), by the main session in the second clone
+Updated: 2026-11-27, at the commit that carries this file (wave 49: every task merged; the close is under way), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged: fourteen of the fifteen tasks, and T389:** every task but T378; the last merged is T380 (81d007f8, with ADR 0072 for its folder layout); each has its Status line on the board and its log entry.
-- **In flight (2026-11-27 17:15 UTC):** T378 (`task/T378`, a258d879): its verifier's MERGE WITH NOTES is in (`<scratchpad>/w49-plan/verify-T378.txt`), and its Opus implementer is in a fix round the coordinator asked for: the new `peaks-tiles` step failed in the sweep's default mode (no terrain with the pack off; the fixture must hold elevation and need no network), plus a merge of `origin/main` (it conflicts in `tools/android-ui.py` and `docs/reference/android-debug-routes.md`); then its verifier, resumed by its id, reads the delta and runs `features-sky` whole in the default mode. The PC lost power at about 12:25 UTC and was restarted; nothing merged or pushed was lost.
+- **Wave 49: every task is merged** (fifteen, T375 to T388 and T390, plus T389), the last T378 (398de1a4); each has its Status line on the board and its log entry. The wave is still on the board: its Close has begun (the README's status paragraph is in; ADR 0072 records T380's folder layout).
+- **In flight (2026-11-27 21:28 UTC):** a Haiku cleanup chore (the branches, worktrees and AVDs of T378, T380 and T388; `tools-main` to the tip). Next the closing sweep, alone on the PC, in a new worktree `dystopo-wt/sweep-w49` under a hold on `main`, with `-Prev` `dystopo-wt/sweep-w48/out/sweep-20261126-w48` and `-First` kept-folder, coordinate-format, glance-searching, glance-position, glance-clock, area-detail, activity-covered, longpress, peaks-tiles, search-tiles, first-run (checked with `--check-first`).
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
 - **On the PC:** restarted after the power cut, so the live viewer on 8765 and every emulator are down; stale locks and AVDs of the two cut-off emulators are their agents' to clear. The main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. The reports and verdicts for the merge bodies are in the first session's scratchpad folder, `w49-plan/` (it survived).
 
 ## Next
 
-1. On T378's verdict: MERGE, the merge sequence (the merge run unpiped, its own result read; the body from `report-T378.txt` and `verify-T378.txt` in the scratchpad's `w49-plan/`); FIX, back to its implementer by its id.
-2. After that merge: a cleanup chore (the branches and worktrees of T378, T380 and T388, the held folder `dystopo-wt/T378-verify`, `tools-main` to the tip); then the wave's Close (the `wave` skill): the README's status paragraph, the closing sweep alone on the PC with `-Prev` from `dystopo-wt/sweep-w48`, the release, the costs, the record, the brainstorm offer, the base's update. A follow-up for the next wave: the kept folder's write through a temporary document (ADR 0072's first prediction).
+1. The closing sweep (the `sweep` skill): set the hold, launch a Sonnet agent, read the summary and the sheets. Watch two things there: in the default mode the app read "offline" with the sweep's live server as its server in several of T378's runs (not explained; wave 48's sweep was green in that mode), and the `startup` part judges the budgets no task of this wave judged.
+2. Green: the release (the `release` skill, v0.1.45-alpha; the README's link and version then), the hold lifted; then the costs (`python -I tools/agent-cost.py <Tnn>`), the record (a Haiku chore moves the wave to `docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base. Follow-ups for the next wave: the kept folder's write through a temporary document (ADR 0072's first prediction); the two findings of 2026-11-27.
 3. The device tour was not shown green on T384's and T389's heads (load, by the verifiers' reading): the closing sweep reads it; if it is red there, look at T379's later start of the cache walk first.
 4. Timed runs go alone: hold launches for T379's and T387's start-up runs when their implementers report them as not judged.
 5. For the Close's record and offer: the a11y tool's append-at-the-end convention conflicts every time two branches add a screen (an idea: a file per task's screens); three verifiers handed back without a verdict while a long command ran and were resumed; the emulator guard stopped two emulators at 8 GB during `features` and start-up runs; the start-up budgets were judged by no task (the closing sweep's `startup` part reads them, alone).
@@ -30,6 +30,7 @@ Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), th
 
 ## Open findings
 
+- `docs/findings/2026-11-27-an-areas-elevation-source-is-sometimes-missing-from-a-terrain-read.md`: open (from T378's fix rounds; not yet tried with a real download).
 - `docs/findings/2026-11-27-a-download-restarted-in-the-background-waits-for-the-screen.md`: open (found by T387's verifier; a task for the next wave, and the row's "Continues by itself").
 - `docs/findings/2026-11-25-tile-cache-index-walk-loops-in-the-background.md`: open for its Next 2 alone, the owner's day in the background on a phone (T379, T390 and T387 built the rest); the layout finding and the GPS clock finding are resolved (T381, T385).
 - `docs/findings/2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md`, `2026-11-24-the-map-render-thread-never-rests-while-flights-are-drawn.md`: open.

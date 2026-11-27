@@ -50,6 +50,7 @@ decisions in [design/decisions/](design/decisions/README.md); one line per merge
 | PMTiles v3 reader/writer | `shared/.../pmtiles/` | pure Kotlin, leaf directories, extract and dedup |
 | MVT encoder/decoder | `shared/.../mvt/` | hand-written protobuf |
 | GPX 1.1 with `dystopo:id` | `shared/.../gpx/` | hand-written XML, extensions preserved |
+| The kept folder: one GPX file per track and route in a folder the user picks | `androidApp/.../tracks/KeptFolder.kt` | one way, a private ledger, a file removed only by a recorded delete (ADR 0072; layout in `docs/reference/android-tracks-and-sync.md`) |
 | Search index `*-search.idx` | `shared/.../search/` | versioned, checksummed, pack fingerprint |
 | Routing graph `*-graph.idx` | `shared/.../routing/` | `DYSG` v6: tile directory, then one body per z11 graph tile (nodes, edges, trail names), both pack fingerprints; tiles load on demand. Built on the phone, or shipped by a server-built pack as derived data: a `derived` entry on the catalog outside `files` (ADR 0049, T189), fetched with the archives and verified by fingerprint, never part of the pack's hash |
 | Sync bundle `DSYNC` | `shared/.../sync/` | v1 whole, v2 paged; gzip; one exception type on bad input |
