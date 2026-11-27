@@ -205,6 +205,10 @@ for the activity's own steps, `LATER`) and the values it publishes and reads. In
 (`MainActivity`), `composition` and `style` (observed from their marks). The trace's own lifecycle marks (`DystopoApp.onCreate`,
 `MainActivity.onCreate`, `onStart`, `onResume`, `first frame`, `waiting for <stage>` ...) are `Launch.boundaries`, no
 stage's. Step 1 moves nothing: every stage runs where and in the order it ran before.
+T387 (ADR 0071) adds `budget`, `sampler` and `pending` after `updater`, and a stage's `waits`: `world`, `updater`, `budget`
+and `pending` wait on their own threads for the first activity of the process, `sampler` for allowed work (on screen or
+a notified job), so a start without a screen does not run them (`docs/PLANNING.md` › A start without a screen;
+`LaunchGate` in `Launch.kt` is the rule, with its tests in `LaunchTest`). `updater` is a worker stage since.
 
 - **The validator** (`LaunchCheck`, pure; `LaunchTest`): unique names; every need declared earlier in the list; every
   mark in one stage and none a boundary; gates monotone along needs; no `DISK` or `BINDER` stage on `MAIN` without an
