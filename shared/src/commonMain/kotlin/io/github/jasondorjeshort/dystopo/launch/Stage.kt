@@ -41,6 +41,7 @@ class Value<T>(val name: String, val gate: Gate, val onTimeout: OnTimeout = OnTi
  * does, its [gate], the values it [publishes] and the values it [reads] (each published by a stage it needs).
  * [allowed] is the reason a MAIN stage may do DISK or BINDER work before the first frame. [bound] says who runs it:
  * the runner ([Bound.RUNNER]), or a thread the stage's owner starts and the runner only observes ([Bound.OBSERVED]).
+ * T387 (ADR 0071): [waits] is what the stage waits for besides its needs ([Waits]; the rule is [LaunchGate]).
  */
 data class Stage(
     val name: String,
@@ -53,6 +54,7 @@ data class Stage(
     val reads: List<Value<*>> = emptyList(),
     val allowed: String? = null,
     val bound: Bound = Bound.RUNNER,
+    val waits: Waits = Waits.NOTHING,
 )
 
 enum class Bound { RUNNER, OBSERVED }

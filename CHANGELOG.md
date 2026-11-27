@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-27
 
+- T387: No launch stage works at a start without a screen
 - T383: A long press names every mark the map draws
 - T382: A first launch with no map takes a fix that comes after four seconds
 - T386: Change a saved area's detail and keep its shape
