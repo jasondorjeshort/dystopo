@@ -151,6 +151,9 @@ private val Link = Color(0xFF2C7BB6)
 private val Violet = Color(0xFF7B3294)
 private val Bad = Color(0xFFB0302A)
 
+/** T380: the kept folder row's links, darker than [Link] so they read at 4.5 to 1 on the row's white. */
+private val KeptLink = Color(0xFF1D5E8C)
+
 /** A row's kind ("track" or "route"), and the key its menu, rename and delete state go by ("track:<id>"). */
 internal fun rowKey(kind: String, id: String): String = "$kind:$id"
 
@@ -457,26 +460,26 @@ private fun KeptFolderRow() {
                 BasicText(KEPT_SETUP, Modifier.padding(top = 6.dp, end = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp))
                 BasicText(keptCount(ask.tracks, ask.routes, ask.folderName, ask.again, ask.changes), Modifier.padding(top = 4.dp, end = 6.dp), style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
                 Row(Modifier.fillMaxWidth().padding(end = 6.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.End)) {
-                    Action(KEEP_THIS) { KeptFolder.confirm(true) }
-                    Action(CANCEL) { KeptFolder.confirm(false) }
+                    Action(KEEP_THIS, KeptLink) { KeptFolder.confirm(true) }
+                    Action(CANCEL, KeptLink) { KeptFolder.confirm(false) }
                 }
             }
             k.mode == "lost" -> {
                 BasicText(keptLost(k.folderName ?: "", k.waiting), Modifier.padding(top = 6.dp, end = 6.dp), style = TextStyle(color = Bad, fontSize = 13.sp, fontWeight = FontWeight.Medium))
                 FlowRow(Modifier.fillMaxWidth().padding(end = 6.dp), horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.End)) {
-                    Action(PICK_AGAIN) { TracksUi.pickKept?.invoke() }
-                    Action(STOP_KEEPING) { KeptFolder.stop() }
+                    Action(PICK_AGAIN, KeptLink) { TracksUi.pickKept?.invoke() }
+                    Action(STOP_KEEPING, KeptLink) { KeptFolder.stop() }
                     HelpIcon("tracks.keptFolder")
                 }
             }
             k.mode == "keeping" -> FlowRow(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center) {
                 BasicText(keptLine(k.folderName ?: "", k.files, k.waiting), Modifier.align(Alignment.CenterVertically).padding(end = 12.dp), style = TextStyle(color = Ink, fontSize = 13.sp))
-                Action(STOP_KEEPING) { KeptFolder.stop() }
+                Action(STOP_KEEPING, KeptLink) { KeptFolder.stop() }
                 HelpIcon("tracks.keptFolder")
             }
             else -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Action(KEEP_FOLDER) { TracksUi.pickKept?.invoke() }
+                    Action(KEEP_FOLDER, KeptLink) { TracksUi.pickKept?.invoke() }
                     BasicText(KEPT_OFF_LINE, Modifier.padding(bottom = 4.dp), style = TextStyle(color = Muted, fontSize = 12.sp))
                 }
                 HelpIcon("tracks.keptFolder")
