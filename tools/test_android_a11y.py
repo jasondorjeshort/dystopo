@@ -1151,4 +1151,55 @@ finally:
     a11y.time.sleep = _sleep
 # end T384
 
+
+# T381: the layout's hold before the frame (hold_layout), and the two screens in SCREENS.
+import unittest
+
+
+class FlipSrv:
+    """GET /layout and GET /semantics as the app answered them: the track bar at one of two places, the next one each read
+    while `flips` is on (the finding's scene before T381), else the same."""
+
+    def __init__(self, flips):
+        self.flips, self.reads = flips, 0
+
+    def ok(self, method, path, **kw):
+        if path == "/layout":
+            self.reads += 1
+            x = 21 if (not self.flips or self.reads % 2) else 279
+            return {"elements": [{"name": "waypointAndTracks", "rectPx": [x, 912, 1059, 1410]}, {"name": "scaleBar", "rectPx": [x, 0, 1, 1]}]}
+        if path == "/semantics":
+            return {"windows": [{"merged": [{"text": "Hide", "clickable": True, "boundsPx": [169, 925, 382, 1025]}]}]}
+        return {}
+
+
+class T381HoldLayout(unittest.TestCase):
+    def setUp(self):
+        self.saved = (a11y.HOLD_S, a11y.HOLD_STEP_S, a11y.HOLD_DEADLINE_S)
+        a11y.HOLD_S, a11y.HOLD_STEP_S, a11y.HOLD_DEADLINE_S = 0.05, 0.005, 0.3
+
+    def tearDown(self):
+        a11y.HOLD_S, a11y.HOLD_STEP_S, a11y.HOLD_DEADLINE_S = self.saved
+
+    def test_a_layout_that_holds_passes(self):
+        a11y.hold_layout(type("C", (), {"srv": FlipSrv(False)})(), "t")
+
+    def test_a_layout_that_flips_fails_the_screen_with_what_moved(self):
+        with self.assertRaises(RuntimeError) as e:
+            a11y.hold_layout(type("C", (), {"srv": FlipSrv(True)})(), "t")
+        self.assertIn("did not hold", str(e.exception))
+        self.assertIn("waypointAndTracks", str(e.exception))
+        self.assertNotIn("scaleBar", str(e.exception), "only the elements that flip with the bar are read")
+
+    def test_the_places_read_hide_from_the_semantics(self):
+        self.assertEqual([169, 925, 382, 1025], a11y.layout_places(FlipSrv(False))["Hide"])
+
+    def test_both_screens_are_map_screens_with_a_teardown(self):
+        by = {s[0]: s for s in a11y.SCREENS}
+        for name in ("recording-stale-unfolded", "activity-covered"):
+            self.assertIn(name, by)
+            self.assertEqual("map", by[name][3])
+            self.assertIsNotNone(by[name][2])
+# end T381
+
 print("test_android_a11y: ok")

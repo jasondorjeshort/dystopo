@@ -96,9 +96,24 @@ data class OverlayInput(
      */
     val firstRun: OverlayCard? = null,
     val trackPanel: Float = 0f,
+    /**
+     * T381: what opens under the track bar is the activity picker: a box of its own that the activity chip, the compass
+     * and the Routes chip under the bar yield to (hidden, in that order, while it would be left short), rather than a panel
+     * that scrolls in what they leave.
+     */
+    val trackPanelBox: Boolean = false,
     val panels: OverlayRect? = null,
     val cardsDrawn: Boolean = false,
 )
+
+/**
+ * T381: the track bar's chip row as its parts, so the rule flows it at the width it chooses ([OverlayLayout.placeWithRow])
+ * instead of reading it as last drawn: [items] the chips in drawn order, each at its own size (dp), [gap] between them and
+ * between lines, [below] the widest of what hangs under the row (the activity picker, the recording panel, the terrain
+ * estimate; 0 with none), [full] the most width the row may take (the bar's column within the window), and [quantum] the
+ * step a chosen width is floored to (a pixel in dp, so the app's row flows at the same width the rule did).
+ */
+data class OverlayBarRow(val items: List<OverlaySize>, val gap: Float, val below: Float, val full: Float, val quantum: Float = 0f)
 
 /** T224: one element's place: [rect] is null when [state] is hidden, and [reason] says why it is not whole. */
 data class OverlayElement(val id: String, val rect: OverlayRect?, val state: OverlayState, val reason: String? = null)
@@ -123,6 +138,8 @@ data class OverlayLatch(val windowWidth: Float, val windowHeight: Float, val fon
 data class OverlayPlacement(
     val elements: List<OverlayElement>, val buttonsDrawn: Int, val entriesDrawn: Int, val sideColumn: Boolean, val cardColumns: Int,
     val latch: OverlayLatch? = null, val trackRoom: Float = 0f, val stripRoom: Float = 0f,
+    /** T381: the width the track bar's chip row was flowed within ([OverlayLayout.placeWithRow]); 0 when not given a row. */
+    val barRowWidth: Float = 0f,
 ) {
     operator fun get(id: String): OverlayElement? = elements.firstOrNull { it.id == id }
 
@@ -337,6 +354,73 @@ object OverlayLayout {
         val p = if (i.cardsDrawn) (if (i.firstRun != null && i.firstRun.drawn == null) arrangeFirstRun(i, rungs, held) else arrangeDrawn(i, rungs, held))
         else rungs.firstNotNullOfOrNull { arrange(i, it, squeeze = false, held) } ?: arrange(i, rungs.last(), squeeze = true, held)!!
         return p.copy(latch = held ?: OverlayLatch(i.windowWidth, i.windowHeight, i.fontScale, cardIds(i), p.sideColumn, p.cardColumns))
+    }
+
+    /** T381: the least width the bar's row is narrowed to beside the online column (T91's floor). */
+    const val ROW_CAP_MIN = 160f
+
+    /**
+     * T381 (pure): the lines [widths] flow into within [maxWidth] with [gap] between items: each line takes items while they
+     * fit, the first always (a flow row's greedy break). The track bar's row lays its chips out by it (`TrackControls.kt`)
+     * and the rule sizes the row by it ([barAt]), so the two agree by construction.
+     */
+    fun flowLines(widths: List<Float>, maxWidth: Float, gap: Float): List<IntRange> {
+        val out = ArrayList<IntRange>()
+        var start = 0
+        var lineW = 0f
+        for ((k, w) in widths.withIndex()) {
+            if (k > start && lineW + gap + w > maxWidth + 0.001f) {
+                out += start until k
+                start = k
+                lineW = w
+            } else lineW += (if (k > start) gap else 0f) + w
+        }
+        if (widths.isNotEmpty()) out += start until widths.size
+        return out
+    }
+
+    /** T381: the row of [items] flowed within [maxWidth] ([flowLines]): its widest line and its lines' heights with the gaps. */
+    fun flowSize(items: List<OverlaySize>, maxWidth: Float, gap: Float): OverlaySize {
+        val lines = flowLines(items.map { it.width }, maxWidth, gap)
+        var w = 0f
+        var h = 0f
+        for ((k, l) in lines.withIndex()) {
+            w = max(w, l.sumOf { items[it].width.toDouble() }.toFloat() + gap * (l.count() - 1))
+            h += l.maxOf { items[it].height } + if (k > 0) gap else 0f
+        }
+        return OverlaySize(w, h)
+    }
+
+    /** T381: the track bar as the rule reads it with its row flowed within [width]: the row's height, the column's width. */
+    fun barAt(row: OverlayBarRow, width: Float): OverlaySize = flowSize(row.items, width, row.gap).let { OverlaySize(max(it.width, row.below), it.height) }
+
+    /**
+     * T381: the width the bar's row narrows to so it stands beside the online column (T91: the chips wrap before it): the
+     * window less the online column's own width from its left edge, a margin each side and the gap, at least [ROW_CAP_MIN],
+     * at most [OverlayBarRow.full], floored to [OverlayBarRow.quantum]. From the column's own measured width, never from where
+     * it was last drawn: before T381 the row read that edge, so a column shown narrowed the row, the taller row left the
+     * column no room, the hidden column widened the row, and the shorter row gave the column its room back (font scale 2.0
+     * with the bar unfolded and the turn-back card up: the layout went round each frame).
+     */
+    fun rowCap(i: OverlayInput, online: OverlaySize, row: OverlayBarRow): Float {
+        val cap = min(row.full, max(ROW_CAP_MIN, i.windowWidth - (i.insetLeft + EDGE + online.width) - 2 * EDGE))
+        return if (row.quantum > 0f) kotlin.math.floor(cap / row.quantum + 0.001f) * row.quantum else cap
+    }
+
+    /**
+     * T381: [place] with the track bar's row flowed by the rule ([OverlayBarRow]): narrowed beside the online column
+     * ([rowCap]) while the rule then shows that column, else at its full width (the column hidden, or the chips under it).
+     * Every input is a measured size that does not depend on the arrangement chosen, so the answer is the same at every
+     * pass: the exchange the row's width had with the online column's drawn edge cannot go round. Null [row]: [place].
+     */
+    fun placeWithRow(i: OverlayInput, row: OverlayBarRow?, latch: OverlayLatch? = null): OverlayPlacement {
+        if (row == null || row.items.isEmpty() || i.trackBar == null) return place(i, latch)
+        fun at(w: Float) = place(i.copy(trackBar = barAt(row, w)), latch).copy(barRowWidth = w)
+        i.online?.let { o ->
+            val cap = rowCap(i, o, row)
+            if (cap < row.full) at(cap).let { if (it[OverlayIds.ONLINE]?.rect != null) return it }
+        }
+        return at(row.full)
     }
 
     private class CardIn(val id: String, val card: OverlayCard, val top: Boolean) {
@@ -716,6 +800,15 @@ object OverlayLayout {
             if (activity >= 0 && i.trackPanel > left) {
                 chips.removeAt(activity)
                 hidden(OverlayIds.ACTIVITY, REASON_NO_ROOM)
+                left = (by - (chipTop + chipsH() + keep)).coerceAtLeast(0f)
+            }
+            // T381: the activity picker is a box: the compass and then the Routes chip yield to it as well.
+            if (i.trackPanelBox) for (id in listOf(OverlayIds.COMPASS, OverlayIds.ROUTES)) {
+                if (i.trackPanel <= left) break
+                val k = chips.indexOfFirst { it.first == id }
+                if (k < 0) continue
+                chips.removeAt(k)
+                hidden(id, REASON_NO_ROOM)
                 left = (by - (chipTop + chipsH() + keep)).coerceAtLeast(0f)
             }
             chips[0] = OverlayIds.TRACK_BAR to OverlaySize(row.width, row.height + min(i.trackPanel, left))
