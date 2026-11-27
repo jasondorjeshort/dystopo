@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-27
 
+- T377: Search inside a downloaded area, from its tiles
 - T384: The glance view says GPS is searching, and shows the position
 - T379: The tile cache's index walk: none without a screen
 
