@@ -89,6 +89,12 @@ import java.util.concurrent.atomic.AtomicLong
  * the phone keeps its tiles, says the sentence and is not resumed by itself ([AutoResume.STOP_CAP]). The bytes are counted as
  * the vector tiles are fetched, and a run that reaches the second stops there ([Job.capStopped], [CAP_STOPPED]: partial, its
  * tiles kept, not resumed by itself). With a server set neither applies.
+ *
+ * T386 (a saved area's detail, [changeDetail]): a lower re-keys the record and frees the dropped zooms ([Areas.applyDetail]); a
+ * raise re-keys it with its [Areas.Record.Raise] and downloads the added tiles alone: [start] of such a record takes its raise
+ * manifest ([Areas.raiseManifest]) as the job's ([Job.raise]), so the cap counts only those ([raiseCapRefusalLine]), its own
+ * bytes are not counted against the budget twice, and the run's end ([raiseEnded]) counts the area's bytes again. A raise left
+ * for later is not resumed by itself ([ResumeCheck]).
  */
 object AreaDownload {
     private val app: DystopoApp get() = DystopoApp.instance
