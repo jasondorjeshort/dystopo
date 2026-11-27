@@ -67,6 +67,16 @@ import java.io.File
  *   the jobs: `recording`, `area download <id>`), and each cache's `index.gate`: `open`, `why`, `held` (its index thread is
  *   waiting on the gate now: nothing walked, read or moved meanwhile), `heldSinceMs`, `holds` (times it waited) and `heldMs`
  *   (the waits that ended). A held walk is not a stall for the whole-index operations' 60 s clock.
+ * - T390: each cache's `snapshot` (the contour cache keeps one too now) adds `generation` and `journal` (`file`, `present`,
+ *   `fileBytes`, `records` since the last write, `base` the generation it extends, `foldAt`, `appended` this process,
+ *   `appendUsPerRecord`, `errors`, `error`, and `load`: `used`, `records` replayed, `journals` (2 after a write cut short),
+ *   `base`, `tailChecked`, `tailDropped`, `replayMs`, or `why` it was set aside); `snapshot.load` adds `generation`,
+ *   `partial` (a walk's checkpoint), `walkCursor`, `interruptedWrite` and `replayMs`, and `why` reads `the journal may lack
+ *   changes: ...` (a torn last record, records of an earlier boot) or `corrupt: format 1, this build reads 2` (an older
+ *   build's snapshot); `lastSave` adds `generation`, `journalRecordsFolded`, `walkCursor`, and `reason` `checkpoint` or
+ *   `journal`; `marker` is gone. Each cache's `index` adds `resume`: `resumable`, `resumedFrom` (the checkpoint's cursor
+ *   this launch resumed after), `entriesAtResume`, `walkedThisLaunch` (files the walk visited, none read from the
+ *   snapshot), `checkpoints` and `lastCheckpoint`.
  */
 object DebugRoutes {
     fun handle(app: DystopoApp, r: Request): Response? {
