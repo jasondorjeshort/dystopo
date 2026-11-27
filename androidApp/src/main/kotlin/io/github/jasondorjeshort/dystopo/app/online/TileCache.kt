@@ -54,9 +54,8 @@ import java.util.concurrent.atomic.AtomicLong
  * directory ([snapshotFile]; [TileIndexSnapshot] is the format) when it changed: on the owner's interval and at the app's
  * stop ([saveSnapshot], called by `OnlineService`), and after a walk. A launch reads it in one pass on the index's thread
  * instead of walking, after a sample of its directories and entries agreed with the disk ([TileIndexSnapshot.validate]);
- * it is discarded, and the directory walked, when it is corrupt or disagrees, when a write of it was interrupted (its
- * `.tmp` is left), and when the last run changed the index after its last write (the `.dirty` marker, made at the first
- * change after a write and deleted by the next). Over an index read from it, a key not in the index is still looked for
+ * it is discarded, and the directory walked, when it is corrupt or disagrees (T390: a write cut short leaves the one before
+ * it, which the journal extends; the `.dirty` marker that discarded it after any change is gone, see below). Over an index read from it, a key not in the index is still looked for
  * on disk ([get], [contains]), and an entry whose file is gone is dropped on [get]. The pinned flags it kept are asked
  * again once it is read ([recountPinned]: navigation's pins do not outlive the process). The walk itself lists each
  * directory and stats its files ([TileWalker]; on Android `File.list` plus `Os.lstat`).
@@ -86,8 +85,20 @@ import java.util.concurrent.atomic.AtomicLong
  * waits on it ([walkHeld]): at a start without a screen nothing is read, and at Home the walk files what it has and stops
  * until the app is back or a notified job begins. A held walk is not a stall: [awaitReady]'s clock counts only time the
  * walk could run ([waitStallMs] without a file while the gate is open is still a timeout). The actions of [whenReady] run
- * when the index is whole, as before; [whenReadyOrHeld] runs at the first hold too (the launch stage `cacheIndex`). The
- * walk's progress across a kill is T390's.
+ * when the index is whole, as before; [whenReadyOrHeld] runs at the first hold too (the launch stage `cacheIndex`).
+ *
+ * T390: **a kill costs neither a whole walk nor the changes since the snapshot.** (1) Every change to the index (a put, a
+ * remove, a file a [get] found) is appended to the journal beside the snapshot ([journalFile], [TileJournal]): one `write(2)`
+ * per record, never synced (a process kill loses nothing the kernel has; what a device stop could cut is told by the boot
+ * the journal was written in). A put's record goes before its file's rename and a remove's after its file's delete, so a
+ * kill leaves at worst an entry whose file is missing (dropped by [get], or by the next eviction, which takes the oldest
+ * first), never a file the index does not name. A load reads the snapshot and replays the journal over it, and looks for
+ * the last [TAIL_CHECK] puts' files. A torn last record, records of an earlier boot or a journal that does not follow the
+ * snapshot mean changes may be missing: the snapshot is set aside and the store walked once. Every write of the snapshot
+ * folds the journal (the online cache's interval and stop, and [FOLD_RECORDS] records). (2) The walk goes in
+ * [TileWalker.compareDirs]'s order and writes checkpoints (a snapshot of what it has filed, with the last directory it
+ * finished), so a kill mid-walk resumes after it, the puts and removes since in the journal. The journal is read and the
+ * walk resumed only on the index's thread, under the gate (ADR 0071).
  */
 class TileCache(
     val dir: File,
@@ -106,6 +117,8 @@ class TileCache(
     pinsPending: Boolean = false,
     /** T379 (ADR 0071): whether the index's thread may work now; on Android the screen or a notified job, on the JVM always. */
     private val gate: WalkGate = WalkGate.forPlatform(),
+    /** T390: the device's boot ([BootId]): a journal written in an earlier one may have lost its last records to a device stop. */
+    private val bootId: () -> String = BootId::current,
     /** Last, so the callers' trailing lambda is the clock (as before T242). */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -206,6 +219,7 @@ class TileCache(
      * [whenReadyOrHeld]'s actions. An interrupt ends the wait and is kept.
      */
     private fun pauseIfShut() {
+        if (killed) throw Killed()
         if (gate.open) return
         val first: List<Pair<String, () -> Unit>>? = synchronized(lock) { atHoldOrReady.also { atHoldOrReady = null } }
         holds.incrementAndGet()
@@ -214,7 +228,7 @@ class TileCache(
         val t0 = System.nanoTime()
         try {
             first?.forEach { (_, action) -> runCatching { action() } }
-            while (!gate.open) gate.awaitOpen()
+            while (!gate.open && !killed) gate.awaitOpen()
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         } finally {
@@ -222,6 +236,7 @@ class TileCache(
             walkHeld = false
             heldSince = null
         }
+        if (killed) throw Killed()
     }
 
     /**
@@ -250,10 +265,10 @@ class TileCache(
     /** T249: where the index is kept on disk (`<dir>.index` beside [dir], so it moves with it), or null when it is not. */
     val snapshotFile: File? = if (snapshot) File(dir.absoluteFile.parentFile, "${dir.name}.index") else null
     private val snapshotTmp: File? = snapshotFile?.let { File(it.parentFile, it.name + ".tmp") }
-    /** T249: made at the first change after a write of the snapshot, deleted by the next: present at launch, the last run's changes were not written. */
+    /** T249: an older build's marker (the last run changed the index after its last write); T390: deleted when seen, the journal does its work. */
     private val dirtyMarker: File? = snapshotFile?.let { File(it.parentFile, it.name + ".dirty") }
 
-    /** T249: this launch's index was read from the snapshot (no walk). */
+    /** T249: this launch's index was read from the snapshot (no walk; T390: or resumed from a walk's checkpoint). */
     @Volatile var fromSnapshot = false
         private set
 
@@ -272,19 +287,187 @@ class TileCache(
     // Under [lock]: changes to the index (entries, sizes, pins) since the process started, and as of the last write.
     private var changes = 0L
     private var savedChanges = 0L
-    private var markerOn = false
-    /** Under [lock]: the index's thread has looked for the last run's marker (until then a change makes none: it would hide it). */
-    private var markerChecked = false
-    /** T249: a touch changed an entry's minute since the last write (written then, but no reason to walk after a kill). */
+    /** T249: a touch changed an entry's minute since the last write (written then; T390: not journalled, a minute is not worth a record). */
     @Volatile private var touched = false
     private val saveLock = Any()
 
-    /** T249: under [lock]: the index changed (an entry, a size, a pin); the first change after a write makes the marker. */
+    /** T249: under [lock]: the index changed (an entry, a size, a pin). */
     private fun changed() {
         changes++
-        if (!markerOn && markerChecked && dirtyMarker != null) {
-            markerOn = true
-            runCatching { dirtyMarker!!.parentFile?.mkdirs(); dirtyMarker!!.createNewFile() }
+    }
+
+    // --- T390: the journal ---
+
+    /**
+     * T390: the changes since the snapshot ([TileJournal]): `<dir>.index.journal`, and while a snapshot is written the one
+     * it replaces (`.journal.old`, deleted once the snapshot is in place).
+     */
+    val journalFile: File? = snapshotFile?.let { File(it.parentFile, it.name + ".journal") }
+    private val journalOld: File? = snapshotFile?.let { File(it.parentFile, it.name + ".journal.old") }
+    private val journalLock = Any()
+    // Under [journalLock]: the open journal, whether its file was read this process, the snapshot it extends (0: none, so
+    // nothing is appended: a walk to come, or the next write of the snapshot, holds every change), what the read found.
+    private var journalOut: FileOutputStream? = null
+    private var journalOpened = false
+    private var journalBase = 0L
+    private var journalScan: TileJournal.Scan? = null
+    @Volatile private var journalRecords = 0
+    @Volatile private var journalBytes = 0L
+    /** T390: why the journal may lack changes that reached the disk (a torn record, an earlier boot); null when it cannot. */
+    @Volatile private var lossWhy: String? = null
+    private val journalAppends = AtomicLong()
+    private val journalAppendNs = AtomicLong()
+    private val journalErrors = AtomicLong()
+    @Volatile private var journalError: String? = null
+    @Volatile private var foldPending = false
+    /** T390: what this launch did with the journal (replayed, its figures; or why it was set aside). */
+    @Volatile var journalLoad: Map<String, Any?>? = null
+        private set
+
+    /** T390: the snapshot's number read or last written (0: none); the journal names it as the one it extends. */
+    @Volatile var generation = 0L
+        private set
+
+    /** T390: records after which the journal is folded into a new snapshot ([FOLD_RECORDS]; tests lower it). */
+    @Volatile internal var foldRecords = FOLD_RECORDS
+
+    /** T390: files walked before a checkpoint is written ([CHECKPOINT_MIN]; tests lower it). */
+    @Volatile internal var checkpointMin = CHECKPOINT_MIN
+
+    private val boot: String by lazy { runCatching(bootId).getOrDefault("unknown") }
+
+    /** T390 (tests): the process dies: the index's thread stops where it is, and nothing more is written (no record, no snapshot). */
+    @Volatile private var killed = false
+
+    private class Killed : RuntimeException("killed")
+
+    internal fun simulateKill() {
+        killed = true
+        synchronized(journalLock) {
+            runCatching { journalOut?.close() }
+            journalOut = null
+        }
+    }
+
+    /** T390 (tests): the index's thread, so a test can wait for it to end. */
+    @Volatile internal var indexThread: Thread? = null
+        private set
+
+    /**
+     * T390: under [journalLock]: reads the journal's file once (at the first append, or at the load, whichever comes first):
+     * its records for the load, a torn last record cut off (and remembered as a possible loss), the header of an earlier
+     * boot renewed when it holds no record (else remembered too); then opens it for appending.
+     */
+    private fun openJournalLocked() {
+        if (journalOpened) return
+        journalOpened = true
+        val f = journalFile ?: return
+        if (!f.isFile) return
+        val scan = try {
+            TileJournal.scan(f.readBytes())
+        } catch (t: Throwable) {
+            lossWhy = "the journal could not be read (${t.message})"
+            return
+        }
+        journalScan = scan
+        journalBase = scan.base
+        journalRecords = scan.records.count
+        if (scan.tornBytes > 0) {
+            lossWhy = "a torn last record (${scan.tornBytes} bytes after record ${scan.records.count})"
+            runCatching { java.io.RandomAccessFile(f, "rw").use { it.setLength(scan.goodEnd.toLong()) } }
+        }
+        if (scan.boot != boot) {
+            if (scan.records.count > 0) {
+                if (lossWhy == null) lossWhy = "its records were written in an earlier boot of the device (a stop may have cut the last of them)"
+            } else {
+                runCatching { f.writeBytes(TileJournal.header(scan.base, boot)) }
+            }
+        }
+        journalBytes = f.length()
+        journalOut = runCatching { FileOutputStream(f, true) }.getOrNull()
+    }
+
+    /** T390: appends [n] encoded records ([bytes]) in one write; folds the journal at [foldRecords]. A failed write ends the journal ([journalFailed]). */
+    private fun appendJournal(bytes: ByteArray, n: Int) {
+        if (journalFile == null || killed || n == 0) return
+        synchronized(journalLock) {
+            openJournalLocked()
+            if (journalBase == 0L) return
+            val out = journalOut ?: return
+            val t0 = System.nanoTime()
+            try {
+                out.write(bytes)
+            } catch (t: Throwable) {
+                journalFailed(t)
+                return
+            }
+            journalAppendNs.addAndGet(System.nanoTime() - t0)
+            journalAppends.addAndGet(n.toLong())
+            journalRecords += n
+            journalBytes += bytes.size
+            if (journalRecords >= foldRecords && ready && !foldPending) scheduleFold()
+        }
+    }
+
+    /** T390: a put of [key] (written before its file's rename, so a file the index lacks never outlives a kill). */
+    private fun journalPut(key: String, bytes: Int, minute: Int) {
+        if (journalFile != null) appendJournal(TileJournal.put(key, bytes, minute), 1)
+    }
+
+    /**
+     * T390: removes, written after the files were deleted (a kill between leaves an entry with no file, which a [get] or the
+     * next eviction drops, never a file with no entry); a key the index holds again (a put meanwhile) is left out.
+     */
+    private fun journalRemoves(keys: Collection<String>) {
+        if (journalFile == null || keys.isEmpty() || killed) return
+        val gone = synchronized(lock) { keys.filter { index.find(it) == TileIndex.NONE } }
+        if (gone.isEmpty()) return
+        val parts = gone.map { TileJournal.remove(it) }
+        val all = ByteArray(parts.sumOf { it.size })
+        var o = 0
+        for (r in parts) {
+            System.arraycopy(r, 0, all, o, r.size)
+            o += r.size
+        }
+        appendJournal(all, parts.size)
+    }
+
+    /** T390: under [journalLock]: a write failed (no space): no more records, and the snapshot goes, so the next start walks. */
+    private fun journalFailed(t: Throwable) {
+        journalErrors.incrementAndGet()
+        journalError = "${t.javaClass.simpleName}: ${t.message}"
+        runCatching { journalOut?.close() }
+        journalOut = null
+        journalBase = 0
+        runCatching { snapshotFile?.delete() }
+    }
+
+    /** T390: under [journalLock]: the journal reached [foldRecords]: a new snapshot on a thread of its own, when the gate allows. */
+    private fun scheduleFold() {
+        foldPending = true
+        Thread({
+            try {
+                while (!gate.open) gate.awaitOpen() // ADR 0071: no write without a screen or a notified job
+                saveSnapshot("journal")
+            } catch (_: Throwable) {
+            } finally {
+                foldPending = false
+            }
+        }, "tile-index-fold-${dir.name}").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+    }
+
+    /** T390: the snapshot and both journals deleted (a walk builds the index); nothing is appended until the next write. */
+    private fun discardAll() {
+        runCatching { snapshotFile?.delete() }
+        synchronized(journalLock) {
+            runCatching { journalOut?.close() }
+            journalOut = null
+            runCatching { journalFile?.delete() }
+            runCatching { journalOld?.delete() }
+            journalBase = 0
+            journalRecords = 0
+            journalBytes = 0
+            journalScan = null
         }
     }
 
@@ -560,10 +743,9 @@ class TileCache(
         if (moving && move!!.from.exists()) moveRoot = move.from
         if (!moving) dir.mkdirs() // T267: a pending move renames the old tree into place, so nothing is made there first
         if (!moving && dir.list().isNullOrEmpty()) {
-            markerChecked = true
-            markReady() // nothing to walk (a new install, or after Android's Clear cache); a snapshot left is written over at the first change
+            markReady() // nothing to walk (a new install, or after Android's Clear cache); a snapshot left is written over at the first write
         } else {
-            Thread(::index, "tile-index-${dir.name}").apply { isDaemon = true }.start()
+            indexThread = Thread(::index, "tile-index-${dir.name}").apply { isDaemon = true; start() }
         }
     }
 
@@ -629,75 +811,140 @@ class TileCache(
 
     /** T249: the index's thread: the snapshot read when it may be, else the walk (then the snapshot written). */
     private fun index() {
-        pauseIfShut() // T379: nothing moved, read or walked without a screen or a notified job
-        if (moving) {
-            moveFirst()
-            if (moveRoot != null) { // T267: a copy: both trees walked (the new first: a key in both is the new one), then copied
-                runCatching { snapshotFile?.delete() }
-                if (snapshotFile != null) snapshotLoad = mapOf("used" to false, "why" to "the store is being copied")
-                synchronized(lock) { markerChecked = true }
-                walk(listOf(dir, moveRoot!!))
-                copyAfterIndex()
-                return
+        try {
+            pauseIfShut() // T379: nothing moved, read or walked without a screen or a notified job
+            if (moving) {
+                moveFirst()
+                if (moveRoot != null) { // T267: a copy: both trees walked (the new first: a key in both is the new one), then copied
+                    discardAll() // T390: and the journals with it
+                    if (snapshotFile != null) snapshotLoad = mapOf("used" to false, "why" to "the store is being copied")
+                    walk(listOf(dir, moveRoot!!))
+                    copyAfterIndex()
+                    return
+                }
             }
+            indexOrRead()
+            if (moving) afterMove()
+        } catch (_: Killed) {
+            // T390 (tests): the process died here
         }
-        indexOrRead()
-        if (moving) afterMove()
     }
+
+    // T390: the walk's resume and checkpoints (the index's thread writes them; read by the JSON).
+    @Volatile private var resumeCursor: String? = null
+    @Volatile private var mergeOld = false
+    @Volatile private var resumedFrom: String? = null
+    @Volatile private var entriesAtResume: Int? = null
+    @Volatile var walkedThisLaunch = 0L
+        private set
+    private val checkpoints = AtomicLong()
+    @Volatile private var lastCheckpoint: Map<String, Any?>? = null
 
     /** T249: the snapshot read when it may be, else the walk (then the snapshot written). */
     private fun indexOrRead() {
         val reason = if (snapshotFile != null) {
             try {
                 loadSnapshot()
+            } catch (k: Killed) {
+                throw k
             } catch (t: Throwable) {
-                runCatching { snapshotFile?.delete() }
+                discardAll()
                 "${t.javaClass.simpleName}: ${t.message}"
             }
         } else "off"
         if (reason == null) {
+            val cursor = resumeCursor
+            if (cursor != null) {
+                // T390: a walk's checkpoint: the walk goes on after its cursor, the entries it had filed (and the journal's) in place.
+                resumedFrom = cursor
+                entriesAtResume = entries
+                walk(after = cursor)
+                if (killed) return
+                runCatching { recountPinned() } // the checkpoint's kept flags are asked again, as a whole snapshot's are
+                runCatching { saveSnapshot("walk") }
+                return
+            }
             markReady(fromSnapshot = true)
             // Navigation's pins do not outlive the process: the kept flags are asked again (and the totals with them).
             val t0 = System.nanoTime()
             runCatching { recountPinned() }
             snapshotLoad = snapshotLoad.orEmpty() + mapOf("pinRecountMs" to (System.nanoTime() - t0) / 1_000_000)
+            // T390: a write of the snapshot was cut after the journal turned over: both journals were replayed; one snapshot now holds them.
+            if (mergeOld) runCatching { saveSnapshot("journal", force = true) }
             return
         }
         if (snapshotFile != null) snapshotLoad = snapshotLoad.orEmpty() + mapOf("used" to false, "why" to reason)
         walk()
-        if (snapshotFile != null) runCatching { saveSnapshot("walk") }
+        if (snapshotFile != null && !killed) runCatching { saveSnapshot("walk") }
     }
 
-    private fun walk(roots: List<File> = listOf(dir)) {
+    /**
+     * T242: walks [roots] into the index. T390: with the snapshot on and one root, the walk goes in [TileWalker.compareDirs]'s
+     * order and writes checkpoints (a snapshot with the last finished directory as its `walkCursor`), every
+     * [checkpointMin] files and at least half the entries of the last one (so their cost stays within a few whole writes),
+     * and when the gate shuts it mid-walk; [after], a checkpoint's cursor, resumes after it.
+     */
+    private fun walk(roots: List<File> = listOf(dir), after: String? = null) {
         val startedAt = System.currentTimeMillis()
         val batch = ArrayList<Walked>(WALK_BATCH)
-        try {
-            for (root in roots) walker.walk(root) { key, bytes, mtime, path ->
-                if (!gate.open) { // T379: the app left the screen: what was walked is filed, then the walk waits
-                    fileWalked(batch)
-                    pauseIfShut()
-                }
-                if (key.endsWith(".tmp")) {
-                    // A write interrupted by a kill; one under way now (a put while indexing) is younger.
-                    if (mtime < startedAt - STALE_TMP_MS) runCatching { File(path).delete() }
-                } else if (bytes == 0L) {
-                    // T279: a write a hard stop left empty (a value empty on purpose is EMPTY_MARK; a put renames a whole file).
-                    if (runCatching { File(path).delete() }.getOrDefault(false)) {
-                        emptyDropped.incrementAndGet()
-                        if (runCatching { keep(key) }.getOrDefault(false)) emptyDroppedKept.incrementAndGet()
-                    }
-                } else {
-                    batch += Walked(key, bytes, mtime)
-                    walked++
-                    if (batch.size >= WALK_BATCH) fileWalked(batch)
-                    walkHook?.invoke(walked)
-                }
+        val resumable = snapshotFile != null && roots.size == 1 && walker.resumable
+        var lastDone: String? = after
+        var since = 0L
+        var lastEntries = entries.toLong()
+        fun checkpoint(cursor: String) {
+            fileWalked(batch)
+            val r = fold("checkpoint", cursor, force = true)
+            if (r == "written") {
+                checkpoints.incrementAndGet()
+                lastCheckpoint = (lastSave.orEmpty() + mapOf("cursor" to cursor))
             }
+            lastEntries = entries.toLong()
+            since = 0
+        }
+        try {
+            for (root in roots) {
+                val visit = TileWalker.Visitor { key, bytes, mtime, path ->
+                    if (killed) throw Killed()
+                    if (!gate.open) { // T379: the app left the screen: what was walked is filed, then the walk waits
+                        fileWalked(batch)
+                        // T390: and its progress kept, for a kill while the app is away (Android's for CPU came after Home)
+                        val c = lastDone
+                        if (resumable && c != null && since >= minOf(HOLD_CHECKPOINT_MIN, checkpointMin.toLong())) checkpoint(c)
+                        pauseIfShut()
+                    }
+                    if (key.endsWith(".tmp")) {
+                        // A write interrupted by a kill; one under way now (a put while indexing) is younger.
+                        if (mtime < startedAt - STALE_TMP_MS) runCatching { File(path).delete() }
+                    } else if (bytes == 0L) {
+                        // T279: a write a hard stop left empty (a value empty on purpose is EMPTY_MARK; a put renames a whole file).
+                        if (runCatching { File(path).delete() }.getOrDefault(false)) {
+                            emptyDropped.incrementAndGet()
+                            if (runCatching { keep(key) }.getOrDefault(false)) emptyDroppedKept.incrementAndGet()
+                        }
+                    } else {
+                        batch += Walked(key, bytes, mtime)
+                        walked++
+                        walkedThisLaunch++
+                        since++
+                        if (batch.size >= WALK_BATCH) fileWalked(batch)
+                        walkHook?.invoke(walked)
+                    }
+                }
+                val done: ((String) -> Unit)? = if (!resumable) null else { d ->
+                    lastDone = d
+                    if (since >= checkpointMin && since >= lastEntries / 2) checkpoint(d)
+                }
+                walker.walkFrom(root, if (resumable) after else null, visit, done)
+            }
+        } catch (k: Killed) {
+            throw k
         } catch (t: Throwable) {
             indexError = "${t.javaClass.simpleName}: ${t.message}" // what was filed stays; get and contains still find the rest
         } finally {
-            runCatching { fileWalked(batch) }
-            markReady()
+            if (!killed) {
+                runCatching { fileWalked(batch) }
+                markReady(fromSnapshot = after != null)
+            }
         }
     }
 
@@ -779,46 +1026,150 @@ class TileCache(
 
     // --- T249: the snapshot ---
 
-    /** T249: reads the snapshot into the index; null when it was used, else why not (a snapshot not used is deleted). */
+    /**
+     * T249: reads the snapshot into the index; null when it was used, else why not (a snapshot not used is deleted). T390:
+     * then the journal's records over it, in their order: the one before the last write (`.old`) when that write was cut
+     * after the journal turned over, then the current one. The journals must extend this snapshot (their `base`); a torn
+     * record, records of an earlier boot or a journal that does not follow mean changes may be missing, and the snapshot
+     * is set aside for a walk (rare: a device stop, not a process kill). The directories and keys the journals touched are
+     * not compared by the validation; the last [TAIL_CHECK] puts are looked for on disk (a kill between a put's record and
+     * its rename leaves a record with no file).
+     */
     private fun loadSnapshot(): String? {
         val snap = snapshotFile!!
         val t0 = System.nanoTime()
+        runCatching { dirtyMarker?.delete() }
         val interrupted = snapshotTmp!!.exists()
-        if (interrupted) snapshotTmp.delete()
-        val dirty: Boolean
-        synchronized(lock) {
-            dirty = dirtyMarker!!.exists()
-            markerChecked = true
-            markerOn = dirty
-            if (changes > 0 && !markerOn) { // a put while this thread started: its marker now
-                markerOn = true
-                runCatching { dirtyMarker!!.parentFile?.mkdirs(); dirtyMarker!!.createNewFile() }
-            }
+        if (interrupted) snapshotTmp.delete() // T390: the snapshot before it and the journals still hold everything
+        val cur: TileJournal.Scan?
+        val curBase: Long
+        val loss: String?
+        synchronized(journalLock) {
+            openJournalLocked()
+            cur = journalScan
+            curBase = journalBase
+            loss = lossWhy
         }
-        if (!snap.isFile) return if (interrupted) "none (a write of it was interrupted)" else "none"
+        val oldFile = journalOld!!
+        val old = if (oldFile.isFile) runCatching { TileJournal.scan(oldFile.readBytes()) }.getOrNull() else null
+        fun setAside(why: String): String {
+            discardAll()
+            journalLoad = linkedMapOf("used" to false, "why" to why)
+            return why
+        }
+        if (!snap.isFile) {
+            discardAll()
+            return if (interrupted) "none (a write of it was interrupted)" else "none"
+        }
         val fileBytes = snap.length()
-        if (interrupted) return "a write of it was interrupted".also { snap.delete() }
-        if (dirty) return "the last run changed the index after its last write".also { snap.delete() }
         val read = try {
             TileIndexSnapshot.read(snap.readBytes()) // one read of the whole file
         } catch (c: TileIndexSnapshot.Corrupt) {
-            snap.delete()
-            return "corrupt: ${c.message}"
+            return setAside("corrupt: ${c.message}")
         }
+        val x = read.generation
+        generation = x
+        if (loss != null) return setAside("the journal may lack changes: $loss")
+        val useOld = old != null && old.base == x
+        if (oldFile.isFile && !useOld) {
+            if (old != null && old.base < x) oldFile.delete() // the write it preceded is in place: written into this snapshot
+            else return setAside("the journal before the last write does not follow the snapshot")
+        }
+        if (useOld && (old!!.tornBytes > 0 || (old.boot != boot && old.records.count > 0))) {
+            return setAside("the journal may lack changes: the journal before the last write was cut or written in an earlier boot")
+        }
+        val useCur = cur != null && (curBase == x || (useOld && curBase > x))
+        if (cur != null && !useCur) return setAside("the journal (base $curBase) does not follow the snapshot (generation $x)")
+        val journals = listOfNotNull(old?.records?.takeIf { useOld }, cur?.records?.takeIf { useCur })
+        val touchedKeys = HashSet<String>()
+        for (j in journals) touchedKeys.addAll(j.keys)
+        val touchedDirs = touchedKeys.mapTo(HashSet()) { it.substringBeforeLast('/', "") }
         val tRead = System.nanoTime()
-        val mismatch = TileIndexSnapshot.validate(dir, read, kotlin.random.Random(System.nanoTime()))
+        val mismatch = TileIndexSnapshot.validate(dir, read, kotlin.random.Random(System.nanoTime()), touched = touchedDirs, touchedKeys = touchedKeys, upTo = read.walkCursor)
         val tValid = System.nanoTime()
-        if (mismatch != null) return "disagrees with the directory: $mismatch".also { snap.delete() }
+        if (mismatch != null) return setAside("disagrees with the directory: $mismatch")
         fileSnapshot(read.entries)
         val tFiled = System.nanoTime()
+        var records = 0
+        for (j in journals) records += replay(j)
+        val tailDropped = checkTail(journals)
+        val tReplayed = System.nanoTime()
         val written = read.header["written"]?.toLongOrNull()
+        resumeCursor = read.walkCursor
+        mergeOld = useOld
         snapshotLoad = linkedMapOf(
             "used" to true, "entries" to read.entries.total, "fileBytes" to fileBytes,
             "fileBytesPerEntry" to read.entries.total.takeIf { it > 0 }?.let { fileBytes.toDouble() / it },
-            "writtenAt" to written, "ageMs" to written?.let { clock() - it },
+            "writtenAt" to written, "ageMs" to written?.let { clock() - it }, "generation" to x,
+            "partial" to (read.walkCursor != null), "walkCursor" to read.walkCursor, "interruptedWrite" to interrupted,
             "readMs" to (tRead - t0) / 1_000_000, "validateMs" to (tValid - tRead) / 1_000_000, "fileMs" to (tFiled - tValid) / 1_000_000,
+            "replayMs" to (tReplayed - tFiled) / 1_000_000,
+        )
+        journalLoad = linkedMapOf(
+            "used" to true, "records" to records, "journals" to journals.size, "base" to curBase.takeIf { cur != null },
+            "tailChecked" to minOf(TAIL_CHECK, journals.sumOf { j -> (0 until j.count).count { j.ops[it].toInt() == TileJournal.PUT } }),
+            "tailDropped" to tailDropped, "replayMs" to (tReplayed - tFiled) / 1_000_000,
         )
         return null
+    }
+
+    /**
+     * T390: applies journal records [r] to the index, in chunks under the lock (the gate asked between them): a put adds or
+     * replaces its entry (unpinned: the pins are asked again after the load), a remove takes it out (and, while indexing,
+     * keeps the walk from filing it again). Each is a change since the snapshot, so the next write folds them.
+     */
+    private fun replay(r: TileJournal.Records): Int {
+        var i = 0
+        while (i < r.count) {
+            if (killed) throw Killed()
+            pauseIfShut()
+            val to = minOf(r.count, i + SCAN_CHUNK)
+            synchronized(lock) {
+                for (j in i until to) {
+                    val key = r.keys[j]
+                    val s = index.find(key)
+                    if (r.ops[j].toInt() == TileJournal.PUT) {
+                        val b = r.sizes[j]
+                        if (s != TileIndex.NONE) {
+                            val was = index.size(s)
+                            if (was != b) {
+                                total += b - was
+                                if (index.isPinned(s)) pinnedTotal += b - was
+                                index.setSize(s, b)
+                            }
+                            index.touch(s, r.minutes[j])
+                            changed()
+                        } else if (removed?.contains(key) != true) {
+                            addEntry(key, b, r.minutes[j], false)
+                        }
+                    } else {
+                        if (s != TileIndex.NONE) removeEntry(key, s)
+                        removed?.add(key)
+                    }
+                }
+            }
+            i = to
+        }
+        return r.count
+    }
+
+    /** T390: the last [TAIL_CHECK] puts of [journals] looked for on disk: an entry whose file is not there is dropped (and journalled). Returns how many. */
+    private fun checkTail(journals: List<TileJournal.Records>): Int {
+        val keys = LinkedHashSet<String>()
+        loop@ for (j in journals.asReversed()) for (i in j.count - 1 downTo 0) {
+            if (keys.size >= TAIL_CHECK) break@loop
+            if (j.ops[i].toInt() == TileJournal.PUT) keys += j.keys[i]
+        }
+        val gone = keys.filter { k -> synchronized(lock) { index.find(k) != TileIndex.NONE } && !fileExists(k) }
+        if (gone.isEmpty()) return 0
+        synchronized(lock) {
+            for (k in gone) {
+                val s = index.find(k)
+                if (s != TileIndex.NONE && !fileExists(k)) removeEntry(k, s)
+            }
+        }
+        journalRemoves(gone)
+        return gone.size
     }
 
     /**
@@ -835,6 +1186,7 @@ class TileCache(
         val totals = LongArray(4)
         var i = 0
         while (i < e.count) {
+            if (killed) throw Killed()
             pauseIfShut() // T379: between chunks, holding no lock
             val to = minOf(e.count, i + SCAN_CHUNK)
             synchronized(lock) {
@@ -881,18 +1233,55 @@ class TileCache(
     /**
      * T249: writes the index to [snapshotFile] when it changed since the last write (or [force]), atomically (a `.tmp`
      * renamed over it); off the main thread, once the index is whole. Returns what happened: `written`, `clean`, `indexing`,
-     * `off` or `error`; [lastSave] has the figures.
+     * `off` or `error`; [lastSave] has the figures. T390: the write folds the journal ([fold]).
      */
     fun saveSnapshot(reason: String, force: Boolean = false): String {
-        val snap = snapshotFile ?: return "off"
+        if (snapshotFile == null) return "off"
         check(!onMain()) { "TileCache.saveSnapshot on the main thread, from ${callerOf()}" }
+        if (!ready) return "indexing"
+        return fold(reason, null, force)
+    }
+
+    /**
+     * T390: the write of a snapshot, a whole index's ([walkCursor] null) or a walk's checkpoint. The journal turns over first
+     * (the current one becomes `.old`, a new one extends the snapshot about to be written, generation + 1), so a change made
+     * while the index is copied is in the new journal, whether or not the copy has it (a record replayed twice is the same);
+     * once the snapshot is in place `.old` goes. A kill at any point leaves a snapshot and journals that a load can follow.
+     */
+    private fun fold(reason: String, walkCursor: String?, force: Boolean): String {
+        val snap = snapshotFile ?: return "off"
         synchronized(saveLock) {
-            if (!ready) return "indexing"
+            if (killed) return "killed"
             val gen: Long
             synchronized(lock) {
                 gen = changes
-                if (!force && gen == savedChanges && !touched) return "clean"
+                if (!force && gen == savedChanges && !touched && journalRecords == 0) return "clean"
                 touched = false
+            }
+            val newGen: Long
+            val folded: Int
+            synchronized(journalLock) {
+                openJournalLocked()
+                folded = journalRecords
+                newGen = maxOf(generation, journalBase) + 1
+                runCatching { journalOut?.close() }
+                journalOut = null
+                val jf = journalFile!!
+                val jo = journalOld!!
+                jo.delete()
+                if (jf.isFile && !jf.renameTo(jo)) jf.delete()
+                try {
+                    jf.parentFile?.mkdirs()
+                    FileOutputStream(jf).use { it.write(TileJournal.header(newGen, boot)) }
+                    journalOut = FileOutputStream(jf, true)
+                    journalBase = newGen
+                    journalScan = null
+                } catch (t: Throwable) {
+                    journalBase = 0
+                    journalError = "${t.javaClass.simpleName}: ${t.message}"
+                }
+                journalRecords = 0
+                journalBytes = jf.length()
             }
             val t0 = System.nanoTime()
             val e = copyEntries()
@@ -910,10 +1299,11 @@ class TileCache(
                             out.flush()
                             Thread.sleep(ms)
                         }
-                    })
+                    }, generation = newGen, walkCursor = walkCursor)
                     out.flush()
                     fos.fd.sync()
                 }
+                if (killed) return "killed"
                 Files.move(tmp.toPath(), snap.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             } catch (t: Throwable) {
                 touched = true
@@ -921,14 +1311,10 @@ class TileCache(
                 lastSave = linkedMapOf("reason" to reason, "error" to "${t.javaClass.simpleName}: ${t.message}", "at" to clock())
                 return "error"
             }
+            generation = newGen
+            runCatching { journalOld?.delete() }
             synchronized(lock) {
-                if (changes == gen) { // nothing changed while it was written: the marker goes
-                    savedChanges = gen
-                    if (markerOn) {
-                        markerOn = false
-                        runCatching { dirtyMarker?.delete() }
-                    }
-                }
+                if (changes == gen) savedChanges = gen // nothing changed while it was written
             }
             saves.incrementAndGet()
             val bytes = snap.length()
@@ -936,6 +1322,7 @@ class TileCache(
                 "reason" to reason, "at" to clock(), "entries" to written, "fileBytes" to bytes,
                 "fileBytesPerEntry" to written.takeIf { it > 0 }?.let { bytes.toDouble() / it },
                 "copyMs" to (tCopy - t0) / 1_000_000, "writeMs" to (System.nanoTime() - tCopy) / 1_000_000,
+                "generation" to newGen, "journalRecordsFolded" to folded, "walkCursor" to walkCursor,
             )
             return "written"
         }
@@ -979,18 +1366,32 @@ class TileCache(
         return TileIndexSnapshot.Entries(groups, keys, sizes, minutes, pinned, n, strings)
     }
 
-    /** T249: the snapshot's file and what this launch and the last write did with it, for `GET /debug/cache`. */
+    /** T249: the snapshot's file and what this launch and the last write did with it, for `GET /debug/cache`. T390: and the journal's. */
     fun snapshotJson(): Map<String, Any?>? {
         val f = snapshotFile ?: return null
         val written = lastSave?.get("at") as? Long
+        val n = journalAppends.get()
         return linkedMapOf(
             "file" to "${f.parentFile?.name}/${f.name}", "present" to f.isFile, "fileBytes" to f.length(),
             "entriesInFile" to (lastSave?.get("entries") ?: snapshotLoad?.get("entries")),
             "ageMs" to (written ?: snapshotLoad?.get("writtenAt") as? Long)?.let { clock() - it },
+            "generation" to generation, // T390
             "usedThisLaunch" to fromSnapshot, "load" to snapshotLoad, "lastSave" to lastSave, "saves" to saves.get(),
-            "dirty" to (synchronized(lock) { changes != savedChanges } || touched), "marker" to dirtyMarker?.isFile,
+            "dirty" to (synchronized(lock) { changes != savedChanges } || touched),
+            "journal" to linkedMapOf( // T390
+                "file" to journalFile?.name, "present" to (journalFile?.isFile == true), "fileBytes" to journalBytes,
+                "records" to journalRecords, "base" to synchronized(journalLock) { journalBase }, "foldAt" to foldRecords,
+                "appended" to n, "appendUsPerRecord" to if (n > 0) journalAppendNs.get() / 1000.0 / n else null,
+                "errors" to journalErrors.get(), "error" to journalError, "load" to journalLoad,
+            ),
         )
     }
+
+    /** T390: the walk's resume and checkpoints, for `GET /debug/cache`'s `index.resume`. */
+    fun resumeJson(): Map<String, Any?> = linkedMapOf(
+        "resumable" to (snapshotFile != null && walker.resumable), "resumedFrom" to resumedFrom, "entriesAtResume" to entriesAtResume,
+        "walkedThisLaunch" to walkedThisLaunch, "checkpoints" to checkpoints.get(), "lastCheckpoint" to lastCheckpoint,
+    )
 
     // --- per key: these work while indexing ---
 
@@ -1013,9 +1414,12 @@ class TileCache(
         }
         val (data, file) = readFile(key) ?: run { // T267: from the new tree, else the old one while it is served
             // Deleted behind our back (the system trims app caches under storage pressure).
-            if (known) synchronized(lock) {
-                val s = index.find(key)
-                if (s != TileIndex.NONE && !fileExists(key)) removeEntry(key, s)
+            if (known) {
+                val dropped = synchronized(lock) {
+                    val s = index.find(key)
+                    (s != TileIndex.NONE && !fileExists(key)).also { if (it) removeEntry(key, s) }
+                }
+                if (dropped) journalRemoves(listOf(key)) // T390
             }
             misses.incrementAndGet()
             return null
@@ -1030,6 +1434,7 @@ class TileCache(
         val minute = minuteOf(now)
         val pinned = if (known) false else keep(key)
         var touchFile = false
+        var filed = false
         synchronized(lock) {
             val s = index.find(key)
             if (s != TileIndex.NONE) {
@@ -1041,8 +1446,10 @@ class TileCache(
             } else if (removed?.contains(key) != true) {
                 addEntry(key, data.size, minute, pinned)
                 touchFile = true
+                filed = true
             }
         }
+        if (filed) journalPut(key, data.size, minute) // T390: a file the index did not name, now in it
         if (touchFile) file.setLastModified(now)
         return if (data.size == 1 && data[0] == EMPTY_MARK[0]) ByteArray(0) else data
     }
@@ -1057,6 +1464,7 @@ class TileCache(
             if (s != TileIndex.NONE) removeEntry(key, s)
         }
         if (file.length() == 0L) file.delete()
+        journalRemoves(listOf(key)) // T390
         emptyDropped.incrementAndGet()
         if (kept) emptyDroppedKept.incrementAndGet()
     }
@@ -1088,6 +1496,7 @@ class TileCache(
             }
         }
         val deleted = deleteFile(key)
+        journalRemoves(listOf(key)) // T390: after the delete
         return held || deleted
     }
 
@@ -1102,11 +1511,12 @@ class TileCache(
             out.write(stored)
             if (syncWrites) out.fd.sync() // T279: the bytes reach the disk before the name does
         }
-        if (!placeWrite(key, tmp, file)) return
         val now = clock()
+        val minute = minuteOf(now)
+        journalPut(key, stored.size, minute) // T390: before the rename, so no file outlives a kill unrecorded
+        if (!placeWrite(key, tmp, file)) return
         file.setLastModified(now)
         val pinned = keep(key)
-        val minute = minuteOf(now)
         synchronized(lock) {
             removed?.remove(key)
             val s = index.find(key)
@@ -1161,6 +1571,7 @@ class TileCache(
             }
         }
         gone.forEach { deleteFile(it) }
+        journalRemoves(gone) // T390
         return gone.size
     }
 
@@ -1258,6 +1669,7 @@ class TileCache(
             }
         }
         victims.forEach { deleteFile(it) }
+        journalRemoves(victims) // T390
         evictions.addAndGet(victims.size.toLong())
         budgetEvictions.addAndGet(victims.size.toLong())
         return freed
@@ -1335,6 +1747,7 @@ class TileCache(
             }
         }
         gone.forEach { deleteFile(it) }
+        journalRemoves(gone) // T390
         return gone.size
     }
 
@@ -1385,6 +1798,7 @@ class TileCache(
                 }
             }
             gone.forEach { deleteFile(it) }
+            journalRemoves(gone) // T390
             deleted += gone.size
             at += part.size
             onChunk?.invoke(deleted, keys.size)
@@ -1419,6 +1833,7 @@ class TileCache(
                 }
             }
             victims.forEach { deleteFile(it) }
+            journalRemoves(victims) // T390
             evictions.addAndGet(victims.size.toLong())
             if (victims.size < CLEAR_CHUNK || total - pinnedTotal <= target) return
         }
@@ -1434,6 +1849,7 @@ class TileCache(
         "stringKeys" to index.stringKeys, "groups" to index.groups, "buckets" to index.bucketCount,
         "walker" to walker.name, "fromSnapshot" to fromSnapshot, // T249
         "gate" to gateJson(), // T379
+        "resume" to resumeJson(), // T390
     )
 
     fun json(): Map<String, Any?> = linkedMapOf(
@@ -1476,6 +1892,21 @@ class TileCache(
 
         /** T242: a `.tmp` file older than this when the walk starts is a write a kill interrupted. */
         const val STALE_TMP_MS = 60_000L
+
+        /**
+         * T390: journal records after which it is folded into a new snapshot (about 45 B a record: 1.5 MB; replayed in a
+         * fraction of a second). Most journals are folded sooner, at the app's stop and on the online cache's interval.
+         */
+        const val FOLD_RECORDS = 32_768
+
+        /** T390: files a walk files between checkpoints, at the least (and at least half the entries of the last one). */
+        const val CHECKPOINT_MIN = 20_000L
+
+        /** T390: files walked since the last checkpoint for one to be written when the gate shuts mid-walk. */
+        const val HOLD_CHECKPOINT_MIN = 1_000L
+
+        /** T390: the journal's last puts looked for on disk at a load (more than the writers that can be between a record and its rename). */
+        const val TAIL_CHECK = 256
 
         /**
          * T242: what the one list and the Storage screen say where a figure would be while the index is built (ADR 0031: the
@@ -1719,7 +2150,7 @@ class TileStoreMove(
 
     companion object {
         /** The files named after the tree that move with it: T249's snapshot, its marker and an interrupted write of it. */
-        val SNAPSHOT_SUFFIXES = listOf(".index", ".index.dirty", ".index.tmp")
+        val SNAPSHOT_SUFFIXES = listOf(".index", ".index.dirty", ".index.tmp", ".index.journal", ".index.journal.old") // T390: the journals
 
         const val S_ISGID = 0x400 // 02000
 
@@ -1804,10 +2235,41 @@ abstract class TileWalker(val name: String) {
 
     abstract fun walk(root: File, visit: Visitor)
 
+    /** T390: whether [walkFrom] resumes after a cursor (the walk visits in [compareDirs]'s order); else it walks whole. */
+    open val resumable: Boolean get() = false
+
+    /**
+     * T390: [walk], but skipping every directory up to [after] (a directory's path relative to the root, "" the root, in
+     * [compareDirs]'s order) and the files in them, and telling [done] each directory whose own files are all visited
+     * (before its subdirectories), in that order. A walker that cannot resume ([resumable] false) walks whole.
+     */
+    open fun walkFrom(root: File, after: String?, visit: Visitor, done: ((String) -> Unit)?) = walk(root, visit)
+
     companion object {
         /** On Android the list walker over `Os.lstat` (T249's measurement), elsewhere (the JVM's tests) `Files.walkFileTree`. */
         fun forPlatform(): TileWalker =
             if (System.getProperty("java.vm.name").orEmpty().contains("Dalvik")) ListWalker(ListWalker::osLstat) else NioWalker
+
+        /**
+         * T390: the walk's order of directories (paths relative to the root, `/` between segments): segment by segment, a
+         * directory before everything below it, siblings by name (`String` order): depth first, a directory before its
+         * children. As a comparison of the two strings with `/` lower than every other character.
+         */
+        fun compareDirs(a: String, b: String): Int {
+            val n = minOf(a.length, b.length)
+            for (i in 0 until n) {
+                val x = a[i]
+                val y = b[i]
+                if (x == y) continue
+                if (x == '/') return -1
+                if (y == '/') return 1
+                return x.compareTo(y)
+            }
+            return a.length - b.length
+        }
+
+        /** T390: whether directory [d] is [of] or above it (an ancestor). */
+        fun isAncestorOrSelf(d: String, of: String): Boolean = d.isEmpty() || of == d || (of.length > d.length && of.startsWith(d) && of[d.length] == '/')
     }
 }
 
@@ -1842,25 +2304,39 @@ object NioWalker : TileWalker("walkFileTree") {
  * bytes and `out[1]` with the modification time (ms) and answers [FILE], [DIR], [OTHER] or [NONE] (gone, or unreadable).
  */
 class ListWalker(private val stat: (String, LongArray) -> Int) : TileWalker("list+lstat") {
-    override fun walk(root: File, visit: Visitor) {
+    override fun walk(root: File, visit: Visitor) = walkFrom(root, null, visit, null)
+
+    override val resumable: Boolean get() = true
+
+    /** T390: each directory's names sorted, its files visited before its subdirectories, which are walked in name order. */
+    override fun walkFrom(root: File, after: String?, visit: Visitor, done: ((String) -> Unit)?) {
         val paths = ArrayList<String>()
-        val prefixes = ArrayList<String>()
+        val rels = ArrayList<String>()
         paths += root.path
-        prefixes += ""
+        rels += ""
         val out = LongArray(2)
+        val subdirs = ArrayList<String>()
         while (paths.isNotEmpty()) {
             val p = paths.removeAt(paths.size - 1)
-            val prefix = prefixes.removeAt(prefixes.size - 1)
+            val rel = rels.removeAt(rels.size - 1)
             val names = File(p).list() ?: continue
+            names.sort()
+            // Up to the cursor: this directory's files were walked before; a child wholly before the cursor is skipped by name.
+            val skipFiles = after != null && compareDirs(rel, after) <= 0
+            subdirs.clear()
             for (n in names) {
+                val childRel = if (rel.isEmpty()) n else "$rel/$n"
+                if (skipFiles && compareDirs(childRel, after!!) < 0 && !isAncestorOrSelf(childRel, after)) continue
                 val full = "$p/$n"
                 when (stat(full, out)) {
-                    FILE -> visit.file(prefix + n, out[0], out[1], full)
-                    DIR -> {
-                        paths += full
-                        prefixes += "$prefix$n/"
-                    }
+                    FILE -> if (!skipFiles) visit.file(if (rel.isEmpty()) n else "$rel/$n", out[0], out[1], full)
+                    DIR -> subdirs += n
                 }
+            }
+            if (!skipFiles) done?.invoke(rel)
+            for (i in subdirs.indices.reversed()) { // the stack pops them in name order
+                paths += "$p/${subdirs[i]}"
+                rels += if (rel.isEmpty()) subdirs[i] else "$rel/${subdirs[i]}"
             }
         }
     }
