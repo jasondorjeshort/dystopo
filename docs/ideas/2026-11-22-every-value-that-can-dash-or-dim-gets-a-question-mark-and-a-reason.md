@@ -1,7 +1,7 @@
 ---
 date: 2026-11-22
 kind: feature
-related: [2026-11-07-blue-dots-on-the-map-unexplained.md, ../findings/2026-11-23-audit-of-values-that-dash-dim-or-hide.md]
+related: [../findings/2026-11-23-audit-of-values-that-dash-dim-or-hide.md]
 ---
 
 # A policy: a state the user can see changing has a "?" that says why

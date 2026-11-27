@@ -70,6 +70,10 @@ import java.util.Locale
  * (GPS, ±8 m)", "Your position, roughly (a poor GPS fix, ±120 m)", "No position, last known 7 min ago"), with the marks'
  * help ([MAP_MARKS_HELP]) beside it.
  *
+ * T383: after the position, a press on any other mark the map draws names it the same way ([MapMarks]: the table, the order
+ * of precedence when a press lands on several, and `GET /map/marks`): "Track start, <track name>", "Water, a spring",
+ * "Waypoint, <name>"; the card names the first mark only, with that kind's help beside it ([markHelp]).
+ *
  * T334: with a fresh fix, a line under the coordinates says whether the place is in view from it ([sight],
  * shared `horizon/SightLine`): "In view, 12.4 mi NNW", "Hidden by a ridge 3.1 mi away, 40 m below the line of sight",
  * "Cannot tell from here"; worked out off the main thread. `GET /map/longpress` › `sight` has the answer and its figures.
@@ -83,6 +87,7 @@ object LongPressMenu {
         private set(v) {
             val moved = v != pointState
             pointState = v
+            if (v == null) clearMark() // T383
             mark = v?.let { markAt(it.first, it.second) } // T251
             if (v == null) {
                 sunRuns.incrementAndGet()
@@ -118,16 +123,35 @@ object LongPressMenu {
     /** A press counts as on a feature within this of it, or a fingertip at the map's zoom when that is wider. */
     const val FINGER_DP = 24.0
 
-    /** T251: the card's first line when the press is on the position marker (what the marker is), else null. */
+    /** T251: the card's first line when the press is on the position marker (what the marker is), else null. T383: or on any mark. */
     var mark by mutableStateOf<String?>(null)
         private set
 
-    /** T251: the marker under a fingertip at [lat], [lon] (main thread). */
+    /** T383: the help key beside [mark] (`map.marks` for the position), null with no mark or no help for its kind. */
+    var markHelp by mutableStateOf<String?>(null)
+        private set
+
+    /** T383: the marks under the press, in their order of precedence (`GET /map/longpress` › `marksUnder`). */
+    @Volatile private var marksUnder: List<MapMarks.Hit> = emptyList()
+    @Volatile private var markKey: String? = null
+
+    /** T251: the marker under a fingertip at [lat], [lon] (main thread). T383: the position first, then [MapMarks.at]. */
     private fun markAt(lat: Double, lon: Double): String? = runCatching {
         val app = DystopoApp.instance
         val metersPerDp = app.map.map?.projection?.getMetersPerPixelAtLatitude(lat) ?: return@runCatching null
-        app.map.puckMark(lat, lon, metersPerDp * FINGER_DP)
+        val hits = runCatching { MapMarks.at(lat, lon, (FINGER_DP * app.resources.displayMetrics.density).toFloat()) }.getOrDefault(emptyList())
+        marksUnder = hits
+        val puck = app.map.puckMark(lat, lon, metersPerDp * FINGER_DP)
+        markHelp = if (puck != null) MapMarks.POSITION.help else hits.firstOrNull()?.mark?.help
+        markKey = if (puck != null) MapMarks.POSITION.key else hits.firstOrNull()?.mark?.key
+        puck ?: hits.firstOrNull()?.line
     }.getOrNull()
+
+    private fun clearMark() {
+        marksUnder = emptyList()
+        markHelp = null
+        markKey = null
+    }
     // end T251
 
     private fun startKnown(lat: Double, lon: Double) {
@@ -393,7 +417,10 @@ object LongPressMenu {
         "actions" to actions(), // T114; T213: with T197's "I am at" item when the card draws it
         "sun" to sun?.json(), // T188: the sun line and the terrain day behind it
         "knownHeight" to (if (point != null) knownInfo else null), // T197: "I am at <name>, <height>" and why (not)
-        "mark" to mark, // T251: the position marker's name when the press is on it
+        "mark" to mark, // T251: the position marker's name when the press is on it; T383: or the first mark's line
+        "markKey" to markKey, // T383: `position` or the named mark's key ([MapMarks.MARKS])
+        "markHelp" to markHelp, // T383
+        "marksUnder" to marksUnder.map { it.json() }, // T383: every mark under the press, in precedence order
         "sight" to (if (point != null) sightInfo else null), // T334: "Can I see it from here?"
     )
 }
@@ -422,10 +449,10 @@ internal fun LongPressCard() {
         Modifier.fillMaxWidth().background(Paper, RoundedCornerShape(8.dp)).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        LongPressMenu.mark?.let { m -> // T251: the position marker under the finger, named first
+        LongPressMenu.mark?.let { m -> // T251: the position marker under the finger, named first; T383: or the mark under it
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BasicText(m, Modifier.weight(1f), style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
-                HelpIcon("map.marks")
+                if (LongPressMenu.markHelp == "map.marks") HelpIcon("map.marks") else MarkHelpIcon(LongPressMenu.markHelp)
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -509,4 +536,4 @@ internal val MAP_MARKS_HELP: List<HelpText> = listOf(
             "fix, network location or an estimate). Grey dot: last known, no fix for a while. While a track records, the " +
             "dot sits on its newest point (magenta); it starts at a green one. Yellow dots are waypoints."
     },
-)
+) + MAP_MARK_KINDS_HELP // T383: every other mark, beside its line
