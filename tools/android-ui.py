@@ -5489,7 +5489,7 @@ def _peaks_of(answer):
     """The peaks summary of a `GET /horizon` answer: the maps and their kinds, the names, the counts and the read's cost."""
     p = (answer or {}).get("peaks") or {}
     return {"reason": p.get("reason"), "maps": p.get("maps"), "sources": p.get("sources"), "candidates": p.get("candidates"),
-            "names": [x.get("name") for x in p.get("peaks") or []], "tilesRead": p.get("tilesRead"),
+            "names": [x.get("name") for x in p.get("peaks") or []], "tested": p.get("tested"), "tilesRead": p.get("tilesRead"),
             "areaTilesRead": p.get("areaTilesRead"), "ms": p.get("ms")}
 
 
@@ -5525,7 +5525,15 @@ def peaks_tiles_step(dev, args):
             kinds = {s.get("kind") for s in off.get("sources") or []}
             if off.get("maps") != [TILE_AREA_NAME] or kinds != {"area"} or not off.get("names"):
                 errors.append(f"with the pack off, GET /horizon names no peak from the area: {off}")
-            n, nodes = dev.wait_for(PEAKS_TILES_LINE, 20)
+            # The Peaks section with its line is below the controls: scrolled to as a swipe would.
+            n, nodes = dev.wait_for(PEAKS_TILES_LINE, 3)
+            for _ in range(8):
+                if n:
+                    break
+                _, hs = srv.call("GET", "/horizon")
+                d = (hs or {}).get("drawn") or {}
+                srv.call("POST", f"/horizon?scroll={min((d.get('scrollPx') or 0) + 600, d.get('scrollMaxPx') or 0)}")
+                n, nodes = dev.wait_for(PEAKS_TILES_LINE, 3)
             out["horizonLine"] = next((t for t in dev.texts(nodes) if "Names from" in t), None)
             out["horizonPng"] = dev.screencap("peaks-tiles-horizon")[0]
             if not n:
@@ -5560,8 +5568,15 @@ def peaks_tiles_step(dev, args):
                 errors.append(f"with the pack and the area, peaks named twice: {dup}")
             if fx["pack"] not in (on.get("maps") or []):
                 errors.append(f"with the pack on, its peaks are not read: {on}")
-            out["counts"] = {"area": len(off.get("names") or []), "packOn": len(on.get("names") or []),
-                             "areaNamesInPackRead": len(set(off.get("names") or []) & set(on.get("names") or []))}
+            # The pack's own count: the area removed, the pack alone 330 m north (a horizon of its own: a kept horizon keeps
+            # its peaks; the fixture's delete then finds none).
+            srv.call("DELETE", f"/areas/{area['id']}")
+            time.sleep(1)
+            alone = _peaks_of(_open_sky_at(srv, lat + 0.003, lon))
+            out["horizonPackOnly"] = {k: alone.get(k) for k in ("maps", "candidates", "tested", "tilesRead", "ms")}
+            out["counts"] = {"area": len(off.get("names") or []), "packAndArea": len(on.get("names") or []),
+                             "packOnly": len(alone.get("names") or []),
+                             "areaNamesInPackOnly": len(set(off.get("names") or []) & set(alone.get("names") or []))}
         finally:
             srv.call("POST", "/horizon/ui?open=0")
             if peaks_was is False:
