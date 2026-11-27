@@ -75,6 +75,7 @@ object Glance {
     internal var notes: GlanceText.Notes = GlanceText.Notes(null, emptyList()) // T363
     internal var gps: GlanceText.Gps? = null // T384
     internal var position: GlanceText.Position? = null
+    internal var clock: GlanceText.Clock? = null // T385
     internal var reasonPx = LinkedHashMap<String, Float>() // T363: each reason line's type size as drawn
     internal var deadlineSource: String? = null
     internal var fit: GlanceFit.Fit? = null
@@ -130,6 +131,7 @@ object Glance {
             "gps" to if (open) gps?.let { g -> g.json() + mapOf("network" to position?.takeIf { it.network }?.let { p -> linkedMapOf("accuracyM" to p.accuracyM, "ageS" to p.ageMs / 1000) }) } else null,
             "position" to if (open) GlanceText.positionJson(position, lines.firstOrNull { it.kind == GlanceText.POSITION }) else null,
             "gnssHold" to Gnss.holders().contains(Gnss.GLANCE_HOLDER),
+            "clock" to if (open) clock?.json() else null, // T385: the GPS clock fault the GPS area words
             "reasonPx" to if (open) reasonPx.mapValues { r1(it.value) } else null,
             "deadline" to linkedMapOf("shown" to (open && lines.any { it.kind == GlanceLine.DEADLINE }), "source" to deadlineSource),
             "fit" to f?.let {
@@ -357,14 +359,17 @@ private fun currentLines(items: List<StripItem>, deadline: GlanceLine?): Triple<
     val s = io.github.jasondorjeshort.dystopo.gnss.GnssHealth.summarize(Gnss.satellites)
     val gps = GlanceText.Gps(Gnss.searching(gap, other, now), Gnss.searchSince(other)?.let { now - it }, s.inView, s.used, s.best4.firstOrNull())
     val position = LiveReadout.position(now)
-    return Triple(GlanceText.lines(items, deadline, gps, position, positionLine = true, units = io.github.jasondorjeshort.dystopo.app.AppSettings.units), gps, position)
+    // T385: the GPS clock fault going on, as the clock log holds it.
+    val clock = ClockLog.fault()?.let { GlanceText.Clock(it.kind, kotlin.math.abs(it.lastDeltaMs), it.lasted(now)) }
+    Glance.clock = clock
+    return Triple(GlanceText.lines(items, deadline, gps, position, positionLine = true, units = io.github.jasondorjeshort.dystopo.app.AppSettings.units, clock = clock), gps, position)
 }
 
 /** T363: the notes now: the readout's record, the known height's end, the bar's room (main thread). */
 private fun currentNotes(): GlanceText.Notes {
     val hidden = !StripLayout.shown && StripLayout.hiddenBecause in setOf(StripLayout.NO_ROOM_BELOW_WARNING_CARD, StripLayout.NO_ROOM_BESIDE_CHIPS)
     val dropped = if (StripLayout.shown) StripLayout.droppedItems else emptyList()
-    return GlanceText.notes(LiveReadout.snapshot?.readout, LiveReadout.pinEnded, dropped, hidden, io.github.jasondorjeshort.dystopo.app.AppSettings.units, recentRows())
+    return GlanceText.notes(LiveReadout.snapshot?.readout, LiveReadout.pinEnded, dropped, hidden, io.github.jasondorjeshort.dystopo.app.AppSettings.units, recentRows(), ClockLog.ended())
 }
 
 @Composable

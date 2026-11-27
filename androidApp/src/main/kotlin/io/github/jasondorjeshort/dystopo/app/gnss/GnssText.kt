@@ -99,7 +99,7 @@ object GnssText {
     // The menu.
     const val RESET = "Reset assistance data"
     const val RESET_TITLE = "Reset assistance data?"
-    const val RESET_BODY = "The phone forgets the satellite orbits and time it downloaded, and fetches them again. The next fix may take a few minutes."
+    const val RESET_BODY = "The phone forgets the satellite orbits and time it downloaded, and fetches them again. The next fix takes longer, up to a few minutes. Some phones ignore this." // T385
     const val RESET_CONFIRM = "Reset"
     const val CANCEL = "Cancel"
     const val RESET_DONE = "Assistance data reset: the next fix may take a few minutes."

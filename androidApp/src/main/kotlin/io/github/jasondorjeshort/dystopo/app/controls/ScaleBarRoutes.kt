@@ -139,6 +139,17 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   `behind` asks the fetch behind as the readout does, and `behind` says what was done: `asked z/x/y`, `held`, `off`,
  *   `notAllowed`, `noSource`, `launch`), with `counters` as `ground`; `&bench=N` times N held reads within 200 m against
  *   the chosen map's own pyramid as read before T358 (`pointReadUs`, `chosenMapPyramidUs`).
+ * T385, the GPS clock: `POST /readout/skew?ms=<n>|rollover=1[&forS=<s>][&clearLog=1]` moves the own time of the device fixes
+ *   the readout hears (`Heading.onFix`, so `adb emu geo fix`; never `POST /location`, which is the injected path and skips the
+ *   clock log) by `ms` (negative: behind the phone; `rollover=1`: 1024 weeks behind, a receiver at the week rollover) for
+ *   `forS` seconds (60 by default; `ms=0` ends it); `clearLog=1` first forgets the clock log. Answers `skew` (`skewMs`, `leftS`)
+ *   and `clockLog`. `GET /readout` › `inputs` adds `skew`, `clockBase` (`device`: the readout's clock runs on elapsed
+ *   realtime from the phone's clock, taken at the first device fix; `injected`: on an injected fix's or a replay's own
+ *   time; null before any fix), `clockOffsetMs` (the readout's clock minus the phone's) and `counts.fixesFlaggedUsed` (device
+ *   fixes flagged by the clock check and still used); `inputs.clockLog` (`app/readout/ClockLog.kt`) has `counts` (`fixes`,
+ *   `fixesOff`, `fixesImplausible`, `fixesElapsedMissing`, `fixesBackwards`, `faults`, `readoutClockBacks`), `fault` (`kind`
+ *   `disagree` or `unreliable`, `sinceS`, `lastChipVsPhoneMs`, `lasted`) or null, `ended` (the same with `endedS`),
+ *   `offThresholdMs`, `run`, `lastedS` and `recent`.
  * The options are settings (`POST /settings?readout.speed=pace=1`, `readoutBarometer=never` (T250: `auto`, `always`, `never`), T177 `readoutBar=0`,
  * `climbWindow=300`, T178 `pressureFallWarning=more`, T257 `readout.course=deg=0|1;mag=0|1`, `readout.pressure=shown=0|1`,
  * the extended readout `readout.accuracy=shown=1&readout.fixAge=shown=1`; `SettingsRoutes`).
@@ -154,7 +165,19 @@ object ScaleBarRoutes {
         "POST" to "/readout/stations" -> Response.json(io.github.jasondorjeshort.dystopo.app.readout.PressureSource.configure(r.query["url"])) // T173
         "POST" to "/readout/trend" -> trend(app, r) // T178
         "POST" to "/readout/calibrate" -> calibrate(app, r) // T197
+        "POST" to "/readout/skew" -> skew(r) // T385
         else -> null
+    }
+
+    /** T385: `POST /readout/skew`. */
+    private fun skew(r: Request): Response {
+        val rollover = r.query["rollover"]?.trim() in setOf("1", "true", "on")
+        val ms = if (rollover) -io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.ROLLOVER_MS
+            else r.query["ms"]?.trim()?.toLongOrNull() ?: return Response.json(mapOf("error" to "ms=<n> or rollover=1", "got" to r.query["ms"]), 400)
+        val forS = r.query["forS"]?.trim()?.let { it.toLongOrNull() ?: return Response.json(mapOf("error" to "forS=<seconds>", "got" to it), 400) } ?: 60L
+        if (r.query["clearLog"]?.trim() in setOf("1", "true", "on")) io.github.jasondorjeshort.dystopo.app.readout.ClockLog.reset()
+        val set = io.github.jasondorjeshort.dystopo.app.readout.LiveReadout.debugSkew(ms, forS)
+        return Response.json(linkedMapOf("skew" to set, "clockLog" to io.github.jasondorjeshort.dystopo.app.readout.ClockLog.json()))
     }
 
     // ---- T358: the one point read behind the readout's ground height (ADR 0066 build task 4) ----
