@@ -80,6 +80,10 @@ Top level: `device` (serial, model, Android version, `emulator`), `uid`, `minute
   `keepScreenOn`); idle's `settled` and `activityAtEnd`.
 - `statsFile` (with `--save-stats`), `error` when the scenario failed, `ok`.
 
+## Background CPU (T379, ADR 0071)
+
+The tile caches' index walk runs only on screen or under a notified job (`android-app.md` › The online tile cache's index). The check on the emulator: a start with no activity (`android-debug-routes.md`, T379's line) and the `tile-index-*` thread's CPU ticks over an interval, with the cached apps freezer off. On the phone the measure is ADR 0071's: no `excessive cpu` exit in `dumpsys activity exit-info` and the app near zero in `dumpsys batterystats` over a day in the background (the owner's action).
+
 ## Results
 
 One line per run: date, device, minutes per scenario, then per scenario the app's mAh and share, CPU, wakelock, GPS

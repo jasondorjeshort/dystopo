@@ -78,6 +78,16 @@ import java.util.concurrent.atomic.AtomicLong
  * image); the walk drops one it meets the same way. A value that is empty on purpose (an open-ocean vector tile, the
  * cliff cache's "unchanged") is written as the one byte [EMPTY_MARK] and read back empty. [put] syncs the temporary file
  * before its rename ([syncWrites]), so a stop after the rename leaves the whole tile or none.
+ *
+ * T379 (ADR 0071): **no walk without a screen.** The index's thread asks [gate] (on Android the process's
+ * [io.github.jasondorjeshort.dystopo.app.Foreground.walkGate]: an activity on screen, or a job under its own ongoing
+ * notification, an area download's or a recording's) before it moves, reads the snapshot or walks, and again before each
+ * file it walks, each chunk of the snapshot it files and each file the move copies. While the gate is shut the thread
+ * waits on it ([walkHeld]): at a start without a screen nothing is read, and at Home the walk files what it has and stops
+ * until the app is back or a notified job begins. A held walk is not a stall: [awaitReady]'s clock counts only time the
+ * walk could run ([waitStallMs] without a file while the gate is open is still a timeout). The actions of [whenReady] run
+ * when the index is whole, as before; [whenReadyOrHeld] runs at the first hold too (the launch stage `cacheIndex`). The
+ * walk's progress across a kill is T390's.
  */
 class TileCache(
     val dir: File,
@@ -94,6 +104,8 @@ class TileCache(
     val move: TileStoreMove? = null,
     /** T267: nothing is evicted until [attachPins] (the online cache's: the offline areas' pins come from `Areas.attach`). */
     pinsPending: Boolean = false,
+    /** T379 (ADR 0071): whether the index's thread may work now; on Android the screen or a notified job, on the JVM always. */
+    private val gate: WalkGate = WalkGate.forPlatform(),
     /** Last, so the callers' trailing lambda is the clock (as before T242). */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -174,6 +186,64 @@ class TileCache(
     @Volatile var indexError: String? = null
         private set
     private val startedNs = System.nanoTime()
+
+    // --- T379: the gate ---
+
+    /** T379: the index's thread is waiting on [gate] now (a start without a screen, or the app left it mid-walk). */
+    @Volatile var walkHeld = false
+        private set
+    /** T379: times the thread waited on the gate, the ms it waited in all, and when the current wait began (ms, [clock]). */
+    private val holds = AtomicLong()
+    @Volatile private var heldNs = 0L
+    @Volatile private var heldSince: Long? = null
+    /** T379: what [awaitReady] counts as a stall: this long with the gate open and no file walked ([WAIT_STALL_MS]; tests shorten it). */
+    @Volatile internal var waitStallMs = WAIT_STALL_MS
+    /** T379: [whenReadyOrHeld]'s actions, run at the first hold or when whole (under [lock]); null once run. */
+    private var atHoldOrReady: ArrayList<Pair<String, () -> Unit>>? = ArrayList()
+
+    /**
+     * T379: waits while [gate] is shut, holding no lock (the caller has filed what it walked). The first hold runs
+     * [whenReadyOrHeld]'s actions. An interrupt ends the wait and is kept.
+     */
+    private fun pauseIfShut() {
+        if (gate.open) return
+        val first: List<Pair<String, () -> Unit>>? = synchronized(lock) { atHoldOrReady.also { atHoldOrReady = null } }
+        holds.incrementAndGet()
+        heldSince = clock()
+        walkHeld = true
+        val t0 = System.nanoTime()
+        try {
+            first?.forEach { (_, action) -> runCatching { action() } }
+            while (!gate.open) gate.awaitOpen()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } finally {
+            heldNs += System.nanoTime() - t0
+            walkHeld = false
+            heldSince = null
+        }
+    }
+
+    /**
+     * T379: runs [action] once, at the first time the index's thread waits on the gate or when the index is whole, whichever
+     * comes first: on that thread, or on a thread of its own ([name]) when one of them has happened. The launch stage
+     * `cacheIndex` ends here, so a start without a screen does not leave it open for the process's life.
+     */
+    fun whenReadyOrHeld(name: String, action: () -> Unit) {
+        synchronized(lock) {
+            atHoldOrReady?.let {
+                it += name to action
+                return
+            }
+        }
+        Thread(action, name).apply { isDaemon = true }.start()
+    }
+
+    /** T379: the gate's state for `GET /debug/cache`: open, why, the walk held now, since when, how often and how long. */
+    fun gateJson(): Map<String, Any?> = linkedMapOf(
+        "open" to gate.open, "why" to gate.why(), "held" to walkHeld, "heldSinceMs" to heldSince?.let { clock() - it },
+        "holds" to holds.get(), "heldMs" to heldNs / 1_000_000, // the holds that ended; the current one is heldSinceMs
+    )
 
     // --- T249: the snapshot ---
 
@@ -399,6 +469,7 @@ class TileCache(
     }
 
     private fun copyOne(m: TileStoreMove, key: String, src: File) {
+        pauseIfShut() // T379: the copy waits for the screen too (both trees stay served meanwhile)
         val dst = fileOf(key)
         if (dst.exists()) { // a newer write is in the new tree
             synchronized(moveLock) { src.delete() }
@@ -558,6 +629,7 @@ class TileCache(
 
     /** T249: the index's thread: the snapshot read when it may be, else the walk (then the snapshot written). */
     private fun index() {
+        pauseIfShut() // T379: nothing moved, read or walked without a screen or a notified job
         if (moving) {
             moveFirst()
             if (moveRoot != null) { // T267: a copy: both trees walked (the new first: a key in both is the new one), then copied
@@ -601,6 +673,10 @@ class TileCache(
         val batch = ArrayList<Walked>(WALK_BATCH)
         try {
             for (root in roots) walker.walk(root) { key, bytes, mtime, path ->
+                if (!gate.open) { // T379: the app left the screen: what was walked is filed, then the walk waits
+                    fileWalked(batch)
+                    pauseIfShut()
+                }
                 if (key.endsWith(".tmp")) {
                     // A write interrupted by a kill; one under way now (a put while indexing) is younger.
                     if (mtime < startedAt - STALE_TMP_MS) runCatching { File(path).delete() }
@@ -644,16 +720,21 @@ class TileCache(
 
     private fun markReady(fromSnapshot: Boolean = false) {
         val actions: List<Pair<String, () -> Unit>>
+        val first: List<Pair<String, () -> Unit>>?
         synchronized(lock) {
             this.fromSnapshot = fromSnapshot
             state = State.READY
             removed = null
             actions = ArrayList(pending)
             pending.clear()
+            first = atHoldOrReady.also { atHoldOrReady = null } // T379
         }
         walkMs = (System.nanoTime() - startedNs) / 1_000_000
-        readyLatch.countDown()
+        // T379 (T363's follow-up): the cap is applied before awaitReady returns, so a caller reads the trimmed index (the
+        // access-order test read the entries the trim was about to evict, under load).
         runCatching { trimIfOver() }
+        readyLatch.countDown()
+        first?.forEach { (_, action) -> runCatching { action() } }
         for ((_, action) in actions) runCatching { action() }
     }
 
@@ -677,15 +758,22 @@ class TileCache(
      * caller and [op] (T229's rule: never a silent answer, never a wait there).
      */
     fun awaitReady(op: String = "awaitReady") {
-        if (ready) return
+        if (readyLatch.count == 0L) return // T379: whole and trimmed
+        if (ready && onMain()) return // whole, its trim under way: the main thread does not wait for it (as before)
         check(!onMain()) {
             "TileCache.$op on the main thread while the index is built, from ${callerOf()}: read bytes, size, pinnedBytes and state (partial while indexing), or call it on a thread"
         }
         var seen = walked
-        while (!readyLatch.await(WAIT_STALL_MS, TimeUnit.MILLISECONDS)) {
+        var holdsSeen = holds.get()
+        while (true) {
+            val stall = waitStallMs
+            if (readyLatch.await(stall, TimeUnit.MILLISECONDS)) return
             val now = walked
-            if (now == seen) throw TimeoutException("TileCache.$op: the index made no progress in $WAIT_STALL_MS ms (${callerOf()})")
+            val h = holds.get()
+            // T379 (ADR 0071, decision 6): a walk held for the screen, now or during the interval, is not a stall.
+            if (now == seen && h == holdsSeen && !walkHeld) throw TimeoutException("TileCache.$op: the index made no progress in $stall ms (${callerOf()})")
             seen = now
+            holdsSeen = h
         }
     }
 
@@ -747,6 +835,7 @@ class TileCache(
         val totals = LongArray(4)
         var i = 0
         while (i < e.count) {
+            pauseIfShut() // T379: between chunks, holding no lock
             val to = minOf(e.count, i + SCAN_CHUNK)
             synchronized(lock) {
                 val gone = removed?.takeIf { it.isNotEmpty() }
@@ -1344,6 +1433,7 @@ class TileCache(
         "heapBytes" to index.heapBytes(), "heapBytesPerEntry" to entries.takeIf { it > 0 }?.let { index.heapBytes() / it },
         "stringKeys" to index.stringKeys, "groups" to index.groups, "buckets" to index.bucketCount,
         "walker" to walker.name, "fromSnapshot" to fromSnapshot, // T249
+        "gate" to gateJson(), // T379
     )
 
     fun json(): Map<String, Any?> = linkedMapOf(
@@ -1664,6 +1754,33 @@ object OsGroupFixer : GroupFixer {
     override fun chown(path: String, gid: Int) = android.system.Os.lchown(path, -1, gid)
 
     override fun chmod(path: String, mode: Int) = android.system.Os.chmod(path, mode)
+}
+
+/**
+ * T379 (ADR 0071): whether a [TileCache]'s index thread may work now. On Android the process's rule
+ * ([io.github.jasondorjeshort.dystopo.app.Foreground.walkGate]: on screen, or a notified job); [OPEN] on the JVM, where the
+ * tests that do not drive the gate run as before.
+ */
+interface WalkGate {
+    val open: Boolean
+
+    /** Blocks until [open] may have changed (callers loop on [open]); throws [InterruptedException]. */
+    fun awaitOpen()
+
+    /** Why it is open or shut, in words (`GET /debug/cache`). */
+    fun why(): String
+
+    companion object {
+        val OPEN: WalkGate = object : WalkGate {
+            override val open: Boolean get() = true
+            override fun awaitOpen() {}
+            override fun why() = "always (no gate)"
+        }
+
+        /** The process's gate on Android, [OPEN] elsewhere (as [TileWalker.forPlatform] picks its walker). */
+        fun forPlatform(): WalkGate =
+            if (System.getProperty("java.vm.name").orEmpty().contains("Dalvik")) io.github.jasondorjeshort.dystopo.app.Foreground.walkGate else OPEN
+    }
 }
 
 /** T242: whether this is the UI thread (false on the JVM, where `android.os.Looper` is a stub). */

@@ -86,7 +86,11 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             }
             while (true) {
                 val j = AreaDownload.job?.takeIf { it.running } ?: break
-                if (run.foreground == null) run.foreground = tryForeground(j, run)
+                if (run.foreground == null) {
+                    run.foreground = tryForeground(j, run)
+                    // T379 (ADR 0071): under the notification the tile index's walk may run (a download's plan waits for it).
+                    if (run.foreground == true) Foreground.notifiedWork(notifiedName, true)
+                }
                 run.watched += j.id
                 while (!j.handedOn) {
                     if (run.foreground == true) runCatching { notify(applicationContext, j) }
@@ -112,9 +116,13 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             run.end("failed: ${e.message ?: e.javaClass.simpleName}")
             return Result.retry()
         } finally {
+            Foreground.notifiedWork(notifiedName, false) // T379
             active.decrementAndGet()
         }
     }
+
+    /** T379: this run's name among the notified jobs ([Foreground.notifiedWork]); per run, so a replaced run's end does not end its successor's. */
+    private val notifiedName = "area download ${id.toString().take(8)}"
 
     /** The foreground with the `dataSync` type; false (a plain job, about ten minutes) when the system refuses it. */
     private suspend fun tryForeground(j: AreaDownload.Job, run: Run): Boolean = try {

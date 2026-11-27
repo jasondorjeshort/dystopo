@@ -88,7 +88,8 @@ class TileCacheTest {
         c.put("new", ByteArray(100))
         now += 120_000
         c.get("old") // touched: newer than "new" on disk
-        // A restart with a smaller cap keeps the most recently used entry (T242: once the index is whole).
+        // A restart with a smaller cap keeps the most recently used entry (T242: once the index is whole; T379: awaitReady
+        // returns after the trim that applies the cap, which ran after it before and lost the race under load).
         val again = cache(150)
         again.awaitReady()
         assertTrue(again.contains("old"))
@@ -381,5 +382,159 @@ class TileCacheTest {
         assertFalse(File(dir, "s/dem/9/1/1.png").exists())
         assertEquals(1L, c.emptyDropped.get())
         assertNull(c.get("s/dem/9/1/1.png"))
+    }
+
+    // --- T379 (ADR 0071): no walk without a screen or a notified job ---
+
+    /** A cache whose walk asks the process's gate ([io.github.jasondorjeshort.dystopo.app.Foreground.walkGate]); [hook] as [heldCache]'s. */
+    private fun gatedCache(max: Long = 1_000_000, hook: ((Long) -> Unit)? = null) =
+        TileCache(dir, max, walkHook = hook, gate = io.github.jasondorjeshort.dystopo.app.Foreground.walkGate) { now }
+
+    private val fg = io.github.jasondorjeshort.dystopo.app.Foreground
+
+    private fun waitFor(what: String, ms: Long = 10_000, ok: () -> Boolean) {
+        val until = System.currentTimeMillis() + ms
+        while (!ok() && System.currentTimeMillis() < until) Thread.sleep(5)
+        assertTrue(ok(), what)
+    }
+
+    @AfterTest
+    fun foregroundBack() {
+        fg.reset()
+    }
+
+    @Test
+    fun theWalkIsHeldWithNoScreenAndNoNotifiedJob() {
+        fg.reset()
+        seed(5)
+        val c = gatedCache()
+        waitFor("the walk held") { c.walkHeld }
+        Thread.sleep(100)
+        assertEquals(TileCache.State.INDEXING, c.state)
+        assertEquals(0L, c.walked, "not one file walked")
+        assertEquals(0, c.size)
+        val gate = c.indexJson()["gate"] as Map<*, *>
+        assertEquals(false, gate["open"])
+        assertEquals(true, gate["held"])
+        assertEquals("no screen and no notified job", gate["why"])
+        assertTrue(c.contains(tile(2)), "a key is still answered from its file")
+        fg.activityStarted() // the app comes to the screen
+        waitReady(c)
+        assertEquals(5, c.size)
+        assertFalse(c.walkHeld)
+        assertEquals(1L, (c.indexJson()["gate"] as Map<*, *>)["holds"])
+    }
+
+    @Test
+    fun theWalkPausesWhenTheAppLeavesTheScreenAndResumesAtItsReturn() {
+        fg.reset()
+        fg.activityStarted()
+        seed(6)
+        // Home after the second file: the walk stops before the third.
+        val c = gatedCache(hook = { if (it == 2L) fg.activityStopped() })
+        waitFor("held after Home") { c.walkHeld }
+        Thread.sleep(100)
+        assertEquals(2L, c.walked)
+        assertEquals(2, c.size, "what was walked is filed before the pause")
+        assertEquals(TileCache.State.INDEXING, c.state)
+        fg.activityStarted()
+        waitReady(c)
+        assertEquals(6, c.size)
+        assertEquals(6L, c.walked)
+    }
+
+    @Test
+    fun theWalkRunsUnderANotifiedJob() {
+        fg.reset()
+        seed(4)
+        val c = gatedCache()
+        waitFor("held") { c.walkHeld }
+        fg.notifiedWork("download", true) // an area download's notification is up, the app off screen
+        waitReady(c)
+        assertEquals(4, c.size)
+        assertEquals("under download", (c.indexJson()["gate"] as Map<*, *>)["why"])
+        fg.notifiedWork("download", false)
+        fg.notifiedWork("download", false) // idempotent
+        assertFalse(fg.workAllowed)
+    }
+
+    @Test
+    fun aNotifiedJobKeepsTheWalkGoingAfterHome() {
+        fg.reset()
+        fg.activityStarted()
+        fg.notifiedWork("recording", true)
+        seed(5)
+        val c = gatedCache(hook = { if (it == 2L) fg.activityStopped() })
+        waitReady(c)
+        assertEquals(5, c.size)
+        assertEquals(0L, (c.indexJson()["gate"] as Map<*, *>)["holds"], "never held")
+    }
+
+    @Test
+    fun awaitReadyDoesNotTimeOutWhileTheWalkIsHeld() {
+        fg.reset()
+        seed(3)
+        val c = gatedCache()
+        c.waitStallMs = 100
+        waitFor("held") { c.walkHeld }
+        var failure: Throwable? = null
+        val done = CountDownLatch(1)
+        Thread {
+            try {
+                c.awaitReady("test")
+            } catch (t: Throwable) {
+                failure = t
+            }
+            done.countDown()
+        }.start()
+        assertFalse(done.await(800, TimeUnit.MILLISECONDS), "still waiting after eight stall periods, no timeout")
+        assertNull(failure)
+        fg.activityStarted()
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertNull(failure, "returned once the walk was whole")
+        assertTrue(c.ready)
+    }
+
+    @Test
+    fun aWalkThatStallsWithTheGateOpenStillTimesOut() {
+        fg.reset()
+        fg.activityStarted()
+        seed(3)
+        val release = CountDownLatch(1)
+        val c = gatedCache(hook = { if (it == 1L) release.await(30, TimeUnit.SECONDS) })
+        c.waitStallMs = 100
+        val e = assertFailsWith<java.util.concurrent.TimeoutException> { c.awaitReady("test") }
+        assertTrue(e.message!!.contains("made no progress"), e.message)
+        release.countDown()
+        c.waitStallMs = TileCache.WAIT_STALL_MS
+        c.awaitReady()
+    }
+
+    @Test
+    fun whenReadyOrHeldRunsAtTheFirstHoldOrWhenWhole() {
+        fg.reset()
+        seed(3)
+        val c = gatedCache()
+        val atHold = CountDownLatch(1)
+        c.whenReadyOrHeld("test") { atHold.countDown() }
+        assertTrue(atHold.await(10, TimeUnit.SECONDS), "ran at the hold")
+        assertFalse(c.ready)
+        fg.activityStarted()
+        waitReady(c)
+        val after = CountDownLatch(1)
+        c.whenReadyOrHeld("test") { after.countDown() }
+        assertTrue(after.await(10, TimeUnit.SECONDS), "ran at once on its own thread when whole")
+        // A walk never held: at the end.
+        val dir2 = Files.createTempDirectory("tilecache2").toFile()
+        try {
+            File(dir2, "a/1").apply { parentFile.mkdirs(); writeBytes(ByteArray(3)) }
+            val whole = CountDownLatch(1)
+            val c2 = TileCache(dir2, 1000, gate = fg.walkGate) { now }
+            c2.whenReadyOrHeld("test") { whole.countDown() }
+            assertTrue(whole.await(10, TimeUnit.SECONDS))
+            assertTrue(c2.ready)
+        } finally {
+            dir2.deleteRecursively()
+        }
     }
 }
