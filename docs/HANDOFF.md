@@ -1,22 +1,22 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at the commit that carries this file (wave 49: four merged, three being verified, T390 building; the meter reset), by the main session in the second clone
+Updated: 2026-11-26, at the commit that carries this file (wave 49: six merged, T381 being verified, T390, T385 and T386 building), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged:** T389 (940365fa), T376 (9feb7f02), T375 (bd8f3741), T379 (bd1e3b7e); each has its Status line on the board and its log entry.
-- **In flight (launched 2026-11-27 04:05 UTC, after the meter's reset):** Sonnet verifiers on T384 (`task/T384`, 90773e93), T381 (`task/T381`, 5349dcc6, `-SweepThrough two-maps`) and T377 (`task/T377`, d74983b9, its `features` part whole); an Opus implementer on T390 (`task/T390`); a read-only research agent for T385 (its answer to `<scratchpad>/w49-plan/research-fix-time.md`). The implementers' reports are kept as `<scratchpad>/w49-plan/report-Tnn.txt` for the merge bodies. `dystopo-wt/tools-main` stands at 8f3b36f0.
+- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged (six of fifteen, and T389):** T389 (940365fa), T376 (9feb7f02), T375 (bd8f3741), T379 (bd1e3b7e), T384 (bee02156), T377 (47f65111); each has its Status line on the board and its log entry.
+- **In flight (2026-11-27 06:50 UTC), four Gradle agents:** a Sonnet verifier on T381 (`task/T381`, 5349dcc6, `-SweepThrough two-maps`; its implementer's report is `<scratchpad>/w49-plan/report-T381.txt`); Opus implementers on T390 (`task/T390`), T385 (`task/T385`) and T386 (`task/T386`), none pushed yet. A Haiku chore is cleaning up T379's, T384's and T377's branches and worktrees and moving `dystopo-wt/tools-main` to the tip.
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
 - **On the PC:** the main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. Two phones of the owner's dropped off wireless adb during T389's verify (cause not found).
 
 ## Next
 
-1. On each verifier's MERGE: the merge sequence (T384 first if two are ready: the readout chain waits on it), a cleanup chore, and the chore moves `tools-main` to the new tip (all three touch `tools/`). A FIX goes back to its implementer by its id.
-2. Launch as slots free (four Gradle agents at once, a verifier counting as one), each after the tasks in its brackets on the board: T387, T382, T383, then T378 (T377), T385 (T384, its research written into its entry), T386 (T377), T380, T388. Every brief carries the wave paragraph's `GRADLE_OPTS`, `-WaitForSlot 120`, the fixture (T377's `tile_area_fixture` and `AreaTiles.vectorTile`) and the Hatchery sentence, and for T387 the way to start the process with no activity (T379's Status line).
-3. When the research for T385 reports: write its answer into T385's entry on the board (the threshold, the fallback with no elapsed stamp, what a track point's time is for a flagged fix).
+1. On T381's verdict: MERGE, the merge sequence and a cleanup chore that also moves `tools-main`; FIX, back to its implementer by its id. As T390, T385 and T386 report: a Sonnet verifier each, run from `dystopo-wt/tools-main` with the report in its brief, `-SlotWaitMinutes 120`, and the sentence that no agent moves HEAD in the coordinator's checkout (a verifier did, briefly).
+2. Launch as slots free (four Gradle agents at once, a verifier counting as one): T387, T382, T383, T378, T380, then T388 (after T383, T385 and T381). Every brief carries the wave paragraph's `GRADLE_OPTS`, `-WaitForSlot 120`, the Hatchery sentence, the packs copied into the worktree's own `out/`, and for T378 the fixture and the shared read (T377's Status line), for T387 the way to start the process with no activity (T379's Status line).
+3. The device tour was not shown green on T384's and T389's heads (load, by the verifiers' reading): the closing sweep reads it; if it is red there, look at T379's later start of the cache walk first.
 4. Timed runs go alone: hold launches for T379's and T387's start-up runs when their implementers report them as not judged.
 5. A small release may be cut once T384, T385, T379 and T381 are merged (the wave paragraph); otherwise the closing sweep, with `-Prev` from `dystopo-wt/sweep-w48`.
 6. Triage's scan: the earliest dated ADR prediction is due 2026-12-01; ADR 0070's two and ADR 0071's second are checked at this wave's close.
