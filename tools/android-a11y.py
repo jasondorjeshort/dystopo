@@ -1811,6 +1811,25 @@ def end_glance_clock(c):
 # end T385
 
 
+# T383: the long-press screen reads GET /map/marks first: a circle or symbol layer of ours that nothing names (no mark in
+# the app's MapMarks table, no rule for another card's layers) fails the screen, and with it the sweep's a11y part. A new
+# overlay's author meets it by naming the layer in MapMarks (androidApp .../app/tracking/MapMarks.kt) and MapMarksTest.
+def unnamed_marks(srv):
+    """The ids GET /map/marks lists as `unnamed`; an answer with no `layers` is an error, not a pass."""
+    j = srv.ok("GET", "/map/marks") or {}
+    if "layers" not in j:
+        raise RuntimeError(f"GET /map/marks answered no layers: {json.dumps(j)[:200]}")
+    return list(j.get("unnamed") or [])
+
+
+def scr_longpress_named(c, timeout=30.0):
+    missing = unnamed_marks(c.srv)
+    if missing:
+        raise RuntimeError(f"longpress: map layers that draw a point with no name: {', '.join(missing)}")
+    scr_longpress(c, timeout)
+# end T383
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1895,6 +1914,9 @@ SCREENS = [
     ("glance-clock", scr_glance_clock, end_glance_clock, "screen"),
     # end T385
 ]
+# T383: the long-press screen checks that every point layer is named first (scr_longpress_named).
+SCREENS = [(n, scr_longpress_named if f is scr_longpress else f, t, l) for n, f, t, l in SCREENS]
+# end T383
 
 
 def find_node(sem, pred):

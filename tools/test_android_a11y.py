@@ -1232,4 +1232,32 @@ finally:
     a11y.geo_fix = _geo
 # end T385
 
+
+# T383: the long-press screen fails on a point layer GET /map/marks lists as unnamed, before it presses.
+class MarksSrv:
+    def __init__(self, answer):
+        self.answer, self.calls = answer, []
+
+    def ok(self, method, path, **kw):
+        self.calls.append(path)
+        return self.answer if path == "/map/marks" else {}
+
+
+assert a11y.unnamed_marks(MarksSrv({"layers": [{"id": "dystopo-track-points", "name": "Track start"}], "unnamed": []})) == []
+assert a11y.unnamed_marks(MarksSrv({"layers": [], "unnamed": ["dystopo-new-dots"]})) == ["dystopo-new-dots"]
+try:
+    a11y.unnamed_marks(MarksSrv({"error": "the map has no style yet"}))
+    raise AssertionError("an answer with no layers passed")
+except RuntimeError as e:
+    assert "no layers" in str(e), e
+_srv = MarksSrv({"layers": [], "unnamed": ["dystopo-new-dots"]})
+try:
+    a11y.scr_longpress_named(type("C", (), {"srv": _srv})())
+    raise AssertionError("an unnamed layer passed")
+except RuntimeError as e:
+    assert "dystopo-new-dots" in str(e), e
+assert _srv.calls == ["/map/marks"], "the screen fails before it presses"
+assert {s[0]: s[1] for s in a11y.SCREENS}["longpress"] is a11y.scr_longpress_named
+# end T383
+
 print("test_android_a11y: ok")
