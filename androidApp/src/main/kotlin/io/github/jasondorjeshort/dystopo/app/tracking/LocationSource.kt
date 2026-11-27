@@ -115,7 +115,9 @@ class GpsLocationSource(
                 else -> null
             }
             return LocationFix(
-                lat = loc.latitude, lon = loc.longitude, ele = ele, time = loc.time,
+                // T385: a fix whose own time is off the phone's (GpsClockCheck.OFF_MS) is kept at the phone's time for it.
+                lat = loc.latitude, lon = loc.longitude, ele = ele, time = io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.trackTime(loc.time,
+                    io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.phoneTime(loc.elapsedRealtimeNanos / 1_000_000, android.os.SystemClock.elapsedRealtime(), System.currentTimeMillis())),
                 accuracyM = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null, source = source,
                 speedMps = if (loc.hasSpeed()) loc.speed.toDouble() else null,
                 courseDeg = if (loc.hasBearing()) loc.bearing.toDouble() else null,

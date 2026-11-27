@@ -39,6 +39,8 @@
 {"screen": "first-run:1.0", "kind": "contrast", "label": "Settings", "boundsDp": [28, 770, 80, 794]},
 {"screen": "first-run:1.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 189, 84]},
 {"screen": "first-run:2.0", "kind": "unlabelled", "label": "-", "boundsDp": [22, 66, 142, 88]},
+{"screen": "glance-clock:1.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
+{"screen": "glance-clock:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "glance-position:1.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "glance-position:2.0", "kind": "covered", "label": "map controls under the screen", "boundsDp": [0, 0, 411, 914]},
 {"screen": "glance-searching:1.0", "kind": "contrast", "label": "accuracy", "boundsDp": [160, 413, 251, 440]},

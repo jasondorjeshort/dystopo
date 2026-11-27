@@ -70,7 +70,7 @@ enum class ValueState(val code: String) {
  * T363: how a reason bears on the value it explains, for the bar's "?" mark ([ReadoutReasons.marked]): [NONE] a figure
  * or off, nothing to say; [AT_REST] a value at rest (a speed standing still, the course held from the last movement),
  * explained in the glance view but not marked; [MISSING] the data is not there; [STALE] it is there but old, held or
- * in doubt.
+ * in doubt. T385: [ReadoutReason.GPS_CLOCK] is [NONE] with words of its own: its value is a figure.
  */
 enum class ReasonKind { NONE, AT_REST, MISSING, STALE }
 
@@ -131,6 +131,13 @@ enum class ReadoutReason(val code: String, val kind: ReasonKind) {
      * not know it): [ReadoutReasons.searching] puts it in place of [NO_FIX]; the estimator never gives it.
      */
     SEARCHING("searching", ReasonKind.MISSING),
+
+    /**
+     * T385: the GPS clock is off ([GpsClockCheck]): the fix is flagged and still used, so the value is a figure and the
+     * bar marks nothing ([ReasonKind.NONE]); the glance view's GPS area words it (`ReasonText.clock`). The estimator
+     * never gives it.
+     */
+    GPS_CLOCK("gps clock", ReasonKind.NONE),
     ;
 
     companion object {
@@ -1322,3 +1329,198 @@ class ReadoutEstimator(
 }
 
 internal fun r3(v: Double): Double = (v * 1000).roundToLong() / 1000.0
+
+// ---- T385: the readout's time base, and the GPS clock check ----
+
+/**
+ * T385: the readout's clock (pure; `ReadoutClockTest`): [offsetMs] is the readout's clock minus elapsed realtime, so an
+ * input at elapsed time `e` is stamped `e + offsetMs` ([at]).
+ *
+ * - **Device fixes** ([deviceFix]) and the sensor's samples are ordered on elapsed realtime: the platform's documentation
+ *   says a fix's own time "should not be used to order or compare locations" and that its elapsed-realtime stamp is the
+ *   monotonic one, on the same base as a sensor event's (the research of 2026-11-27, on the board's T385). The base is
+ *   taken once from the phone's clock, at the first device fix after a start, a [reset] or injected fixes, and kept: a fix's
+ *   own time never moves it, nor does the phone's clock being set. A fix whose elapsed stamp is missing, zero or in the
+ *   future takes its time of receipt ([fixElapsed]; counted in [stampsMissing]).
+ * - **Injected fixes and replays** ([injectedFix]) keep the rule before T385: the clock is the fix's own time, moved with
+ *   each fix, since their times are in the past by design.
+ */
+class ReadoutClock {
+    /** The readout's clock minus elapsed realtime. */
+    var offsetMs = 0L
+        private set
+
+    /** The base is the device's (taken from the phone's clock), not an injected fix's. */
+    var deviceBase = false
+        private set
+
+    /** A fix has set the clock since the start or the last [reset]. */
+    var known = false
+        private set
+
+    /** Device fixes whose elapsed stamp was missing, zero or in the future (ordered by their receipt). */
+    var stampsMissing = 0L
+        private set
+
+    /**
+     * A device fix whose elapsed stamp is [stampElapsedMs] (null when it has none), received at [nowElapsedMs] with the
+     * phone's clock at [nowWallMs]: its time on the readout's clock, whatever its own time says.
+     */
+    fun deviceFix(stampElapsedMs: Long?, nowElapsedMs: Long, nowWallMs: Long): Long {
+        if (!deviceBase) {
+            offsetMs = nowWallMs - nowElapsedMs
+            deviceBase = true
+        }
+        known = true
+        val e = fixElapsed(stampElapsedMs, nowElapsedMs) ?: run { stampsMissing++; nowElapsedMs }
+        return e + offsetMs
+    }
+
+    /** An injected or replayed fix at its own [fixTimeMs], received at [nowElapsedMs]: the clock follows it. */
+    fun injectedFix(fixTimeMs: Long, nowElapsedMs: Long): Long {
+        offsetMs = fixTimeMs - nowElapsedMs
+        deviceBase = false
+        known = true
+        return fixTimeMs
+    }
+
+    /** An input at elapsed time [elapsedMs] on the readout's clock (a sensor sample, a read). */
+    fun at(elapsedMs: Long): Long = elapsedMs + offsetMs
+
+    /** The readout's clock minus the phone's clock, now: what the station prior and the pin's clock text convert by. */
+    fun minusWall(nowElapsedMs: Long, nowWallMs: Long): Long = offsetMs - (nowWallMs - nowElapsedMs)
+
+    fun reset() {
+        offsetMs = 0L
+        deviceBase = false
+        known = false
+        stampsMissing = 0L
+    }
+
+    companion object {
+        /** A fix's elapsed stamp when it is usable (set, above zero, not after [nowElapsedMs]), else null: take its receipt. */
+        fun fixElapsed(stampElapsedMs: Long?, nowElapsedMs: Long): Long? = stampElapsedMs?.takeIf { it in 1..nowElapsedMs }
+    }
+}
+
+/** T385: a GPS clock fault as the glance view words it: the two clocks disagree, or the receiver's time is implausible. */
+enum class GpsClockFault(val code: String) {
+    /** The fix's time and the phone's differ by more than [GpsClockCheck.OFF_MS]; either clock may be the wrong one. */
+    DISAGREE("disagree"),
+
+    /** As [DISAGREE], and the fix's time is implausible on its own ([GpsClockCheck.implausible]): the receiver's clock. */
+    UNRELIABLE("unreliable"),
+}
+
+/**
+ * T385: the GPS clock check (pure; `ReadoutClockTest`). Each GPS fix's own time is compared with the time the phone's
+ * clock gives for the moment it was taken (the phone's clock now less the fix's age on elapsed realtime, [phoneTime]).
+ * A fix further off than [OFF_MS] is **flagged and still used** for position, height and speed (its time is not what
+ * orders it: [ReadoutClock]). The two stamps alone cannot tell a wrong receiver from a wrong phone clock, so a fault is
+ * [GpsClockFault.UNRELIABLE] only while the fix's time is implausible on its own ([implausible]), else
+ * [GpsClockFault.DISAGREE]. A fault begins with [RUN] flagged fixes in a row and ends with [RUN] good ones in a row;
+ * [ended] keeps the last few, for the glance view's last minute (one note per fault).
+ */
+class GpsClockCheck {
+    /** One fault: [kind] as its last flagged fix read, from [sinceElapsedMs] (its first flagged fix) to [endElapsedMs] (null while it lasts). */
+    data class Fault(val kind: GpsClockFault, val sinceElapsedMs: Long, val lastDeltaMs: Long, val endElapsedMs: Long? = null) {
+        /** The fault has lasted [LASTED_MS] and the receiver is the suspect: the glance view names the assistance reset. */
+        fun lasted(nowElapsedMs: Long): Boolean = kind == GpsClockFault.UNRELIABLE && nowElapsedMs - sinceElapsedMs >= LASTED_MS
+    }
+
+    /** One fix's verdict: [deltaMs] its time less the phone's, [off] flagged, [implausible] its time impossible on its own. */
+    data class Flag(val deltaMs: Long, val off: Boolean, val implausible: Boolean)
+
+    /** The fault going on now, or null. */
+    var fault: Fault? = null
+        private set
+
+    /** The faults that ended, oldest first, at most [KEEP]. */
+    val ended = ArrayDeque<Fault>()
+
+    private var offRun = 0
+    private var okRun = 0
+    private var runStart = 0L
+
+    /** A GPS fix whose own time is [fixTimeMs], the phone's time for it [phoneTimeMs], received at [elapsedMs]. */
+    fun onFix(fixTimeMs: Long, phoneTimeMs: Long, elapsedMs: Long): Flag {
+        val delta = fixTimeMs - phoneTimeMs
+        val off = off(delta)
+        val flag = Flag(delta, off, off && implausible(fixTimeMs, phoneTimeMs))
+        val f = fault
+        if (off) {
+            okRun = 0
+            if (offRun == 0) runStart = elapsedMs
+            offRun++
+            val kind = if (flag.implausible) GpsClockFault.UNRELIABLE else GpsClockFault.DISAGREE
+            if (f != null) fault = f.copy(kind = kind, lastDeltaMs = delta)
+            else if (offRun >= RUN) fault = Fault(kind, runStart, delta)
+        } else {
+            offRun = 0
+            okRun++
+            if (f != null && okRun >= RUN) {
+                ended.addLast(f.copy(endElapsedMs = elapsedMs))
+                while (ended.size > KEEP) ended.removeFirst()
+                fault = null
+            }
+        }
+        return flag
+    }
+
+    fun reset() {
+        fault = null
+        ended.clear()
+        offRun = 0
+        okRun = 0
+    }
+
+    companion object {
+        /**
+         * A fix further than this from the phone's clock is flagged: above network time's error and a fix's latency, below a
+         * missing leap-second correction (18 s). The researcher's judgement (2026-11-27), not a sourced figure.
+         */
+        const val OFF_MS = 5_000L
+
+        /** Flagged fixes in a row that begin a fault, and good ones in a row that end it. */
+        const val RUN = 2
+
+        /**
+         * An unreliable receiver's fault this long names the assistance reset: the navigation message repeats every 30 s
+         * and carries the week number once in each repeat, so a receiver still wrong after two repeats is not putting its
+         * own time right.
+         */
+        const val LASTED_MS = 60_000L
+
+        /**
+         * No fix is older than this (2026-11-01 UTC): the code that reads it was written after it. The app carries no build
+         * date, so this stands for it; a receiver's time before it (an epoch date, the 1024-week rollover) is impossible.
+         */
+        const val NOT_BEFORE_MS = 1_793_491_200_000L
+
+        /** The GPS week number's rollover: 1024 weeks. */
+        const val ROLLOVER_MS = 1024L * 7 * 86_400_000L
+
+        private const val ROLLOVER_SLACK_MS = 86_400_000L
+
+        fun off(deltaMs: Long): Boolean = abs(deltaMs) > OFF_MS
+
+        /** A fix's time impossible on its own: before [NOT_BEFORE_MS], or a whole number of rollovers behind the phone's (within a day). */
+        fun implausible(fixTimeMs: Long, phoneTimeMs: Long): Boolean {
+            if (fixTimeMs < NOT_BEFORE_MS) return true
+            val behind = phoneTimeMs - fixTimeMs
+            if (behind < ROLLOVER_MS - ROLLOVER_SLACK_MS) return false
+            val rem = behind % ROLLOVER_MS
+            return rem <= ROLLOVER_SLACK_MS || ROLLOVER_MS - rem <= ROLLOVER_SLACK_MS
+        }
+
+        /** The phone's time for a fix taken at elapsed [stampElapsedMs] (its receipt when unusable), read at [nowElapsedMs] and [nowWallMs]. */
+        fun phoneTime(stampElapsedMs: Long?, nowElapsedMs: Long, nowWallMs: Long): Long =
+            nowWallMs - (nowElapsedMs - (ReadoutClock.fixElapsed(stampElapsedMs, nowElapsedMs) ?: nowElapsedMs))
+
+        /** A recorded track point's time: the fix's own, or for a flagged fix ([off]) the phone's. */
+        fun trackTime(fixTimeMs: Long, phoneTimeMs: Long): Long = if (off(fixTimeMs - phoneTimeMs)) phoneTimeMs else fixTimeMs
+
+        /** Ended faults kept. */
+        const val KEEP = 8
+    }
+}

@@ -37,6 +37,11 @@ import io.github.jasondorjeshort.dystopo.app.Response
  *   for how long, the satellites and the best signal. `position` has `lat`, `lon`, `source` (`gps` or `network`),
  *   `provider` (`gps`, `network`, `passive`, `debug` for an injected fix), `ageS`, `accuracyM`, `text` and `line` as drawn
  *   (`source` null before any fix).
+ * - T385: `clock` is the GPS clock fault the view read ([ClockLog.fault]: `kind` `disagree` or `unreliable`, `offS`, `lasted`),
+ *   null while the clocks agree. Then, unless the GPS searches, the accuracy's `reason` (else the fix age's, else the
+ *   position's) reads "GPS clock unreliable" or that the two clocks differ (`reasonCode` `gps clock`; the fix is still
+ *   used), the fix age's names the assistance reset once an unreliable fault has lasted 60 s, and `notes.recent` has one
+ *   line per fault that ended in the last minute. `POST /readout/skew` makes one for a test.
  */
 object GlanceRoutes {
     fun handle(app: DystopoApp, r: Request): Response? = when (r.method to r.path) {
