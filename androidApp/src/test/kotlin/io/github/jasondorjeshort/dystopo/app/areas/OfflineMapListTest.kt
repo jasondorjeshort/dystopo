@@ -482,6 +482,18 @@ class OfflineMapListTest {
     }
 
     @Test
+    fun searchKeepsAnAreaWhileItsRaiseRunsWaitsOrWasCutShort() {
+        val keep = io.github.jasondorjeshort.dystopo.app.search.AreaTiles::keptAsTiles
+        val held = Areas.Record.Raise.of(polygon.at(D.MEDIUM), deferred = false)
+        assertTrue(keep(drawnAt(D.MEDIUM)), "a finished area")
+        assertTrue(keep(drawnAt(D.FULL, state = "downloading", raise = held)), "a raise downloading")
+        assertTrue(keep(drawnAt(D.FULL, state = "done", raise = held.copy(deferred = true))), "a raise left for later")
+        assertTrue(keep(drawnAt(D.FULL, state = "partial", raise = held)), "a raise cut short")
+        assertTrue(!keep(drawnAt(D.FULL, state = "partial")), "a first download not finished stays out")
+        assertTrue(!keep(drawnAt(D.FULL, state = "downloading")), "nor one still downloading")
+    }
+
+    @Test
     fun theSheetsSentences() {
         val less = io.github.jasondorjeshort.dystopo.areas.DetailChange.of(polygon, D.FULL, D.LESS, 8)
         val full = io.github.jasondorjeshort.dystopo.areas.DetailChange.of(polygon, D.MEDIUM, D.FULL, 8)
