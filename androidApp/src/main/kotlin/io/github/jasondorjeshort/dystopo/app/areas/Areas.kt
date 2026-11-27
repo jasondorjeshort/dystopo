@@ -688,15 +688,29 @@ object Areas : VersionPins {
         return out
     }
 
-    /** T386: the pins of every pinned area but [id] (and navigation's), so a tile only [id] holds reads unpinned. */
-    private fun pinsWithout(id: String): AreaPins = synchronized(this) {
-        load()
-        val pinned = records.values.filter { it.pinned && it.pack == null && it.id != id }
-        AreaPins(
-            pinned.map { r -> coverMemo.getOrPut(r.id) { AreaPins.cover(if (r.opaque != null) opaquePinArea(r.area, AreaDownload.heapTiles()) else r.area) } } + transient.values.map { it.first },
-            pinned.map { it.versions } + transient.values.map { it.second },
-            pinned.map { r -> r.area.demMaxZoom.takeIf { r.opaque == null } },
-        )
+    /** T386: what [current] was made from ([changed]): the pinned records' ids, then every cover (theirs, then navigation's). */
+    private class PinInputs(val ids: List<String>, val covers: List<Map<Int, TileSet>>, val versions: List<Map<String, Map<String, String>>>, val demTops: List<Int?>)
+
+    @Volatile private var pinInputs = PinInputs(emptyList(), emptyList(), emptyList(), emptyList())
+
+    /**
+     * T386: the pins of every pinned area but [id] (and navigation's), so a tile only [id] holds reads unpinned. Takes no lock:
+     * the tile cache asks it under its own lock (as it asks [isPinned]).
+     */
+    private fun pinsWithout(id: String): AreaPins {
+        awaitLoaded()
+        val p = pinInputs
+        val keep = p.covers.indices.filter { i -> i >= p.ids.size || p.ids[i] != id }
+        return AreaPins(keep.map { p.covers[it] }, keep.map { p.versions.getOrElse(it) { emptyMap() } }, keep.map { p.demTops.getOrNull(it) })
+    }
+
+    /** T386: [pinsWithout] of [id], made again only when the pins changed (a new [current]), so a chunk's second ask sees new pins. */
+    @Volatile private var othersMemo: Triple<String, AreaPins, AreaPins>? = null
+
+    private fun pinnedByOthers(id: String): AreaPins {
+        val now = current
+        othersMemo?.takeIf { it.first == id && it.second === now }?.let { return it.third }
+        return pinsWithout(id).also { othersMemo = Triple(id, now, it) }
     }
 
     /**
@@ -760,7 +774,9 @@ object Areas : VersionPins {
                     synchronized(this) { lowerings = lowerings.map { if (it.id == n.id) it.copy(done = done, total = total) else it } }
                     if (chunkDelayMs > 0 && total > 0) Thread.sleep(chunkDelayMs)
                 },
-                matches = removalMatcher(byPrefixOf(dropped, n), ::isPinned),
+                // Not [isPinned]: the area's own cover still holds the tiles below its new deepest zoom (an overzoomed view,
+                // AreaPins), so the dropped zooms' tiles are asked of every other pin, read again whenever the pins change.
+                matches = removalMatcher(byPrefixOf(dropped, n)) { k -> pinnedByOthers(n.id).isPinned(k) },
             )
             val m = manifest(n.id)
             val counted = if (lowering || raise != null) countBytes(n) else null
@@ -791,7 +807,10 @@ object Areas : VersionPins {
         val same = covers == pinCovers
         pinCovers = covers
         // T95: with the versions; T170: and a medium area's elevation cap (DEM tiles past it are not pinned).
-        current = AreaPins(covers, pinned.map { it.versions } + transient.values.map { it.second }, pinned.map { r -> r.area.demMaxZoom.takeIf { r.opaque == null } })
+        val versions = pinned.map { it.versions } + transient.values.map { it.second }
+        val demTops = pinned.map { r -> r.area.demMaxZoom.takeIf { r.opaque == null } }
+        pinInputs = PinInputs(pinned.map { it.id }, covers, versions, demTops) // T386: before [current], which [pinnedByOthers] keys on
+        current = AreaPins(covers, versions, demTops)
         if (!same) onPinsChanged?.let { hook -> Thread(hook, "areas-recount").apply { isDaemon = true }.start() }
         list = all
         if (save) runCatching {

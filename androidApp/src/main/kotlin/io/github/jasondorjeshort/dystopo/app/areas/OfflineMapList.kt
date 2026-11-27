@@ -347,7 +347,8 @@ object OfflineMapList {
             if (job == null && lowering == null) {
                 actions += if (r.pinned) ALLOW_CLEARING else KEEP
                 // T386: a raise that waits or stopped is started again by Start (Retry, Update and Download again are the whole area's)
-                actions += if (raise != null) START else if (failed) RETRY else if (olderFrom != null) UPDATE else DOWNLOAD_AGAIN
+                if (raise != null) { if (state != WAITING) actions += START } // a raise just started reads Waiting until its job shows
+                else actions += if (failed) RETRY else if (olderFrom != null) UPDATE else DOWNLOAD_AGAIN
                 if (failed && raise == null) actions += DISMISS
                 if (detailOffered(r)) actions += DETAIL // T386
                 actions += RENAME

@@ -465,6 +465,23 @@ class OfflineMapListTest {
     }
 
     @Test
+    fun aLowerAsksTheOtherPinsNotTheAreasOwnCover() {
+        // The area's own cover still holds a tile below its new deepest zoom (an overzoomed view), so the clear must not ask it:
+        // found on the emulator, where a Full to Less lower freed nothing while asking every pin.
+        val less = polygon.at(D.LESS)
+        val z14 = io.github.jasondorjeshort.dystopo.areas.TileCover.of(polygon.at(D.FULL), 14, 1)
+        var x = -1
+        var y = -1
+        z14.forEachRow { yy, x0, _ -> if (x < 0) { x = x0; y = yy } }
+        val key = "sources/dem/14/$x/$y.png"
+        assertTrue(io.github.jasondorjeshort.dystopo.areas.AreaPins(listOf(io.github.jasondorjeshort.dystopo.areas.AreaPins.cover(less))).isPinned(key))
+        val dropped = io.github.jasondorjeshort.dystopo.areas.TilesItem("dem", "png", "", mapOf(14 to z14), 0)
+        assertTrue(removalMatcher(mapOf("sources/dem" to dropped)) { false }(key), "with no other pin it goes")
+        val src = java.io.File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/areas/Areas.kt").readText()
+        assertTrue("pinnedByOthers(n.id).isPinned(k)" in src, "the lower's clear asks the other pins")
+    }
+
+    @Test
     fun theSheetsSentences() {
         val less = io.github.jasondorjeshort.dystopo.areas.DetailChange.of(polygon, D.FULL, D.LESS, 8)
         val full = io.github.jasondorjeshort.dystopo.areas.DetailChange.of(polygon, D.MEDIUM, D.FULL, 8)
