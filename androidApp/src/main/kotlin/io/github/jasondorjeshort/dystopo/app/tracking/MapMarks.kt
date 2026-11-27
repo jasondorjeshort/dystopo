@@ -139,7 +139,7 @@ object MapMarks {
         Elsewhere(AircraftLayer.SOURCE + "-", "flights: their own tap card"),
         Elsewhere("dystopo-picker-", "the area picker's handles, shown only while it is open"),
         Elsewhere("dystopo-areas-", "an offline map's outline label, which names its map"),
-        Elsewhere(CatalogOverlay.LABEL, "a pack's own label on the pack screen"),
+        Elsewhere(CatalogOverlay.LABEL, "an offline map's label on the screen that lists them"),
     )
 
     /** Our layers' prefix: `GET /map/marks` lists the live circle and symbol layers that start with it. */
@@ -162,8 +162,12 @@ object MapMarks {
         fun json(): Map<String, Any?> = linkedMapOf("key" to mark.key, "line" to line, "layer" to layer, "px" to Math.round(px * 10) / 10.0)
     }
 
-    /** [hits] in their order of precedence ([MARKS]' order, then the nearest first), pure. The card names the first. */
-    fun ordered(hits: List<Hit>): List<Hit> = hits.sortedWith(compareBy<Hit> { h -> MARKS.indexOfFirst { it.key == h.mark.key } }.thenBy { it.px })
+    /**
+     * [hits] in their order of precedence ([MARKS]' order, then the nearest first), pure; one feature found through two of
+     * its mark's layers (a dot and its label) is kept once, at its nearest. The card names the first.
+     */
+    fun ordered(hits: List<Hit>): List<Hit> =
+        hits.sortedWith(compareBy<Hit> { h -> MARKS.indexOfFirst { it.key == h.mark.key } }.thenBy { it.px }).distinctBy { it.mark.key to it.line }
 
     /** The facts the app has at hand: a track's name from the track store (one row; main thread is fine). */
     private fun facts(): Facts = Facts(trackName = { id -> runCatching { Tracking.readyOrNull?.store?.summary(id)?.name }.getOrNull() })

@@ -119,10 +119,11 @@ class MapMarksTest {
             ),
             MapMarks.ALL.map { it.key },
         )
-        // A waypoint on the track's head: the waypoint is named, though the head is nearer the press.
-        fun hit(key: String, px: Float) = MapMarks.MARKS.single { it.key == key }.let { MapMarks.Hit(it, it.name, it.layers[0], px) }
-        val got = MapMarks.ordered(listOf(hit("track.head", 1f), hit("track.gap", 0f), hit("waypoint", 9f), hit("waypoint", 3f)))
-        assertEquals(listOf("waypoint", "waypoint", "track.head", "track.gap"), got.map { it.mark.key })
+        // A waypoint on the track's head: the waypoint is named, though the head is nearer the press; the waypoint's dot
+        // and its label (one feature, two layers) are kept once, at the nearer.
+        fun hit(key: String, px: Float, line: String? = null) = MapMarks.MARKS.single { it.key == key }.let { MapMarks.Hit(it, line ?: it.name, it.layers[0], px) }
+        val got = MapMarks.ordered(listOf(hit("track.head", 1f), hit("track.gap", 0f), hit("waypoint", 9f), hit("waypoint", 3f), hit("track.start", 2f, "Track start, A"), hit("track.start", 4f, "Track start, B")))
+        assertEquals(listOf("waypoint", "track.head", "track.start", "track.start", "track.gap"), got.map { it.mark.key })
         assertEquals(3f, got[0].px)
     }
 }
