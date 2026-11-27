@@ -136,6 +136,12 @@ try:
     got = summary.PARTS["a11y"](d, "a11y")
     assert got["screens"]["route:2.0"] == {"under48": 1, "contrast": 2} and got["screens"]["share:2.0"] == {"skipped": "RuntimeError: POST /share/start: 500"}, got
     assert got["baseline"] == {"entries": 40, "matched": 2, "new": 1, "gone": 0} and got["new"] == [new] and got["skipped"] == ["share:2.0"], got
+    assert "unsteady" not in got, got
+    # T381: a screen whose layout moved across its frame is a line of the part's summary, with what moved.
+    rep["screens"].append({"screen": "recording-stale-unfolded:2.0", "counts": {}, "unsteady": ["Hide", "Waypoint"]})
+    write("a11y.json", json.dumps(rep))
+    assert summary.PARTS["a11y"](d, "a11y")["unsteady"] == {"recording-stale-unfolded:2.0": ["Hide", "Waypoint"]}
+    # end T381
     write("a11y.json", json.dumps({"part": "a11y", "ok": False, "error": "RuntimeError: no debug server"}))
     assert summary.PARTS["a11y"](d, "a11y") == {"error": "RuntimeError: no debug server"}
     os.makedirs(os.path.join(d, "a11y"))

@@ -4,6 +4,7 @@ import io.github.jasondorjeshort.dystopo.app.online.TileCache
 import io.github.jasondorjeshort.dystopo.app.storage.FileTrees
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.launch
 
 /**
  * The on-device contour tile cache (T41): one directory per DEM pack and contour version under
@@ -18,10 +19,13 @@ import java.util.concurrent.atomic.AtomicLong
  * online cache's is ([TileCache.state]): [collectGarbage] waits for it on its thread, [json] answers without the directories
  * meanwhile, [resize] applies once it is whole.
  *
- * T379 (ADR 0071): this cache keeps no snapshot, so it walks its directory at every start (the cache budget's start and
- * the contour collection after the packs open make it). Its walk takes the online cache's rule ([TileCache]'s gate): none without a screen or a
- * notified job, a pause at Home. [collectGarbage] waits for the whole index as an action queued on it
- * ([TileCache.whenReady]), not as a thread parked in a wait holding its lock while the walk is held.
+ * T379 (ADR 0071): its walk takes the online cache's rule ([TileCache]'s gate): none without a screen or a notified job, a
+ * pause at Home. [collectGarbage] waits for the whole index as an action queued on it ([TileCache.whenReady]), not as a
+ * thread parked in a wait holding its lock while the walk is held.
+ *
+ * T390: it keeps its index on disk as the online cache does (`cache/contours.index` and its journal beside the directory,
+ * so Android's Clear cache takes them with the tiles): a start reads it instead of walking (it walked at every start before),
+ * and it is written when the app leaves the screen ([saveIndex]) and when its journal is long.
  */
 object ContourCache {
     /** Bump when contour generation changes what it writes; part of every directory name. */
@@ -33,8 +37,18 @@ object ContourCache {
     private fun root(app: DystopoApp) = File(app.cacheDir, "contours")
 
     fun get(app: DystopoApp = DystopoApp.instance): TileCache = cache ?: synchronized(this) {
-        cache ?: TileCache(root(app), AppSettings.contourCacheMb * MB).also { cache = it }
+        cache ?: TileCache(root(app), AppSettings.contourCacheMb * MB, snapshot = true).also {
+            cache = it
+            // T390: written when the app leaves the screen (as the online cache's), on a thread of its own.
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+                Foreground.flow.collect { fg -> if (!fg) saveIndex("stop") }
+            }
+        }
     }
+
+    /** T390: writes the index's snapshot when it changed ([TileCache.saveSnapshot]; `indexing` while the walk runs). */
+    fun saveIndex(reason: String, force: Boolean = false): String =
+        cache?.let { c -> runCatching { c.saveSnapshot(reason, force) }.getOrElse { "error: ${it.message}" } } ?: "off"
 
     /**
      * The directory (cache key prefix) of [identity]'s contour tiles in [unit] at [tileSize]; [tag] is the

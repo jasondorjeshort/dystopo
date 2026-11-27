@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-26, at the commit that carries this file (wave 49: six merged, T381 being verified, T390, T385 and T386 building), by the main session in the second clone
+Updated: 2026-11-26, at the commit that carries this file (wave 49: eight merged; T385 and T386 in verification, T383 and T387 building), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged (six of fifteen, and T389):** T389 (940365fa), T376 (9feb7f02), T375 (bd8f3741), T379 (bd1e3b7e), T384 (bee02156), T377 (47f65111); each has its Status line on the board and its log entry.
-- **In flight (2026-11-27 05:25 UTC), four Gradle agents:** a Sonnet verifier on T381 (`task/T381`, 5349dcc6, `-SweepThrough two-maps`; its implementer's report is `<scratchpad>/w49-plan/report-T381.txt`); Opus implementers on T390 (`task/T390`), T385 (`task/T385`) and T386 (`task/T386`), none pushed yet. A Haiku chore is cleaning up T379's, T384's and T377's branches and worktrees and moving `dystopo-wt/tools-main` to the tip.
+- **Wave 49 is open: fifteen tasks, T375 to T388 and T390, plus T389.** Planned, read by a critic and launched on 2026-11-26 on the owner's words (the wave paragraph quotes them). **Merged (eight of fifteen, and T389):** T389 (940365fa), T376 (9feb7f02), T375 (bd8f3741), T379 (bd1e3b7e), T384 (bee02156), T377 (47f65111), T381 (e1b568bf), T390 (4db7929e); each has its Status line on the board and its log entry.
+- **In flight (2026-11-27 07:36 UTC), four Gradle agents:** T385 (`task/T385`): its verifier's MERGE WITH NOTES on 903adbb3 is in, and its implementer is merging `origin/main` into the branch (conflicts with T381's block in the a11y tool's files); a Sonnet verifier on T386 (`task/T386`, e1937352); Opus implementers on T383 (`task/T383`) and T387 (`task/T387`). Reports and round-1 verdicts are kept as `<scratchpad>/w49-plan/report-Tnn.txt` and `verify-Tnn.txt` for the merge bodies.
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
 - **On the PC:** the main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. Two phones of the owner's dropped off wireless adb during T389's verify (cause not found).
 
 ## Next
 
-1. On T381's verdict: MERGE, the merge sequence and a cleanup chore that also moves `tools-main`; FIX, back to its implementer by its id. As T390, T385 and T386 report: a Sonnet verifier each, run from `dystopo-wt/tools-main` with the report in its brief, `-SlotWaitMinutes 120`, and the sentence that no agent moves HEAD in the coordinator's checkout (a verifier did, briefly).
-2. Launch as slots free (four Gradle agents at once, a verifier counting as one): T387, T382, T383, T378, T380, then T388 (after T383, T385 and T381). Every brief carries the wave paragraph's `GRADLE_OPTS`, `-WaitForSlot 120`, the Hatchery sentence, the packs copied into the worktree's own `out/`, and for T378 the fixture and the shared read (T377's Status line), for T387 the way to start the process with no activity (T379's Status line).
+1. On each verdict: MERGE, the merge sequence (run the merge unpiped and read its own result: a piped one hid a conflict once); FIX, back to its implementer by its id. When `main` moves under a verified branch, its implementer merges `origin/main` into it (both sides whole) and the delta is read: by its verifier when code or tools conflicted (T385's a11y files), by the coordinator when it is one docs row. A cleanup chore is owed for T381's and T390's branches and worktrees and the folder `dystopo-wt/T377-verify` (held by a process), and `tools-main` moves to the tip with it.
+2. Launch as slots free (four Gradle agents at once, a verifier counting as one; the two emulators are the real queue): T382, T378, T380, then T388 (after T383 and T385). Every brief carries the wave paragraph's `GRADLE_OPTS`, `-WaitForSlot 180`, the Hatchery sentence, the packs copied into the worktree's own `out/`, no HEAD moved in either checkout, and for T378 the fixture and the shared read (T377's Status line).
 3. The device tour was not shown green on T384's and T389's heads (load, by the verifiers' reading): the closing sweep reads it; if it is red there, look at T379's later start of the cache walk first.
 4. Timed runs go alone: hold launches for T379's and T387's start-up runs when their implementers report them as not judged.
 5. A small release may be cut once T384, T385, T379 and T381 are merged (the wave paragraph); otherwise the closing sweep, with `-Prev` from `dystopo-wt/sweep-w48`.

@@ -33,9 +33,8 @@ contrast.
 2026-11-26 (triage, taking in the coordinator's `New:` of that day): wave 48's layout fault
 (`../findings/2026-11-25-the-map-layout-flips-at-font-2-with-the-bar-unfolded-and-the-turn-back-card.md`) is a node
 whose bounds do not match its drawing because the layout does not hold still. T373 already reads each screen across
-frame tries and marks one that never settles `unsteady` without failing it; the layout-flip idea
-(`2026-11-26-the-map-layout-flips-at-the-largest-font-with-the-bar-unfolded.md`) makes `unsteady` a summary line and
-adds the held-state screen.
+frame tries and marks one that never settles `unsteady` without failing it; T381 (wave 49) fixed the flip, made
+`unsteady` a line of the sweep's summary and added the held-state screen `recording-stale-unfolded`.
 
 Plan: one pass, after the baseline's screen-reader findings are fixed (the map's controls reachable under a full
 screen or a sheet, the search field's label) and after the layout-flip pass (both edit `tools/android-a11y.py`).

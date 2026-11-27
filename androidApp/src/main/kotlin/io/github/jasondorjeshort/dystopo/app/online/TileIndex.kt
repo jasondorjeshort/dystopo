@@ -504,10 +504,16 @@ internal class TileIndex {
  *
  * [read] refuses a file of another magic or format, a bad checksum, or one that ends early or late ([Corrupt]); [validate]
  * compares a sample of its directories and entries with the disk. A later format (ADR 0060's ledger) bumps [FORMAT].
+ *
+ * T390 (ADR 0033): format 2 adds three header lines: `generation` (the snapshot's number, which a [TileJournal] names as the
+ * one it extends), `complete` (false for a walk's checkpoint) and, for a checkpoint, `walkCursor` (the last directory the walk
+ * had finished, in [TileWalker.compareDirs]'s order, so the next start resumes after it). A format 1 file is refused by its
+ * version ([read]: "format 1, this build reads 2"): the cache deletes it and walks once. A build of format 1 meeting a
+ * format 2 file does the same (it refuses "format 2") and ignores the journal files beside it.
  */
 internal object TileIndexSnapshot {
     const val MAGIC = "DYSTOPO-TILE-INDEX"
-    const val FORMAT = 1
+    const val FORMAT = 2
     const val LAYOUT = "UTF: a 2-byte length, then UTF-8; varint groups, each (UTF prefix, UTF ext); varint directories, each (UTF path, varint n, n entries: " +
         "varint tag (0: UTF name; g+1: tile of group g, then varint y), varint bytes, zigzag varint minute, byte flags (1 pinned)); " +
         "then the CRC-32 of all bytes before it as a long"
@@ -538,7 +544,13 @@ internal object TileIndexSnapshot {
     }
 
     /** What [read] found: the header's lines, the entries, and the entries per directory path. */
-    class Read(val header: Map<String, String>, val entries: Entries, val dirs: Map<String, Int>)
+    class Read(val header: Map<String, String>, val entries: Entries, val dirs: Map<String, Int>) {
+        /** T390: the snapshot's number ([TileJournal]'s `base` names it). */
+        val generation: Long get() = header["generation"]?.toLongOrNull() ?: 0L
+
+        /** T390: a walk's checkpoint: the last directory it had finished (the walk resumes after it); null for a whole index. */
+        val walkCursor: String? get() = if (header["complete"] == "false") header["walkCursor"].orEmpty() else null
+    }
 
     class Corrupt(message: String) : java.io.IOException(message)
 
@@ -547,7 +559,10 @@ internal object TileIndexSnapshot {
      * one pass. [midway] runs once, after half the bytes are written (a debug hold, so a kill mid-write can be tried).
      * Returns the entries written.
      */
-    fun write(out: java.io.OutputStream, e: Entries, writtenAt: Long, root: String, midway: (() -> Unit)? = null): Int {
+    fun write(
+        out: java.io.OutputStream, e: Entries, writtenAt: Long, root: String, midway: (() -> Unit)? = null,
+        generation: Long = 1, walkCursor: String? = null,
+    ): Int {
         sortPacked(e)
         dedupe(e)
         e.strings.sortBy { it.key }
@@ -579,6 +594,9 @@ internal object TileIndexSnapshot {
             append(MAGIC).append('\n')
             append("format: ").append(FORMAT).append('\n')
             append("written: ").append(writtenAt).append('\n')
+            append("generation: ").append(generation).append('\n') // T390
+            append("complete: ").append(walkCursor == null).append('\n')
+            if (walkCursor != null) append("walkCursor: ").append(walkCursor.replace('\n', ' ')).append('\n')
             append("root: ").append(root).append('\n')
             append("entries: ").append(e.total).append('\n')
             append("bytes: ").append(e.bytes()).append('\n')
@@ -651,6 +669,7 @@ internal object TileIndexSnapshot {
             }
             val format = header["format"]?.toIntOrNull()
             if (format != FORMAT) throw Corrupt("format $format, this build reads $FORMAT")
+            if (header["generation"]?.toLongOrNull()?.takeIf { it > 0 } == null) throw Corrupt("generation ${header["generation"]}")
             val total = header["entries"]?.toLongOrNull()?.takeIf { it in 0..MAX_ENTRIES } ?: throw Corrupt("entries ${header["entries"]}")
             val g = c.count(TileIndex.MAX_GROUPS.toLong(), "groups")
             val groups = ArrayList<Pair<String, String>>(g)
@@ -764,8 +783,16 @@ internal object TileIndexSnapshot {
      * (their file counts), and [entrySample] random entries (each file's size; all of them when there are no more). Null when they agree, else the first
      * disagreement. A directory may hold empty directories the snapshot does not name (a column whose tiles were all
      * evicted); `.tmp` files are not counted.
+     *
+     * T390: [touched] are the directories a journal replayed over the snapshot changed (their file counts are not
+     * compared, and a directory of theirs, or one above them, may be there or not), and [touchedKeys] its keys (not sampled);
+     * [upTo], a checkpoint's cursor: only the directories the walk had finished are compared ([TileWalker.compareDirs]),
+     * none above them (the walk has not reached all their children).
      */
-    fun validate(root: java.io.File, r: Read, random: kotlin.random.Random, dirSample: Int = 64, leafSample: Int = 32, entrySample: Int = 64): String? {
+    fun validate(
+        root: java.io.File, r: Read, random: kotlin.random.Random, dirSample: Int = 64, leafSample: Int = 32, entrySample: Int = 64,
+        touched: Set<String> = emptySet(), touchedKeys: Set<String> = emptySet(), upTo: String? = null,
+    ): String? {
         val children = HashMap<String, HashSet<String>>()
         children[""] = HashSet()
         for (p in r.dirs.keys) {
@@ -777,18 +804,31 @@ internal object TileIndexSnapshot {
                 path = parent
             }
         }
-        val interior = children.keys.filter { it.isNotEmpty() }
+        // T390: the touched directories and every one above them: present or not, as the journal left them.
+        val loose = HashSet<String>()
+        for (t in touched) {
+            var path = t
+            while (loose.add(path) && path.isNotEmpty()) path = path.substringBeforeLast('/', "")
+        }
         val dirs = LinkedHashSet<String>()
-        dirs += ""
-        dirs += if (interior.size < dirSample) interior else interior.shuffled(random).take(dirSample - 1)
-        val leaves = r.dirs.keys.toList()
+        if (upTo == null) {
+            val interior = children.keys.filter { it.isNotEmpty() }
+            dirs += ""
+            dirs += if (interior.size < dirSample) interior else interior.shuffled(random).take(dirSample - 1)
+        }
+        val leaves = r.dirs.keys.filter { upTo == null || TileWalker.compareDirs(it, upTo) <= 0 }
         dirs += if (leaves.size <= leafSample) leaves else leaves.shuffled(random).take(leafSample)
-        for (p in dirs) checkDir(root, p, children[p].orEmpty(), r.dirs[p] ?: 0)?.let { return it }
+        for (p in dirs) {
+            if (upTo != null && p !in r.dirs) continue
+            checkDir(root, p, children[p].orEmpty(), r.dirs[p] ?: 0, loose, p in touched, upTo != null)?.let { return it }
+        }
         val e = r.entries
         val all = e.total <= entrySample // a small index: every entry
         if (e.total > 0) repeat(if (all) e.total else entrySample) { n ->
             val i = if (all) n else random.nextInt(e.total)
             val (key, bytes) = if (i < e.count) e.keyOf(i) to e.sizes[i] else e.strings[i - e.count].let { it.key to it.bytes }
+            if (key in touchedKeys) return@repeat
+            if (upTo != null && TileWalker.compareDirs(parentOf(key), upTo) > 0) return@repeat // a put's, past the cursor: the walk files it
             val f = java.io.File(root, key)
             val len = f.length()
             if (len != bytes.toLong() || (len == 0L && !f.isFile)) return "the entry $key: ${if (f.isFile) "$len bytes, the snapshot says $bytes" else "no file"}"
@@ -796,16 +836,24 @@ internal object TileIndexSnapshot {
         return null
     }
 
-    private fun checkDir(root: java.io.File, path: String, dirs: Set<String>, files: Int): String? {
+    private fun checkDir(root: java.io.File, path: String, dirs: Set<String>, files: Int, loose: Set<String>, touched: Boolean, leafOnly: Boolean): String? {
         val at = if (path.isEmpty()) root else java.io.File(root, path)
-        val names = at.list() ?: return "the directory '$path' is missing"
+        val names = at.list() ?: return if (path in loose) null else "the directory '$path' is missing"
+        if (touched) return null // T390: its count is the journal's
         var seen = 0
+        var need = 0
         val others = ArrayList<String>()
         for (n in names) {
             if (n.endsWith(".tmp")) continue
-            if (n in dirs) seen++ else others += n
+            val child = if (path.isEmpty()) n else "$path/$n"
+            if (n in dirs) {
+                if (child !in loose) seen++
+            } else if (child !in loose) {
+                others += n
+            }
         }
-        if (seen < dirs.size) return "the directory '$path' lacks ${dirs.size - seen} of its ${dirs.size} directories"
+        for (d in dirs) if ((if (path.isEmpty()) d else "$path/$d") !in loose) need++
+        if (!leafOnly && seen < need) return "the directory '$path' lacks ${need - seen} of its $need directories"
         if (others.size == files) return null
         if (files == 0) {
             val budget = intArrayOf(64)
@@ -941,5 +989,195 @@ internal object TileIndexSnapshot {
             w++
         }
         e.count = w
+    }
+}
+
+/**
+ * T390: the changes to a [TileCache]'s index since its snapshot ([TileIndexSnapshot]), so a kill after a change costs a
+ * replay instead of a walk. The file (`tiles.index.journal` beside the snapshot; while a snapshot is written, the one before
+ * it is `tiles.index.journal.old`) is:
+ *
+ * - a text header: the line [MAGIC], then `format` ([FORMAT]), `base` (the [TileIndexSnapshot.Read.generation] it extends)
+ *   and `boot` (the device's boot it was opened in: records a device stop may have cut are told from those a process kill
+ *   leaves whole), then an empty line;
+ * - records, appended one `write(2)` each: a varint length, the payload, and the CRC-32 of the payload as 4 bytes. A payload
+ *   is an op byte, then the key (a 2-byte length and UTF-8): [PUT] adds or replaces an entry and carries its bytes (varint)
+ *   and touch minute (zigzag varint); [REMOVE] takes it out.
+ *
+ * [scan] reads the records up to the first that is cut short or fails its checksum (a torn last record) and says where the
+ * good ones end; nothing after a torn record is read.
+ */
+internal object TileJournal {
+    const val MAGIC = "DYSTOPO-TILE-JOURNAL"
+    const val FORMAT = 1
+    const val PUT = 1
+    const val REMOVE = 2
+
+    fun header(base: Long, boot: String): ByteArray =
+        "$MAGIC\nformat: $FORMAT\nbase: $base\nboot: ${boot.replace('\n', ' ')}\n\n".toByteArray(Charsets.UTF_8)
+
+    fun put(key: String, bytes: Int, minute: Int): ByteArray = record(PUT, key, bytes, minute)
+
+    fun remove(key: String): ByteArray = record(REMOVE, key, 0, 0)
+
+    private fun record(op: Int, key: String, bytes: Int, minute: Int): ByteArray {
+        val k = key.toByteArray(Charsets.UTF_8)
+        require(k.size <= 0xffff) { "a key of ${k.size} bytes" }
+        val p = ByteArray(3 + k.size + if (op == PUT) 15 else 0)
+        var n = 0
+        p[n++] = op.toByte()
+        p[n++] = (k.size ushr 8).toByte()
+        p[n++] = k.size.toByte()
+        System.arraycopy(k, 0, p, n, k.size)
+        n += k.size
+        if (op == PUT) {
+            n = varint(p, n, bytes.toLong())
+            n = varint(p, n, (minute.toLong() shl 1) xor (minute.toLong() shr 63))
+        }
+        val out = ByteArray(5 + n + 4)
+        var o = varint(out, 0, n.toLong())
+        System.arraycopy(p, 0, out, o, n)
+        o += n
+        val crc = java.util.zip.CRC32()
+        crc.update(p, 0, n)
+        val c = crc.value
+        for (i in 3 downTo 0) out[o++] = (c ushr (i * 8)).toByte()
+        return out.copyOf(o)
+    }
+
+    private fun varint(b: ByteArray, at: Int, value: Long): Int {
+        var n = at
+        var v = value
+        while (v and 0x7fL.inv() != 0L) {
+            b[n++] = ((v and 0x7f) or 0x80).toByte()
+            v = v ushr 7
+        }
+        b[n++] = v.toByte()
+        return n
+    }
+
+    /** Records in parallel arrays: the op, the key, and a put's bytes and minute. */
+    class Records {
+        var ops = ByteArray(64)
+            private set
+        var sizes = IntArray(64)
+            private set
+        var minutes = IntArray(64)
+            private set
+        val keys = ArrayList<String>()
+        val count: Int get() = keys.size
+
+        fun add(op: Int, key: String, bytes: Int, minute: Int) {
+            val i = keys.size
+            if (i == ops.size) {
+                ops = ops.copyOf(i * 2)
+                sizes = sizes.copyOf(i * 2)
+                minutes = minutes.copyOf(i * 2)
+            }
+            ops[i] = op.toByte()
+            sizes[i] = bytes
+            minutes[i] = minute
+            keys += key
+        }
+    }
+
+    /** What [scan] found: the header's base and boot, the good records, where the header and they end, the file's length. */
+    class Scan(val base: Long, val boot: String, val records: Records, val headerEnd: Int, val goodEnd: Int, val fileBytes: Int) {
+        /** Bytes after the last good record (a record cut short, or one whose checksum fails, and anything after it). */
+        val tornBytes: Int get() = fileBytes - goodEnd
+    }
+
+    /** Reads a journal's [bytes]; a header it cannot read is [TileIndexSnapshot.Corrupt]. */
+    fun scan(bytes: ByteArray): Scan {
+        var at = 0
+        fun line(): String {
+            val from = at
+            while (at < bytes.size && bytes[at] != '\n'.code.toByte()) {
+                if (at - from >= 4096) throw TileIndexSnapshot.Corrupt("a header line too long")
+                at++
+            }
+            if (at >= bytes.size) throw TileIndexSnapshot.Corrupt("the header ends early")
+            return String(bytes, from, at++ - from, Charsets.UTF_8)
+        }
+        if (line() != MAGIC) throw TileIndexSnapshot.Corrupt("not a tile journal")
+        val header = HashMap<String, String>()
+        while (true) {
+            val l = line()
+            if (l.isEmpty()) break
+            if (header.size > 64) throw TileIndexSnapshot.Corrupt("header too long")
+            header[l.substringBefore(": ")] = l.substringAfter(": ", "")
+        }
+        val format = header["format"]?.toIntOrNull()
+        if (format != FORMAT) throw TileIndexSnapshot.Corrupt("format $format, this build reads $FORMAT")
+        val base = header["base"]?.toLongOrNull()?.takeIf { it >= 0 } ?: throw TileIndexSnapshot.Corrupt("base ${header["base"]}")
+        val headerEnd = at
+        val recs = Records()
+        var good = at
+        val crc = java.util.zip.CRC32()
+        while (at < bytes.size) {
+            var len = 0L
+            var shift = 0
+            var ok = true
+            while (true) {
+                if (at >= bytes.size || shift > 28) {
+                    ok = false
+                    break
+                }
+                val x = bytes[at++].toInt()
+                len = len or ((x and 0x7f).toLong() shl shift)
+                if (x and 0x80 == 0) break
+                shift += 7
+            }
+            if (!ok || len < 3 || len > 0x10000 + 32 || at + len + 4 > bytes.size) break
+            val p = at
+            val n = len.toInt()
+            crc.reset()
+            crc.update(bytes, p, n)
+            var sum = 0L
+            for (i in 0 until 4) sum = (sum shl 8) or (bytes[p + n + i].toLong() and 0xff)
+            if (sum != crc.value) break
+            val op = bytes[p].toInt()
+            val kn = ((bytes[p + 1].toInt() and 0xff) shl 8) or (bytes[p + 2].toInt() and 0xff)
+            if (3 + kn > n || (op != PUT && op != REMOVE)) break
+            val key = String(bytes, p + 3, kn, Charsets.UTF_8)
+            if (op == PUT) {
+                var q = p + 3 + kn
+                val end = p + n
+                fun v(): Long {
+                    var r = 0L
+                    var s = 0
+                    while (true) {
+                        if (q >= end || s > 63) return -1
+                        val x = bytes[q++].toInt()
+                        r = r or ((x and 0x7f).toLong() shl s)
+                        if (x and 0x80 == 0) return r
+                        s += 7
+                    }
+                }
+                val b = v()
+                val zz = v()
+                if (q != end || b !in 0..Int.MAX_VALUE.toLong()) break
+                recs.add(PUT, key, b.toInt(), ((zz ushr 1) xor -(zz and 1)).toInt())
+            } else {
+                if (3 + kn != n) break
+                recs.add(REMOVE, key, 0, 0)
+            }
+            at = p + n + 4
+            good = at
+        }
+        return Scan(base, header["boot"].orEmpty(), recs, headerEnd, good, bytes.size)
+    }
+}
+
+/**
+ * T390: which boot of the device this is, so a [TileJournal] written in an earlier one is known (a device stop may cut
+ * records that were still in the page cache; a process kill does not). Linux's boot id; where it cannot be read, the boot's
+ * time to the minute (the wall clock less the time since boot); on the JVM a fixed name.
+ */
+internal object BootId {
+    fun current(): String {
+        runCatching { java.io.File("/proc/sys/kernel/random/boot_id").readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val sinceBoot = runCatching { android.os.SystemClock.elapsedRealtime() }.getOrNull() ?: return "jvm"
+        return "t" + (System.currentTimeMillis() - sinceBoot) / 60_000
     }
 }
