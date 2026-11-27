@@ -78,12 +78,17 @@ object SearchUi {
         val states = if (want) PlaceSearch.ensure() else PlaceSearch.peek()
         val building = states.filter { it.status == "building" }
         // T255: where no offline map with a vector archive covers the view, why search finds nothing here comes first.
-        val cov = if (want) PlaceSearch.coverageOnMain() else null
+        // T377: search's own coverage: an area kept as tiles there is searchable (the route card's coverage is not changed).
+        val sc = if (want) PlaceSearch.searchCoverageOnMain() else null
+        val cov = sc?.first
         coverage = cov
+        val here = sc?.second?.let { h -> states.firstOrNull { it.key == h.key } ?: h }
         status = when {
             !want && states.none { it.busy } -> null // not asked for yet: nothing to say
             cov != null && cov != MapCoverage.VECTOR -> MapCoverage.searchSentence(cov, 0)
             states.isEmpty() -> SEARCH_NO_MAP
+            // T377: the area in view is being indexed (its first index; a rebuild keeps the old one searchable)
+            here != null && here.index == null && here.busy -> areaIndexingLine(here.pack, here.done, here.total)
             building.isNotEmpty() -> "Indexing places" + building.sumOf { it.total }.let { t -> if (t > 0) " ${building.sumOf { it.done } * 100 / t}%" else "..." } +
                 if (building.size > 1) " (${building.size} maps)" else ""
             states.all { it.status == "error" } -> "Search index failed: ${states.first().error}"
@@ -126,8 +131,19 @@ object SearchUi {
 /** T149: the box's line when the heap guard refused every index build (asked again after a while). */
 internal const val SEARCH_NO_MEMORY = "Not enough memory to index places now; try again in a minute"
 
-/** T255 (ADR 0031: listed for the owner): the box's line over a view that only map tiles cover ([MapCoverage.TILES_ONLY]). */
-const val SEARCH_TILES_ONLY = "Search needs an offline map here; this area has map tiles only"
+/**
+ * T255 (ADR 0031: listed for the owner): the box's line over a view that only map tiles cover ([MapCoverage.TILES_ONLY]).
+ * T377: a downloaded area kept as tiles is searchable now, so the line names it: the tiles here were viewed earlier, cut
+ * from a wider zoom, or are terrain only.
+ */
+const val SEARCH_TILES_ONLY = "Search needs an offline map or a downloaded area here; this view has map tiles only"
+
+/**
+ * T377 (ADR 0031: listed for the owner): the box's line while the area kept as tiles in view gets its first index, with
+ * the share of its tiles read ("Indexing places in Paradise 40%"). Pure, tested.
+ */
+internal fun areaIndexingLine(name: String, done: Int, total: Int): String =
+    "Indexing places in $name" + if (total > 0) " ${done * 100 / total}%" else "..."
 
 /** The box's line where nothing on the phone covers the view ([MapCoverage.NO_MAP]). */
 const val SEARCH_NO_MAP = "No map data here to search"
@@ -153,10 +169,11 @@ internal fun OfflineMapsLink(onOpen: () -> Unit = {}) {
 
 /** T255: what search and routes need, beside the search box's "needs an offline map here" line; gathered by `HelpRegistry`. */
 internal val SEARCH_COVERAGE_HELP: List<io.github.jasondorjeshort.dystopo.app.help.HelpText> = listOf(
-    io.github.jasondorjeshort.dystopo.app.help.HelpText("search.offlineMap", "Search and routes need an offline map", "The map: the search box", needs = "a view with map tiles only") {
-        "Search and routes read the places and trails of an offline map saved with routing and place search. Where the " +
-            "map shows tiles only (viewed earlier, a map-only download, or cut from a wider zoom) there is nothing to " +
-            "search or route on. Download this area as an offline map from Offline maps."
+    io.github.jasondorjeshort.dystopo.app.help.HelpText("search.offlineMap", "What search and routes need", "The map: the search box", needs = "a view with map tiles only") {
+        // T377: an area downloaded as map tiles is searchable; routes still need an offline map with routing.
+        "Search reads the places of an offline map, or of an area you downloaded as map tiles. Routes need an offline map " +
+            "with routing: an area kept as map tiles has no trails to route on. Tiles viewed earlier or cut from a wider " +
+            "zoom hold nothing to search or route on. Download this area from Offline maps."
     },
 )
 

@@ -131,7 +131,7 @@ class OnlineOverlaySnapshotTest {
             0 to ("This part of the map is saved on this phone as an offline map." to "Offline maps ›"),
             1 to ("This part of the map is coming over the network and is kept only until space is needed." to null),
             2 to ("This part of the map is coming over the network and is kept only until space is needed." to null),
-            3 to ("This part of the map is kept on this phone as map tiles only, so search and routes do not work here." to "Offline maps ›"),
+            3 to ("This part of the map is kept on this phone as map tiles, so routes do not work here; search finds places only inside a downloaded area." to "Offline maps ›"),
             4 to ("You viewed this part earlier. It stays until space is needed." to "Offline maps ›"),
             5 to ("Nothing on this phone covers this view." to "Offline maps ›"),
             6 to ("This part of the map is cut from a wider zoom kept on this phone, so it shows less detail." to "Offline maps ›"),

@@ -667,6 +667,8 @@ internal const val AROUND_HERE = "Download around here"
 /** T142 (ADR 0041 §5): the around flow's sentence. */
 internal const val AROUND_SENTENCE = "Up to 20 km around a point; draw an area for more"
 /** T142: the drawing card's hint. */
+/** T377 (ADR 0031; the owner, 2026-11-24): what a drawn area brings, said before its download. */
+internal const val DRAW_TILES_LINE = "A drawn area is kept as map tiles: place search works in it, routes do not."
 internal const val DRAW_HINT = "Tap the map to add a corner. Drag a corner or a midpoint to move it; long-press a corner to remove it."
 internal const val NAME_LABEL = "Name"
 internal const val OTHER_RADIUS = "Other:"
@@ -714,6 +716,7 @@ internal fun PickerCard() {
             when (m) {
                 AreaPicker.Mode.Draw -> {
                     BasicText(DRAW_HINT, style = TextStyle(color = Muted, fontSize = 12.sp))
+                    BasicText(DRAW_TILES_LINE, style = TextStyle(color = Muted, fontSize = 12.sp)) // T377
                     CardAction("Undo", if (AreaDraw.canUndo) Link else Muted) { AreaDraw.undo() }
                 }
                 is AreaPicker.Mode.Around -> AroundControls(m)

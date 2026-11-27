@@ -34,7 +34,7 @@ data class SearchEntry(
 /** What an index was built from, so a stale index (the pack changed) is rebuilt instead of used. */
 data class SearchSource(
     val file: String,
-    /** [SearchIndexBuilder.fingerprint] of the vector archive. */
+    /** [SearchIndexBuilder.fingerprint] of the vector archive; T377: [TileSetSource.fingerprint] of the tiles it read. */
     val fingerprint: String,
     val zooms: List<Int>,
     /** Build time, epoch milliseconds (from the caller; commonMain has no clock). */
@@ -224,6 +224,9 @@ class SearchIndex private constructor(
             val pack = PackNames.parse(vectorFileName)?.pack ?: vectorFileName.substringBeforeLast('.')
             return pack + SUFFIX
         }
+
+        /** T377: the index file of an area kept as tiles, beside its manifest (`<area id>.json`): `<area id>-search.idx`. */
+        fun fileNameForArea(areaId: String): String = areaId + SUFFIX
 
         /** Builds the token table for [entries]. */
         fun of(entries: List<SearchEntry>, source: SearchSource): SearchIndex {
