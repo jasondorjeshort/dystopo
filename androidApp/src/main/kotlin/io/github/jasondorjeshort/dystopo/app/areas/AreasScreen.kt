@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -122,6 +123,7 @@ private fun AreasSheet() {
         // T366: every map's outline by its level, read off the UI thread (the list's poll redraws them while it is up)
         if (open) withContext(Dispatchers.IO) { AreaOutlines.showAll(app) } else AreaOutlines.show(emptyList())
         if (!open && AreaPicker.mode != null) AreaPicker.close() // T142: closed from elsewhere (help, settings): the picker goes too
+        if (!open) { Areas.detailSheet = null; Areas.detailChoice = null } // T386: the Detail sheet goes with the list
     }
     if (!open) return
     // T142: drawing, around a point and a country's summary are a card over the map; the country list is a sheet of its own.
@@ -180,6 +182,11 @@ internal fun rowAction(row: OfflineMapList.Row, action: String, inputs: OfflineM
     if (action == OfflineMapList.STORAGE) {
         Areas.screenOpen = false
         io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true
+        return
+    }
+    if (action == DETAIL) { // T386: the row's sheet opens, or closes (on the UI thread)
+        Areas.detailChoice = null
+        Areas.detailSheet = row.recordId?.takeIf { it != Areas.detailSheet }
         return
     }
     if (action == OfflineMapList.REMOVE) removing(row.id, true)
@@ -259,7 +266,10 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = fals
         }
         // T342: "Use on this phone" on every map that opens, so whether it is used shows without opening the row.
         row.off?.let { off -> UseOnPhone(row.id, off, help) { onAction(USE_ON_PHONE) } }
-        if (open) {
+        // T386: the row's Detail sheet in place of its lines and actions while it is open
+        val sheet = row.recordId?.takeIf { open && it == Areas.detailSheet }
+        if (sheet != null) DetailSheet(sheet)
+        if (open && sheet == null) {
             for (line in row.detail) {
                 if (line == OfflineMapList.STARTS_HERE) Row(verticalAlignment = Alignment.CenterVertically) { // T361; T366: never cut
                     BasicText(line, Modifier.weight(1f, fill = false), style = TextStyle(color = Muted, fontSize = 12.sp))
@@ -281,6 +291,101 @@ internal fun MapRow(row: OfflineMapList.Row, open: Boolean, help: Boolean = fals
         }
     }
 }
+
+// T386
+/**
+ * T386: an area row's Detail sheet, under its actions: the three details (Less, Medium, Full, named as everywhere,
+ * [detailLabel]) each with its size and the change against today's ([AreaDownload.detailOptions], read off the UI thread),
+ * Less saying that search finds fewer places there; a choice other than today's shows what it asks ([AreaDownload.DetailOption.confirm],
+ * or the cap's or the budget's refusal with no Start): Lower (or Drop the download), or Start now and Later for a raise, and
+ * Cancel. The change runs on a worker ([AreaDownload.changeDetail]); the sheet closes when it is made. `POST /areas/ui?sheet=<id>`
+ * opens it and `choose=less|medium|full` picks a choice, for frames.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun DetailSheet(id: String) {
+    var options by remember(id) { mutableStateOf<List<AreaDownload.DetailOption>?>(null) }
+    var error by remember(id) { mutableStateOf<String?>(null) }
+    var busy by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id, Areas.list) {
+        withContext(Dispatchers.IO) { runCatching { AreaDownload.detailOptions(id) } }
+            .onSuccess { options = it; error = null }.onFailure { if (!busy) error = it.message }
+    }
+    val chosen = options?.firstOrNull { it.detail.key == Areas.detailChoice && !it.now }
+    fun run(start: Boolean) {
+        val o = chosen ?: return
+        busy = true
+        thread(name = "dystopo-area-detail") {
+            val r = runCatching { AreaDownload.changeDetail(id, o.detail, start) }
+            DystopoApp.instance.map.onMain {
+                busy = false
+                r.onSuccess { Areas.detailChoice = null; Areas.detailSheet = null }.onFailure { error = it.message }
+            }
+        }
+    }
+    Column(
+        Modifier.fillMaxWidth().border(1.dp, Color(0xFFE2D8C6), RoundedCornerShape(8.dp)).padding(10.dp).testTag("detailSheet:$id"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(DETAIL, Modifier.weight(1f, fill = false), style = TextStyle(color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold))
+            HelpIcon("areas.detail", flat = true) // [DETAIL_HELP_KEY]
+            Box(Modifier.weight(1f))
+            Action(CLOSE) { Areas.detailChoice = null; Areas.detailSheet = null }
+        }
+        BasicText(DETAIL_INTRO, style = TextStyle(color = Muted, fontSize = 12.sp))
+        error?.let { BasicText(it, style = TextStyle(color = Color(0xFFB0302A), fontSize = 12.sp)) }
+        val opts = options
+        if (opts == null && error == null) BasicText(DETAIL_SIZING, style = TextStyle(color = Muted, fontSize = 12.sp))
+        opts?.forEach { o ->
+            val selected = if (chosen != null) o === chosen else o.now
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .selectable(selected = selected, enabled = !busy, role = androidx.compose.ui.semantics.Role.RadioButton) { Areas.detailChoice = if (o.now) null else o.detail.key }
+                    .testTag("detail:${o.detail.key}"),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(Modifier.size(20.dp).border(2.dp, if (selected) Teal else Muted, CircleShape).padding(4.dp)) {
+                    if (selected) Box(Modifier.fillMaxSize().background(Teal, CircleShape))
+                }
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LevelSwatch(DetailOutline.levelOf(o.change.target.maxZoom, o.change.target.demMaxZoom ?: o.change.target.maxZoom))
+                        BasicText(o.label, style = TextStyle(color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold))
+                    }
+                    BasicText(o.line, style = TextStyle(color = Muted, fontSize = 12.sp))
+                    o.note?.let { BasicText(it, style = TextStyle(color = Muted, fontSize = 12.sp)) }
+                }
+            }
+        }
+        chosen?.let { o ->
+            BasicText(o.refusal ?: o.confirm.orEmpty(), style = TextStyle(color = if (o.refusal != null) Color(0xFFB0302A) else Ink, fontSize = 13.sp))
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (o.refusal == null && !busy) {
+                    if (o.change.raise) {
+                        Action(START_NOW) { run(start = true) }
+                        Action(LATER) { run(start = false) }
+                    } else Action(if (o.change.target.id == o.change.held.id) DROP_DOWNLOAD else LOWER) { run(start = true) }
+                }
+                Action(CANCEL, Muted) { Areas.detailChoice = null }
+            }
+        }
+    }
+}
+
+/** T386 (ADR 0031): the sheet's close, and its line while the sizes are worked out. */
+internal const val CLOSE = "Close"
+internal const val DETAIL_SIZING = "Working out the sizes"
+
+/** T386 (ADR 0031): the Detail sheet's help, beside its title. */
+internal const val DETAIL_HELP_KEY = "areas.detail"
+internal val DETAIL_HELP: List<HelpText> = listOf(
+    HelpText("areas.detail", DETAIL,"${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, a drawn area's row, Detail", show = { Areas.screenOpen = true }) {
+        "Detail changes how much of a saved area is kept, and keeps its shape. Less detail frees space at once; more detail downloads " +
+            "only what it adds, now or later. Search finds fewer places at less detail."
+    },
+)
+// end T386
 
 /**
  * T342: the row's switch, "Use on this phone", on by default; the whole line toggles it (a 48 dp target, role Switch). Off, the
@@ -367,6 +472,8 @@ internal fun offlineMapInputs(app: DystopoApp = DystopoApp.instance): OfflineMap
         active = manager.activeName(), units = AppSettings.units, now = now,
         indexing = !service.cache.ready, // T242
         off = manager.offNames(), // T342
+        lowerings = Areas.lowerings, // T386
+        raiseBytes = records.filter { it.raise != null }.associate { r -> r.id to (Areas.raiseManifest(r.id)?.bytes ?: 0L) }, // T386
     )
 }
 
@@ -405,6 +512,13 @@ internal fun runRowAction(row: OfflineMapList.Row, action: String, inputs: Offli
             app.map.onMain { Areas.screenOpen = false; io.github.jasondorjeshort.dystopo.app.storage.StorageUi.visible = true }
             linkedMapOf("storage" to true)
         }
+        // T386: Detail opens the row's sheet (`POST /areas/{id}/detail` makes the change); Start begins a raise that waits.
+        DETAIL -> {
+            val id = record().id
+            app.map.onMain { Areas.detailOpen = Areas.detailOpen + id; Areas.detailChoice = null; Areas.detailSheet = id }
+            linkedMapOf("sheet" to id)
+        }
+        OfflineMapList.START -> AreaDownload.startRaise(record().id)
         OfflineMapList.REMOVE -> {
             val plan = OfflineMapList.removePlan(row, inputs) ?: throw IllegalStateException("${row.id} offers no Remove")
             val out = linkedMapOf<String, Any?>("plan" to plan.toString())
@@ -557,7 +671,7 @@ internal val AREAS_HELP: List<HelpText> = run {
         HelpText("areas.corridor", "Corridors", "${io.github.jasondorjeshort.dystopo.app.firstrun.Screens.OFFLINE_MAPS}, the line under the title", show = show) { units ->
             corridorHelp(AppSettings.tripCorridorM, units)
         },
-    ) + START_HERE_HELP // T361
+    ) + START_HERE_HELP + DETAIL_HELP // T361; T386
 }
 
 /**

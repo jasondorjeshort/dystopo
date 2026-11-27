@@ -96,8 +96,17 @@ object Areas : VersionPins {
          * Written only when set; a record without it reads on (ADR 0033: an older build's save drops it, the map then reads on).
          */
         val off: Boolean = false,
+        /**
+         * T386: a raise of detail not finished ([Raise]: the zooms the area holds whole, and whether the user chose Later). Written
+         * only when set; a record without it (every record before T386) has none (ADR 0033: an older build's save drops it, and
+         * the record then reads as its new detail with its coverage short until it is downloaded again).
+         */
+        val raise: Raise? = null,
     ) {
         val kind: String get() = if (pack != null) "pack" else "tiles"
+
+        /** T386: the area at the zooms it holds whole: [area] at [Raise]'s zooms while a raise waits or runs, else [area]. */
+        val heldArea: AreaOfInterest get() = raise?.let { area.withZooms(it.minZoom, it.maxZoom, it.demMaxZoom) } ?: area
 
         /** T140: an opaque record ([opaque]); its card says the phone needs a newer app. */
         val needsNewerApp: Boolean get() = opaque != null
@@ -119,10 +128,32 @@ object Areas : VersionPins {
             autoResume?.let { m["autoResume"] = it.json() }
             if (contours) m["contours"] = true // T170: only when set, so other records are written as before
             if (off) m["off"] = true // T342: the same
+            raise?.let { m["raise"] = it.json() } // T386: the same
         }
 
         /** T140: an unreadable record's raw JSON and the sentence that refused it. */
         data class Opaque(val raw: Map<String, Any?>, val reason: String)
+
+        /**
+         * T386: a raise of detail not finished. The record already has the new id and zooms ([area]); it holds [minZoom] to
+         * [maxZoom] (elevation to [demMaxZoom]) whole, which the lookups read meanwhile ([heldArea]); the added tiles are fetched
+         * from `files/areas/<id>.raise.json` ([raiseManifest]). [deferred]: the user chose Later (or stopped it), so nothing
+         * starts it but Start ([ResumeCheck] never does).
+         */
+        data class Raise(val minZoom: Int, val maxZoom: Int, val demMaxZoom: Int?, val deferred: Boolean) {
+            fun json(): Map<String, Any?> = linkedMapOf("minZoom" to minZoom, "maxZoom" to maxZoom, "demMaxZoom" to demMaxZoom, "deferred" to deferred)
+
+            companion object {
+                fun of(held: AreaOfInterest, deferred: Boolean) = Raise(held.minZoom, held.maxZoom, held.demMaxZoom, deferred)
+
+                /** Null when [m] is not one (the record then reads as its own zooms). */
+                fun parse(m: Map<*, *>): Raise? {
+                    val lo = (m["minZoom"] as? Number)?.toInt() ?: return null
+                    val hi = (m["maxZoom"] as? Number)?.toInt() ?: return null
+                    return Raise(lo, hi, (m["demMaxZoom"] as? Number)?.toInt(), m["deferred"] == true)
+                }
+            }
+        }
 
         companion object {
             /**
@@ -175,6 +206,7 @@ object Areas : VersionPins {
                 autoResume = (m["autoResume"] as? Map<*, *>)?.let { AutoResume.parse(it) },
                 contours = m["contours"] == true, // T170
                 off = m["off"] == true, // T342: absent reads on
+                raise = (m["raise"] as? Map<*, *>)?.let { Raise.parse(it) }, // T386: absent reads none
             )
         }
     }
@@ -299,11 +331,12 @@ object Areas : VersionPins {
         }
         awaitLoaded()
         val all = list
-        val areas = heldAreas?.takeIf { it.first === all }?.second ?: all.filter { it.pack == null && it.opaque == null && it.state == "done" }.map { r ->
+        val areas = heldAreas?.takeIf { it.first === all }?.second ?: all.filter { keptWhole(it) }.map { r ->
             val sets = java.util.concurrent.ConcurrentHashMap<Int, TileSet>()
+            val a = r.heldArea // T386: what it holds whole while a raise waits or runs
             HeldHere.Holding(
-                r.name, HeldHere.Kind.AREA, r.area.bounds, r.area.maxZoom, r.area.demMaxZoom ?: r.area.maxZoom, routing = false,
-                cells = { z, x, y -> sets.getOrPut(z) { io.github.jasondorjeshort.dystopo.areas.TileCover.of(r.area, z) }.contains(x, y) },
+                r.name, HeldHere.Kind.AREA, a.bounds, a.maxZoom, a.demMaxZoom ?: a.maxZoom, routing = false,
+                cells = { z, x, y -> sets.getOrPut(z) { io.github.jasondorjeshort.dystopo.areas.TileCover.of(a, z) }.contains(x, y) },
             )
         }.also { heldAreas = all to it }
         return maps + areas
@@ -329,9 +362,9 @@ object Areas : VersionPins {
         }
         awaitLoaded()
         val all = list
-        val areas = lookupAreas?.takeIf { it.first === all }?.second ?: all.filter { it.pack == null && it.opaque == null && it.state == "done" }.map { r ->
+        val areas = lookupAreas?.takeIf { it.first === all }?.second ?: all.filter { keptWhole(it) }.map { r ->
             val sets = java.util.concurrent.ConcurrentHashMap<Int, TileSet>()
-            val a = r.area
+            val a = r.heldArea // T386
             io.github.jasondorjeshort.dystopo.packs.Holdings.Holding(
                 r.name, io.github.jasondorjeshort.dystopo.packs.Holdings.Kind.AREA,
                 io.github.jasondorjeshort.dystopo.packs.Holdings.Stored(a.minZoom, a.maxZoom, a.bounds),
@@ -511,6 +544,8 @@ object Areas : VersionPins {
         val r = get(id) ?: throw NoSuchElementException("no area '$id'")
         check(r.opaque == null) { "area ${r.name}: ${NeedsNewerApp.USER_SENTENCE}" } // T140
         check(r.state != "downloading" || AreaDownload.job?.let { it.id == r.id && it.running } != true) { "area ${r.name} is downloading; DELETE /areas/download first" }
+        // T386: a raise's message goes and the area stays at the detail it holds whole, the raise left to Start.
+        if (r.raise != null) return update(r.id) { it.copy(state = "done", error = null, cancelled = false, raise = it.raise?.copy(deferred = true)) }
         val share = (coverage(r)["share"] as? Number)?.toDouble()
         return when (val next = dismissedState(r.pack != null, share, r.bytes, r.state)) {
             null -> { remove(r.id); null }
@@ -544,6 +579,7 @@ object Areas : VersionPins {
         try {
             val m = manifest(r.id) ?: manifestOf(r) // T151: read before the file goes (it was deleted first, so the manifest was always remade)
             manifestFile(r.id).delete()
+            raiseManifestFile(r.id).delete() // T386
             synchronized(manifestMemo) { manifestMemo.remove(r.id) }
             var tilesDeleted = 0
             var pack: Map<String, Any?>? = null
@@ -574,6 +610,173 @@ object Areas : VersionPins {
     private fun progress(r: Record, done: Int, total: Int) = synchronized(this) {
         removals = removals.map { if (it.record === r) it.copy(done = done, total = total) else it }
     }
+
+    // T386
+    /**
+     * T386: an area whose detail is being changed with tiles to free, for its row ([id] the new record's): the tiles freed so
+     * far of [total] (null until they are counted: the tile cache's index is walked first when it is not whole). In memory only.
+     */
+    data class Lowering(val id: String, val to: String, val startedAt: Long, val done: Int = 0, val total: Int? = null)
+
+    /** T386: the lowerings under way (Compose state, replaced on every chunk), for the rows and `GET /areas`. */
+    var lowerings by mutableStateOf<List<Lowering>>(emptyList())
+        private set
+
+    /** T386: the record whose Detail sheet is open on its row (screen state, never saved; null for none). */
+    var detailSheet by mutableStateOf<String?>(null)
+
+    /** T386: the detail chosen on the open sheet ([io.github.jasondorjeshort.dystopo.areas.AreaDetail.key]; null: none yet), whose confirm shows. */
+    var detailChoice by mutableStateOf<String?>(null)
+
+    /** T386: a record kept whole for the lookups: a finished one, or one whose raise waits or runs (at its held zooms, [Record.heldArea]). */
+    fun keptWhole(r: Record): Boolean = r.pack == null && r.opaque == null && (r.state == "done" || r.raise != null)
+
+    /** T386: where a raise's manifest of the added tiles lives (beside the area's whole manifest). */
+    fun raiseManifestFile(id: String) = File(dir, "$id.raise.json")
+
+    fun saveRaiseManifest(m: AreaManifest) {
+        runCatching { raiseManifestFile(m.id).writeText(MiniJson.encode(m.json())) }.onFailure { Log.w(TAG, "saving the raise manifest ${m.id} failed", it) }
+    }
+
+    /** The raise manifest of [id], or null; read again only when its file changed (the list's poll asks every 1.5 s). */
+    fun raiseManifest(id: String): AreaManifest? {
+        val f = raiseManifestFile(id).takeIf { it.isFile } ?: return null
+        val stamp = f.lastModified() to f.length()
+        synchronized(raiseMemo) { raiseMemo[id]?.takeIf { it.first == stamp }?.let { return it.second } }
+        val m = runCatching { AreaManifest.parse(f.readText()) }.getOrNull() ?: return null
+        synchronized(raiseMemo) { raiseMemo[id] = stamp to m }
+        return m
+    }
+
+    private val raiseMemo = HashMap<String, Pair<Pair<Long, Long>, AreaManifest>>()
+
+    /**
+     * T386: [old] under the id of [area] (its zooms changed, its shape kept): the name, creation time, pin, off state, versions,
+     * contours, source and sizes carried over, [raise] set, no cursor, resume state or message; [manifest] written under the
+     * new id and the old id's manifests deleted. No tile is touched (the pins follow the new zooms at once). The row keeps
+     * its place and stays open. Refused when a record of that id is on the phone already (the same shape kept at that detail).
+     */
+    fun rekey(old: Record, area: AreaOfInterest, manifest: AreaManifest, raise: Record.Raise?): Record {
+        val id = area.id
+        val n: Record
+        synchronized(this) {
+            load()
+            check(records.containsKey(old.id)) { "no area '${old.id}'" }
+            check(id == old.id || !records.containsKey(id)) { DETAIL_TAKEN }
+            n = old.copy(id = id, area = area.withName(old.name), state = "done", raise = raise, cursor = null, autoResume = null, error = null, cancelled = false)
+            val kept = LinkedHashMap(records)
+            records.clear()
+            for ((k, v) in kept) if (k == old.id) records[id] = n else records[k] = v
+            coverMemo.remove(old.id)
+            saveManifest(manifest)
+            if (old.id in detailOpen) detailOpen = detailOpen - old.id + id
+            if (detailSheet == old.id) detailSheet = null
+            changed()
+        }
+        if (id != old.id) {
+            manifestFile(old.id).delete()
+            raiseManifestFile(old.id).delete()
+            synchronized(manifestMemo) { manifestMemo.remove(old.id) }
+        }
+        return n
+    }
+
+    /** T386: the key prefixes of [items]' routes for [r]'s source, to the item ([removalMatcher]'s input). */
+    private fun byPrefixOf(items: List<TilesItem>, r: Record): Map<String, TilesItem> {
+        val out = HashMap<String, TilesItem>()
+        for (item in items) for (p in keyPrefixes(item.route, r.source)) out[p] = item
+        return out
+    }
+
+    /** T386: the pins of every pinned area but [id] (and navigation's), so a tile only [id] holds reads unpinned. */
+    private fun pinsWithout(id: String): AreaPins = synchronized(this) {
+        load()
+        val pinned = records.values.filter { it.pinned && it.pack == null && it.id != id }
+        AreaPins(
+            pinned.map { r -> coverMemo.getOrPut(r.id) { AreaPins.cover(if (r.opaque != null) opaquePinArea(r.area, AreaDownload.heapTiles()) else r.area) } } + transient.values.map { it.first },
+            pinned.map { it.versions } + transient.values.map { it.second },
+            pinned.map { r -> r.area.demMaxZoom.takeIf { r.opaque == null } },
+        )
+    }
+
+    /**
+     * T386: the bytes of [r]'s manifest tiles in the cache (any pin), or null when they cannot be counted now. Waits for the
+     * cache's index to be whole (off the main thread): a lower or a raise counts the area again after it.
+     */
+    fun countBytes(r: Record): Long? = runCatching {
+        val m = manifest(r.id) ?: return null
+        OnlineService.get(app).cache.bytesWhere(pinned = null, matches = removalMatcher(byPrefixOf(m.items.filterIsInstance<TilesItem>(), r)) { false })
+    }.onFailure { Log.w(TAG, "counting ${r.name} failed", it) }.getOrNull()
+
+    /**
+     * T386: what freeing [dropped] of [r] takes, before anything changes: `own` the bytes of those tiles in the cache, `freed` the
+     * ones no other area or pin holds (what goes). From the cache when its index is whole (and [count]), else the estimate
+     * ([io.github.jasondorjeshort.dystopo.areas.DetailChange.estimateOf]) for both, `counted` false.
+     */
+    fun droppedBytes(r: Record, dropped: List<TilesItem>, count: Boolean = true): Map<String, Any?> {
+        val cache = OnlineService.get(app).cache
+        if (dropped.isEmpty()) return linkedMapOf("own" to 0L, "freed" to 0L, "counted" to true)
+        if (count && cache.ready) runCatching {
+            val byPrefix = byPrefixOf(dropped, r)
+            val others = pinsWithout(r.id)
+            val own = cache.bytesWhere(pinned = null, matches = removalMatcher(byPrefix) { false })
+            val freed = cache.bytesWhere(pinned = null, matches = removalMatcher(byPrefix) { others.isPinned(it) })
+            return linkedMapOf("own" to own, "freed" to freed, "counted" to true)
+        }.onFailure { Log.w(TAG, "counting the tiles a change frees failed", it) }
+        val est = dropped.sumOf { io.github.jasondorjeshort.dystopo.areas.DetailChange.estimateOf(it.route, it.tiles) }
+        return linkedMapOf("own" to est, "freed" to est, "counted" to false)
+    }
+
+    /**
+     * T386: [r] at [change]'s target, its shape kept: what the change frees is counted first (the cache's index waited for when it
+     * is not whole: the row reads "Counting the map tiles" meanwhile, and a walk held while the app is off the screen waits, not
+     * fails), then the record is re-keyed ([rekey], with [raise] for a raise) and the tiles of the dropped zooms that no other
+     * area or pin holds leave the cache in chunks ([TileCache.clearWhere], the pins asked again for each chunk), then the area's
+     * bytes are counted again. Nothing is fetched. A kill midway leaves the record re-keyed and the tiles not yet deleted
+     * unpinned (the cache budget evicts them, as an area's removal leaves them). [chunkDelayMs] slows the deletes for a frame.
+     */
+    fun applyDetail(r: Record, change: io.github.jasondorjeshort.dystopo.areas.DetailChange.Change, raise: Record.Raise?, chunkDelayMs: Long = 0): Pair<Record, Map<String, Any?>> {
+        val t0 = System.currentTimeMillis()
+        val old = manifest(r.id) ?: manifestOf(r) ?: throw IllegalStateException("area ${r.name} has no manifest")
+        val dropped = io.github.jasondorjeshort.dystopo.areas.DetailChange.droppedItems(old, change)
+        val target = change.target
+        val label = io.github.jasondorjeshort.dystopo.app.areas.detailLabel(target)
+        val lowering = dropped.isNotEmpty()
+        if (lowering) synchronized(this) { lowerings = lowerings + Lowering(target.id, label, t0) }
+        try {
+            val cache = OnlineService.get(app).cache
+            val waitedForIndex = !cache.ready
+            val before = if (lowering) try {
+                cache.awaitReady("a change of detail") // T379: a held walk is no stall; the row says the tiles are counted
+                droppedBytes(r, dropped)
+            } catch (e: Exception) {
+                throw IllegalStateException("the map tiles could not be counted: ${e.message}")
+            } else droppedBytes(r, dropped)
+            val bytesBefore = r.bytes
+            val n = rekey(r, target, io.github.jasondorjeshort.dystopo.areas.DetailChange.rekeyed(old, change), raise)
+            var deleted = 0
+            if (lowering) deleted = cache.clearWhere(
+                onChunk = { done, total ->
+                    synchronized(this) { lowerings = lowerings.map { if (it.id == n.id) it.copy(done = done, total = total) else it } }
+                    if (chunkDelayMs > 0 && total > 0) Thread.sleep(chunkDelayMs)
+                },
+                matches = removalMatcher(byPrefixOf(dropped, n), ::isPinned),
+            )
+            val m = manifest(n.id)
+            val counted = if (lowering || raise != null) countBytes(n) else null
+            val after = update(n.id) { it.copy(bytes = counted ?: (it.bytes - ((before["own"] as? Long) ?: 0L)).coerceAtLeast(0L), tiles = m?.tileCount ?: it.tiles, estimateBytes = m?.bytes ?: it.estimateBytes) } ?: n
+            val unheld = if (lowering) dropUnheld() else 0
+            return after to linkedMapOf(
+                "id" to after.id, "fromId" to r.id, "detail" to io.github.jasondorjeshort.dystopo.areas.AreaDetail.of(after.area)?.key, "zooms" to listOf(after.area.minZoom, after.area.maxZoom),
+                "demMaxZoom" to after.area.demMaxZoom, "bytesBefore" to bytesBefore, "bytes" to after.bytes, "bytesCounted" to (counted != null),
+                "freedBytes" to before["freed"], "ownDroppedBytes" to before["own"], "tilesDeleted" to deleted + unheld, "waitedForIndex" to waitedForIndex,
+                "dropped" to dropped.associate { it.route to it.tiles.keys.sorted() }, "ms" to System.currentTimeMillis() - t0,
+            )
+        } finally {
+            if (lowering) synchronized(this) { lowerings = lowerings.filter { it.id != target.id } }
+        }
+    }
+    // end T386
 
     /** T91: told (on its own thread, so no lock is held) when the pins change, so the cache recounts its pinned bytes. */
     @Volatile private var onPinsChanged: (() -> Unit)? = null
@@ -756,6 +959,7 @@ object Areas : VersionPins {
             "cache" to cache.json(), "download" to AreaDownload.json(), "prefetch" to AheadPrefetch.json(),
             "cacheRows" to cacheRows?.second?.let { mapOf("tiles" to it.size, "spans" to it.spanCount) }, // T151: the cache's keys as rows (coverage)
             "outline" to AreaOutlines.json(all), // T106: the corridor polygons; T136: of every kept corridor, drawn or not
+            "lowerings" to lowerings.map { linkedMapOf("id" to it.id, "to" to it.to, "done" to it.done, "total" to it.total) }, // T386
         )
     }
 }

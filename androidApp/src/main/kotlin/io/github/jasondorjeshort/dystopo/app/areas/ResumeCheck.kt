@@ -37,7 +37,9 @@ import java.util.concurrent.atomic.AtomicInteger
  *   the budget changes, and runs that fail without progress back off ([BACKOFF_MS]) and stop after [MAX_FAILURES] with Retry
  *   ([afterRun]). A run cut off by the network (stalled, [AreaDownload]) backs off but is not counted: losing service is
  *   normal and the owner's requirement is that the download continues later without being asked. App start and the
- *   foreground trigger skip the backoff's wait (the user is there), never the stop or the cancel.
+ *   foreground trigger skip the backoff's wait (the user is there), never the stop or the cancel. T386: a raise of detail the
+ *   user left for later ([Areas.Record.Raise.deferred]: Later, or a raise stopped) is never started here, at a launch or after;
+ *   only its Start on the row does. A raise started and cut short resumes as any unfinished download does.
  *
  * T156 (ADR 0046): the out-of-process half is the WorkManager chain ([DownloadWorker]). A check that finds an unfinished
  * record which may resume and starts nothing keeps the chain enqueued ([DownloadWorker.ensure], KEEP: nothing while it is
@@ -291,7 +293,7 @@ internal fun unfinished(r: Areas.Record): Boolean = r.pack == null && r.opaque =
 
 /**
  * T151: the cheap check's decision over [records] (in memory): each unfinished one with its reason (`running`, `ending`,
- * `cancelled`, `stopped`, `refused`, `backoff`, `ready`), the oldest `ready` one to start when no job runs ([live] null), the
+ * `cancelled`, `deferred` (T386: a raise of detail left for later), `stopped`, `refused`, `backoff`, `ready`), the oldest `ready` one to start when no job runs ([live] null), the
  * earliest backoff's end, and the running job when something waits for it. [userPresent] (app start, foreground) skips the
  * backoff's wait; a budget refusal waits for another [budgetMb]. T369: one over the public vector source's cap waits
  * (`cap`) while [direct] (no server set); with a server set it is ready again. Pure, tested.
@@ -306,6 +308,7 @@ internal fun decide(records: List<Areas.Record>, live: String?, now: Long, budge
         val why = when {
             r.id == live -> "running"
             r.cancelled -> "cancelled"
+            r.raise?.deferred == true -> "deferred" // T386: a raise the user left for later starts only by its Start
             a?.stopped == AutoResume.STOP_FAILURES -> "stopped"
             a?.stopped == AutoResume.STOP_REFUSED && a.budgetMb == budgetMb -> "refused"
             a?.stopped == AutoResume.STOP_CAP && direct -> "cap" // T369

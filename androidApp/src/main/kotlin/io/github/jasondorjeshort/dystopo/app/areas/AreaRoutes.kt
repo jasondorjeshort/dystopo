@@ -152,9 +152,26 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   manifest, so the area holds fewer tiles than its shape (with the pack on, none). Answers `id`, `name`, `zooms`,
  *   `copied`, `skippedOpenMap` and `outsidePack` per zoom, `bytes`, `ms`, `keyPrefix`, `network` false and the record.
  *   `DELETE /areas/{id}` removes it with its tiles. The pack is read even while it is off (`POST /areas/rows/off`).
+ * - T386, a saved area's detail changed with its shape kept (`DetailChange` in `shared`): `GET /areas/{id}/detail` gives
+ *   `detail` (the recorded zooms' `full`, `medium`, `less`), `held` and `label` (what it holds whole: below `detail` while a raise
+ *   waits or runs), `zooms`, `demMaxZoom`, `bytes`, `raise` (`minZoom`, `maxZoom`, `demMaxZoom` held, `deferred` after Later, the
+ *   target's `label`, the added `tiles`, `vectorTiles`, `bytes`), `offered`, `refusal` (why no Detail: a trip's corridor "Its detail
+ *   follows the trip.", a download running, not finished), `lowering` (`to`, `done`, `total`, `ms` while tiles are freed),
+ *   `sheetOpen`, `choice`, and `options`: the sheet's three choices (`detail`, `label`, `now`, `pending`, `line`, `note`, `confirm`,
+ *   `bytes`, `delta`, `freedBytes`, `counted`, `added` {`bytes`, `tiles`, `vectorTiles`}, `refusal`, `overCap`, `change` {`from`,
+ *   `to`, `added` and `dropped` zooms per route, `fromId`, `toId`}, `id`). `POST /areas/{id}/detail?level=less|medium|full[&start=0]
+ *   [&chunkDelayMs=]` makes the change as the sheet's confirm does and answers when it is made: a lower re-keys the record (the new
+ *   `id`, `fromId`), frees the dropped zooms' tiles no other area or pin holds (`freedBytes`, `tilesDeleted`, `bytesBefore`,
+ *   `bytes` counted again, `waitedForIndex`) and fetches nothing; a raise re-keys it with its `raise` and saves the added tiles'
+ *   manifest (`raise`: `tiles`, `vectorTiles`, `bytes`, `perRoute` zooms, `deferred`), then starts their download (`download`), or
+ *   with `start=0` ("Later") leaves it waiting, not started by the launch's resume check (`GET /areas/resume` `why` `deferred`).
+ *   Over the public source's cap (direct mode, the added vector tiles alone) or the budget it answers 409 with the sentence and
+ *   changes nothing. `POST /areas/rows/action?action=Start` starts a raise that waits; `action=Detail` opens the sheet.
+ *   `POST /areas/ui?sheet=<id>` opens the row and its sheet (`sheet=0` closes it), `choose=less|medium|full` shows a choice's
+ *   confirm. `GET /areas` adds `lowerings`; each record carries `raise` while one waits or runs.
  */
 object AreaRoutes {
-    private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss|/rename)?$")
+    private val item = Regex("^/areas/(a[0-9a-f]{4,16})(/manifest|/pin|/retry|/dismiss|/rename|/detail)?$") // T386: /detail
 
     fun handle(app: DystopoApp, r: Request): Response? {
         if (r.path != "/areas" && !r.path.startsWith("/areas/")) return null
@@ -197,6 +214,14 @@ object AreaRoutes {
                     Areas.screenOpen = open
                     // T221: as a tap on the row; T234: a row id of `GET /areas/rows` too (`pack:<name>`, `area:<id>`).
                     r.query["detail"]?.let { d -> Areas.get(d.removePrefix(OfflineMapList.AREA))?.let { Areas.toggleDetail(it.id) } ?: d.takeIf { it.startsWith(OfflineMapList.PACK) }?.let { Areas.toggleDetail(it) } }
+                    // T386: `sheet=<id>` opens that area's row and its Detail sheet (`sheet=0` closes it), `choose=` picks a choice
+                    r.query["sheet"]?.let { s ->
+                        val id = Areas.get(s.removePrefix(OfflineMapList.AREA))?.id
+                        if (id != null) Areas.detailOpen = Areas.detailOpen + id
+                        Areas.detailChoice = null
+                        Areas.detailSheet = id
+                    }
+                    r.query["choose"]?.let { c -> Areas.detailChoice = c.takeIf { it in DETAILS } }
                 }
                 return Response.json(mapOf("open" to open))
             }
@@ -229,6 +254,12 @@ object AreaRoutes {
             // T130: a trip's corridor removed by hand is not made again. T221: `chunkDelayMs` slows the deletes for a screenshot.
             "DELETE" to "" -> Response.json(TripCorridors.userRemove(rec.id, r.query["chunkDelayMs"]?.toLongOrNull()?.coerceIn(0, 10_000) ?: 0))
             "POST" to "/rename" -> Response.json(rename(rec.id, r.query["name"] ?: throw IllegalArgumentException("name=<new name>")).json()) // T142
+            "GET" to "/detail" -> Response.json(detailJson(rec)) // T386
+            "POST" to "/detail" -> { // T386: the sheet's choice, run here (answers when the tiles are freed or the raise is set)
+                val level = r.query["level"]?.let { AreaDetail.byKey(it) } ?: throw IllegalArgumentException("level must be ${DETAILS.joinToString(", ")}")
+                val start = r.query["start"] != "0"
+                Response.json(AreaDownload.changeDetail(rec.id, level, start, r.query["chunkDelayMs"]?.toLongOrNull()?.coerceIn(0, 10_000) ?: 0))
+            }
             else -> Response.notFound()
         }
     }
@@ -433,6 +464,21 @@ object AreaRoutes {
             "copied" to copied.mapKeys { it.key.toString() }, "skippedOpenMap" to skipped.mapKeys { it.key.toString() },
             "outsidePack" to outside.mapKeys { it.key.toString() },
             "bytes" to bytes, "ms" to System.currentTimeMillis() - t0, "keyPrefix" to prefix, "network" to false, "area" to Areas.get(area.id)?.json(),
+        )
+    }
+
+    /** T386: `GET /areas/{id}/detail` (see the object comment). */
+    private fun detailJson(rec: Areas.Record): Map<String, Any?> {
+        val refusal = AreaDownload.detailRefusal(rec)
+        val raise = Areas.raiseManifest(rec.id)
+        return linkedMapOf(
+            "id" to rec.id, "name" to rec.name, "detail" to AreaDetail.of(rec.area)?.key, "held" to AreaDetail.of(rec.heldArea)?.key, "label" to detailLabel(rec.heldArea),
+            "zooms" to listOf(rec.area.minZoom, rec.area.maxZoom), "demMaxZoom" to rec.area.demMaxZoom, "state" to rec.state, "bytes" to rec.bytes, "tiles" to rec.tiles,
+            "raise" to rec.raise?.json()?.plus(mapOf("label" to detailLabel(rec.area), "tiles" to raise?.tileCount, "vectorTiles" to raise?.vectorTileCount, "bytes" to raise?.bytes)),
+            "offered" to OfflineMapList.detailOffered(rec), "refusal" to refusal,
+            "lowering" to Areas.lowerings.firstOrNull { it.id == rec.id }?.let { linkedMapOf("to" to it.to, "done" to it.done, "total" to it.total, "ms" to System.currentTimeMillis() - it.startedAt) },
+            "sheetOpen" to (Areas.detailSheet == rec.id), "choice" to Areas.detailChoice,
+            "options" to if (refusal == null) runCatching { AreaDownload.detailOptions(rec.id).map { it.json() } }.getOrElse { listOf(mapOf("error" to it.message)) } else null,
         )
     }
 
