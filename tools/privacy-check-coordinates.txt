@@ -1,21 +1,38 @@
-# T388: positions as shared/.../geo/CoordinateFormat.kt prints them, one per line: place|lat|lon|format|text.
+# T388: positions as shared/.../geo/CoordinateFormat.kt prints them, one per line: place|lat|lon|format|text;
+# a format ending -line is CoordinateFormat.line's text (no-break spaces inside each part, as the card and the waypoint show it).
 # Read by tools/test_privacy_check.py (each form must read as a pair) and held against the formatter by
 # androidApp's CoordinateFixturesTest, so the checker and the app cannot drift apart. paradise and aconcagua are
 # public areas.json places; private-fixture is a made-up point in the open South Pacific that the test's fake
 # devtool.local.json boxes; outside is a made-up point in the open Indian Ocean, inside no box at all.
 paradise|46.786|-121.735|dd|46.78600° N, 121.73500° W
+paradise|46.786|-121.735|dd-line|46.78600° N, 121.73500° W
 paradise|46.786|-121.735|dm|46° 47.160' N, 121° 44.100' W
+paradise|46.786|-121.735|dm-line|46° 47.160' N, 121° 44.100' W
 paradise|46.786|-121.735|dms|46° 47' 09.6" N, 121° 44' 06.0" W
+paradise|46.786|-121.735|dms-line|46° 47' 09.6" N, 121° 44' 06.0" W
 paradise|46.786|-121.735|utm|10T 596555 5182160
+paradise|46.786|-121.735|utm-line|10T 596555 5182160
 aconcagua|-32.653|-70.011|dd|32.65300° S, 70.01100° W
+aconcagua|-32.653|-70.011|dd-line|32.65300° S, 70.01100° W
 aconcagua|-32.653|-70.011|dm|32° 39.180' S, 70° 00.660' W
+aconcagua|-32.653|-70.011|dm-line|32° 39.180' S, 70° 00.660' W
 aconcagua|-32.653|-70.011|dms|32° 39' 10.8" S, 70° 00' 39.6" W
+aconcagua|-32.653|-70.011|dms-line|32° 39' 10.8" S, 70° 00' 39.6" W
 aconcagua|-32.653|-70.011|utm|19H 405187 6386729
+aconcagua|-32.653|-70.011|utm-line|19H 405187 6386729
 private-fixture|-30.0123|-129.9876|dd|30.01230° S, 129.98760° W
+private-fixture|-30.0123|-129.9876|dd-line|30.01230° S, 129.98760° W
 private-fixture|-30.0123|-129.9876|dm|30° 00.738' S, 129° 59.256' W
+private-fixture|-30.0123|-129.9876|dm-line|30° 00.738' S, 129° 59.256' W
 private-fixture|-30.0123|-129.9876|dms|30° 00' 44.3" S, 129° 59' 15.4" W
+private-fixture|-30.0123|-129.9876|dms-line|30° 00' 44.3" S, 129° 59' 15.4" W
 private-fixture|-30.0123|-129.9876|utm|9J 404758 6679441
+private-fixture|-30.0123|-129.9876|utm-line|9J 404758 6679441
 outside|-20.25|60.75|dd|20.25000° S, 60.75000° E
+outside|-20.25|60.75|dd-line|20.25000° S, 60.75000° E
 outside|-20.25|60.75|dm|20° 15.000' S, 60° 45.000' E
+outside|-20.25|60.75|dm-line|20° 15.000' S, 60° 45.000' E
 outside|-20.25|60.75|dms|20° 15' 00.0" S, 60° 45' 00.0" E
+outside|-20.25|60.75|dms-line|20° 15' 00.0" S, 60° 45' 00.0" E
 outside|-20.25|60.75|utm|41K 264966 7759255
+outside|-20.25|60.75|utm-line|41K 264966 7759255

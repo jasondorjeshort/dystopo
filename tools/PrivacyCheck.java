@@ -46,7 +46,9 @@ import java.util.regex.Pattern;
  * easting, northing, turned into latitude and longitude by the same series as shared/.../geo/Utm.kt). Each is checked
  * like a signed pair: inside (or within 0.1 degrees of) a local bbox blocks the hooks and counts in scan's
  * coordinatePairHits, with formPairHits beside it saying how many of those were in one of these forms; outside every
- * public area it counts in pairsOutsidePublicAreas. An angle needs its hemisphere letter and a partner on the other axis
+ * public area it counts in pairsOutsidePublicAreas. Every Unicode space (the no-break space CoordinateFormat.line puts
+ * inside each part, thin and figure spaces) reads as a space in every coordinate rule; hemisphere letters and the UTM
+ * band may be lower case; "N 12° 20.740' W 123° 27.407'", letters first with no comma, is a pair. An angle needs its hemisphere letter and a partner on the other axis
  * within 24 characters, a decimal needs two fraction digits, minutes and seconds need their marks, and a UTM easting six
  * digits, so a time (12:47' 09.6"), a version ("10T") or a bare number pair is no hit.
  *
@@ -133,7 +135,7 @@ public class PrivacyCheck {
             String norm = normalize(l[1]);
             String reason = null;
             for (String t : terms) if (norm.contains(t)) { reason = "private term"; break; }
-            if (reason == null) reason = coordinateHit(l[1], boxes);
+            if (reason == null) reason = coordinateHit(spaces(l[1]), boxes);
             if (reason == null) for (double[] q : formPairs(l[1])) if (inAny(q[0], q[1], boxes, MARGIN_DEG)) { reason = "coordinate pair"; break; } // T388
             if (reason != null) {
                 String text = l[1].strip();
@@ -198,6 +200,7 @@ public class PrivacyCheck {
             String norm = normalize(line);
             boolean hit = false;
             for (String t : terms) if (norm.contains(t)) { termHits++; hit = true; break; }
+            line = spaces(line); // T388: a no-break or thin space reads as a space in every coordinate rule
             if ((logcat ? loneHit(line, boxes) : coordinateHit(line, boxes)) != null) { valueHits++; hit = true; }
             Matcher p = PAIR.matcher(line);
             while (p.find()) {
@@ -235,21 +238,36 @@ public class PrivacyCheck {
     private static final String DM = "(\\d{1,3})(?:\\s*°\\s*|\\s+)(\\d{1,2}(?:\\.\\d+)?)\\s*['′]";
     private static final String DMS = "(\\d{1,3})(?:\\s*°\\s*|\\s+)(\\d{1,2})\\s*['′]\\s*(\\d{1,2}(?:\\.\\d+)?)\\s*[\"″]";
     /** One angle and its hemisphere letter, before (group 1) or after it (group 8); groups 2-4 DMS, 5-6 DM, 7 D. */
-    private static final Pattern ANGLE = Pattern.compile("(?:(?<![A-Za-z])([NSEW])\\s*)?(?<![\\d.])(?:" + DMS + "|" + DM + "|" + D + ")"
-        + "(?:\\s*([NSEW])(?![A-Za-z]))?");
+    private static final Pattern ANGLE = Pattern.compile("(?:(?<![A-Za-z])([NSEWnsew])\\s*)?(?<![\\d.])(?:" + DMS + "|" + DM + "|" + D + ")"
+        + "(?:\\s*([NSEWnsew])(?![A-Za-z]))?");
+    /** Every Unicode space that is not a plain one: no-break (U+00A0, the app's CoordinateFormat.line), figure, thin, narrow no-break and the rest. */
+    private static final Pattern SPACES = Pattern.compile("[\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{202F}\\x{205F}\\x{3000}]");
+
+    /** T388: [text] with every Unicode space a plain space, so the coordinate rules' \\s and ' ' read it. */
+    static String spaces(String text) {
+        return SPACES.matcher(text).replaceAll(" ");
+    }
+
     /** A hemisphere letter right after a number: PAIR leaves that pair to formPairs, so it is counted once, with its sign. */
-    private static final Pattern HEMI_AFTER = Pattern.compile("\\s*°?\\s*[NSEW](?![A-Za-z])");
-    private static final Pattern UTM = Pattern.compile("(?<![\\w.])([1-9]|[1-5]\\d|60)([C-HJ-NP-X])\\s+(\\d{6})(?:\\.\\d+)?\\s+(\\d{6,7})(?:\\.\\d+)?(?![\\w.])");
+    private static final Pattern HEMI_AFTER = Pattern.compile("\\s*°?\\s*[NSEWnsew](?![A-Za-z])");
+    private static final Pattern UTM = Pattern.compile("(?<![\\w.])([1-9]|[1-5]\\d|60)([C-HJ-NP-Xc-hj-np-x])\\s+(\\d{6})(?:\\.\\d+)?\\s+(\\d{6,7})(?:\\.\\d+)?(?![\\w.])");
 
     /** T388: every (lat, lon) the line writes in a form CoordinateFormat prints (not the signed pairs PAIR reads). */
     static List<double[]> formPairs(String line) {
+        line = spaces(line);
         List<double[]> out = new ArrayList<>();
         List<double[]> angles = new ArrayList<>(); // {signed degrees, axis 0 lat / 1 lon, start, end}
         Matcher m = ANGLE.matcher(line);
-        while (m.find()) {
+        for (int from = 0; from < line.length() && m.find(from); ) {
             String before = m.group(1), after = m.group(8);
-            if ((before == null) == (after == null)) continue; // exactly one hemisphere letter
-            char h = (before != null ? before : after).charAt(0);
+            from = m.end();
+            int end = m.end();
+            if (before == null && after == null) continue; // no hemisphere letter
+            if (before != null && after != null) { // "N 12° 20.740' W 123° 27.407'": the letter after is the next angle's
+                after = null;
+                from = end = m.start(8);
+            }
+            char h = Character.toUpperCase((before != null ? before : after).charAt(0));
             double v;
             if (m.group(2) != null) {
                 double min = Double.parseDouble(m.group(3)), sec = Double.parseDouble(m.group(4));
@@ -262,7 +280,7 @@ public class PrivacyCheck {
             } else v = Double.parseDouble(m.group(7));
             boolean lat = h == 'N' || h == 'S';
             if (v > (lat ? 90 : 180)) continue;
-            angles.add(new double[]{(h == 'S' || h == 'W') ? -v : v, lat ? 0 : 1, m.start(), m.end()});
+            angles.add(new double[]{(h == 'S' || h == 'W') ? -v : v, lat ? 0 : 1, m.start(), end});
         }
         for (int i = 0; i + 1 < angles.size(); i++) {
             double[] a = angles.get(i), b = angles.get(i + 1);
@@ -275,7 +293,7 @@ public class PrivacyCheck {
         m = UTM.matcher(line);
         while (m.find()) {
             int zone = Integer.parseInt(m.group(1));
-            char band = m.group(2).charAt(0);
+            char band = Character.toUpperCase(m.group(2).charAt(0));
             double e = Double.parseDouble(m.group(3)), n = Double.parseDouble(m.group(4));
             if (e < 100_000 || e > 900_000 || n > 9_400_000) continue;
             out.add(utmInverse(e, n, zone, band >= 'N'));

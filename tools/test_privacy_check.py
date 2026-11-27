@@ -157,7 +157,7 @@ def t388(tmp, check):
     with open(local, "w", encoding="utf-8") as f:
         json.dump(PRIVATE_LOCAL, f)
     rows = fixtures()
-    check("T388: four places in four formats", len(rows) == 16, f"{len(rows)} rows")
+    check("T388: four places in four formats, format() and line()", len(rows) == 32 and sum(f.endswith("-line") for _, f, _ in rows) == 16, f"{len(rows)} rows")
     for place, fmt, text in rows:
         code, r, err = scan(text + NL, local)
         if r is None:
@@ -176,6 +176,12 @@ def t388(tmp, check):
     for text in ["S 30.01230, W 129.98760", "30.0123S 129.9876W", "30°00′44.3″S, 129°59′15.4″W", "W 129° 59.256', S 30° 00.738'"]:
         code, r, _ = scan(text + NL, local)
         check(f"T388: {ascii(text)} is a hit", r is not None and r["formPairHits"] == 1 and code == 1, f"exit {code}, {r}")
+    # Typed forms the app does not print: letters first with no comma, lower-case letters and band, thin and figure spaces.
+    typed = ["S 30" + chr(0xB0) + " 00.738' W 129" + chr(0xB0) + " 59.256'", "S 30" + chr(0xB0) + " 00' 44.3\" W 129" + chr(0xB0) + " 59' 15.4\"",
+             "30.01230 s, 129.98760 w", "9j 404758 6679441", "30" + chr(0xB0) + chr(0x2009) + "00.738'" + chr(0x202F) + "S, 129" + chr(0xB0) + chr(0x2007) + "59.256' W"]
+    for text in typed:
+        code, r, _ = scan(text + NL, local)
+        check(f"T388: typed {ascii(text)} is a hit", r is not None and r["formPairHits"] == 1 and code == 1, f"exit {code}, {r}")
     for text in LOOK_ALIKES:
         code, r, _ = scan(text + NL, local)
         check(f"T388: look-alike {ascii(text)} stays quiet", r is not None and hits(r) == 0 and r["formPairHits"] == 0

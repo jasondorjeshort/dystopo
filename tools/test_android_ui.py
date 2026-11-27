@@ -745,7 +745,7 @@ def _card_line(text):
 
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "privacy-check-coordinates.txt"), encoding="utf-8") as _f:
     _rows = [l.rstrip(chr(10)).split("|") for l in _f if l.strip() and not l.startswith("#")]
-assert {r[3] for r in _rows} == {"dd", "dm", "dms", "utm"}, _rows
+assert {r[3] for r in _rows} == {"dd", "dm", "dms", "utm", "dd-line", "dm-line", "dms-line", "utm-line"}, _rows
 for _r in _rows:
     assert re.match(ui.CARD_COORDS, _card_line(_r[4])), _r
     assert re.match(ui.CARD_COORDS, _r[4]), _r  # plain spaces too (a dump that folded them)
