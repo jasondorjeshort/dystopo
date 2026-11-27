@@ -106,6 +106,9 @@ class ReasonTextTest {
         val d = io.github.jasondorjeshort.dystopo.readout.GpsClockFault.DISAGREE
         assertEquals("GPS clock unreliable: fixes used, times from the phone.", ReasonText.clock(u, 1L))
         assertEquals("GPS and phone clocks differ by 46 min: fixes still used.", ReasonText.clock(d, 46 * 60_000L))
+        // T388: the reset line names where the action sits, in the words the Horizon view and its menu show.
+        assertEquals("Horizon view: Satellites menu, Reset assistance data.", ReasonText.CLOCK_RESET)
+        assertTrue(io.github.jasondorjeshort.dystopo.app.horizon.HorizonText.TITLE in ReasonText.CLOCK_RESET && io.github.jasondorjeshort.dystopo.app.gnss.GnssText.RESET in ReasonText.CLOCK_RESET)
         val widest = listOf(ReasonText.clock(u, 0), ReasonText.CLOCK_RESET) + listOf(6_000L, 59 * 60_000L, 23 * 3_600_000L).map { ReasonText.clock(d, it) }
         val names = File("../tools/user-text-names.txt").readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
         for (t in widest) {

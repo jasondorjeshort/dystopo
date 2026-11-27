@@ -559,6 +559,7 @@ class Tracking private constructor(private val app: DystopoApp) {
             stoppedBySystemAt = null
             watch.begin(SystemClock.elapsedRealtime())
             weak.reset() // T333: once a recording
+            GpsLocationSource.recorderTimes.reset() // T388: a new track starts on the fixes' own times
             recorder.start(n, profile).also { io.github.jasondorjeshort.dystopo.app.nav.WayBackClock.onStart(it.id) } // T180; T262: a new track is shown
                 .also { puck(null) } // T251
         }

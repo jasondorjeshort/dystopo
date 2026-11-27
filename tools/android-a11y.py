@@ -1966,6 +1966,17 @@ SCREENS = [(n, scr_longpress_named if f is scr_longpress else f, t, l) for n, f,
 # end T383
 
 
+# T388: Settings > Units and display with the Coordinate format row (its four choices) and the row's help open (`POST
+# /help/open` brings the page up; close_all's `/help/close` closes both). The sweep's settings step reads the row too.
+def scr_coordinate_format(c):
+    c.srv.ok("POST", "/settings/open?group=display")
+    c.srv.ok("POST", "/help/open?key=settings.coordinateFormat")
+
+
+SCREENS = SCREENS + [("coordinate-format", scr_coordinate_format, None, "screen")]
+# end T388
+
+
 def find_node(sem, pred):
     for w in sem.get("windows") or []:
         for n in w.get("merged") or []:

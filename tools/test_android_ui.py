@@ -731,3 +731,29 @@ finally:
     ui.debug.device_now, ui.debug.bootstrap, ui.urllib.request.urlopen, ui.check.refused = _saved
     ui.FORWARD_RESTORES.clear()
 print("test_android_ui (T335): ok")
+
+
+# T388: the card's coordinate line is found in each Coordinate format, as the app writes it (CoordinateFormat.line: a no-break
+# space inside the latitude and the longitude; the fixtures are tools/privacy-check-coordinates.txt, the formatter's own text).
+def _card_line(text):
+    if ", " in text:
+        a, b = text.split(", ", 1)
+        return a.replace(" ", "\xa0") + ", " + b.replace(" ", "\xa0")
+    head, north = text.rsplit(" ", 1)
+    return head.replace(" ", "\xa0") + " " + north
+
+
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "privacy-check-coordinates.txt"), encoding="utf-8") as _f:
+    _rows = [l.rstrip(chr(10)).split("|") for l in _f if l.strip() and not l.startswith("#")]
+assert {r[3] for r in _rows} == {"dd", "dm", "dms", "utm", "dd-line", "dm-line", "dms-line", "utm-line"}, _rows
+for _r in _rows:
+    assert re.match(ui.CARD_COORDS, _card_line(_r[4])), _r
+    assert re.match(ui.CARD_COORDS, _r[4]), _r  # plain spaces too (a dump that folded them)
+    _card = [card[0], card_node(_card_line(_r[4]), [47, 1822, 907, 1859], click=False)] + card[2:]
+    assert ui.card_intruders(_card)[0] == {"Route to here": [47, 2026, 262, 2063], "Waypoint here": [304, 2026, 534, 2152],
+                                           "Cancel": [885, 2101, 1011, 2219]}, _r
+assert re.match(ui.CARD_COORDS, "46.80241, -121.72892")  # a build before T388
+for _t in ("Route to here", "10T", "46.80241° N", "In view, 1.2 mi NNE", "12:47' 09.6\""):
+    assert not re.match(ui.CARD_COORDS, _t), _t
+print("test_android_ui (T388): ok")
+# end T388

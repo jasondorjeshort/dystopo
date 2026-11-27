@@ -362,7 +362,7 @@ private fun currentLines(items: List<StripItem>, deadline: GlanceLine?): Triple<
     // T385: the GPS clock fault going on, as the clock log holds it.
     val clock = ClockLog.fault()?.let { GlanceText.Clock(it.kind, kotlin.math.abs(it.lastDeltaMs), it.lasted(now)) }
     Glance.clock = clock
-    return Triple(GlanceText.lines(items, deadline, gps, position, positionLine = true, units = io.github.jasondorjeshort.dystopo.app.AppSettings.units, clock = clock), gps, position)
+    return Triple(GlanceText.lines(items, deadline, gps, position, positionLine = true, units = io.github.jasondorjeshort.dystopo.app.AppSettings.units, format = io.github.jasondorjeshort.dystopo.app.AppSettings.coordinateFormat, clock = clock), gps, position) // T388: the position in the coordinate format
 }
 
 /** T363: the notes now: the readout's record, the known height's end, the bar's room (main thread). */
