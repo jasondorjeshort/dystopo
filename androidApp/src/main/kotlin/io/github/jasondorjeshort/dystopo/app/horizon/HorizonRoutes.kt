@@ -23,7 +23,8 @@ import java.time.LocalDate
  *   angles) or null with `horizonReason`, `peaks` (T309: `reason`, `ms`, `tilesRead`, `tested`, `visible`, `skyline`,
  *   `candidates` (in sight or out of sight by no more than `hiddenM`), `outOfSight`, `hiddenM`, `named` (null before the
  *   plot drew), and each candidate, closest first: `name`, `eleM`, `distanceM`, `bearingDeg`, `compass`, `angleDeg`,
- *   `clearanceDeg`, `inSight`, `skyline`, `dominant`, `promM`, `score` and `rank` (`HorizonLabels`), `named`), `sun` (`date`, `onTerrain`, the terrain
+ *   `clearanceDeg`, `inSight`, `skyline`, `dominant`, `promM`, `score` and `rank` (`HorizonLabels`), `named`; T352 `maps`; T378 `sources`
+ *   (each map's `name` and `kind`: `map`, `area` (kept as tiles), `overview`) and `areaTilesRead`), `sun` (`date`, `onTerrain`, the terrain
  *   and flat `…SunriseMs`/`…SunsetMs` with their clock times and UTC, `noonMs`, `sunMinutes`, `alwaysUp`, `sunlit`,
  *   `gaps`, `pathSamples`, `pathClear`, `highestDeg`, `hourMarks`; `nowAltitudeDeg`, `nowAzimuthDeg`). No position.
  *   T312: `layers` has `flights` (the stored toggle, `horizonFlights`) and `flightTracking` (T311's setting: the layer and

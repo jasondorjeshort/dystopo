@@ -152,6 +152,9 @@ import io.github.jasondorjeshort.dystopo.pmtiles.MiniJson
  *   manifest, so the area holds fewer tiles than its shape (with the pack on, none). Answers `id`, `name`, `zooms`,
  *   `copied`, `skippedOpenMap` and `outsidePack` per zoom, `bytes`, `ms`, `keyPrefix`, `network` false and the record.
  *   `DELETE /areas/{id}` removes it with its tiles. The pack is read even while it is off (`POST /areas/rows/off`).
+ *   T378: `dem=1` (default off) also copies the pack's elevation tiles of the area's elevation rows (its download's `dem` item,
+ *   to the detail's elevation zoom) under the keys a download writes, and the manifest gets that item: the area then holds its
+ *   terrain with the pack off and no network (the sky views' step); answers add `demCopied` per zoom and `demBytes`.
  * - T386, a saved area's detail changed with its shape kept (`DetailChange` in `shared`): `GET /areas/{id}/detail` gives
  *   `detail` (the recorded zooms' `full`, `medium`, `less`), `held` and `label` (what it holds whole: below `detail` while a raise
  *   waits or runs), `zooms`, `demMaxZoom`, `bytes`, `raise` (`minZoom`, `maxZoom`, `demMaxZoom` held, `deferred` after Later, the
@@ -404,7 +407,7 @@ object AreaRoutes {
 
     /**
      * T377: `POST /areas/fixture/tiles` (see the object comment): a drawn area recorded as a finished tile area from the vector
-     * tiles of the pack [q] names, copied into the online cache; nothing is fetched.
+     * tiles of the pack [q] names, copied into the online cache; nothing is fetched. T378: with `dem=1` its elevation tiles too.
      */
     private fun seedTileArea(app: DystopoApp, q: Map<String, String>): Map<String, Any?> {
         val t0 = System.currentTimeMillis()
@@ -449,20 +452,45 @@ object AreaRoutes {
             }
         }
         val tiles = io.github.jasondorjeshort.dystopo.areas.TilesItem(item.route, item.ext, item.url, held.toSortedMap(), bytes)
+        // T378: `dem=1` copies the pack's elevation tiles of the area's elevation rows too, under the keys a download writes, so
+        // the area holds its terrain with the pack off and no network (the sky views' fixture); default off (T377, T386).
+        val demCopied = sortedMapOf<Int, Int>()
+        var demBytes = 0L
+        val demItem = if (q["dem"] != "1") null else {
+            val dem = listed.files.dem ?: throw IllegalArgumentException("pack '$packName' has no elevation archive")
+            val want = AreaDownload.localManifest(area, fetcher.server).items.filterIsInstance<io.github.jasondorjeshort.dystopo.areas.TilesItem>()
+                .firstOrNull { it.route == io.github.jasondorjeshort.dystopo.areas.AreaManifest.ROUTE_DEM } ?: throw IllegalStateException("the area's manifest has no elevation item")
+            val demPrefix = Areas.keyPrefixes(want.route, fetcher.server, held = false).first()
+            val demHeld = HashMap<Int, io.github.jasondorjeshort.dystopo.areas.TileSet>()
+            io.github.jasondorjeshort.dystopo.app.FileRangeSource(dem).use { src ->
+                val reader = io.github.jasondorjeshort.dystopo.pmtiles.PmtilesReader.open(src, mapOf(io.github.jasondorjeshort.dystopo.pmtiles.Compression.GZIP to io.github.jasondorjeshort.dystopo.app.gunzip))
+                for ((z, set) in want.tiles) set.forEachRow { y, x0, x1 ->
+                    for (x in x0..x1) {
+                        val tile = reader.tile(z, x, y) ?: continue
+                        demHeld.getOrPut(z) { io.github.jasondorjeshort.dystopo.areas.TileSet(z) }.add(x, y)
+                        service.cache.put(demPrefix + "/" + z + "/" + x + "/" + y + "." + want.ext, tile)
+                        demBytes += tile.size
+                        demCopied[z] = (demCopied[z] ?: 0) + 1
+                    }
+                }
+            }
+            io.github.jasondorjeshort.dystopo.areas.TilesItem(want.route, want.ext, want.url, demHeld.toSortedMap(), demBytes)
+        }
+        bytes += demBytes
         Areas.saveManifest(io.github.jasondorjeshort.dystopo.areas.AreaManifest(
-            area.id, name, area, io.github.jasondorjeshort.dystopo.areas.AreaManifest.STATUS_READY, listOf(tiles),
+            area.id, name, area, io.github.jasondorjeshort.dystopo.areas.AreaManifest.STATUS_READY, listOfNotNull(demItem, tiles),
             source = "phone (debug fixture from the pack $packName)", generatedAt = java.time.Instant.now().toString(),
         ))
         val old = Areas.get(area.id)
         Areas.put(Areas.Record(
             id = area.id, name = name, area = area, createdAt = old?.createdAt ?: System.currentTimeMillis(), pinned = true, state = "done",
-            source = fetcher.server, bytes = bytes, estimateBytes = bytes, tiles = copied.values.sum(), versions = fetcher.currentVersions(),
+            source = fetcher.server, bytes = bytes, estimateBytes = bytes, tiles = copied.values.sum() + demCopied.values.sum(), versions = fetcher.currentVersions(),
             downloadMs = System.currentTimeMillis() - t0,
         ))
         return linkedMapOf(
             "id" to area.id, "name" to name, "pack" to packName, "detail" to detail.key, "zooms" to held.keys.sorted(), "skipOpen" to skipOpen,
             "copied" to copied.mapKeys { it.key.toString() }, "skippedOpenMap" to skipped.mapKeys { it.key.toString() },
-            "outsidePack" to outside.mapKeys { it.key.toString() },
+            "outsidePack" to outside.mapKeys { it.key.toString() }, "demCopied" to demCopied.mapKeys { it.key.toString() }, "demBytes" to demBytes,
             "bytes" to bytes, "ms" to System.currentTimeMillis() - t0, "keyPrefix" to prefix, "network" to false, "area" to Areas.get(area.id)?.json(),
         )
     }

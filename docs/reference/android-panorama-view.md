@@ -192,7 +192,10 @@ again, and so is one lacking cells (or none) once the network comes back. `GET /
 round the whole circle at `PanoramaSweep.steps` for the zoom: 1 degree first, then the step fine enough (0.5 at 60
 degrees on a 1080 px plot, 0.1 at 10). The scenes of two places are kept (the fix's and one other), each by place within
 100 m, range and step; a changed `viewRange` drops the other ranges and sweeps again. The peaks are read once per place
-and range at `Viewshed.peakZoom` and tested on the farthest skyline, again on each finer one. Measured on a settled
+and range at `Viewshed.peakZoom` and tested on the farthest skyline, again on each finer one. T378: they come from the
+open maps and the downloaded areas kept as tiles, in ADR 0066's lookup order, through the Horizon view's read
+(`android-horizon-view.md`, Peaks), so the Panorama and the List name the peaks of an area with no map there;
+`GET /panorama` `work.peaks.maps` names the area as its Offline maps row does. Measured on a settled
 emulator at Paradise, a fresh process: 30 km, 51 tiles, 8.5 MB, 0.53 s, the 1 degree sweep 0.28 s, the 0.5 degree 0.16
 s, the first skyline 1.06 s after the tap; 100 km, 54 tiles, 9.0 MB (the pack ends inside the range), 0.63 s, 0.38 s
 and 0.20 s, the first skyline 1.27 s; the 0.1 degree sweep at 10 degrees, 534k samples, 0.78 s. Just after a boot the

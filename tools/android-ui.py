@@ -3358,8 +3358,8 @@ def part_horizonflights(args):
 # install-map, and every other step is in exactly one half (a new step not named in FEATURES_SKY goes to map).
 FEATURE_STEPS = ("install-map", "search", "route-to", "route", "routes-list", "waypoint", "track", "two-tracks", "gpx", "share-gpx",
                  "sync", "sync-sheet", "share", "settings", "search-tiles", "kept-folder", "drive", "horizon", "panorama", "panorama-list", "flights",
-                 "horizonflights")  # T377: search-tiles; T380: kept-folder
-FEATURES_SKY = ("horizon", "panorama", "panorama-list", "flights", "horizonflights")
+                 "horizonflights", "peaks-tiles")  # T377: search-tiles; T380: kept-folder; T378: peaks-tiles
+FEATURES_SKY = ("horizon", "panorama", "panorama-list", "flights", "horizonflights", "peaks-tiles")
 
 
 def feature_half(half):
@@ -3549,7 +3549,8 @@ def part_features(args):
                      ("panorama", lambda: panorama_step(dev)),  # T326
                      ("panorama-list", lambda: panorama_list_step(dev)),  # T344
                      ("flights", lambda: flights_step(dev)),  # T311: flights
-                     ("horizonflights", lambda: horizon_flights_step(dev))):  # T312
+                     ("horizonflights", lambda: horizon_flights_step(dev)),  # T312
+                     ("peaks-tiles", lambda: peaks_tiles_step(dev, args))):  # T378
         if name != "install-map" and args.feature_steps and name not in args.feature_steps.split(","):
             continue
         if name not in half:
@@ -5738,6 +5739,171 @@ def kept_folder_step(dev):
     close_tracks(dev)
     return {"ok": not errors, **out, "png": out.get("confirmPng"), **({"error": "; ".join(errors)} if errors else {})}
 # end T380
+
+
+# T378
+# --- features-sky: peak names inside an area kept as tiles (T378), on the wave's fixture (T377's) -----------------------
+# The sky views read an area's cached vector tiles for peak names (HorizonData.sourcesOf), so with the Rainier pack off and
+# the area at Paradise kept as tiles, the Horizon view, the Panorama and the List name the peaks of the area's tiles, and
+# the names line says the area's name. Like search-tiles, the step drives the debug build beside the release one.
+PEAKS_TILES_LINE = r"Names from the offline map Paradise tiles\."  # HorizonData.namesFrom on the area's row name
+
+
+def _peaks_of(answer):
+    """The peaks summary of a `GET /horizon` answer: the maps and their kinds, the names, the counts and the read's cost."""
+    p = (answer or {}).get("peaks") or {}
+    return {"reason": p.get("reason"), "maps": p.get("maps"), "sources": p.get("sources"), "candidates": p.get("candidates"),
+            "names": [x.get("name") for x in p.get("peaks") or []], "tested": p.get("tested"), "tilesRead": p.get("tilesRead"),
+            "areaTilesRead": p.get("areaTilesRead"), "ms": p.get("ms")}
+
+
+def _open_sky_at(srv, lat, lon, wait_ms=120000):
+    """The Horizon view opened at a point as "Sky from here" does, its peaks waited for; `GET /horizon`'s answer."""
+    srv.call("POST", "/horizon/ui?open=0")
+    srv.call("POST", f"/horizon/ui?open=1&lat={lat}&lon={lon}&radius=1&wait={wait_ms}", timeout=wait_ms // 1000 + 60)
+    _, h = srv.call("GET", f"/horizon?wait={wait_ms}", timeout=wait_ms // 1000 + 60)
+    return h
+
+
+def peaks_tiles_step(dev, args):
+    """T378: peak names inside an area kept as tiles. On the fixture (the Rainier pack off, the area at Paradise kept as
+    tiles): `GET /horizon` at Paradise names peaks from the area (`maps` the area's name, `sources` kind `area`), the
+    Horizon view's names line reads "Names from the offline map Paradise tiles." (`peaks-tiles-horizon`), the Panorama's
+    route names the area as its peaks' map (`peaks-tiles-panorama`) and the List names the same peaks
+    (`peaks-tiles-list`); then the pack on beside the area: each peak named once, the pack's own count reported. The pack
+    is on again after it (the fixture). The area is seeded with its elevation too (`dem=1`) and the reads run in airplane
+    mode, so the terrain and the names come from the phone whatever the sweep's server mode; the step first asserts a
+    terrain horizon read from the area (`terrainPackOff`)."""
+    lat, lon = SEARCH_TILES_AT
+
+    def body(fx):
+        srv = fx["srv"]
+        errors = []
+        # The terrain from the phone too, never the network (the sweep's live server, direct sources or none, or no network at
+        # all): the same area seeded again with the pack's elevation tiles (`dem=1`; same ring, detail and name, so the same id).
+        code, area = srv.call("POST", f"/areas/fixture/tiles?pack={urllib.parse.quote(fx['pack'])}&dem=1")
+        if code != 200 or not (area or {}).get("demCopied"):
+            return fail(f"POST /areas/fixture/tiles?dem=1: {code} {area}")
+        fx["area"] = area
+        out = {"pack": fx["pack"], "seeded": {k: area.get(k) for k in ("id", "zooms", "copied", "demCopied", "bytes", "network")}}
+        # Who holds the elevation at the point (`GET /holdings`' lookup: the elevation tile one zoom under z, so z=12 asks the
+        # area's deepest, z13) and what the network could add now, for a reader of a failure.
+        _, hd = srv.call("GET", f"/holdings?lat={lat}&lon={lon}&z=12")
+        dem = (hd or {}).get("dem") or {}
+        out["demHere"] = {"tile": dem.get("tile"), "serves": dem.get("serves"), "members": [m.get("name") for m in dem.get("members") or []],
+                          "network": dem.get("network")}
+        # The reads below run with no network at all (airplane mode, as the flights steps set it; off again after): the area's
+        # own tiles must give the terrain and the names whatever the sweep's server mode.
+        _, before = srv.call("GET", "/horizon")
+        peaks_was = ((before or {}).get("layers") or {}).get("peaks")
+        if peaks_was is not True:
+            srv.call("POST", "/horizon?peaks=1")
+        try:
+            airplane(dev, True)
+            time.sleep(2)
+
+            def fetcher():
+                _, o = srv.call("GET", "/online")
+                f = (o or {}).get("fetcher") or {}
+                d = (o or {}).get("direct") or {}
+                return {**{k: f.get(k) for k in ("state", "requests", "cacheHits", "fetches", "notFound", "errors")},
+                        "isDirect": d.get("direct") is True, "directRequests": d.get("requests"), "directOfflineFailures": d.get("offlineFailures")}
+            f0 = fetcher()
+            h = _open_sky_at(srv, lat, lon)
+            f1 = fetcher()
+            # What the peaks need first: a complete terrain horizon at the point, read with no network (airplane mode on and the
+            # online fetcher's network counters unchanged across the read: every tile it gave came from the phone's cache), where
+            # the lookup names the area as the holder of the elevation and the fixture copied the area's elevation tiles. Which
+            # reader handed the area's cached tiles to the sweep (the area's own source, or the online source reading the same
+            # cache keys, ahead of it by depth while the fetcher reads online: ADR 0066) is reported, not asserted.
+            hz = (h or {}).get("horizon") or {}
+            terrain = hz.get("terrain") or {}
+            net = {k: (f1.get(k) or 0) - (f0.get(k) or 0) for k in ("requests", "cacheHits", "fetches", "notFound", "errors", "directRequests", "directOfflineFailures")}
+            out["terrainPackOff"] = {"horizonReason": (h or {}).get("horizonReason"), "source": hz.get("source"),
+                                     "maps": terrain.get("maps"), "online": terrain.get("online"), "complete": terrain.get("complete"),
+                                     "cells": terrain.get("cells"), "fetcherBefore": f0.get("state"), "fetcherAfter": f1.get("state"),
+                                     "fetcherDelta": net, "read": {k: v for k, v in terrain.items() if k not in ("text",)}}
+            if not hz:
+                errors.append(f"with the pack off and no network, no terrain horizon at Paradise: {out['terrainPackOff']}; {out['demHere']}")
+                return {"ok": False, **out, "error": "; ".join(errors)}
+            if terrain.get("complete") is not True:
+                errors.append(f"with the pack off and no network, the terrain horizon is not complete: {out['terrainPackOff']}")
+            # A request to the network: a server's fetch (with a server set a fetch is an HTTP request), any fetch error or miss,
+            # or a direct source's HTTP range request or offline failure. With the direct sources a fetch renders a tile from
+            # their range blocks kept on the phone, which needs no network, so it is reported, not counted.
+            went = {k: net[k] for k in ("notFound", "errors", "directRequests", "directOfflineFailures") if net[k]}
+            if not f0.get("isDirect") and net["fetches"]:
+                went["fetches"] = net["fetches"]
+            if went:
+                errors.append(f"the terrain read went to the network (airplane mode on): {went} of {net}")
+            if TILE_AREA_NAME not in out["demHere"]["members"]:
+                errors.append(f"the lookup does not name the area as holding the elevation at Paradise: {out['demHere']}")
+            off = _peaks_of(h)
+            out["horizonPackOff"] = off
+            kinds = {s.get("kind") for s in off.get("sources") or []}
+            if off.get("maps") != [TILE_AREA_NAME] or kinds != {"area"} or not off.get("names"):
+                errors.append(f"with the pack off, GET /horizon names no peak from the area: {off}")
+            # The Peaks section with its line is below the controls: scrolled to as a swipe would.
+            n, nodes = dev.wait_for(PEAKS_TILES_LINE, 3)
+            for _ in range(8):
+                if n:
+                    break
+                _, hs = srv.call("GET", "/horizon")
+                d = (hs or {}).get("drawn") or {}
+                srv.call("POST", f"/horizon?scroll={min((d.get('scrollPx') or 0) + 600, d.get('scrollMaxPx') or 0)}")
+                n, nodes = dev.wait_for(PEAKS_TILES_LINE, 3)
+            out["horizonLine"] = next((t for t in dev.texts(nodes) if "Names from" in t), None)
+            out["horizonPng"] = dev.screencap("peaks-tiles-horizon")[0]
+            if not n:
+                errors.append(f"the Horizon view does not read {PEAKS_TILES_LINE!r} (texts: {dev.texts(nodes)[:30]})")
+            # The Panorama at the same place: its peaks read through the same read.
+            srv.call("POST", "/horizon/switch?to=panorama")
+            _, pano = srv.call("GET", "/panorama?wait=120000", timeout=200)
+            work = ((pano or {}).get("work") or {}).get("peaks") or {}
+            out["panorama"] = {"maps": work.get("maps"), "tiles": work.get("tiles"), "read": work.get("read"),
+                               "candidates": work.get("candidates"), "ms": work.get("ms"), "peaksLine": (pano or {}).get("peaksLine"),
+                               "names": [x.get("name") for x in (pano or {}).get("names") or []]}
+            if work.get("maps") != [TILE_AREA_NAME] or not work.get("read"):
+                errors.append(f"the Panorama's peaks do not come from the area: {out['panorama']}")
+            time.sleep(1.5)
+            out["panoramaPng"] = dev.screencap("peaks-tiles-panorama")[0]
+            # The List from the Panorama: the rows are the same read's peaks.
+            srv.call("POST", "/skylist?open=1")
+            _, sl = srv.call("GET", "/skylist?wait=60000", timeout=120)
+            drawn = (sl or {}).get("drawn") or {}
+            out["list"] = {"open": (sl or {}).get("open"), "peaksLine": drawn.get("peaksLine"), "peaks": drawn.get("peaks")}
+            if not drawn.get("peaks"):
+                errors.append(f"the List shows no peak row: {out['list']}")
+            time.sleep(1.0)
+            out["listPng"] = dev.screencap("peaks-tiles-list")[0]
+            # The pack on beside the area: one read over both, each peak once, from the source the lookup ranks first.
+            srv.call("POST", f"/areas/rows/off?id=pack:{urllib.parse.quote(fx['pack'])}&off=0")
+            time.sleep(2)
+            on = _peaks_of(_open_sky_at(srv, lat, lon))
+            out["horizonPackOn"] = on
+            dup = sorted({x for x in on.get("names") or [] if (on.get("names") or []).count(x) > 1})
+            if dup:
+                errors.append(f"with the pack and the area, peaks named twice: {dup}")
+            if fx["pack"] not in (on.get("maps") or []):
+                errors.append(f"with the pack on, its peaks are not read: {on}")
+            # The pack's own count: the area removed, the pack alone 330 m north (a horizon of its own: a kept horizon keeps
+            # its peaks; the fixture's delete then finds none).
+            srv.call("DELETE", f"/areas/{area['id']}")
+            time.sleep(1)
+            alone = _peaks_of(_open_sky_at(srv, lat + 0.003, lon))
+            out["horizonPackOnly"] = {k: alone.get(k) for k in ("maps", "candidates", "tested", "tilesRead", "ms")}
+            out["counts"] = {"area": len(off.get("names") or []), "packAndArea": len(on.get("names") or []),
+                             "packOnly": len(alone.get("names") or []),
+                             "areaNamesInPackOnly": len(set(off.get("names") or []) & set(alone.get("names") or []))}
+        finally:
+            airplane(dev, False)
+            srv.call("POST", "/horizon/ui?open=0")
+            if peaks_was is False:
+                srv.call("POST", "/horizon?peaks=0")
+        return {"ok": not errors, **out, "png": out.get("horizonPng"), **({"error": "; ".join(errors)} if errors else {})}
+
+    return tile_area_fixture(dev, args, body)
+# end T378
 
 
 if __name__ == "__main__":
