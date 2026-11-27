@@ -98,6 +98,8 @@ class InMemoryTrackStore(
 
     private fun opsOf(key: Key): List<Op> = byEntity[key] ?: emptyList()
 
+    override fun tombstoneOf(kind: EntityKind, id: String): Hlc? = Materializer.tombstone(opsOf(Key(kind, id))) // T380
+
     private fun keyOf(b: OpBody) = Key(b.kind, b.id)
 
     private fun hold(op: Op) {

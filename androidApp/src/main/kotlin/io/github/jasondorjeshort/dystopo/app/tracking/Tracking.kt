@@ -849,6 +849,7 @@ class Tracking private constructor(private val app: DystopoApp) {
         val live = recorder.liveStats()
         val active = recorder.activeId?.let { store.summary(it) }
         val tracks = store.list().reversed()
+        io.github.jasondorjeshort.dystopo.app.tracks.KeptFolder.changed(tracks = tracks) // T380: the kept folder's change signal
         val hidden = store.hidden(ShownKind.TRACK) // T262
         shownId = recorder.activeId?.takeIf { it !in hidden } ?: tracks.firstOrNull { it.id !in hidden }?.id
         val profile = profileId?.let { id ->
