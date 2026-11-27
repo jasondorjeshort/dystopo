@@ -5805,7 +5805,9 @@ def peaks_tiles_step(dev, args):
             def fetcher():
                 _, o = srv.call("GET", "/online")
                 f = (o or {}).get("fetcher") or {}
-                return {k: f.get(k) for k in ("state", "requests", "cacheHits", "fetches", "notFound", "errors")}
+                d = (o or {}).get("direct") or {}
+                return {**{k: f.get(k) for k in ("state", "requests", "cacheHits", "fetches", "notFound", "errors")},
+                        "isDirect": d.get("direct") is True, "directRequests": d.get("requests"), "directOfflineFailures": d.get("offlineFailures")}
             f0 = fetcher()
             h = _open_sky_at(srv, lat, lon)
             f1 = fetcher()
@@ -5816,7 +5818,7 @@ def peaks_tiles_step(dev, args):
             # cache keys, ahead of it by depth while the fetcher reads online: ADR 0066) is reported, not asserted.
             hz = (h or {}).get("horizon") or {}
             terrain = hz.get("terrain") or {}
-            net = {k: (f1.get(k) or 0) - (f0.get(k) or 0) for k in ("requests", "cacheHits", "fetches", "notFound", "errors")}
+            net = {k: (f1.get(k) or 0) - (f0.get(k) or 0) for k in ("requests", "cacheHits", "fetches", "notFound", "errors", "directRequests", "directOfflineFailures")}
             out["terrainPackOff"] = {"horizonReason": (h or {}).get("horizonReason"), "source": hz.get("source"),
                                      "maps": terrain.get("maps"), "online": terrain.get("online"), "complete": terrain.get("complete"),
                                      "cells": terrain.get("cells"), "fetcherBefore": f0.get("state"), "fetcherAfter": f1.get("state"),
@@ -5826,8 +5828,14 @@ def peaks_tiles_step(dev, args):
                 return {"ok": False, **out, "error": "; ".join(errors)}
             if terrain.get("complete") is not True:
                 errors.append(f"with the pack off and no network, the terrain horizon is not complete: {out['terrainPackOff']}")
-            if net["fetches"] or net["notFound"] or net["errors"]:
-                errors.append(f"the terrain read went to the network (airplane mode on): {net}")
+            # A request to the network: a server's fetch (with a server set a fetch is an HTTP request), any fetch error or miss,
+            # or a direct source's HTTP range request or offline failure. With the direct sources a fetch renders a tile from
+            # their range blocks kept on the phone, which needs no network, so it is reported, not counted.
+            went = {k: net[k] for k in ("notFound", "errors", "directRequests", "directOfflineFailures") if net[k]}
+            if not f0.get("isDirect") and net["fetches"]:
+                went["fetches"] = net["fetches"]
+            if went:
+                errors.append(f"the terrain read went to the network (airplane mode on): {went} of {net}")
             if TILE_AREA_NAME not in out["demHere"]["members"]:
                 errors.append(f"the lookup does not name the area as holding the elevation at Paradise: {out['demHere']}")
             off = _peaks_of(h)
