@@ -116,6 +116,17 @@ object OpenView {
      */
     fun recentres(opened: ViewAt?, fix: LastFix.Fix, sinceOpenMs: Long, now: Long): Boolean =
         sinceOpenMs <= windowMs(opened, now) && (stale(opened, now) || fix.movedAt > opened!!.at)
+
+    /**
+     * T382: whether a camera rest [sinceOpenMs] after open is the app's own placement. Under a [Source.WORLD] open the open
+     * view is null, so there is no placed view to compare the rest with, and the map's first rest after the style loads
+     * (nothing moved) used to end the fix window as `cameraMoved` and save the world view: a first fix after it no longer
+     * recentred the map. So while the window is still open ([windowOpen]: no gesture, `cameraSet` or recentre has ended
+     * it) and within its time ([windowMs]), a rest under a world open is the app's: not saved, the window kept open. Under
+     * every other open a rest is compared with the placed view as before; after the window's time a rest is a move.
+     */
+    fun restIsOwnPlacement(source: Source, windowOpen: Boolean, sinceOpenMs: Long, windowMs: Long): Boolean =
+        source == Source.WORLD && windowOpen && sinceOpenMs <= windowMs
 }
 
 /**

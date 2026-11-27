@@ -66,6 +66,35 @@ class OpenViewTest {
     }
 
     @Test
+    fun aRestUnderAWorldOpenInsideTheWindowIsTheAppsOwnPlacement() {
+        // T382: no pack, no fix, no saved view: the map's first rest after the style loads moved nothing.
+        val world = OpenView.choose(null, null, null)
+        val window = OpenView.windowMs(world.view, now)
+        assertEquals(OpenView.STALE_FIX_WINDOW_MS, window)
+        assertTrue(OpenView.restIsOwnPlacement(world.source, windowOpen = true, sinceOpenMs = 4_000, windowMs = window))
+        assertTrue(OpenView.restIsOwnPlacement(world.source, true, window, window), "up to the window's end")
+        // ... so the window stays open and a fix after it still recentres the map.
+        assertTrue(OpenView.recentres(world.view, fix(now - 30 * day, at = now), 5_000, now))
+    }
+
+    @Test
+    fun aGestureOrAnEndedWindowMakesAWorldRestTheUsers() {
+        // A gesture (or cameraSet, or a recentre) ended the window first: the rest after it is the user's and is saved.
+        assertFalse(OpenView.restIsOwnPlacement(OpenView.Source.WORLD, windowOpen = false, sinceOpenMs = 4_000, windowMs = OpenView.STALE_FIX_WINDOW_MS))
+        // After the window's time a rest is a move as before, and a fix no longer recentres.
+        assertFalse(OpenView.restIsOwnPlacement(OpenView.Source.WORLD, true, OpenView.STALE_FIX_WINDOW_MS + 1, OpenView.STALE_FIX_WINDOW_MS))
+        assertFalse(OpenView.recentres(null, fix(now), OpenView.STALE_FIX_WINDOW_MS + 1, now))
+    }
+
+    @Test
+    fun aRestUnderAnyOtherOpenIsUnchanged() {
+        // Those opens have a placed view (or keep MapLibre's camera); a rest away from it is the user's move.
+        for (s in OpenView.Source.entries - OpenView.Source.WORLD) {
+            assertFalse(OpenView.restIsOwnPlacement(s, windowOpen = true, sinceOpenMs = 1_000, windowMs = OpenView.STALE_FIX_WINDOW_MS), s.json)
+        }
+    }
+
+    @Test
     fun aMoveIsMoreThanTheAccuracyAndAtLeastFiftyMetres() {
         val f = LastFix.Fix(46.786, -121.7357, 10.0, now, now)
         val north40m = 46.786 + 40.0 / 111_195.0
