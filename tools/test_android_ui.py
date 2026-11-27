@@ -153,7 +153,7 @@ _m, _s = ui.feature_half("map"), ui.feature_half("sky")
 assert _m[0] == _s[0] == "install-map" and ui.feature_half("all") == ui.feature_half("") == ui.FEATURE_STEPS
 assert sorted(_m[1:] + _s[1:]) == sorted(ui.FEATURE_STEPS[1:]) and not set(_m[1:]) & set(_s[1:])
 assert list(_m) == [x for x in ui.FEATURE_STEPS if x in _m] and list(_s) == [x for x in ui.FEATURE_STEPS if x in _s]
-assert _m[-1] == "drive" and _s[1:] == ("horizon", "panorama", "panorama-list", "flights", "horizonflights")
+assert _m[-1] == "drive" and _s[1:] == ("horizon", "panorama", "panorama-list", "flights", "horizonflights", "peaks-tiles")  # T378
 try:
     ui.feature_half("both")
     raise AssertionError("an unknown half was accepted")
