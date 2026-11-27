@@ -669,16 +669,16 @@ object AreaDownload {
      */
     class DetailOption(
         val detail: AreaDetail, val label: String, val now: Boolean, val pending: Boolean, val change: DetailChange.Change,
-        val bytes: Long, val delta: Long, val freedBytes: Long, val counted: Boolean,
+        val bytes: Long, val delta: Long, val freedBytes: Long, val counted: Boolean, val ownBytes: Long,
         val addedBytes: Long, val addedTiles: Int, val addedVectorTiles: Int, val refusal: String?, val overCap: Boolean, heldLabel: String,
     ) {
-        val line: String = detailOptionLine(now, pending, bytes, delta, addedBytes)
+        val line: String = detailOptionLine(now, pending, bytes, delta, addedBytes, raise = change.raise)
         val note: String? = if (detail == AreaDetail.LESS) LESS_SEARCH_NOTE else null
-        val confirm: String? = if (now) null else detailConfirmLine(change, label, heldLabel, freedBytes, addedBytes, addedTiles)
+        val confirm: String? = if (now) null else detailConfirmLine(change, label, heldLabel, freedBytes, addedBytes, addedTiles, ownBytes)
 
         fun json(): Map<String, Any?> = linkedMapOf(
             "detail" to detail.key, "label" to label, "now" to now, "pending" to pending, "line" to line, "note" to note, "confirm" to confirm,
-            "bytes" to bytes, "delta" to delta, "freedBytes" to freedBytes, "counted" to counted,
+            "bytes" to bytes, "delta" to delta, "freedBytes" to freedBytes, "ownBytes" to ownBytes, "counted" to counted,
             "added" to linkedMapOf("bytes" to addedBytes, "tiles" to addedTiles, "vectorTiles" to addedVectorTiles), "refusal" to refusal, "overCap" to overCap,
             "change" to change.json(), "id" to change.target.id,
         )
@@ -704,10 +704,12 @@ object AreaDownload {
             val addedBytes = added?.bytes ?: 0L
             val cap = if (direct && added != null) raiseCapRefusalLine(added.vectorTileCount.toLong()) else null
             val refusal = cap ?: added?.let { budgetRefusal(c.target, service.cache.pinnedBytes, it.bytes, 0L, AppSettings.pinnedCacheMb) }
-            val bytes = (r.bytes - own).coerceAtLeast(0L) + addedBytes
+            val now = c.target.id == r.heldArea.id
+            // the area's figure is the row's: the record's bytes, counted from the cache (a part-fetched raise's tiles in it)
+            val bytes = if (now) r.bytes else (r.bytes - own).coerceAtLeast(0L) + addedBytes
             DetailOption(
-                d, detailLabel(c.target), now = c.target.id == r.heldArea.id, pending = r.raise != null && c.target.id == r.area.id, c,
-                bytes, bytes - r.bytes, dropped["freed"] as Long, dropped["counted"] == true,
+                d, detailLabel(c.target), now = now, pending = r.raise != null && c.target.id == r.area.id, c,
+                bytes, bytes - r.bytes, dropped["freed"] as Long, dropped["counted"] == true, own,
                 addedBytes, added?.tileCount ?: 0, added?.vectorTileCount ?: 0, refusal, cap != null, heldLabel,
             )
         }
@@ -1211,30 +1213,42 @@ internal const val LOWER = "Lower"
 internal const val DROP_DOWNLOAD = "Drop the download"
 internal const val CANCEL = "Cancel"
 
-/**
- * T386: a Detail choice's size line: "On this phone now: 70 MB"; a lower "About 30 MB, 40 MB less"; a raise "About 82 MB, 12 MB
- * more to download"; the detail a raise waits for "Waiting: about 12 MB more to download". Pure, tested.
- */
-internal fun detailOptionLine(now: Boolean, pending: Boolean, bytes: Long, delta: Long, addedBytes: Long): String = when {
-    now -> "On this phone now: ${aboutSize(bytes)}"
-    pending -> "Waiting: about ${aboutSize(addedBytes)} more to download"
-    delta < 0 -> "About ${aboutSize(bytes)}, ${aboutSize(-delta)} less"
-    else -> "About ${aboutSize(bytes)}, ${aboutSize(addedBytes)} more to download"
-}
+/** T386: a size in the Detail sheet, as the row writes it ([OfflineMapList.sizeText]: "705 kB", "4.9 MB", "17 MB"). */
+internal fun detailSize(bytes: Long): String = OfflineMapList.sizeText(bytes)
 
 /**
- * T386: what choosing [label] asks before it runs. A lower: "Lower to Less detail? This frees about 40 MB. Tiles another saved map
- * uses stay on the phone." The held detail chosen again while a raise waits: "Keep Medium detail and drop the download that
- * waits? This frees about 2 MB." A raise: "Full detail downloads about 160 MB more (1,300 tiles). The map stays at Medium detail
- * until it is done.", with " It also frees about 2 MB." when it drops what an earlier raise fetched. Pure, tested.
+ * T386: a Detail choice's size line, its figures as the row's ([detailSize]): "On this phone now: 17 MB" (the record's bytes, the
+ * row's figure); a lower "About 12 MB, 4.9 MB less", or "About 12 MB, nothing to download" when none of what it drops is on the
+ * phone; a raise "About 19 MB, 7.6 MB more to download"; the detail a raise waits for "Waiting: about 7.6 MB more to download".
+ * Never a zero figure. Pure, tested.
  */
-internal fun detailConfirmLine(change: DetailChange.Change, label: String, heldLabel: String, freedBytes: Long, addedBytes: Long, addedTiles: Int): String {
-    val frees = "This frees about ${aboutSize(freedBytes)}."
+internal fun detailOptionLine(now: Boolean, pending: Boolean, bytes: Long, delta: Long, addedBytes: Long, raise: Boolean = addedBytes > 0): String = when {
+    now -> "On this phone now: ${detailSize(bytes)}"
+    pending -> "Waiting: about ${detailSize(addedBytes)} more to download"
+    raise -> "About ${detailSize(bytes)}, ${detailSize(addedBytes)} more to download"
+    delta < 0 -> "About ${detailSize(bytes)}, ${detailSize(-delta)} less"
+    else -> "About ${detailSize(bytes)}, nothing to download"
+}
+
+/** T386: why a lower frees nothing, in place of a zero figure ([ownBytes]: the dropped tiles of the area on the phone). */
+internal fun nothingFreedLine(ownBytes: Long): String =
+    if (ownBytes > 0) "Nothing is freed: another saved map uses these tiles." else "Nothing is freed: none of these tiles are on this phone."
+
+/**
+ * T386: what choosing [label] asks before it runs. A lower: "Lower to Less detail? This frees about 4.9 MB. Tiles another saved
+ * map uses stay on the phone.", or with nothing to free "Lower to Less detail? Nothing is freed: another saved map uses these
+ * tiles." ([nothingFreedLine]). The held detail chosen again while a raise waits: "Keep Medium detail and drop the download
+ * that waits? This frees about 2.3 MB." A raise: "Full detail downloads about 7.6 MB more (50 tiles). The map stays at Medium
+ * detail until it is done.", with " It also frees about 2.3 MB." when it drops what an earlier raise fetched. Sizes as the
+ * row's ([detailSize]); never a zero figure. Pure, tested.
+ */
+internal fun detailConfirmLine(change: DetailChange.Change, label: String, heldLabel: String, freedBytes: Long, addedBytes: Long, addedTiles: Int, ownBytes: Long = freedBytes): String {
+    val frees = if (freedBytes > 0) "This frees about ${detailSize(freedBytes)}." else nothingFreedLine(ownBytes)
     return when {
-        change.raise -> "$label downloads about ${aboutSize(addedBytes)} more (${String.format(java.util.Locale.US, "%,d", addedTiles)} ${if (addedTiles == 1) "tile" else "tiles"}). " +
-            "The map stays at $heldLabel until it is done." + if (change.lower) " It also frees about ${aboutSize(freedBytes)}." else ""
+        change.raise -> "$label downloads about ${detailSize(addedBytes)} more (${String.format(java.util.Locale.US, "%,d", addedTiles)} ${if (addedTiles == 1) "tile" else "tiles"}). " +
+            "The map stays at $heldLabel until it is done." + if (change.lower && freedBytes > 0) " It also frees about ${detailSize(freedBytes)}." else ""
         change.target.id == change.held.id -> "Keep $label and drop the download that waits? $frees"
-        else -> "Lower to $label? $frees Tiles another saved map uses stay on the phone."
+        else -> "Lower to $label? $frees" + if (freedBytes > 0) " Tiles another saved map uses stay on the phone." else ""
     }
 }
 // end T386

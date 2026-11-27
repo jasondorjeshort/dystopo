@@ -384,7 +384,7 @@ object OfflineMapList {
         val label = detailLabel(r.area)
         return when {
             running || r.state == "downloading" -> "Adding $label"
-            r.raise?.deferred == true -> "$label waits" + (addedBytes?.let { ": about ${aboutSize(it)} to download" } ?: "")
+            r.raise?.deferred == true -> "$label waits" + (addedBytes?.takeIf { it > 0 }?.let { ": about ${sizeText(it)} to download" } ?: "")
             else -> "Adding $label: part downloaded"
         }
     }
