@@ -88,4 +88,66 @@ class LaunchTest {
             main.zipWithNext().forEach { (a, b) -> assertTrue(b.first >= a.last, "seed $seed: two main-thread stages overlap") }
         }
     }
+
+    // ---------- T387 (ADR 0071): the gate of a start without a screen ----------
+
+    @Test fun theDeclaredLaunchPassesTheGatesRule() {
+        assertEquals(emptyList(), LaunchGate.problems(Launch.stages))
+    }
+
+    /** ADR 0071 decision 2: a start without a screen does not copy the overview, check for an update, run the budget, sample or resume map work. */
+    @Test fun aStartWithoutAScreenDefersTheStagesTheRuleNames() {
+        val deferred = LaunchGate.deferredWithoutScreen(Launch.stages).map { it.name }.toSet()
+        assertEquals(setOf("world", "updater", "budget", "sampler", "pending"), deferred)
+        // What such a start still runs: the settings, a recording's tracker, the packs, the tile service and the servers.
+        for (s in listOf(Launch.SETTINGS, Launch.TRACKING, Launch.PACKS, Launch.ONLINE_SERVICE, Launch.TILES_SERVICE, Launch.SERVER, Launch.DOWNLOADS_STAGE)) {
+            assertEquals(Waits.NOTHING, s.waits, "${s.name} runs at every start")
+        }
+        // Under a notified job (a recording restarted by the system) only the sampler opens; the rest waits for the screen.
+        val underJob = Launch.stages.filter { !LaunchGate.opens(it.waits, screenSeen = false, workAllowed = true) }.map { it.name }.toSet()
+        assertEquals(setOf("world", "updater", "budget", "pending"), underJob)
+        assertTrue(Launch.stages.all { LaunchGate.opens(it.waits, screenSeen = true, workAllowed = false) }, "after the first screen every stage may start")
+    }
+
+    @Test fun opensFollowsTheScreenAndTheNotifiedWork() {
+        for (screen in listOf(false, true)) for (work in listOf(false, true)) {
+            assertTrue(LaunchGate.opens(Waits.NOTHING, screen, work))
+            assertEquals(screen || work, LaunchGate.opens(Waits.WORK, screen, work), "WORK screen=$screen work=$work")
+            assertEquals(screen, LaunchGate.opens(Waits.SCREEN, screen, work), "SCREEN screen=$screen work=$work")
+        }
+    }
+
+    @Test fun aWaitingStageMustBeALateWorkerTheRunnerRuns() {
+        val ok = Stage("w", runs = Runs.WORKER, gate = Gate.LATER, waits = Waits.SCREEN)
+        assertEquals(emptyList(), LaunchGate.problems(listOf(ok)))
+        assertTrue(LaunchGate.problems(listOf(ok.copy(runs = Runs.MAIN))).single().contains("main thread"))
+        assertTrue(LaunchGate.problems(listOf(ok.copy(gate = Gate.FIRST_FRAME))).single().contains("not LATER"))
+        assertTrue(LaunchGate.problems(listOf(ok.copy(bound = Bound.OBSERVED))).single().contains("does not run it"))
+    }
+
+    @Test fun aStageWaitsAtLeastAsLongAsItsNeeds() {
+        val screen = Stage("s", runs = Runs.WORKER, gate = Gate.LATER, waits = Waits.SCREEN)
+        val work = Stage("w", runs = Runs.WORKER, gate = Gate.LATER, waits = Waits.WORK)
+        val now = Stage("n", needs = listOf("s"), runs = Runs.WORKER, gate = Gate.LATER)
+        assertTrue(LaunchGate.problems(listOf(screen, now)).single().contains("needs s, which waits for SCREEN"))
+        assertTrue(LaunchGate.problems(listOf(screen, work.copy(needs = listOf("s")))).single().contains("waits for WORK but needs s"))
+        assertEquals(emptyList(), LaunchGate.problems(listOf(work, screen.copy(needs = listOf("w")))))
+        // A stage added after the real list that needs the updater must wait for the screen too.
+        val needsUpdater = Stage("after", needs = listOf("updater"), runs = Runs.WORKER, gate = Gate.LATER)
+        assertTrue(LaunchGate.problems(Launch.stages + needsUpdater).any { it.startsWith("after: waits for NOTHING but needs updater") })
+    }
+
+    @Test fun theStateReadsOneWordFromTheFigures() {
+        fun st(bound: Boolean = true, needs: Boolean = true, started: Boolean = false, ended: Boolean = false, failed: Boolean = false, waits: Waits = Waits.SCREEN, screen: Boolean = false, work: Boolean = false) =
+            LaunchGate.state(bound, needs, started, ended, failed, waits, screen, work)
+        assertEquals(StageState.NOT_REACHED, st(bound = false, waits = Waits.NOTHING))
+        assertEquals(StageState.WAITING, st(needs = false))
+        assertEquals(StageState.DEFERRED, st())
+        assertEquals(StageState.DEFERRED, st(work = true), "a notified job does not open a stage that waits for the screen")
+        assertEquals(StageState.RUNNING, st(waits = Waits.WORK, work = true))
+        assertEquals(StageState.RUNNING, st(started = true))
+        assertEquals(StageState.DONE, st(started = true, ended = true))
+        assertEquals(StageState.FAILED, st(started = true, ended = true, failed = true))
+        assertEquals("deferred", StageState.DEFERRED.json)
+    }
 }

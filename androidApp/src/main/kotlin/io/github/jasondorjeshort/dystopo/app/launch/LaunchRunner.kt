@@ -1,9 +1,12 @@
 package io.github.jasondorjeshort.dystopo.app.launch
 
 import io.github.jasondorjeshort.dystopo.launch.Bound
+import io.github.jasondorjeshort.dystopo.launch.LaunchGate
 import io.github.jasondorjeshort.dystopo.launch.Runs
 import io.github.jasondorjeshort.dystopo.launch.Stage
+import io.github.jasondorjeshort.dystopo.launch.StageState
 import io.github.jasondorjeshort.dystopo.launch.Value
+import io.github.jasondorjeshort.dystopo.launch.Waits
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
@@ -22,6 +25,11 @@ import java.util.concurrent.atomic.AtomicLong
  * the main thread's wait on it, its failure. The runner's own overhead ([overheadNs]) is the sum over stages of start minus
  * ready-to-start (the injected delay excluded) plus its own main-thread time outside the bodies. Pure on the JVM: the clock,
  * the main-thread test and the worker come in ([LaunchRunnerTest]).
+ *
+ * T387 (ADR 0071): a WORKER stage that [waits][Stage.waits] for the screen or for allowed work waits on its own thread, after
+ * its needs, in [awaitOpen] (the app's `Foreground`); [opened] answers whether that wait is over now. Its readiness is when
+ * the wait ended, so the time it spent deferred is neither its lag nor the runner's overhead ([Span.deferredAt], [Span.openedAt]).
+ * [state] is [LaunchGate.state] over a span.
  */
 class LaunchRunner(
     val stages: List<Stage>,
@@ -31,6 +39,8 @@ class LaunchRunner(
     private val delayMs: (Stage) -> Long = { 0L },
     private val strict: Boolean = true,
     private val hooks: Hooks = Hooks(),
+    private val awaitOpen: (Waits) -> Unit = {},
+    private val opened: (Waits) -> Boolean = { true },
 ) {
     /** The platform's side: the start trace's mark for a main-thread wait, a release build's main-thread read. */
     class Hooks(
@@ -52,6 +62,9 @@ class LaunchRunner(
         @Volatile var failure: Throwable? = null
         /** The class of the body the binding passed ([run]): the frame right above the runner's in a stack from inside it ([stageAt]). */
         @Volatile var bodyClass: String? = null
+        /** T387: when its needs were done and it began waiting for its [Stage.waits] (-1: it did not wait), and when that wait ended. */
+        @Volatile var deferredAt = -1L
+        @Volatile var openedAt = -1L
         val done = Done()
 
         /** Start minus ready-to-start, the delay excluded; 0 before it started. */
@@ -138,7 +151,12 @@ class LaunchRunner(
         s.boundAt = t0
         worker("launch-${stage.name}") {
             for (n in stage.needs) span(n).done.await(Long.MAX_VALUE)
-            s.readyAt = maxOf(t0, needsEnd(stage))
+            if (stage.waits != Waits.NOTHING && !opened(stage.waits)) { // T387: deferred until the screen (or allowed work)
+                s.deferredAt = nanos()
+                awaitOpen(stage.waits)
+                s.openedAt = nanos()
+            }
+            s.readyAt = maxOf(t0, needsEnd(stage), s.openedAt)
             val t = Thread.currentThread()
             val was = t.name
             t.name = "launch-${stage.name}" // what a freeze report's stacks show (a pool's thread is renamed while it runs the stage)
@@ -187,6 +205,16 @@ class LaunchRunner(
             }
         }
         s.done.complete(Unit)
+    }
+
+    /** T387: [stage]'s state now (`GET /debug/launch`). */
+    fun state(stage: Stage): StageState {
+        val s = span(stage.name)
+        return LaunchGate.state(
+            bound = s.boundAt >= 0, needsDone = stage.needs.all { span(it).done.isCompleted }, started = s.startAt >= 0,
+            ended = s.done.isCompleted, failed = s.failure != null, waits = stage.waits,
+            screenSeen = opened(Waits.SCREEN), workAllowed = opened(Waits.WORK),
+        )
     }
 
     private fun needsEnd(stage: Stage): Long = stage.needs.maxOfOrNull { span(it).endAt } ?: -1L

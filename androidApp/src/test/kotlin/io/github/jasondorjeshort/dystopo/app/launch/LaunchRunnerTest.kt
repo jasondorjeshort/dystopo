@@ -4,7 +4,9 @@ import io.github.jasondorjeshort.dystopo.launch.Gate
 import io.github.jasondorjeshort.dystopo.launch.OnTimeout
 import io.github.jasondorjeshort.dystopo.launch.Runs
 import io.github.jasondorjeshort.dystopo.launch.Stage
+import io.github.jasondorjeshort.dystopo.launch.StageState
 import io.github.jasondorjeshort.dystopo.launch.Value
+import io.github.jasondorjeshort.dystopo.launch.Waits
 import io.github.jasondorjeshort.dystopo.launch.Work
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -113,5 +115,46 @@ class LaunchRunnerTest {
     @Test fun theSlotIsTheSameObjectForAValue() {
         val r = runner(listOf(settings, worker))
         assertSame(r.slot<Any>(v), r.slot<Any>(v))
+    }
+
+    /** T387 (ADR 0071): a stage that waits for the screen is deferred on its own thread until it opens; the wait is neither lag nor overhead. */
+    @Test fun aStageThatWaitsForTheScreenIsDeferredUntilItOpens() {
+        val screen = java.util.concurrent.atomic.AtomicBoolean(false)
+        val lock = Object()
+        val deferred = Stage("deferred", needs = listOf("settings"), runs = Runs.WORKER, gate = Gate.LATER, waits = Waits.SCREEN)
+        val r = LaunchRunner(
+            listOf(settings, deferred), { Thread.currentThread() === main }, { _, rr -> pool.execute(rr) },
+            awaitOpen = { synchronized(lock) { while (!screen.get()) lock.wait() } },
+            opened = { w -> w == Waits.NOTHING || screen.get() },
+        )
+        val ran = java.util.concurrent.CountDownLatch(1)
+        r.run(settings) {}
+        r.start(deferred) { ran.countDown() }
+        Thread.sleep(150)
+        assertEquals(StageState.DEFERRED, r.state(deferred), "no screen: deferred")
+        assertEquals(1L, ran.count, "its body has not run")
+        assertTrue(r.span("deferred").deferredAt >= 0 && r.span("deferred").openedAt < 0)
+        assertEquals(StageState.DONE, r.state(settings))
+        synchronized(lock) { screen.set(true); lock.notifyAll() }
+        assertTrue(ran.await(5, TimeUnit.SECONDS), "it runs once the screen comes")
+        r.span("deferred").done.await(5_000)
+        assertEquals(StageState.DONE, r.state(deferred))
+        val sp = r.span("deferred")
+        assertTrue(sp.openedAt - sp.deferredAt >= TimeUnit.MILLISECONDS.toNanos(100), "deferred ${(sp.openedAt - sp.deferredAt) / 1e6} ms")
+        assertTrue(sp.readyAt >= sp.openedAt, "ready when its wait ended")
+        assertTrue(sp.lagNs < TimeUnit.MILLISECONDS.toNanos(100) && r.overheadNs < TimeUnit.MILLISECONDS.toNanos(100), "lag ${sp.lagNs} ns, overhead ${r.overheadNs} ns")
+    }
+
+    /** T387: a stage that waits but finds its gate already open (a start with a screen) runs at once and records no wait. */
+    @Test fun aStageWhoseGateIsOpenRunsAtOnce() {
+        val deferred = Stage("deferred", needs = listOf("settings"), runs = Runs.WORKER, gate = Gate.LATER, waits = Waits.SCREEN)
+        val r = LaunchRunner(listOf(settings, deferred), { Thread.currentThread() === main }, { _, rr -> pool.execute(rr) },
+            awaitOpen = { error("must not wait") }, opened = { true })
+        r.run(settings) {}
+        r.start(deferred) { "ok" }
+        assertTrue(r.span("deferred").done.await(5_000))
+        assertEquals(StageState.DONE, r.state(deferred))
+        assertEquals(null, r.span("deferred").failure)
+        assertEquals(-1L, r.span("deferred").deferredAt)
     }
 }

@@ -1,7 +1,6 @@
 ---
 date: 2026-11-08
 kind: chore
-related: [2026-11-07-blue-dots-on-the-map-unexplained.md]
 ---
 
 # A touch-target and accessibility sweep: every node's bounds match its drawing, and a tap at its centre does what it says

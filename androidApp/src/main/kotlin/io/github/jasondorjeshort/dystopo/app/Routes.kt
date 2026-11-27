@@ -149,6 +149,7 @@ class Routes(private val app: DystopoApp) {
         AttributionRoutes.handle(app, r)?.let { return it }
         NavRoutes.handle(app, r)?.let { return it } // T61: /nav, /nav/status, /nav/start|stop|camera|heading; observes POST /location?bearing=
         TrackRoutes.handle(app, r)?.let { return it } // T31: /tracks, /location/replay; observes POST /location
+        io.github.jasondorjeshort.dystopo.app.tracking.MapMarks.handle(app, r)?.let { return it } // T383: GET /map/marks
         settings.handle(r)?.let { return it }
         ContourLabelRoutes(app).handle(r)?.let { return it } // T36: GET /contour-labels
         io.github.jasondorjeshort.dystopo.app.firstrun.FirstRunRoutes.handle(app, r)?.let { return it } // T79: /firstrun, /packs/import (before the pack routes)

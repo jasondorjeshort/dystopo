@@ -1855,6 +1855,25 @@ def end_area_detail(c):
 # end T386
 
 
+# T383: the long-press screen reads GET /map/marks first: a circle or symbol layer of ours that nothing names (no mark in
+# the app's MapMarks table, no rule for another card's layers) fails the screen, and with it the sweep's a11y part. A new
+# overlay's author meets it by naming the layer in MapMarks (androidApp .../app/tracking/MapMarks.kt) and MapMarksTest.
+def unnamed_marks(srv):
+    """The ids GET /map/marks lists as `unnamed`; an answer with no `layers` is an error, not a pass."""
+    j = srv.ok("GET", "/map/marks") or {}
+    if "layers" not in j:
+        raise RuntimeError(f"GET /map/marks answered no layers: {json.dumps(j)[:200]}")
+    return list(j.get("unnamed") or [])
+
+
+def scr_longpress_named(c, timeout=30.0):
+    missing = unnamed_marks(c.srv)
+    if missing:
+        raise RuntimeError(f"longpress: map layers that draw a point with no name: {', '.join(missing)}")
+    scr_longpress(c, timeout)
+# end T383
+
+
 # T380
 KEPT_TREE = "content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FDystopoKept"
 
@@ -1966,6 +1985,9 @@ SCREENS = [
     ("kept-folder", scr_kept_folder, end_kept_folder, "screen"),
     # end T380
 ]
+# T383: the long-press screen checks that every point layer is named first (scr_longpress_named).
+SCREENS = [(n, scr_longpress_named if f is scr_longpress else f, t, l) for n, f, t, l in SCREENS]
+# end T383
 
 
 def find_node(sem, pred):

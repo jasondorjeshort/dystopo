@@ -48,6 +48,11 @@ class DystopoApp : Application() {
     // T228: StartupTrace.mark names each step of the launch; a step lasts until the next mark (marks only, nothing moved).
     // T266 (ADR 0061 step 1): each step is the body of a declared stage (`shared` launch.Launch), bound here and run by
     // AppLaunch.runner on the thread it declares; the lines and their order are the ones before, nothing moved.
+    // T387 (ADR 0071): a start without a screen (a preload, a job, a broadcast) runs only what such a start needs: the
+    // settings, a recording's tracker, the packs, the tile service and the servers. The world overview's copy, the update
+    // check, the cache budget, the memory sampler and the pending map work (`pending`: the packs' interrupted downloads, the
+    // areas' resume check, the trips' corridors) wait on their own threads for the first activity, the sampler for allowed
+    // work (`Launch.Waits`, the rule `LaunchGate`); with an activity they run as before, from its `onStart`.
     override fun onCreate() {
         StartupTrace.mark("DystopoApp.onCreate")
         super.onCreate()
@@ -76,7 +81,7 @@ class DystopoApp : Application() {
         }
         StartupTrace.mark("Tracking.start")
         launch.start(Launch.TRACKING) { io.github.jasondorjeshort.dystopo.app.tracking.Tracking.start(this) } // T229: built on a worker, so neither the first frame nor the corridors' thread waits on a build
-        launch.start(Launch.WORLD_COPY) { io.github.jasondorjeshort.dystopo.app.firstrun.WorldOverview.copy(this) } // T264: the world overview's copy, on a worker
+        launch.start(Launch.WORLD_COPY) { io.github.jasondorjeshort.dystopo.app.firstrun.WorldOverview.copy(this) } // T264: the world overview's copy, on a worker; T387: at the first screen
         launch.run(Launch.ASSETS) {
             StartupTrace.mark("BundledAssets.install")
             io.github.jasondorjeshort.dystopo.app.firstrun.BundledAssets.install(this) // T80: glyphs and sprites from the APK
@@ -91,20 +96,15 @@ class DystopoApp : Application() {
         online.cache.whenReadyOrHeld("launch-cacheIndex") { launch.end(Launch.CACHE_INDEX, online.cache) } // T379: whole, or held for the screen (ADR 0071)
         published = launch.run(Launch.TILES_SERVICE) { tileService(packs) }
         launch.run(Launch.WATCHERS) {
-            StartupTrace.mark("style-prime, watchdog, reports and cache budget start")
+            StartupTrace.mark("style-prime, watchdog and reports")
             Thread({ runCatching { published.style() } }, "style-prime").apply { isDaemon = true }.start() // T144: reads each pack's metadata once, off the UI thread, so the map's first style() there takes no pack lock
             MainWatchdog.start(this) // T144: the UI-thread watchdog (every build)
             io.github.jasondorjeshort.dystopo.app.reports.Reports.start(this) // T145: the crash handler, and the exit records read on a worker
-            io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.start(this) // T112: one budget over the caches (its own thread)
-            StartupTrace.mark("MemorySampler.start")
-            io.github.jasondorjeshort.dystopo.app.reports.MemorySampler.start(this) // T258: schedules a sample a minute on its own thread (the diagnostic dump's memory history)
+            io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.prime() // T127: the sources' ceiling is the budget's total from the start; T387: the engine is the `budget` stage
         }
         launch.run(Launch.DOWNLOADS_STAGE) {
             StartupTrace.mark("PackManager.get")
-            val manager = io.github.jasondorjeshort.dystopo.app.packs.PackManager.create(this)
-            StartupTrace.mark("resumePending")
-            manager.downloads.resumePending() // T29: finish interrupted pack downloads
-            manager
+            io.github.jasondorjeshort.dystopo.app.packs.PackManager.create(this) // T387: its interrupted downloads resume in the `pending` stage
         }
         launch.run(Launch.SERVER) {
             StartupTrace.mark("Routes and the loopback servers")
@@ -121,10 +121,10 @@ class DystopoApp : Application() {
             }
             if (BuildConfig.DEBUG_ENDPOINTS) startDebugServer(routes)
         }
-        launch.run(Launch.UPDATER) {
-            StartupTrace.mark("Updater.start")
-            io.github.jasondorjeshort.dystopo.app.update.Updater.start(this) // T83: daily update check (release builds), a verified download kept across restarts
-        }
+        launch.start(Launch.UPDATER) { io.github.jasondorjeshort.dystopo.app.update.Updater.start(this) } // T83: daily update check (release builds), a verified download kept across restarts; T387: at the first screen
+        launch.start(Launch.BUDGET) { io.github.jasondorjeshort.dystopo.app.cachebudget.CacheBudget.start(this) } // T112: one budget over the caches (its own thread); T387: at the first screen
+        launch.start(Launch.SAMPLER) { io.github.jasondorjeshort.dystopo.app.reports.MemorySampler.start(this) } // T258: a sample a minute (the diagnostic dump's memory history); T387: once work is allowed
+        launch.start(Launch.PENDING) { resumePendingWork() } // T387: at the first screen
         StartupTrace.appCreated()
     }
 
@@ -142,6 +142,19 @@ class DystopoApp : Application() {
     override fun onLowMemory() {
         super.onLowMemory()
         io.github.jasondorjeshort.dystopo.app.online.HeapGuard.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
+    }
+
+    /**
+     * T387: the `pending` stage's body, at the first screen: T29's interrupted pack downloads, T151's resume check of the
+     * areas with its foreground trigger, and T130's trip corridors (trips saved or synced while the app was not running).
+     * An area download that was running when the process died also resumes at a start without a screen when its own job
+     * (`areas/DownloadWorker`) runs, under its notification: that job runs the resume check itself.
+     */
+    private fun resumePendingWork() {
+        io.github.jasondorjeshort.dystopo.app.packs.PackManager.get(this).downloads.resumePending()
+        io.github.jasondorjeshort.dystopo.app.areas.ResumeCheck.install()
+        io.github.jasondorjeshort.dystopo.app.areas.ResumeCheck.request(io.github.jasondorjeshort.dystopo.app.areas.ResumeCheck.TRIGGER_START)
+        io.github.jasondorjeshort.dystopo.app.areas.TripCorridors.request("start")
     }
 
     /** T57: the debug server (null with [fixedDebugPort] or in release builds). */

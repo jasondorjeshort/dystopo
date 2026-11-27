@@ -232,6 +232,10 @@ class HelpRegistryTest {
             // T386: a saved area's Detail sheet.
             "areas.detail",
             // end T386
+            // T383: each kind of mark the long-press card names.
+            "map.marks.track", "map.marks.trip", "map.marks.route", "map.marks.water", "map.marks.nav", "map.marks.search",
+            "map.marks.viewshed", "map.marks.wayDown",
+            // end T383
             // T380: the kept folder's row on Tracks and routes.
             "tracks.keptFolder",
             // end T380
@@ -456,6 +460,19 @@ class HelpRegistryTest {
         assertEquals(setOf("AreasScreen.kt"), references["areas.detail"])
     }
     // end T386
+
+    // T383: every mark the long-press card names has its kind's help in the registry, beside its line in MapMarks.kt.
+    @Test
+    fun everyMarkHasItsKindsHelp() {
+        val marks = io.github.jasondorjeshort.dystopo.app.tracking.MapMarks.ALL
+        val helps = marks.mapNotNull { it.help }.toSet()
+        for (k in helps) assertTrue(HelpRegistry.byKey(k) != null, "mark help $k has no text")
+        val kinds = keys.filter { it.startsWith("map.marks.") }.toSet()
+        assertEquals(kinds, helps - "map.marks", "map.marks.* texts no mark uses, or marks with no text")
+        for (k in kinds) assertEquals(setOf("MapMarks.kt"), references[k], k)
+        assertTrue(HelpRegistry.byKey("map.marks.water")!!.text(ContourUnits.METERS).startsWith("Blue marks"))
+    }
+    // end T383
 
     // T380: the kept folder's help says how files are named, where routes go, what a rename and a delete do, and that a hidden one keeps its file.
     @Test
