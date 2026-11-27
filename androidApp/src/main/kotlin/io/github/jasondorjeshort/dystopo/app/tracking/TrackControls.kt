@@ -2,7 +2,6 @@ package io.github.jasondorjeshort.dystopo.app.tracking
 
 import io.github.jasondorjeshort.dystopo.app.AppSettings
 import io.github.jasondorjeshort.dystopo.app.control
-import io.github.jasondorjeshort.dystopo.app.controlCore
 import io.github.jasondorjeshort.dystopo.render.UnitFormat
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -52,6 +51,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jasondorjeshort.dystopo.app.DystopoApp
@@ -119,33 +120,18 @@ private fun BoxScope.Controls() {
 
     io.github.jasondorjeshort.dystopo.app.MapChrome { Box(Modifier.fillMaxSize()) { // T91: capped font scale
         val density = androidx.compose.ui.platform.LocalDensity.current
-        Column(
-            // Below the top row (T29), under the navigation card while navigating (T65), the Routes chip under it: T239, where
-            // the layout rule puts it (its control node draws it there, app/MapLayout.kt).
-            Modifier.align(Alignment.TopEnd).padding(start = 8.dp, end = 8.dp)
-                .control("waypointAndTracks") // T238
-                .onGloballyPositioned { c -> io.github.jasondorjeshort.dystopo.app.TopChips.trackColumnAt(c, density) },
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            // T91: the chips wrap (right-aligned) instead of running under the online indicator on the left; at
-            // most the width right of it.
-            val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
-            val onlineRight = with(density) { io.github.jasondorjeshort.dystopo.app.TopChips.onlineRightPx.toDp() }
-            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-            androidx.compose.foundation.layout.FlowRow(
-                Modifier.controlCore().widthIn(max = if (onlineRight > 0.dp) (screenW - onlineRight - 16.dp).coerceAtLeast(160.dp) else screenW), // T239: the row the rule fits the bar by
-                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                itemVerticalAlignment = Alignment.CenterVertically, // T109: the chips centred on the help icon's taller target
-            ) {
-                // T253: Hide (the old "\u00D7" read as Stop) first, at the row's far edge from the record group, which comes last.
+        // T381: the bar's column as one layout ([TrackRow]): the chip row flowed at the width the layout rule chose for it
+        // (beside the online column or across), and under it what hangs from it, right-aligned, 6 dp apart. Before T381 the
+        // row was a FlowRow capped at the online column's drawn edge, which fed the rule's own last answer back into it.
+        androidx.compose.ui.layout.Layout(
+            contents = listOf<@Composable () -> Unit>({
+                // T253: Hide (the old "×" read as Stop) first, at the row's far edge from the record group, which comes last.
                 if (barOpen) HideChip { TrackBar.hide() }
                 // T91: a waypoint at the current fix at any time, folded or not, recording or not.
                 Chip("Waypoint") { Thread { dropHere(tracker()) }.start() }
                 if (!barOpen) {
                     // Folded: one chip; while recording it shows the live distance in red, so a hidden panel visibly records on.
-                    Chip(if (ui.recording) "\u25CF " + UnitFormat.distance(ui.distanceM, AppSettings.units) else "Tracks", if (ui.recording) RecordRed else Ink) { barOpen = true }
+                    Chip(if (ui.recording) "● " + UnitFormat.distance(ui.distanceM, AppSettings.units) else "Tracks", if (ui.recording) RecordRed else Ink) { barOpen = true }
                 } else {
                     Chip("Tracks") { if (TrackBar.listOpen) TrackBar.closeList() else TrackBar.listOpen = true }
                     io.github.jasondorjeshort.dystopo.app.help.HelpIcon("tracks.bar") // T109: record, pause, finish and keep
@@ -155,28 +141,35 @@ private fun BoxScope.Controls() {
                         Chip(label, recordGroupColour(label)) { recordGroupTap(label) }
                     }
                 }
-            }
-            EstimateChip() // T203: the terrain estimate, recording or not
-            if (barOpen && !TrackBar.listOpen) ActivityPickerPanel(onRecordStarted) // T172; T219: a track's in the Tracks sheet
-            if (barOpen && ui.recording) {
-                // T253: a vertical swipe on the panel hides it, as Hide and Back do; the recording goes on. Where the rule leaves
-                // the panel less than its height (landscape at font scale 2.0) it scrolls instead, so Discard and the turn-back
-                // chip stay reachable; the chips above it (Hide and the record group) never scroll away.
-                val scroll = androidx.compose.foundation.rememberScrollState()
-                Panel((if (scroll.maxValue > 0) Modifier else Modifier.hideOnSwipe()).verticalScroll(scroll, enabled = scroll.maxValue > 0)) {
-                    BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
-                    // T172: the recording's activity; a tap changes it (the recording then uses that activity's settings).
-                    ActivityLine(ui.activeId, ui.activeName, ui.activeActivity)
-                    // T260: the gaps bridged on the map, their count and time, after the live stats.
-                    GapStatsLine(UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)), ui.gapText, 13)
-                    RecordingStateLine(ui)
-                    if (ui.weakSignal) WeakSignalLine() // T333
-                    if (ui.paused) DiscardLine() // T253: paused only, and it asks first
-                    TurnBackChip() // T252: the card off by default, on with this chip
-                    WayBackLine() // T180
+            }, {
+                EstimateChip() // T203: the terrain estimate, recording or not
+                if (barOpen && !TrackBar.listOpen) ActivityPickerPanel(onRecordStarted) // T172; T219: a track's in the Tracks sheet
+                if (barOpen && ui.recording) {
+                    // T253: a vertical swipe on the panel hides it, as Hide and Back do; the recording goes on. Where the rule leaves
+                    // the panel less than its height (landscape at font scale 2.0) it scrolls instead, so Discard and the turn-back
+                    // chip stay reachable; the chips above it (Hide and the record group) never scroll away.
+                    val scroll = androidx.compose.foundation.rememberScrollState()
+                    Panel((if (scroll.maxValue > 0) Modifier else Modifier.hideOnSwipe()).verticalScroll(scroll, enabled = scroll.maxValue > 0)) {
+                        BasicText(ui.activeName ?: "", style = TextStyle(color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold))
+                        // T172: the recording's activity; a tap changes it (the recording then uses that activity's settings).
+                        ActivityLine(ui.activeId, ui.activeName, ui.activeActivity)
+                        // T260: the gaps bridged on the map, their count and time, after the live stats.
+                        GapStatsLine(UnitFormat.distance(ui.distanceM, AppSettings.units) + String.format(Locale.US, "  %d pts  %s", ui.points, duration(ui.durationS)), ui.gapText, 13)
+                        RecordingStateLine(ui)
+                        if (ui.weakSignal) WeakSignalLine() // T333
+                        if (ui.paused) DiscardLine() // T253: paused only, and it asks first
+                        TurnBackChip() // T252: the card off by default, on with this chip
+                        WayBackLine() // T180
+                    }
                 }
-            }
-        }
+            }),
+            // Below the top row (T29), under the navigation card while navigating (T65), the Routes chip under it: T239, where
+            // the layout rule puts it (its control node draws it there, app/MapLayout.kt).
+            modifier = Modifier.align(Alignment.TopEnd).padding(start = 8.dp, end = 8.dp)
+                .control("waypointAndTracks") // T238
+                .onGloballyPositioned { c -> io.github.jasondorjeshort.dystopo.app.TopChips.trackColumnAt(c, density) },
+            measurePolicy = TrackRow.policy,
+        )
     } }
 
     Column(
@@ -812,5 +805,81 @@ private fun Action(text: String, color: Color = Link, onClick: () -> Unit) {
 private fun Panel(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) { // T277: ColumnScope, for the chart's weight
     Column(modifier.background(Paper, RoundedCornerShape(8.dp)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         content()
+    }
+}
+
+/**
+ * T381: the track bar's column ([policy]): its chip row flowed by [io.github.jasondorjeshort.dystopo.ui.OverlayLayout.flowLines]
+ * within the width the layout rule chose for it (the bar's limit `coreWidthPx`, `app/MapLayout.kt`; the column's whole
+ * width before the rule's first answer), each line right-aligned and its chips centred on the line, and under the row what
+ * hangs from it (the terrain estimate, the activity picker, the recording panel), right-aligned, [GAP_DP] apart, each
+ * within the height the rule left (the bar's limit). What the rule reads of it ([itemsPx], [belowWidthPx], [fullPx],
+ * [gapPx]) is measured here at each measure and does not depend on the width chosen, so the rule's answer cannot feed
+ * back into what it reads. Plain fields, main thread (T146).
+ */
+internal object TrackRow {
+    const val GAP_DP = 6
+
+    /** The row's chips at their own sizes (px), in drawn order; empty before the first measure. */
+    @Volatile var itemsPx: List<IntArray> = emptyList()
+        private set
+
+    /** The widest of what hangs under the row (px; 0 with nothing), the most width the row may take and the gap (px). */
+    @Volatile var belowWidthPx = 0
+        private set
+    @Volatile var fullPx = 0
+        private set
+    @Volatile var gapPx = 0
+        private set
+
+    /** The row as drawn now: its height (px) and the width it was flowed within (px). */
+    @Volatile var rowHeightPx = 0
+        private set
+    @Volatile var rowWidthPx = 0
+        private set
+
+    val policy = androidx.compose.ui.layout.MultiContentMeasurePolicy { (row, below), c ->
+        val gap = GAP_DP.dp.roundToPx()
+        val full = if (c.hasBoundedWidth) c.maxWidth else Int.MAX_VALUE
+        val items = row.map { it.measure(androidx.compose.ui.unit.Constraints(maxWidth = full)) }
+        val chosen = io.github.jasondorjeshort.dystopo.app.MapLayout.controls.lastRuled?.limits?.get("waypointAndTracks")?.coreWidthPx
+        val w = (chosen ?: full).coerceIn(0, full)
+        val lines = io.github.jasondorjeshort.dystopo.ui.OverlayLayout.flowLines(items.map { it.width.toFloat() }, w.toFloat(), gap.toFloat())
+        val lineW = lines.map { l -> l.sumOf { items[it].width } + gap * (l.count() - 1) }
+        val lineH = lines.map { l -> l.maxOf { items[it].height } }
+        val rowH = lineH.sum() + gap * (lines.size - 1).coerceAtLeast(0)
+        var room = if (c.hasBoundedHeight) c.maxHeight - rowH else Int.MAX_VALUE
+        val under = below.map { m ->
+            val maxH = if (room == Int.MAX_VALUE) androidx.compose.ui.unit.Constraints.Infinity else (room - gap).coerceAtLeast(0)
+            m.measure(androidx.compose.ui.unit.Constraints(maxWidth = full, maxHeight = maxH)).also { p ->
+                if (room != Int.MAX_VALUE) room -= gap + p.height
+            }
+        }
+        val belowW = under.maxOfOrNull { it.width } ?: 0
+        itemsPx = items.map { intArrayOf(it.width, it.height) }
+        belowWidthPx = belowW
+        fullPx = full
+        gapPx = gap
+        rowHeightPx = rowH
+        rowWidthPx = w
+        val width = c.constrainWidth(maxOf(lineW.maxOrNull() ?: 0, belowW))
+        val height = c.constrainHeight(rowH + under.sumOf { gap + it.height })
+        layout(width, height) {
+            var y = 0
+            for ((k, l) in lines.withIndex()) {
+                var x = width - lineW[k]
+                for (i in l) {
+                    items[i].place(x, y + (lineH[k] - items[i].height) / 2)
+                    x += items[i].width + gap
+                }
+                y += lineH[k] + gap
+            }
+            y = rowH
+            for (p in under) {
+                y += gap
+                p.place(width - p.width, y)
+                y += p.height
+            }
+        }
     }
 }

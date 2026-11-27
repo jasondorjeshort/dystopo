@@ -27,7 +27,6 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.constrainHeight
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import io.github.jasondorjeshort.dystopo.app.controls.RecenterLayout
@@ -38,6 +37,7 @@ import io.github.jasondorjeshort.dystopo.app.readout.StripLayout
 import io.github.jasondorjeshort.dystopo.app.readout.WarningCardLayout
 import io.github.jasondorjeshort.dystopo.app.routing.BottomPanels
 import io.github.jasondorjeshort.dystopo.app.routing.CardLayout
+import io.github.jasondorjeshort.dystopo.ui.OverlayBarRow
 import io.github.jasondorjeshort.dystopo.ui.OverlayCard
 import io.github.jasondorjeshort.dystopo.ui.OverlayIds
 import io.github.jasondorjeshort.dystopo.ui.OverlayInput
@@ -74,13 +74,6 @@ import kotlin.math.ceil
  * node is not where it is drawn.
  */
 fun Modifier.control(id: String): Modifier = this.then(ControlElement(id)).testTag(id)
-
-/**
- * T239: on the part of a control the rule fits it by (the track bar's chip row): measured free of the height its column
- * leaves it, so the rule sees the row whole, and given to the enclosing [control] node ([MeasuredControls.Slot.corePx]).
- * What lies under it in the control (an open panel) takes the room the rule leaves (T224's clamp, now the rule's).
- */
-fun Modifier.controlCore(): Modifier = this.then(CoreElement)
 
 /** T241: [control]'s element. */
 private class ControlElement(val id: String) : ModifierNodeElement<ControlNode>() {
@@ -166,23 +159,6 @@ internal class ControlNode(private var id: String) : Modifier.Node(), LayoutModi
     }
 }
 
-/** T239: [controlCore]'s element. */
-private object CoreElement : ModifierNodeElement<CoreNode>() {
-    override fun create() = CoreNode()
-    override fun update(node: CoreNode) {}
-    override fun equals(other: Any?) = other === this
-    override fun hashCode() = 7239
-}
-
-/** T239: [controlCore]'s node (T224's track row node, now giving its height to the enclosing [ControlNode]'s slot). */
-private class CoreNode : Modifier.Node(), LayoutModifierNode {
-    override fun MeasureScope.measure(measurable: Measurable, constraints: Constraints): MeasureResult {
-        val p = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
-        if (!isLookingAhead) (findNearestAncestor(ControlNode.TRAVERSE_KEY) as? ControlNode)?.slot?.let { MapLayout.controls.core(it, p.height) }
-        return layout(p.width, constraints.constrainHeight(p.height)) { p.place(0, 0) }
-    }
-}
-
 /**
  * T241 (pure, `MapLayoutTest`): what the [control] nodes measured and placed, for `GET /layout`, `GET /controls` and,
  * from T239, the placement itself. Plain fields, never Compose state (T146: state written in layout reaches its readers a
@@ -213,10 +189,6 @@ class MeasuredControls(private val ruler: ((MeasuredControls) -> Ruled?)? = null
         internal var placed = false
         internal var attached = true
 
-        /** T239: its [controlCore]'s height as last measured, px (0 with none). */
-        var corePx = 0
-            internal set
-
         /** T239: the rule's reason while it hides this element (nothing placed), else null. */
         var ruledOut: String? = null
             internal set
@@ -234,8 +206,12 @@ class MeasuredControls(private val ruler: ((MeasuredControls) -> Ruled?)? = null
     /** T239: where the rule draws an element's content, px from the window's top left, or that it hides it ([reason]). */
     data class Target(val leftPx: Int, val topPx: Int, val hidden: Boolean, val reason: String? = null)
 
-    /** T239: what an element is measured within (px): the track bar's room, the strip's width and the entries it draws. */
-    data class Limit(val maxWidthPx: Int? = null, val maxHeightPx: Int? = null, val entries: Int? = null)
+    /**
+     * T239: what an element is measured within (px): the track bar's room, the strip's width and the entries it draws. T381:
+     * [coreWidthPx], the width the track bar's chip row is flowed within (`tracking/TrackControls.kt`'s `TrackRow`); not a
+     * constraint of the whole element, so the panel under the row keeps its own width.
+     */
+    data class Limit(val maxWidthPx: Int? = null, val maxHeightPx: Int? = null, val entries: Int? = null, val coreWidthPx: Int? = null)
 
     /** T239: one pass's rule: each placed element's [targets] (by manifest id), the [limits], and what it was made of. */
     class Ruled(
@@ -320,11 +296,6 @@ class MeasuredControls(private val ruler: ((MeasuredControls) -> Ruled?)? = null
         slot.size = size
         slot.placed = false
         onMeasured?.invoke(slot)
-    }
-
-    /** T239: in measure: [slot]'s [controlCore] measured [heightPx] tall. */
-    fun core(slot: Slot, heightPx: Int) {
-        slot.corePx = heightPx
     }
 
     /** In placement: [slot] placed at [rectPx] (px from the window's top left). T239: a card at a new rectangle starts a pass. */
@@ -532,12 +503,15 @@ object MapLayout {
         val root = rootSize()
         if (root[0] <= 0f || root[1] <= 0f) return null
         val measured = inputFrom(c, d, root, insetsPx(), res.configuration.fontScale)
+        val row = barRow(d) // T381: the bar's row flowed by the rule, from its chips' own sizes
         // T360: with the chip's card open, the online column at the height the rule still places, its coverage section taking
         // what is left (down to nothing), measured within that limit.
-        val coverage = coverageFit(measured, d)
-        val input = coverage?.let { measured.copy(online = measured.online!!.copy(height = it.first)) } ?: measured
-        val placed = coverage?.second ?: OverlayLayout.place(input, latch)
+        val coverage = coverageFit(measured, row, d)
+        val asked = coverage?.let { measured.copy(online = measured.online!!.copy(height = it.first)) } ?: measured
+        val placed = coverage?.second ?: OverlayLayout.placeWithRow(asked, row, latch)
         // end T360
+        // T381: the input as placed: the bar at the row's chosen width.
+        val input = if (row != null && placed.barRowWidth > 0f && asked.trackBar != null) asked.copy(trackBar = OverlayLayout.barAt(row, placed.barRowWidth)) else asked
         latch = placed.latch
         fun px(v: Float) = Math.round(v * d)
         val targets = LinkedHashMap<String, MeasuredControls.Target>()
@@ -547,9 +521,7 @@ object MapLayout {
             targets[name] = e.rect?.let { MeasuredControls.Target(px(it.left), px(it.top), false, e.reason) } ?: MeasuredControls.Target(0, 0, true, e.reason)
         }
         val limits = LinkedHashMap<String, MeasuredControls.Limit>()
-        if (placed.trackRoom > 0f && placed[OverlayIds.TRACK_BAR]?.rect != null) {
-            limits[nameOf(OverlayIds.TRACK_BAR)] = MeasuredControls.Limit(maxHeightPx = ceil(placed.trackRoom * d).toInt())
-        }
+        barLimit(placed, d)?.let { limits[nameOf(OverlayIds.TRACK_BAR)] = it }
         placed[OverlayIds.FIRST_RUN_CARD]?.rect?.let { r ->
             // T320: the first-run card measured within the rule's rectangle: its body scrolls in what is left, and below its
             // least its links scroll with it.
@@ -562,7 +534,7 @@ object MapLayout {
         coverage?.let { limits[nameOf(OverlayIds.ONLINE)] = MeasuredControls.Limit(maxHeightPx = Math.floor((it.first * d).toDouble()).toInt()) } // T360
         // The compass: where the rule puts it, or with the map facing north where it would go once turned.
         val compassAt = placed[OverlayIds.COMPASS] ?: if (input.compass == null) {
-            CompassView.sizePx()?.let { s -> OverlayLayout.place(input.copy(compass = OverlaySize(s[0] / d, s[1] / d)), latch)[OverlayIds.COMPASS] }
+            CompassView.sizePx()?.let { s -> OverlayLayout.placeWithRow(asked.copy(compass = OverlaySize(s[0] / d, s[1] / d)), row, latch)[OverlayIds.COMPASS] }
         } else null
         compassAt?.let { e ->
             val t = CompassTarget(e.rect?.let { floatArrayOf(it.left * d, it.top * d, it.right * d, it.bottom * d) }, e.rect == null && input.compass != null, e.reason)
@@ -587,15 +559,38 @@ object MapLayout {
         else null
 
     /**
+     * T239: the track bar's limit by the rule's placement [placed] (density [d]): the height its column may take while the
+     * rule places it, and (T381) the width its chip row is flowed within, whenever the rule flowed it; null with neither.
+     * Pure; `MapLayoutTest` drives it.
+     */
+    internal fun barLimit(placed: OverlayPlacement, d: Float): MeasuredControls.Limit? {
+        val h = if (placed.trackRoom > 0f && placed[OverlayIds.TRACK_BAR]?.rect != null) ceil(placed.trackRoom * d).toInt() else null
+        val w = if (placed.barRowWidth > 0f) Math.round(placed.barRowWidth * d) else null
+        return if (h == null && w == null) null else MeasuredControls.Limit(maxHeightPx = h, coreWidthPx = w)
+    }
+
+    /**
+     * T381: the track bar's row as the rule flows it ([OverlayBarRow]), from what its column measured
+     * ([io.github.jasondorjeshort.dystopo.app.tracking.TrackRow]: the chips at their own sizes, what hangs under them, the
+     * column's width), dp at density [d]; null before the bar was measured.
+     */
+    private fun barRow(d: Float): OverlayBarRow? {
+        val t = io.github.jasondorjeshort.dystopo.app.tracking.TrackRow
+        val items = t.itemsPx
+        if (items.isEmpty() || t.fullPx <= 0 || t.fullPx == Int.MAX_VALUE) return null
+        return OverlayBarRow(items.map { OverlaySize(it[0] / d, it[1] / d) }, t.gapPx / d, t.belowWidthPx / d, t.fullPx / d, quantum = 1f / d)
+    }
+
+    /**
      * T360: while the coverage section is up (the chip's card open), the online column's height the rule still places and that
      * placement ([io.github.jasondorjeshort.dystopo.app.online.CoveragePanel.fitColumn]); null while it is not.
      */
-    private fun coverageFit(input: OverlayInput, d: Float): Pair<Float, OverlayPlacement>? {
+    private fun coverageFit(input: OverlayInput, row: OverlayBarRow?, d: Float): Pair<Float, OverlayPlacement>? {
         val cp = io.github.jasondorjeshort.dystopo.app.online.CoveragePanel
         val online = input.online ?: return null
         if (cp.capPx <= 0) return null
         val natural = minOf(cp.contentPx, cp.capPx) / d
-        return cp.fitColumn(online.height, cp.viewportPx / d, natural, { h -> OverlayLayout.place(input.copy(online = online.copy(height = h)), latch) }) {
+        return cp.fitColumn(online.height, cp.viewportPx / d, natural, { h -> OverlayLayout.placeWithRow(input.copy(online = online.copy(height = h)), row, latch) }) {
             it[OverlayIds.ONLINE]?.rect != null
         }
     }
@@ -636,7 +631,7 @@ object MapLayout {
 
     /**
      * T239: the rule's input from the nodes: sizes as last measured (kept while hidden), the cards where they are drawn
-     * ([OverlayCard.drawn]), the track bar by its row ([controlCore]) with what opens under it, the track panels, the window
+     * ([OverlayCard.drawn]), the track bar by its row (T381: `tracking/TrackControls.kt`'s `TrackRow`) with what opens under it, the track panels, the window
      * and its insets, the settings and [turned] and [offCentre]. Main thread.
      */
     private fun inputFrom(c: MeasuredControls, d: Float, root: FloatArray, ins: FloatArray, fontScale: Float): OverlayInput {
@@ -651,7 +646,8 @@ object MapLayout {
         }
         val bar = c.slot(nameOf(OverlayIds.TRACK_BAR))
         val barSize = bar?.size
-        val core = bar?.corePx ?: 0
+        // T381: the row's height as its column drew it (`TrackRow`); the rest of the column is what hangs under it.
+        val core = io.github.jasondorjeshort.dystopo.app.tracking.TrackRow.rowHeightPx
         val rowPx = if (barSize != null && core in 1..barSize.height) core else barSize?.height ?: 0
         val search = c.sizeOf(nameOf(OverlayIds.SEARCH))
         val panels = panelsRect(root[0] / d, root[1] / d, BottomPanels.trackPanelsTop.value, BottomPanels.trackPanelsBottom.value)
@@ -666,6 +662,9 @@ object MapLayout {
             online = dp(c.sizeOf(nameOf(OverlayIds.ONLINE))),
             trackBar = barSize?.let { OverlaySize(it.width / d, rowPx / d) },
             trackPanel = barSize?.let { (it.height - rowPx).coerceAtLeast(0) / d } ?: 0f,
+            // T381: the activity picker open under the bar (the bar unfolded, the Tracks list closed: where TrackControls draws it).
+            trackPanelBox = io.github.jasondorjeshort.dystopo.app.tracking.ActivityPicker.target != null &&
+                io.github.jasondorjeshort.dystopo.app.tracking.TrackBar.open && !io.github.jasondorjeshort.dystopo.app.tracking.TrackBar.listOpen,
             routes = dp(c.sizeOf(nameOf(OverlayIds.ROUTES))),
             activity = dp(c.sizeOf(nameOf(OverlayIds.ACTIVITY))), // T263
             horizonSwitch = dp(c.sizeOf(nameOf(OverlayIds.HORIZON_SWITCH))), // T309; T315: the rule reserves its anchor
@@ -965,6 +964,7 @@ object MapLayout {
                     "sideColumn" to p.sideColumn, "cardColumns" to p.cardColumns, "buttonsDrawn" to p.buttonsDrawn, "entriesDrawn" to p.entriesDrawn,
                     "latch" to p.latch?.let { l -> linkedMapOf("widthDp" to l.windowWidth, "heightDp" to l.windowHeight, "fontScale" to l.fontScale, "cards" to l.cards.sorted()) },
                     "trackRoomDp" to p.trackRoom, "stripRoomDp" to p.stripRoom,
+                    "barRowWidthDp" to p.barRowWidth, // T381: the width the rule flowed the track bar's row within (0: not flowed)
                     // T277: the track panels' rectangle the rule stood the lower columns on, and the drawn elements over it.
                     "panelsPx" to i?.panels?.let { r -> listOf(Math.round(r.left * d), Math.round(r.top * d), Math.round(r.right * d), Math.round(r.bottom * d)) },
                     "overPanels" to i?.panels?.let { r ->

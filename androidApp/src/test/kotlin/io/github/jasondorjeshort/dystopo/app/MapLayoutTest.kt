@@ -690,6 +690,23 @@ class MapLayoutTest {
         }
     }
     // end T344
+
+    // T381
+    @Test
+    fun theBarsLimitCarriesTheRowsWidthApartFromItsHeight() {
+        val bar = OverlayElement(OverlayIds.TRACK_BAR, io.github.jasondorjeshort.dystopo.ui.OverlayRect(100f, 100f, 300f, 200f), OverlayState.SHOWN)
+        fun placed(room: Float, row: Float, shown: Boolean = true) =
+            OverlayPlacement(if (shown) listOf(bar) else emptyList(), 1, 0, false, 1, trackRoom = room, barRowWidth = row)
+        assertEquals(MeasuredControls.Limit(maxHeightPx = 525, coreWidthPx = 470), MapLayout.barLimit(placed(200f, 179.04762f), 2.625f))
+        // The row's width with the bar hidden (its row still flowed by the rule), the height only while it is placed.
+        assertEquals(MeasuredControls.Limit(coreWidthPx = 1038), MapLayout.barLimit(placed(200f, 395.42856f, shown = false), 2.625f))
+        assertNull(MapLayout.barLimit(placed(0f, 0f), 2.625f))
+        // The width is no constraint of the whole column: the panel under the row keeps its own.
+        val c = MeasuredControls()
+        val s = c.attach("waypointAndTracks", null)
+        assertEquals(Constraints(maxWidth = 1059, maxHeight = 2400), c.constrain(s, Constraints(maxWidth = 1059, maxHeight = 2400)))
+    }
+    // end T381
 }
 
 // T344: the four-segment switch's width (dp) at font scale 1.0 and at map chrome's cap (font 2.0), measured.
