@@ -1233,6 +1233,52 @@ finally:
 # end T385
 
 
+# T386: the area's Detail sheet: the pack over Paradise found from the rows, the fixture seeded from it, the sheet's three
+# choices checked before the list and the sheet open; its end closes the sheet and deletes the area; a wrong sheet fails it.
+class DetailSrv:
+    def __init__(self, options):
+        self.calls = []
+        self.options = options
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/areas/rows":
+            return {"rows": [{"id": "pack:elsewhere", "pack": "elsewhere", "bounds": [10, 45, 11, 46]},
+                             {"id": "pack:rainier", "pack": "rainier", "bounds": [-121.9, 46.7, -121.5, 46.95]}]}
+        if path.startswith("/areas/fixture/tiles"):
+            return {"id": "a00112233445566aa"}
+        if path.endswith("/detail"):
+            return {"options": self.options}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+SHEET = [{"detail": "less", "now": False}, {"detail": "medium", "now": True}, {"detail": "full", "now": False}]
+ad = next(s for s in a11y.SCREENS if s[0] == "area-detail")
+assert ad[3] == "screen", ad
+a11y.time.sleep = lambda s: None
+try:
+    ds = DetailSrv(SHEET)
+    dctx = type("C", (), {"srv": ds})()
+    ad[1](dctx)
+    assert ("POST", "/areas/fixture/tiles?pack=rainier") in ds.calls, ds.calls
+    assert ds.calls[-2:] == [("POST", "/packs/ui?show=true"), ("POST", "/areas/ui?sheet=a00112233445566aa")], ds.calls
+    ds.calls.clear()
+    ad[2](dctx)
+    assert ds.calls == [("POST", "/areas/ui?sheet=0"), ("DELETE", "/areas/a00112233445566aa"), ("POST", "/packs/ui?show=false")], ds.calls
+    try:
+        ad[1](type("C", (), {"srv": DetailSrv(SHEET[:2])})())
+        raise AssertionError("a sheet without its three choices should fail area-detail")
+    except RuntimeError as e:
+        assert "Less, Medium (now), Full" in str(e), e
+finally:
+    a11y.time.sleep = _sleep
+# end T386
+
+
 # T383: the long-press screen fails on a point layer GET /map/marks lists as unnamed, before it presses.
 class MarksSrv:
     def __init__(self, answer):

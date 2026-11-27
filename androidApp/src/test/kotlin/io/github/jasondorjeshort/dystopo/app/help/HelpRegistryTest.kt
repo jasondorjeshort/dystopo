@@ -229,6 +229,9 @@ class HelpRegistryTest {
             // T360: the coverage panel.
             "online.coverage",
             // end T360
+            // T386: a saved area's Detail sheet.
+            "areas.detail",
+            // end T386
             // T383: each kind of mark the long-press card names.
             "map.marks.track", "map.marks.trip", "map.marks.route", "map.marks.water", "map.marks.nav", "map.marks.search",
             "map.marks.viewshed", "map.marks.wayDown",
@@ -443,6 +446,17 @@ class HelpRegistryTest {
         assertEquals(setOf("AreasScreen.kt"), references["areas.startHere"])
     }
     // end T361
+
+    // T386: the Detail sheet's help says the shape stays, what less and more do, and that search finds fewer places at less.
+    @Test
+    fun theDetailHelpSaysTheShapeStaysAndWhatEachWayDoes() {
+        val h = HelpRegistry.byKey(io.github.jasondorjeshort.dystopo.app.areas.DETAIL_HELP_KEY)!!
+        assertEquals("Detail", h.title)
+        val t = h.text(ContourUnits.METERS)
+        assertTrue("keeps its shape" in t && "frees space" in t && "only what it adds, now or later" in t && "fewer places" in t, t)
+        assertEquals(setOf("AreasScreen.kt"), references["areas.detail"])
+    }
+    // end T386
 
     // T383: every mark the long-press card names has its kind's help in the registry, beside its line in MapMarks.kt.
     @Test

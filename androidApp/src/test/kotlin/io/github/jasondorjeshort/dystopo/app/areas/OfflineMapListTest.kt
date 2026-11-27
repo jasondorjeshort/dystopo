@@ -1,6 +1,7 @@
 package io.github.jasondorjeshort.dystopo.app.areas
 
 import io.github.jasondorjeshort.dystopo.app.areas.OfflineMapList as L
+import io.github.jasondorjeshort.dystopo.areas.AreaDetail as D // T386
 import io.github.jasondorjeshort.dystopo.areas.AreaOfInterest
 import io.github.jasondorjeshort.dystopo.areas.AreaPoint
 import io.github.jasondorjeshort.dystopo.areas.AreaShape
@@ -377,4 +378,153 @@ class OfflineMapListTest {
         // On again, the wide map is low detail by its archives (map to z13, elevation to z11).
         assertEquals(DetailOutline.Level.LOW, L.rows(L.Inputs(packs = listOf(wide))).single().level)
     }
+
+    // T386: a saved area's detail changed with its shape kept: the row's Detail, the raise and the lower on the row, the record's
+    // new field read from files written before it, the resume check leaving a deferred raise alone, and the sheet's sentences.
+    private fun drawnAt(d: D, id: String = "a0003", state: String = "done", raise: Areas.Record.Raise? = null, trip: String? = null) =
+        Areas.Record(id = id, name = "Drawn", area = polygon.at(d), createdAt = 1, state = state, source = "sources", raise = raise, tripId = trip, bytes = 40L shl 20)
+
+    @Test
+    fun aDrawnAreaOffersDetailAndATripsCorridorSaysItsDetailFollowsTheTrip() {
+        val drawn = L.rows(L.Inputs(records = listOf(drawnAt(D.FULL)))).single()
+        assertTrue(DETAIL in drawn.actions, drawn.actions.toString())
+        assertTrue(drawn.actions.indexOf(DETAIL) < drawn.actions.indexOf(L.RENAME))
+        val trip = Areas.Record(id = "a0005", name = "Muir", area = corridor, createdAt = 1, state = "done", tripId = "r1", source = "sources")
+        val row = L.rows(L.Inputs(records = listOf(trip))).single()
+        assertTrue(DETAIL !in row.actions, "no Detail on a trip's corridor: ${row.actions}")
+        assertTrue(TRIP_DETAIL_LINE in row.detail, row.detail.toString())
+        assertEquals("Its detail follows the trip.", TRIP_DETAIL_LINE)
+        assertEquals(TRIP_DETAIL_LINE, AreaDownload.detailRefusal(trip))
+        // Not on an area still downloading, nor on a pack's row.
+        assertTrue(DETAIL !in L.rows(L.Inputs(records = listOf(drawnAt(D.FULL, state = "partial")))).single().actions)
+        assertTrue(L.rows(L.Inputs(packs = listOf(usable))).single().actions.none { it == DETAIL })
+    }
+
+    @Test
+    fun aRaiseThatWaitsKeepsTheRowSavedWithStartAndItsLine() {
+        val waits = drawnAt(D.MEDIUM, raise = Areas.Record.Raise.of(polygon.at(D.LESS), deferred = true))
+        val row = L.rows(L.Inputs(records = listOf(waits), raiseBytes = mapOf("a0003" to (12L shl 20)))).single()
+        assertEquals(L.SAVED, row.state)
+        assertTrue(L.START in row.actions && L.DOWNLOAD_AGAIN !in row.actions && L.RETRY !in row.actions && DETAIL in row.actions, row.actions.toString())
+        assertTrue("Medium detail waits: about 12 MB to download" in row.detail, row.detail.toString())
+        assertEquals(DetailOutline.Level.LESS, row.level, "the level it holds whole")
+        assertTrue("Zooms z8-13" in row.detail, "the zooms it holds whole: ${row.detail}")
+        // Running: the word with its percent; cut short: Saved still, the line says it goes on.
+        val running = L.rows(L.Inputs(records = listOf(waits.copy(state = "downloading", raise = waits.raise!!.copy(deferred = false))), areaJob = L.AreaJob("a0003", true, 40.0, isNew = false))).single()
+        assertEquals("Adding detail 40%", running.state)
+        assertTrue("Adding Medium detail" in running.detail)
+        val partial = L.rows(L.Inputs(records = listOf(waits.copy(state = "partial", raise = waits.raise!!.copy(deferred = false))))).single()
+        assertEquals(L.SAVED, partial.state)
+        assertTrue("Adding Medium detail: part downloaded" in partial.detail && "Continues by itself" in partial.detail, partial.detail.toString())
+    }
+
+    @Test
+    fun aLowerReadsLoweringDetailWithItsProgress() {
+        val r = drawnAt(D.LESS)
+        val counting = L.rows(L.Inputs(records = listOf(r), lowerings = listOf(Areas.Lowering("a0003", "Less detail", 0)), indexing = true)).single()
+        assertEquals(L.LOWERING, counting.state)
+        assertTrue(L.INDEXING_LINE in counting.detail, counting.detail.toString())
+        assertEquals(listOf(L.SHOW_ON_MAP, L.REMOVE), counting.actions)
+        val freeing = L.rows(L.Inputs(records = listOf(r), lowerings = listOf(Areas.Lowering("a0003", "Less detail", 0, done = 1200, total = 4000)))).single()
+        assertTrue("Freeing: 1,200 of 4,000 tiles" in freeing.detail, freeing.detail.toString())
+        assertTrue(L.DETAIL_WORDS.none { it in L.AREA_WORDS })
+    }
+
+    @Test
+    fun aRecordSavedBeforeThePendingRaiseReadsNoneAndWritesNone() {
+        // v0.1.13's files (before T386): every record reads with no raise, holds its own zooms, and writes no "raise" back.
+        val main = javaClass.getResource("/areas/areas-v0.1.13.json")!!.readText()
+        val sibling = javaClass.getResource("/areas/areas2-v0.1.13.json")!!.readText()
+        val files = AreaFiles.decode(main, sibling)
+        assertEquals(5, files.records.size)
+        assertTrue(files.records.all { it.raise == null && it.heldArea == it.area })
+        assertTrue("raise" !in files.mainText() && "raise" !in files.siblingText().orEmpty())
+        // A record with a raise round-trips; its id is the new detail's, and it holds the old one.
+        val waits = drawnAt(D.FULL, id = polygon.at(D.FULL).id, raise = Areas.Record.Raise.of(polygon.at(D.MEDIUM), deferred = true))
+        val back = AreaFiles.decode(AreaFiles(listOf(waits)).mainText(), AreaFiles(listOf(waits)).siblingText()).records.single()
+        assertEquals(waits.raise, back.raise)
+        assertEquals(polygon.at(D.MEDIUM).id, back.heldArea.id)
+        assertEquals(polygon.at(D.FULL).id, back.id)
+        // A "raise" this build cannot read is none (the record reads as its own zooms).
+        assertNull(Areas.Record.Raise.parse(mapOf("deferred" to true)))
+    }
+
+    @Test
+    fun theResumeCheckNeverStartsARaiseLeftForLater() {
+        val later = drawnAt(D.MEDIUM, state = "done", raise = Areas.Record.Raise.of(polygon.at(D.LESS), deferred = true))
+        assertTrue(!unfinished(later), "a raise left for later is a finished record: nothing to resume")
+        val stopped = later.copy(state = "partial")
+        for (present in listOf(true, false)) {
+            val d = decide(listOf(stopped), null, 0L, 2048, userPresent = present)
+            assertEquals("deferred", d.unfinished.single()["why"])
+            assertNull(d.start)
+        }
+        // Started and cut short: it goes on by itself, as any unfinished download.
+        val started = later.copy(state = "partial", raise = later.raise!!.copy(deferred = false))
+        assertEquals(started.id, decide(listOf(started), null, 0L, 2048, userPresent = true).start)
+    }
+
+    @Test
+    fun aLowerAsksTheOtherPinsNotTheAreasOwnCover() {
+        // The area's own cover still holds a tile below its new deepest zoom (an overzoomed view), so the clear must not ask it:
+        // found on the emulator, where a Full to Less lower freed nothing while asking every pin.
+        val less = polygon.at(D.LESS)
+        val z14 = io.github.jasondorjeshort.dystopo.areas.TileCover.of(polygon.at(D.FULL), 14, 1)
+        var x = -1
+        var y = -1
+        z14.forEachRow { yy, x0, _ -> if (x < 0) { x = x0; y = yy } }
+        val key = "sources/dem/14/$x/$y.png"
+        assertTrue(io.github.jasondorjeshort.dystopo.areas.AreaPins(listOf(io.github.jasondorjeshort.dystopo.areas.AreaPins.cover(less))).isPinned(key))
+        val dropped = io.github.jasondorjeshort.dystopo.areas.TilesItem("dem", "png", "", mapOf(14 to z14), 0)
+        assertTrue(removalMatcher(mapOf("sources/dem" to dropped)) { false }(key), "with no other pin it goes")
+        val src = java.io.File("src/main/kotlin/io/github/jasondorjeshort/dystopo/app/areas/Areas.kt").readText()
+        assertTrue("pinnedByOthers(n.id).isPinned(k)" in src, "the lower's clear asks the other pins")
+    }
+
+    @Test
+    fun searchKeepsAnAreaWhileItsRaiseRunsWaitsOrWasCutShort() {
+        val keep = io.github.jasondorjeshort.dystopo.app.search.AreaTiles::keptAsTiles
+        val held = Areas.Record.Raise.of(polygon.at(D.MEDIUM), deferred = false)
+        assertTrue(keep(drawnAt(D.MEDIUM)), "a finished area")
+        assertTrue(keep(drawnAt(D.FULL, state = "downloading", raise = held)), "a raise downloading")
+        assertTrue(keep(drawnAt(D.FULL, state = "done", raise = held.copy(deferred = true))), "a raise left for later")
+        assertTrue(keep(drawnAt(D.FULL, state = "partial", raise = held)), "a raise cut short")
+        assertTrue(!keep(drawnAt(D.FULL, state = "partial")), "a first download not finished stays out")
+        assertTrue(!keep(drawnAt(D.FULL, state = "downloading")), "nor one still downloading")
+    }
+
+    @Test
+    fun theSheetsSentences() {
+        val less = io.github.jasondorjeshort.dystopo.areas.DetailChange.of(polygon, D.FULL, D.LESS, 8)
+        val full = io.github.jasondorjeshort.dystopo.areas.DetailChange.of(polygon, D.MEDIUM, D.FULL, 8)
+        assertEquals("Lower to Less detail? This frees about 40 MB. Tiles another saved map uses stay on the phone.", detailConfirmLine(less, "Less detail", "Full detail", 40L shl 20, 0, 0))
+        assertEquals("Full detail downloads about 160 MB more (1,300 tiles). The map stays at Medium detail until it is done.", detailConfirmLine(full, "Full detail", "Medium detail", 0, 160L shl 20, 1300))
+        val back = io.github.jasondorjeshort.dystopo.areas.DetailChange.of(polygon.at(D.LESS), polygon.at(D.LESS), 8, current = polygon.at(D.FULL))
+        assertEquals("Keep Less detail and drop the download that waits? This frees about 2.0 MB.", detailConfirmLine(back, "Less detail", "Less detail", 2L shl 20, 0, 0))
+        assertEquals("On this phone now: 70 MB", detailOptionLine(now = true, pending = false, bytes = 70L shl 20, delta = 0, addedBytes = 0))
+        assertEquals("About 30 MB, 40 MB less", detailOptionLine(false, false, 30L shl 20, -(40L shl 20), 0))
+        assertEquals("About 82 MB, 12 MB more to download", detailOptionLine(false, false, 82L shl 20, 12L shl 20, 12L shl 20))
+        assertEquals("Waiting: about 12 MB more to download", detailOptionLine(false, true, 82L shl 20, 12L shl 20, 12L shl 20))
+        // The verifier's three: no zero figure, the row's formatter under 1 MB, and the area's figure the row's.
+        assertEquals("Lower to Less detail? Nothing is freed: another saved map uses these tiles.", detailConfirmLine(less, "Less detail", "Full detail", 0, 0, 0, ownBytes = 3L shl 20))
+        assertEquals("Lower to Less detail? Nothing is freed: none of these tiles are on this phone.", detailConfirmLine(less, "Less detail", "Full detail", 0, 0, 0, ownBytes = 0))
+        assertEquals("Keep Less detail and drop the download that waits? Nothing is freed: none of these tiles are on this phone.", detailConfirmLine(back, "Less detail", "Less detail", 0, 0, 0))
+        assertEquals("About 12 MB, nothing to download", detailOptionLine(false, false, 12L shl 20, 0, 0, raise = false))
+        assertEquals("On this phone now: 705 kB", detailOptionLine(true, false, 705L * 1024, 0, 0))
+        assertEquals("About 512 kB, 192 kB less", detailOptionLine(false, false, 512L * 1024, -192L * 1024, 0))
+        assertEquals(L.sizeText(705L * 1024), detailSize(705L * 1024), "one formatter for the row and the sheet")
+        for (line in listOf(detailOptionLine(false, false, 12L shl 20, 0, 0), detailConfirmLine(less, "Less detail", "Full detail", 0, 0, 0)))
+            assertTrue("0.0" !in line && " 0 kB" !in line, line)
+        assertEquals("Less detail", detailLabel(polygon.at(D.LESS)))
+        assertEquals("Medium detail", detailLabel(polygon.at(D.MEDIUM)))
+        assertEquals("Full detail", detailLabel(polygon.at(D.FULL)))
+        // Over the cap a raise offers a server or a smaller shape, never less detail; the stop line names the remedy that fits.
+        val cap = raiseCapRefusalLine(4_601)!!
+        assertEquals("Adding this detail needs about 4,700 map tiles, and the public map source allows 3,000 a download. Make the area smaller, or set a server in Settings › Sources.", cap)
+        assertNull(raiseCapRefusalLine(3_000))
+        assertTrue("less detail" !in capStoppedLine(false) && "server" in capStoppedLine(false))
+        assertEquals(CAP_STOPPED, capStoppedLine(true))
+        for (s in listOf(cap, capStoppedLine(false), DETAIL_INTRO, LESS_SEARCH_NOTE, TRIP_DETAIL_LINE)) assertTrue("OpenFreeMap" !in s && "OpenStreetMap" !in s, s)
+    }
+    // end T386
 }

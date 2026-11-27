@@ -27,8 +27,13 @@ object AreaTiles {
     /** The areas kept as tiles (finished, no pack, readable): [Areas.lookupHoldings]' `Kind.AREA` set, as records. */
     fun areas(): List<Areas.Record> = Areas.all().filter { keptAsTiles(it) }
 
-    /** Pure: [r] is an area kept as tiles (the filter [Areas.lookupHoldings] applies). */
-    fun keptAsTiles(r: Areas.Record): Boolean = r.pack == null && r.opaque == null && r.state == "done"
+    /**
+     * Pure: [r] is an area kept as tiles (the filter [Areas.lookupHoldings] applies, [Areas.keptWhole]). T386: also while a raise
+     * of detail downloads, waits (Later) or was cut short, since the area holds its old detail whole meanwhile; the index's
+     * fingerprint counts the tiles present, so tiles the raise brings rebuild it on a later use. A first download not finished
+     * (no raise) stays out.
+     */
+    fun keptAsTiles(r: Areas.Record): Boolean = Areas.keptWhole(r)
 
     /** [r]'s vector tile item: its saved manifest's, else the one the phone makes for its shape; null when it has none. */
     fun vectorItem(r: Areas.Record): TilesItem? {
