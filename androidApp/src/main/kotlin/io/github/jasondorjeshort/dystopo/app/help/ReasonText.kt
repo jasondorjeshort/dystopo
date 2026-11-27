@@ -96,6 +96,32 @@ object ReasonText {
         ReadoutReason.SILENT -> "barometer silent"
         ReadoutReason.NOT_GIVEN -> "not given"
         ReadoutReason.SEARCHING -> "GPS searching" // T384
+        ReadoutReason.GPS_CLOCK -> "GPS clock off" // T385
+    }
+
+    // ---- T385: the GPS clock (the glance view's GPS area, GlanceText.clockArea) ----
+
+    /** The receiver's time is impossible on its own: its clock is the wrong one. */
+    const val CLOCK_UNRELIABLE = "GPS clock unreliable: fixes used, times from the phone."
+
+    /** Named once an unreliable receiver's fault has lasted (GpsClockCheck.LASTED_MS); the action is the Horizon view's menu item. */
+    const val CLOCK_RESET = "Still wrong: try Reset assistance data in Horizon view."
+
+    /**
+     * The GPS area's line for a fault of [kind]: "GPS clock unreliable" only when the receiver's time is impossible on its
+     * own; otherwise a neutral line that the two clocks differ by [offMs] (either may be the wrong one).
+     */
+    fun clock(kind: io.github.jasondorjeshort.dystopo.readout.GpsClockFault, offMs: Long): String = when (kind) {
+        io.github.jasondorjeshort.dystopo.readout.GpsClockFault.UNRELIABLE -> CLOCK_UNRELIABLE
+        io.github.jasondorjeshort.dystopo.readout.GpsClockFault.DISAGREE -> "GPS and phone clocks differ by ${span(offMs)}: fixes still used."
+    }
+
+    /** The last minute's one note for a fault [f] that ended, at [nowElapsedMs]; null once it ended over [RECENT_MS] ago or while it lasts. */
+    fun clockEnded(f: io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.Fault, nowElapsedMs: Long): String? {
+        val end = f.endElapsedMs ?: return null
+        if (nowElapsedMs - end !in 0..RECENT_MS) return null
+        val what = if (f.kind == io.github.jasondorjeshort.dystopo.readout.GpsClockFault.UNRELIABLE) "GPS clock unreliable" else "GPS and phone clocks differed"
+        return "$what for ${span(end - f.sinceElapsedMs)}, ${span(nowElapsedMs - end)} ago"
     }
 
     /** "8 s", "3 min", "2 h": a time span as the lines say it. */

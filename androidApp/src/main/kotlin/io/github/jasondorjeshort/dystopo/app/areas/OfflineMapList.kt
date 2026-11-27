@@ -29,6 +29,10 @@ import kotlin.math.floor
  * **Remove** ([removePlan]): an area row's record goes as today ([TripCorridors.userRemove]); a pack row's every record naming
  * P, then P and its download; an update or a trail-network fetch is only stopped, and P stays until a second Remove.
  *
+ * **Detail** (T386): a drawn area's or a disc's row offers [DETAIL] (not a trip's corridor, which says [TRIP_DETAIL_LINE]); while a
+ * change frees tiles the row reads [LOWERING], while a raise downloads [ADDING_DETAIL] with its percent, and a raise that waits
+ * (Later) or stopped keeps the row's Saved with its line ([raiseLine]) and [START].
+ *
  * The inputs are one class with defaults, so a third store (proposal 0055's dwell box) is one more field, not a new signature.
  */
 object OfflineMapList {
@@ -114,6 +118,10 @@ object OfflineMapList {
         val indexing: Boolean = false,
         /** T342: the maps that are off ([io.github.jasondorjeshort.dystopo.app.packs.PackManager.offNames]). */
         val off: Set<String> = emptySet(),
+        /** T386: the changes of detail freeing tiles now ([Areas.lowerings]): the row reads [LOWERING] with their progress. */
+        val lowerings: List<Areas.Lowering> = emptyList(),
+        /** T386: per record whose raise of detail waits or runs, the estimated bytes of its added tiles ([Areas.raiseManifest]). */
+        val raiseBytes: Map<String, Long> = emptyMap(),
     )
 
     /** How a row's state word reads: [BUSY] rows go first; [BAD] and [GOOD] colour the word. */
@@ -168,6 +176,16 @@ object OfflineMapList {
     /** The words a pack row can take, in the table's order; [AREA_WORDS] an area row's. */
     val PACK_WORDS = listOf(REMOVING, DOWNLOADING, UPDATING, BUILDING, FETCHING_TRAILS, PAUSED, WAITING, STOPPED, NOT_ON_PHONE, INCOMPLETE, UPDATE_AVAILABLE, SAVED)
     val AREA_WORDS = listOf(REMOVING, NEEDS_NEWER, DOWNLOADING, UPDATING, WAITING, STOPPED, PART_SAVED, UPDATE_AVAILABLE, SAVED, MAY_BE_CLEARED)
+
+    // T386 (ADR 0031): a change of detail. Its words come before the table's for the rows it concerns (a raise or a lower under
+    // way); a raise that waits or stopped reads Saved or May be cleared, since the area holds its old detail whole.
+    const val LOWERING = "Lowering detail"
+    const val ADDING_DETAIL = "Adding detail"
+    /** The words of a change of detail, before [AREA_WORDS]' for the rows it concerns. */
+    val DETAIL_WORDS = listOf(LOWERING, ADDING_DETAIL)
+    /** The row's Start on a raise of detail that waits. */
+    const val START = "Start"
+    // end T386
 
     // The actions, by their labels.
     const val SHOW_ON_MAP = "Show on map"
@@ -283,8 +301,14 @@ object OfflineMapList {
     private fun areaRow(r: Areas.Record, i: Inputs): Row {
         val job = i.areaJob?.takeIf { it.id == r.id && it.running }
         val olderFrom = i.older[r.id]
+        val lowering = i.lowerings.firstOrNull { it.id == r.id } // T386
+        val raise = r.raise?.takeIf { r.opaque == null } // T386
         val (state, tone) = when {
             r.opaque != null -> NEEDS_NEWER to Tone.BAD
+            lowering != null -> LOWERING to Tone.BUSY // T386
+            job != null && raise != null -> percentWord(ADDING_DETAIL, job.percent) to Tone.BUSY // T386
+            raise != null && (r.state == "pending" || r.state == "downloading") -> WAITING to Tone.BUSY // T386
+            raise != null -> if (r.pinned) SAVED to Tone.GOOD else MAY_BE_CLEARED to Tone.PLAIN // T386: its old detail is whole
             job != null -> percentWord(if (job.isNew) DOWNLOADING else UPDATING, job.percent) to Tone.BUSY
             r.state == "pending" || r.state == "downloading" || (r.tripId != null && r.tripId in i.queued) -> WAITING to Tone.BUSY
             r.state in FAILED_RECORD || r.error != null -> STOPPED to Tone.BAD
@@ -306,7 +330,11 @@ object OfflineMapList {
             detail += HOLDS_TILES
             detail += if (r.pinned) IN_BUDGET else CLEARED_FIRST
             shapeLine(r, i.units)?.let { detail += it }
-            detail += areaDetailLines(r.area)
+            detail += areaDetailLines(r.heldArea) // T386: the zooms it holds whole
+            // T386: a change of detail under way or waiting; a trip's corridor says why it has no Detail.
+            lowering?.let { detail += loweringLine(it, i.indexing) }
+            raise?.let { detail += raiseLine(r, job != null, i.raiseBytes[r.id]) }
+            if (r.tripId != null) detail += TRIP_DETAIL_LINE
             val share = i.coverage[r.id]
             detail += "${sizeText(r.bytes)} downloaded (about ${sizeText(r.estimateBytes)} planned)" +
                 (share?.let { String.format(Locale.US, " · %.0f%% on this phone", it * 100) } ?: if (i.indexing) " · $INDEXING_LINE" else "") // T242
@@ -316,10 +344,13 @@ object OfflineMapList {
             resumeLine(r, i.now)?.let { detail += it }
             val failed = state == STOPPED || state == PART_SAVED
             actions += SHOW_ON_MAP
-            if (job == null) {
+            if (job == null && lowering == null) {
                 actions += if (r.pinned) ALLOW_CLEARING else KEEP
-                actions += if (failed) RETRY else if (olderFrom != null) UPDATE else DOWNLOAD_AGAIN
-                if (failed) actions += DISMISS
+                // T386: a raise that waits or stopped is started again by Start (Retry, Update and Download again are the whole area's)
+                if (raise != null) { if (state != WAITING) actions += START } // a raise just started reads Waiting until its job shows
+                else actions += if (failed) RETRY else if (olderFrom != null) UPDATE else DOWNLOAD_AGAIN
+                if (failed && raise == null) actions += DISMISS
+                if (detailOffered(r)) actions += DETAIL // T386
                 actions += RENAME
             }
             actions += REMOVE
@@ -327,8 +358,37 @@ object OfflineMapList {
         return Row(AREA + r.id, r.name, r.bytes, state, tone, detail, actions, r.area.bounds.toList(), null, r.id, r.createdAt, level = recordLevel(r))
     }
 
-    /** T366: a record's level by its area's zooms (the elevation to its own cap, else to the map's). */
-    fun recordLevel(r: Areas.Record): DetailOutline.Level = DetailOutline.levelOf(r.area.maxZoom, r.area.demMaxZoom ?: r.area.maxZoom)
+    /** T366: a record's level by its area's zooms (the elevation to its own cap, else to the map's). T386: the zooms it holds whole. */
+    fun recordLevel(r: Areas.Record): DetailOutline.Level = r.heldArea.let { a -> DetailOutline.levelOf(a.maxZoom, a.demMaxZoom ?: a.maxZoom) }
+
+    // T386
+    /**
+     * T386: an area row offers Detail: a drawn area or a disc (no pack, readable, not a trip's corridor, whose detail follows the
+     * trip and whose reconcile would undo a re-key) kept whole or with a raise waiting or under way.
+     */
+    fun detailOffered(r: Areas.Record): Boolean =
+        r.pack == null && r.opaque == null && r.tripId == null && r.area.shape !is AreaShape.Box && (r.state == "done" || r.raise != null)
+
+    /** T386: a lowering's line: "Counting the map tiles" while the cache's index is walked, then "Freeing: 1,200 of 4,000 tiles". */
+    fun loweringLine(x: Areas.Lowering, indexing: Boolean): String = when {
+        x.total != null && x.total > 0 -> String.format(Locale.US, "Freeing: %,d of %,d %s", x.done, x.total, if (x.total == 1) "tile" else "tiles")
+        indexing -> INDEXING_LINE
+        else -> "Lowering to ${x.to}"
+    }
+
+    /**
+     * T386: a raise's line: "Full detail waits: about 160 MB to download" (Later, or stopped), "Adding Full detail" while it
+     * downloads, "Adding Full detail: part downloaded" when it was cut short (it goes on by itself, [resumeLine]).
+     */
+    fun raiseLine(r: Areas.Record, running: Boolean, addedBytes: Long?): String {
+        val label = detailLabel(r.area)
+        return when {
+            running || r.state == "downloading" -> "Adding $label"
+            r.raise?.deferred == true -> "$label waits" + (addedBytes?.takeIf { it > 0 }?.let { ": about ${sizeText(it)} to download" } ?: "")
+            else -> "Adding $label: part downloaded"
+        }
+    }
+    // end T386
 
     private fun removingAreaRow(x: Areas.Removal, i: Inputs): Row =
         Row(AREA + x.record.id, x.record.name, x.record.bytes, removingWord(x), Tone.BUSY, listOf(removingLine(x.done, x.total)), emptyList(), x.record.area.bounds.toList(), null, x.record.id, x.record.createdAt, level = recordLevel(x.record))

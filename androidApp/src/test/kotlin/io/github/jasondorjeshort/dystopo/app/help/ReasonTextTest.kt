@@ -99,6 +99,27 @@ class ReasonTextTest {
         assertEquals("Phone clock went back 1 h, 20 s ago", ReasonText.fault(clock, 120_000, ContourUnits.FEET))
     }
 
+    /** T385: the GPS clock's lines: one short line each, the state then what it means; no other product's name. */
+    @Test
+    fun theGpsClocksLines() {
+        val u = io.github.jasondorjeshort.dystopo.readout.GpsClockFault.UNRELIABLE
+        val d = io.github.jasondorjeshort.dystopo.readout.GpsClockFault.DISAGREE
+        assertEquals("GPS clock unreliable: fixes used, times from the phone.", ReasonText.clock(u, 1L))
+        assertEquals("GPS and phone clocks differ by 46 min: fixes still used.", ReasonText.clock(d, 46 * 60_000L))
+        val widest = listOf(ReasonText.clock(u, 0), ReasonText.CLOCK_RESET) + listOf(6_000L, 59 * 60_000L, 23 * 3_600_000L).map { ReasonText.clock(d, it) }
+        val names = File("../tools/user-text-names.txt").readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+        for (t in widest) {
+            assertTrue(t.length <= ReasonText.MAX_SENTENCE, "${t.length} characters: $t")
+            assertTrue(t.endsWith(".") && ':' in t, t)
+            for (n in names) assertFalse(Regex("(?<![A-Za-z0-9])" + Regex.escape(n) + "(?![A-Za-z0-9])", RegexOption.IGNORE_CASE).containsMatchIn(t), "$t names $n")
+        }
+        assertEquals("GPS clock off", ReasonText.words(ReadoutReason.GPS_CLOCK))
+        val f = io.github.jasondorjeshort.dystopo.readout.GpsClockCheck.Fault(u, 100_000, -1L, endElapsedMs = 160_000)
+        assertEquals("GPS clock unreliable for 1 min, 20 s ago", ReasonText.clockEnded(f, 180_000))
+        assertNull(ReasonText.clockEnded(f, 220_001), "gone after a minute")
+        assertNull(ReasonText.clockEnded(f.copy(endElapsedMs = null), 180_000), "a fault still going is the GPS area's")
+    }
+
     @Test
     fun theBarsLeftOutEntries() {
         assertNull(ReasonText.leftOut(emptyList(), false))

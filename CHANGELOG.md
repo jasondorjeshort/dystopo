@@ -6,6 +6,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-27
 
+- T386: Change a saved area's detail and keep its shape
+- T385: A GPS fix with a wrong time no longer restarts the readout
 - T390: The tile cache's walk resumes after a kill, and one change no longer costs a whole walk
 - T381: The map's layout holds at the largest font, and the activity picker lies over nothing
 - T377: Search inside a downloaded area, from its tiles

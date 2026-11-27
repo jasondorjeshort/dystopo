@@ -1202,4 +1202,80 @@ class T381HoldLayout(unittest.TestCase):
             self.assertIsNotNone(by[name][2])
 # end T381
 
+# T385: the glance view's GPS clock screen: the skew on with the log cleared, device fixes through the console after the
+# injected fixes' precedence, the view opened held, the scene's check, and the skew and the log cleared at the end.
+CLOCK = {"holding": True, "gps": {"searching": False}, "clock": {"kind": "unreliable", "offS": 619315200, "lasted": False},
+         "lines": [{"kind": "elevation"}, {"kind": "accuracy", "reasonCode": "gps clock", "reason": "GPS clock unreliable: ..."}, {"kind": "position"}]}
+cy = {s[0]: s for s in a11y.SCREENS}["glance-clock"]
+assert cy[3] == "screen" and cy[2] is a11y.end_glance_clock, cy
+assert a11y.glance_clock_scene(CLOCK) is None
+assert "hold" in a11y.glance_clock_scene(dict(CLOCK, holding=False))
+assert "searching" in a11y.glance_clock_scene(dict(CLOCK, gps={"searching": True}))
+assert "clock" in a11y.glance_clock_scene(dict(CLOCK, clock={"kind": "disagree"}))
+assert "accuracy" in a11y.glance_clock_scene(dict(CLOCK, lines=[{"kind": "accuracy", "reasonCode": "searching"}]))
+_geo = a11y.geo_fix
+a11y.time.sleep = lambda s: None
+try:
+    fixes = []
+    a11y.geo_fix = lambda c, lat, lon, ele: fixes.append((lat, lon, ele))
+    cs = GpsSrv(CLOCK)
+    cctx = type("C", (), {"srv": cs})()
+    cy[1](cctx)
+    assert ("POST", "/location?device=1") in cs.calls and ("POST", "/readout/skew?rollover=1&forS=120&clearLog=1") in cs.calls, cs.calls
+    assert len(fixes) == a11y.GLANCE_CLOCK_FIXES >= 2 and all(abs(f[0] - a11y.PARADISE[0]) < 0.001 for f in fixes), fixes
+    assert cs.calls[-1] == ("POST", "/readout/glance?open=1&hold=1"), cs.calls
+    cs.calls.clear()
+    cy[2](cctx)
+    assert cs.calls[0] == ("POST", "/readout/skew?ms=0&clearLog=1") and ("POST", "/readout/glance?open=0") in cs.calls, cs.calls
+finally:
+    a11y.time.sleep = _sleep
+    a11y.geo_fix = _geo
+# end T385
+
+
+# T386: the area's Detail sheet: the pack over Paradise found from the rows, the fixture seeded from it, the sheet's three
+# choices checked before the list and the sheet open; its end closes the sheet and deletes the area; a wrong sheet fails it.
+class DetailSrv:
+    def __init__(self, options):
+        self.calls = []
+        self.options = options
+
+    def ok(self, method, path, **kw):
+        self.calls.append((method, path))
+        if path == "/areas/rows":
+            return {"rows": [{"id": "pack:elsewhere", "pack": "elsewhere", "bounds": [10, 45, 11, 46]},
+                             {"id": "pack:rainier", "pack": "rainier", "bounds": [-121.9, 46.7, -121.5, 46.95]}]}
+        if path.startswith("/areas/fixture/tiles"):
+            return {"id": "a00112233445566aa"}
+        if path.endswith("/detail"):
+            return {"options": self.options}
+        return {}
+
+    def call(self, method, path, **kw):
+        self.calls.append((method, path))
+        return 200, {}
+
+
+SHEET = [{"detail": "less", "now": False}, {"detail": "medium", "now": True}, {"detail": "full", "now": False}]
+ad = next(s for s in a11y.SCREENS if s[0] == "area-detail")
+assert ad[3] == "screen", ad
+a11y.time.sleep = lambda s: None
+try:
+    ds = DetailSrv(SHEET)
+    dctx = type("C", (), {"srv": ds})()
+    ad[1](dctx)
+    assert ("POST", "/areas/fixture/tiles?pack=rainier") in ds.calls, ds.calls
+    assert ds.calls[-2:] == [("POST", "/packs/ui?show=true"), ("POST", "/areas/ui?sheet=a00112233445566aa")], ds.calls
+    ds.calls.clear()
+    ad[2](dctx)
+    assert ds.calls == [("POST", "/areas/ui?sheet=0"), ("DELETE", "/areas/a00112233445566aa"), ("POST", "/packs/ui?show=false")], ds.calls
+    try:
+        ad[1](type("C", (), {"srv": DetailSrv(SHEET[:2])})())
+        raise AssertionError("a sheet without its three choices should fail area-detail")
+    except RuntimeError as e:
+        assert "Less, Medium (now), Full" in str(e), e
+finally:
+    a11y.time.sleep = _sleep
+# end T386
+
 print("test_android_a11y: ok")

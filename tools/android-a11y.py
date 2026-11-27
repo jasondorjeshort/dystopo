@@ -1762,6 +1762,99 @@ def end_activity_covered(c):
 # end T381
 
 
+# T385
+GLANCE_CLOCK_FIXES = 4  # device fixes, a second apart: two flagged in a row begin the fault
+GLANCE_CLOCK_QUIET_S = 11.0  # past the readout's 10 s precedence of injected fixes over the device's
+
+
+def geo_fix(c, lat, lon, ele):
+    """T385: one device fix through the emulator's console (the path a real receiver's fixes take, unlike POST /location)."""
+    debug.adb(c.srv.exe, c.srv.serial, "emu", "geo", "fix", f"{lon:.6f}", f"{lat:.6f}", str(ele), timeout=30)
+
+
+def scr_glance_clock(c):
+    """T385: the glance view while the GPS clock is unreliable: device fixes at Paradise whose own time the debug skew puts
+    1024 weeks back (a receiver at the week rollover), so the accuracy's row reads "GPS clock unreliable" while the fixes
+    are still used. Opened held (T372) straight after the last fix, before the GPS could read as searching; the clock log
+    is cleared before and after, so no other screen sees the fault."""
+    glance_gps_settings(c)
+    c.srv.ok("POST", "/location?device=1")
+    c.srv.ok("POST", "/readout/skew?rollover=1&forS=120&clearLog=1")
+    time.sleep(GLANCE_CLOCK_QUIET_S)
+    for k in range(GLANCE_CLOCK_FIXES):
+        geo_fix(c, PARADISE[0] + k * 0.00002, PARADISE[1], 1650)
+        time.sleep(1.0)
+    g = c.srv.ok("POST", "/readout/glance?open=1&hold=1") or {}
+    why = glance_clock_scene(g)
+    if why:
+        raise RuntimeError(f"the glance view does not show the GPS clock: {why}")
+
+
+def glance_clock_scene(g):
+    """T385: what is wrong with the held glance view's GPS clock state (`GET /readout/glance`), or None when it is the screen's."""
+    if not g.get("holding"):
+        return "the view does not hold"
+    if (g.get("gps") or {}).get("searching"):
+        return "the GPS reads as searching"
+    clock = g.get("clock") or {}
+    if clock.get("kind") != "unreliable":
+        return f"clock {clock!r}"
+    acc = next((l for l in g.get("lines") or [] if l.get("kind") == "accuracy"), {})
+    if acc.get("reasonCode") != "gps clock":
+        return f"the accuracy's row reads {acc.get('reason')!r}"
+    return None
+
+
+def end_glance_clock(c):
+    c.srv.call("POST", "/readout/skew?ms=0&clearLog=1")
+    end_glance_gps(c)
+# end T385
+
+
+# T386
+DETAIL_ORDER = ["less", "medium", "full"]  # the sheet's choices, top to bottom
+
+
+def paradise_pack(c):
+    """T386: the name of a pack on the phone whose bounds hold Paradise (`GET /areas/rows`), or None."""
+    for r in (c.srv.ok("GET", "/areas/rows") or {}).get("rows") or []:
+        b = r.get("bounds") or []
+        if r.get("pack") and len(b) == 4 and b[0] <= PARADISE[1] <= b[2] and b[1] <= PARADISE[0] <= b[3]:
+            return r["pack"]
+    return None
+
+
+def scr_area_detail(c):
+    """T386: the Offline maps list with a drawn area's row open on its Detail sheet (`POST /areas/ui?sheet=`): an area around
+    Paradise kept as tiles at medium detail, recorded from the Rainier pack's own vector tiles (T377's fixture, `POST
+    /areas/fixture/tiles`, no network), so the sheet lists Less (with its line on search), Medium (now) and Full, each with its
+    size, worked out first (checked: `GET /areas/{id}/detail` `options`). end_area_detail closes the sheet and deletes the area."""
+    pack = paradise_pack(c)
+    if not pack:
+        raise RuntimeError("no pack on the phone covers Paradise: the fixture copies its tiles")
+    seeded = c.srv.ok("POST", "/areas/fixture/tiles?pack=" + urllib.parse.quote(pack), timeout=120.0) or {}
+    c.detail_area = seeded.get("id")
+    if not c.detail_area:
+        raise RuntimeError(f"no area seeded: {json.dumps(seeded)[:200]}")
+    d = c.srv.ok("GET", f"/areas/{c.detail_area}/detail", timeout=120.0) or {}
+    opts = d.get("options") or []
+    if [o.get("detail") for o in opts] != DETAIL_ORDER or [o.get("now") for o in opts] != [False, True, False]:
+        raise RuntimeError(f"the sheet's choices are not Less, Medium (now), Full: {json.dumps(opts)[:300]}")
+    c.srv.ok("POST", "/packs/ui?show=true")
+    c.srv.ok("POST", f"/areas/ui?sheet={c.detail_area}")
+    time.sleep(2.5)  # the sheet works its sizes out off the UI thread
+
+
+def end_area_detail(c):
+    c.srv.call("POST", "/areas/ui?sheet=0")
+    aid = getattr(c, "detail_area", None)
+    if aid:
+        c.srv.call("DELETE", f"/areas/{aid}")
+    c.detail_area = None
+    c.srv.call("POST", "/packs/ui?show=false")
+# end T386
+
+
 # (name, setup, teardown or None, layer): "map" for the map with a card up (its controls checked, GET /layout's semanticsAway
 # applies), "screen" for a screen or sheet opened over it (the map's controls under it are one `covered` finding).
 # close_all runs before every screen; a teardown is for what it does not close.
@@ -1842,6 +1935,12 @@ SCREENS = [
     ("recording-stale-unfolded", scr_recording_stale_unfolded, end_recording_stale_unfolded, "map"),
     ("activity-covered", scr_activity_covered, end_activity_covered, "map"),
     # end T381
+    # T385
+    ("glance-clock", scr_glance_clock, end_glance_clock, "screen"),
+    # end T385
+    # T386
+    ("area-detail", scr_area_detail, end_area_detail, "screen"),
+    # end T386
 ]
 
 
