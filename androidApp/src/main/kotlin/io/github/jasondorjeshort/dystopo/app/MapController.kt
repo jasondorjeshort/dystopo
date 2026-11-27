@@ -234,6 +234,7 @@ class MapController {
             m.addOnCameraMoveStartedListener { reason ->
                 animating = true
                 lastCameraAt = SystemClock.elapsedRealtime()
+                openEvent("move:$reason") // T382: what moved the camera in the window
                 if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) endOpenWindow("gesture") // T162
             }
             m.addOnCameraIdleListener {
@@ -876,6 +877,18 @@ class MapController {
         @Volatile var endedAfterMs: Long? = null
         @Volatile var recentredTo: Map<String, Any?>? = null
         @Volatile var fixesInWindow = 0
+        /** T382: rests taken as the app's own placement under a world open (the window kept open). */
+        @Volatile var restsKept = 0
+        /** T382: the camera's moves and rests in the first [EVENTS_MAX] after open, each with its time since open. */
+        val events: MutableList<Map<String, Any?>> = java.util.Collections.synchronizedList(ArrayList())
+        fun event(what: String, sinceMs: Long) {
+            if (events.size < EVENTS_MAX) events.add(linkedMapOf("what" to what, "afterMs" to sinceMs, "window" to window))
+        }
+    }
+
+    private fun openEvent(what: String) {
+        val o = opened ?: return
+        o.event(what, SystemClock.elapsedRealtime() - o.atElapsed)
     }
 
     @Volatile private var opened: Opened? = null
@@ -910,6 +923,7 @@ class MapController {
         val o = opened ?: return
         if (o.window != "open") return
         val since = SystemClock.elapsedRealtime() - o.atElapsed
+        o.event("fix", since)
         if (since > o.windowMs) { endOpenWindow("expired"); return }
         o.fixesInWindow++
         if (!OpenView.recentres(o.choice.view, fix, since, System.currentTimeMillis())) return
@@ -921,10 +935,23 @@ class MapController {
         endOpenWindow("recentred")
     }
 
-    /** T162: the camera came to rest (main thread): saved unless the app put it there; a move away ends the open window. */
+    /**
+     * T162: the camera came to rest (main thread): saved unless the app put it there; a move away ends the open window.
+     * T382: under a world open, a rest while the window is open is the app's own ([OpenView.restIsOwnPlacement]).
+     */
     private fun atRest(m: MapLibreMap) {
         val c = m.cameraPosition
         val t = c.target ?: return
+        opened?.let { o ->
+            val since = SystemClock.elapsedRealtime() - o.atElapsed
+            o.event("rest", since)
+            if (o.window == "open" && since > o.windowMs) endOpenWindow("expired")
+            if (OpenView.restIsOwnPlacement(o.choice.source, o.window == "open", since, o.windowMs)) {
+                o.restsKept++ // the world view settling, not the user's move: not saved, the window stays open
+                placed = ViewAt(t.latitude, t.longitude, c.zoom, c.bearing, System.currentTimeMillis())
+                return
+            }
+        }
         val p = placed
         if (p != null && distanceM(p.lat, p.lon, t.latitude, t.longitude) < PLACED_TOLERANCE_M && kotlin.math.abs(p.zoom - c.zoom) < 0.01) return
         placed = null
@@ -946,6 +973,7 @@ class MapController {
             "window" to linkedMapOf(
                 "ms" to o.windowMs, "state" to o.window, "endedAfterMs" to o.endedAfterMs,
                 "fixes" to o.fixesInWindow, "recentredTo" to o.recentredTo,
+                "restsKept" to o.restsKept, "events" to synchronized(o.events) { o.events.toList() },
             ),
             "lastFix" to LastFix.json(),
             "savedNow" to view(SavedView.get()), "savedWrites" to SavedView.writes,
@@ -996,6 +1024,8 @@ class MapController {
     companion object {
         /** T162: a rest this close to where the app put the camera (at the same zoom) is the app's placement, not saved. */
         const val PLACED_TOLERANCE_M = 1.0
+        /** T382: how many camera moves and rests after open `GET /camera` `openView.window.events` lists. */
+        const val EVENTS_MAX = 24
 
         /** How long everything must stay settled before the map counts as idle. */
         const val QUIET_MS = 500L
