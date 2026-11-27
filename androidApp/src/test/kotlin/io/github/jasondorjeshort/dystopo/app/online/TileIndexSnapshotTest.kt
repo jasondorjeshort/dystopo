@@ -300,6 +300,56 @@ class TileIndexSnapshotTest {
     }
 
     @Test
+    fun aPutRacingAWriteOfTheSnapshotIsIndexedAfterTheNextLoad() {
+        val a0 = seeded()
+        a0.saveSnapshot("test")
+        kill(a0)
+        val a = cache()
+        assertTrue(a.fromSnapshot)
+        val k = "s_1/dem@v1/12/650/1489.png"
+        val renamed = java.util.concurrent.CountDownLatch(1)
+        val goOn = java.util.concurrent.CountDownLatch(1)
+        a.putHook = { if (it == k) { renamed.countDown(); goOn.await(10, java.util.concurrent.TimeUnit.SECONDS) } }
+        val putter = Thread { a.put(k, ByteArray(17)) }
+        putter.start()
+        assertTrue(renamed.await(10, java.util.concurrent.TimeUnit.SECONDS), "the put's record written and its file renamed")
+        // A whole write in the gap before the put's add: the journal turns over, the copy lacks the entry, `.old` (with the record) goes.
+        assertEquals("written", a.saveSnapshot("test", force = true))
+        assertFalse(File(root, "online/tiles.index.journal.old").exists())
+        goOn.countDown()
+        putter.join(10_000)
+        kill(a)
+        val b = cache()
+        assertTrue(b.fromSnapshot, "the snapshot is read (no walk to find the file): ${b.snapshotLoad}")
+        assertEquals(1, b.journalLoad?.get("records"), "the put journalled again after the turnover: ${b.journalLoad}")
+        assertEquals(diskKeys(), keys(b), "the file is in the index, not only on disk")
+        assertEquals(diskKeys().values.sum(), b.bytes)
+    }
+
+    @Test
+    fun aJournalThatCannotBeMadeAtAWriteMeansAWalk() {
+        val a0 = seeded()
+        a0.saveSnapshot("test")
+        kill(a0)
+        val a = cache()
+        a.turnoverHook = { throw java.io.IOException("No space left on device") }
+        a.put("s_1/dem@v1/12/650/1488.png", ByteArray(9))
+        assertEquals("error", a.saveSnapshot("test"))
+        assertTrue((a.lastSave?.get("error") as String).contains("the journal could not be made"), "${a.lastSave}")
+        assertFalse(snap.exists(), "the snapshot is not trusted any more")
+        a.put("s_1/dem@v1/12/650/1487.png", ByteArray(8)) // not journalled: nothing could hold it
+        kill(a)
+        val b = cache()
+        assertFalse(b.fromSnapshot)
+        assertEquals("none", b.snapshotLoad?.get("why"))
+        assertEquals(diskKeys(), keys(b), "the walk found both")
+        // A later write that can make its journal trusts the snapshot again.
+        assertTrue(waitFor { b.lastSave?.get("reason") == "walk" })
+        kill(b)
+        assertTrue(cache().fromSnapshot)
+    }
+
+    @Test
     fun aWalkKilledMidwayResumesFromItsCheckpoint() {
         for (x in 0 until 6) for (y in 0 until 10) File(dir, "s_1/dem@v1/12/${700 + x}/${1500 + y}.png").apply { parentFile.mkdirs() }.writeBytes(ByteArray(10 + y))
         val gate = TestGate()

@@ -415,6 +415,20 @@ class TileCache(
     }
 
     /**
+     * T390 (the verifier's gap 1): times [fold] turned the journal over. A put reads it before its record and again after
+     * its add to the index: a turnover in between may have put the record in the journal that write deletes while the
+     * write's copy of the entries ran before the add, so the put is journalled again, into the new journal. A turnover
+     * after the add finds the entry in the copy. No put waits for a write of the snapshot.
+     */
+    @Volatile private var turnovers = 0L
+
+    /** T390 (tests): called by [put] between its file's rename and its add to the index. */
+    @Volatile internal var putHook: ((String) -> Unit)? = null
+
+    /** T390 (tests): called by [fold] as it makes the new journal (a test throws to make the turnover fail). */
+    @Volatile internal var turnoverHook: (() -> Unit)? = null
+
+    /**
      * T390: removes, written after the files were deleted (a kill between leaves an entry with no file, which a [get] or the
      * next eviction drops, never a file with no entry); a key the index holds again (a put meanwhile) is left out.
      */
@@ -1260,6 +1274,7 @@ class TileCache(
             }
             val newGen: Long
             val folded: Int
+            var turnoverFailed: Throwable? = null
             synchronized(journalLock) {
                 openJournalLocked()
                 folded = journalRecords
@@ -1270,18 +1285,27 @@ class TileCache(
                 val jo = journalOld!!
                 jo.delete()
                 if (jf.isFile && !jf.renameTo(jo)) jf.delete()
+                turnovers++
                 try {
                     jf.parentFile?.mkdirs()
+                    turnoverHook?.invoke()
                     FileOutputStream(jf).use { it.write(TileJournal.header(newGen, boot)) }
                     journalOut = FileOutputStream(jf, true)
                     journalBase = newGen
                     journalScan = null
                 } catch (t: Throwable) {
-                    journalBase = 0
-                    journalError = "${t.javaClass.simpleName}: ${t.message}"
+                    // T390 (the verifier's gap 2): no journal to hold the changes after this write (a full disk): as a
+                    // failed append, the snapshot is not trusted (the next start walks); no snapshot is written now.
+                    journalFailed(t)
+                    turnoverFailed = t
                 }
                 journalRecords = 0
                 journalBytes = jf.length()
+            }
+            turnoverFailed?.let { t ->
+                touched = true
+                lastSave = linkedMapOf("reason" to reason, "error" to "the journal could not be made: ${t.javaClass.simpleName}: ${t.message}", "at" to clock())
+                return "error"
             }
             val t0 = System.nanoTime()
             val e = copyEntries()
@@ -1513,9 +1537,11 @@ class TileCache(
         }
         val now = clock()
         val minute = minuteOf(now)
+        val turned = turnovers
         journalPut(key, stored.size, minute) // T390: before the rename, so no file outlives a kill unrecorded
         if (!placeWrite(key, tmp, file)) return
         file.setLastModified(now)
+        putHook?.invoke(key)
         val pinned = keep(key)
         synchronized(lock) {
             removed?.remove(key)
@@ -1533,6 +1559,7 @@ class TileCache(
                 addEntry(key, stored.size, minute, pinned)
             }
         }
+        if (turnovers != turned) journalPut(key, stored.size, minute) // T390: a write turned the journal over meanwhile
         writes.incrementAndGet()
         trimIfOver()
         onWrite?.invoke() // T112: outside the lock; the budget only reads totals here
