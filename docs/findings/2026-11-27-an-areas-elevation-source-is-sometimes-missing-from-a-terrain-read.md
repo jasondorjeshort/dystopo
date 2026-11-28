@@ -58,7 +58,25 @@ probe's failures apart (`GET /online` `fetcher.probeFailures`). The read's area 
 (`TileService.heldAreas()`) is a 2 s memo of `Areas.lookupHoldings()`, itself rebuilt whenever the
 areas' list changes, so a read right after a seed can miss the area for up to 2 s; not shown yet.
 
+T391's runs (2026-11-27, `task/T391`, API 35 emulators): `features-sky` twice with the fixture's
+server pinned unreachable, and `peaks-tiles` once by hand with it pinned to a reachable server of
+the run's own (`DYSTOPO_FIXTURE_SERVER`). All three read the same way: the terrain's `maps` empty,
+every cell from the online source (the area's cached tiles under the fetcher's keys), the read
+complete, no request from the read (`readErrors` 0; in one run the probe's own failure was the one
+`errors` count, `probeFailures` 1), 21 peaks named from the area. `GET /holdings` before airplane
+mode named the online member `allowed` in each, so the online source ranked ahead of the area by
+its depth (T368's `onlineByDepth`, z15 against the area's z13). The path that names the area showed
+in none of the three; in the closing sweep of wave 49, with the dead device server set, the online
+member read not allowed (`offline`) and the area was named. So which path a read takes follows the
+online member's `allowed` when the read opens, a state the fixture now pins but which still moves
+with the fetcher's first probe after the pin.
+
 ## Next
+
+T391 leaves this open: the two server states were shown, and the two paths were not both shown under
+them, so the cause is the reading above, not a run that flips it. Next: one run with the online
+member held not allowed at the read (Mobile data off, or the probe's first failure waited for)
+against one with it allowed, each with the read's source list logged; then 2 to 4 below.
 
 1. Reproduce off the sweep: seed the fixture, then read `GET /horizon` repeatedly with the pack off,
    with the fetcher forced online and offline, and log the read's source list each time.
