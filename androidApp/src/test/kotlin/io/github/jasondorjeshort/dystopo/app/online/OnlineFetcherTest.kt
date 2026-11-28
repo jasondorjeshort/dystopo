@@ -92,6 +92,24 @@ class OnlineFetcherTest {
         assertEquals(1, f.generation, "one offline-to-online transition")
     }
 
+    /**
+     * T391 (the closing sweep of wave 49, `features-sky` peaks-tiles): the probe's failures count among the errors and apart
+     * from them, so a reader can tell the probe loop's tries from its own work's.
+     */
+    @Test
+    fun theProbesFailuresAreCountedApart() {
+        val f = fetcher { throw ConnectFailed("connection refused") }
+        assertEquals(null, f.probe())
+        assertEquals(1L, f.errors.get())
+        assertEquals(1L, f.probeFailures.get())
+        assertIs<Fetch.Unavailable>(f.get("dem", "8/1/1.png")) // in the backoff the probe started: no try, no error
+        now += 6_000
+        assertIs<Fetch.Unavailable>(f.get("dem", "8/1/2.png")) // a tile's own try
+        assertEquals(2L, f.errors.get())
+        assertEquals(1L, f.probeFailures.get(), "a tile's failure is not the probe's")
+        assertEquals(1L, f.json()["probeFailures"])
+    }
+
     @Test
     fun cachedTilesStillServeWhileOffline() {
         var up = true

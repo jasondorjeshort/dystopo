@@ -5307,6 +5307,36 @@ TILE_AREA_NAME = "Paradise tiles"  # AreaRoutes.seedTileArea's default name
 SEARCH_TILES_AT = (46.7865, -121.7353)  # Paradise (the place point), inside the fixture's ring
 SEARCH_TILES_LINE = r"^Map and place search, no routes$"  # OfflineMapList.HOLDS_TILES
 DRAW_TILES_LINE = r"^A drawn area is kept as map tiles: place search works in it, routes do not\.$"  # AreaPicker.DRAW_TILES_LINE
+# T391: the server the fixture pins on the debug build for its run: one that never answers (the host's port 9, where nothing
+# listens), so the steps read what the phone holds with the online source unreachable, whatever server an earlier part left
+# set (the closing sweep of wave 49 found the sweep's device server, stopped after the debug parts, still set there) and
+# whatever the sweep's mode. Not "none": the fixture keeps the area's tiles under an online source's keys, as a download does.
+# Never a public source, and nothing is fetched (the seeding copies a pack's tiles).
+# DYSTOPO_FIXTURE_SERVER overrides it for a run by hand (the two server states compared for the terrain read finding).
+FIXTURE_SERVER = os.environ.get("DYSTOPO_FIXTURE_SERVER") or "http://10.0.2.2:9"
+
+
+def _pin_server(srv, url, timeout=30):
+    """T391: sets the debug build's server to [url] with the direct sources off; returns what it found (to restore) and
+    whether `GET /online` named [url] as the fetcher's server within [timeout] s."""
+    _, st = srv.call("GET", "/settings")
+    _, d = srv.call("GET", "/firstrun/direct")
+    found = {"server": (st or {}).get("server") or "", "direct": bool((d or {}).get("enabled"))}
+    srv.call("POST", "/firstrun/direct?on=0")
+    srv.call("POST", "/settings?server=" + urllib.parse.quote(url, safe=""))
+    deadline = time.time() + timeout
+    while True:
+        _, o = srv.call("GET", "/online")
+        named = ((o or {}).get("fetcher") or {}).get("server") == url
+        if named or time.time() >= deadline:
+            return found, named
+        time.sleep(0.5)
+
+
+def _restore_server(srv, found):
+    """T391: puts back the server and the direct sources [_pin_server] found."""
+    srv.call("POST", "/settings?server=" + urllib.parse.quote(found.get("server") or "", safe=""))
+    srv.call("POST", f"/firstrun/direct?on={1 if found.get('direct') else 0}")
 
 
 def _free_port():
@@ -5365,7 +5395,12 @@ def tile_area_fixture(dev, args, body, skip_open_case=None):
     fx = {"srv": srv, "dev": dev, "pack": None, "area": None}
     pack = None
     result = None
+    found = None
     try:
+        found, pinned = _pin_server(srv, FIXTURE_SERVER)  # T391: no server state left by an earlier part
+        fx["server"] = {"pinned": FIXTURE_SERVER, "found": found["server"], "foundDirect": found["direct"]}
+        if not pinned:
+            return fail(f"the debug build did not take the fixture's server {FIXTURE_SERVER} (found {found})")
         pack = _paradise_pack(srv)
         if not pack:
             return fail("no pack on the debug build covers Paradise (GET /areas/rows): the fixture copies its tiles")
@@ -5399,6 +5434,8 @@ def tile_area_fixture(dev, args, body, skip_open_case=None):
             srv.call("POST", "/areas/picker/close")
             srv.call("POST", "/areas/ui?open=0")
             srv.call("POST", "/search/clear")
+            if found is not None:
+                _restore_server(srv, found)  # T391
         except Exception as e:  # the cleanup is reported by the step's own checks; never raised over its result
             print(f"[ui] tile area fixture cleanup: {type(e).__name__}: {e}", file=sys.stderr)
         if not was_running:
@@ -5408,6 +5445,7 @@ def tile_area_fixture(dev, args, body, skip_open_case=None):
         open_map(dev, *PARADISE, 13)  # the release build in front again
     if isinstance(result, dict):
         result["packsOffAfter"] = fx.get("packsOffAfter")
+        result["server"] = fx.get("server")  # T391
         if fx.get("packsOffAfter"):
             result.update(ok=False, error=f"maps left off after the step: {fx['packsOffAfter']}")
     return result
@@ -5453,11 +5491,17 @@ def search_tiles_step(dev, args):
             errors.append(f"GET /search?q=Paradise: {out['search']}")
         if not entry or entry.get("status") != "ready" or entry.get("tilesMissing") != 0:
             errors.append(f"the area's index is not ready with no tile missing: {out['status']}")
+        _, cam = srv.call("GET", "/camera")  # T391: the zoom the route's coverage is read at, for a reader of a failure
+        out["cameraZoom"] = ((cam or {}).get("camera") or cam or {}).get("zoom")
         code, route = srv.call("POST", f"/route?from={lat},{lon}&to=46.8024,-121.7289&mode=hike")
         out["route"] = {"code": code, "reason": ((route or {}).get("details") or {}).get("reason") or (route or {}).get("reason"),
                         "message": (route or {}).get("message")}
         if "tiles-only" not in json.dumps(route or {}):
             errors.append(f"a route inside the area does not answer tiles-only: {out['route']}")
+        # T391: the route card's line there, with the fixture's server unreachable (RouteSession.ROUTE_TILES_ONLY), reported.
+        n, nodes = dev.wait_for(r"^Routes need an offline map here; this area has map tiles only$", 10)
+        out["routeCard"] = next((t for t in dev.texts(nodes) if t.startswith("Routes need")), None)
+        out["routePng"] = dev.screencap("search-tiles-route")[0]
         srv.call("POST", "/route/clear")
         # The frames: the search box with its results, the area's row in Offline maps, and Draw an area.
         srv.call("POST", f"/search/ui?focus=1&q=Paradise")
@@ -5800,13 +5844,21 @@ def peaks_tiles_step(dev, args):
             srv.call("POST", "/horizon?peaks=1")
         try:
             airplane(dev, True)
-            time.sleep(2)
+            # T391: waited for, not slept: the app's one network rule (`GET /online` `chip.network`) reads no network.
+            t_net = time.time()
+            while True:
+                _, o = srv.call("GET", "/online")
+                if ((o or {}).get("chip") or {}).get("network") is False or time.time() - t_net > 20:
+                    break
+                time.sleep(0.5)
+            out["networkOff"] = {"read": ((o or {}).get("chip") or {}).get("network") is False, "afterS": round(time.time() - t_net, 1)}
 
             def fetcher():
                 _, o = srv.call("GET", "/online")
                 f = (o or {}).get("fetcher") or {}
                 d = (o or {}).get("direct") or {}
-                return {**{k: f.get(k) for k in ("state", "requests", "cacheHits", "fetches", "notFound", "errors")},
+                return {**{k: f.get(k) for k in ("state", "requests", "cacheHits", "fetches", "notFound", "errors", "probeFailures")},
+                        "recentErrors": f.get("recentErrors"),
                         "isDirect": d.get("direct") is True, "directRequests": d.get("requests"), "directOfflineFailures": d.get("offlineFailures")}
             f0 = fetcher()
             h = _open_sky_at(srv, lat, lon)
@@ -5818,11 +5870,15 @@ def peaks_tiles_step(dev, args):
             # cache keys, ahead of it by depth while the fetcher reads online: ADR 0066) is reported, not asserted.
             hz = (h or {}).get("horizon") or {}
             terrain = hz.get("terrain") or {}
-            net = {k: (f1.get(k) or 0) - (f0.get(k) or 0) for k in ("requests", "cacheHits", "fetches", "notFound", "errors", "directRequests", "directOfflineFailures")}
+            net = {k: (f1.get(k) or 0) - (f0.get(k) or 0) for k in ("requests", "cacheHits", "fetches", "notFound", "errors", "probeFailures", "directRequests", "directOfflineFailures")}
+            # T391: the probe loop asks the (unreachable) server every few seconds whatever the read does; its own failures
+            # (`probeFailures`, counted in `errors` too) are not the read's. A `/version` check or a fetch the read made is.
+            net["readErrors"] = net["errors"] - net["probeFailures"]
             out["terrainPackOff"] = {"horizonReason": (h or {}).get("horizonReason"), "source": hz.get("source"),
                                      "maps": terrain.get("maps"), "online": terrain.get("online"), "complete": terrain.get("complete"),
                                      "cells": terrain.get("cells"), "fetcherBefore": f0.get("state"), "fetcherAfter": f1.get("state"),
-                                     "fetcherDelta": net, "read": {k: v for k, v in terrain.items() if k not in ("text",)}}
+                                     "fetcherDelta": net, "recentErrors": [e for e in (f1.get("recentErrors") or []) if e not in (f0.get("recentErrors") or [])],
+                                     "read": {k: v for k, v in terrain.items() if k not in ("text",)}}
             if not hz:
                 errors.append(f"with the pack off and no network, no terrain horizon at Paradise: {out['terrainPackOff']}; {out['demHere']}")
                 return {"ok": False, **out, "error": "; ".join(errors)}
@@ -5831,7 +5887,7 @@ def peaks_tiles_step(dev, args):
             # A request to the network: a server's fetch (with a server set a fetch is an HTTP request), any fetch error or miss,
             # or a direct source's HTTP range request or offline failure. With the direct sources a fetch renders a tile from
             # their range blocks kept on the phone, which needs no network, so it is reported, not counted.
-            went = {k: net[k] for k in ("notFound", "errors", "directRequests", "directOfflineFailures") if net[k]}
+            went = {k: net[k] for k in ("notFound", "readErrors", "directRequests", "directOfflineFailures") if net[k]}
             if not f0.get("isDirect") and net["fetches"]:
                 went["fetches"] = net["fetches"]
             if went:
