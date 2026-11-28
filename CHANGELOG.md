@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-28
+
+- T395: The long press's composed elevation pyramid starts at the point's zoom and allocates a gigabyte
+
 ## v0.1.45-alpha (2026-11-28)
 
 ### 2026-11-28
