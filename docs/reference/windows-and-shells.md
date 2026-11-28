@@ -84,8 +84,11 @@ What holds on the development machine for every agent. The rules these facts sup
   does (finding `../findings/2026-10-13-inherited-pipe-handles.md`).
 - adb on this machine loses a host `adb forward` now and then, and under load a screen capture comes back
   empty or cut short; the device scripts retry both and count them (`captureRetries`, `forwardRestores`,
-  `incompleteReadRetries`; `android-emulator.md` › Known quirks, T185). On Windows a refused connection to
-  127.0.0.1 takes about 2 s to fail, so a re-forward costs that much more.
+  `incompleteReadRetries`; `android-emulator.md` › Known quirks, T185). The forward goes when the emulator's
+  transport closes (`%TEMP%db.log`: `connection terminated: read failed`); since T394 the device tour waits up to
+  15 s for `GET /health` after bringing it back before it sends again. On Windows a refused connection to
+  127.0.0.1 takes about 2 s to fail, so a re-forward costs that much more; a listener that comes back within those
+  2 s is still reached by the same connect.
 
 ## Shared state
 

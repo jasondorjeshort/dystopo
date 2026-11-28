@@ -86,6 +86,9 @@ records the device port and that a request without the token got 401.
 T185: a request refused on the host port (adb on the second PC drops a forward now and then) forwards it again to
 the app's device port and is sent once more; a GET whose body arrives cut short (IncompleteRead) is asked once more,
 a POST never. The summary's `connection` counts both (forwardRestores, incompleteReadRetries, tokenRefreshes, events).
+T394: a GET whose connection is refused or dropped (adb drops the forwards when the emulator's transport closes) has the
+forward brought back, waits until GET /health answers (at most 15 s) and is sent again, up to three times; a POST is sent
+again only after a refusal, once. `connection` adds logcatRereads, resent, recovered, unrecovered and portWaitMaxS.
 
 Device selection: --port is the host port forwarded to the app (tools/android-emu.ps1 -Port). With
 --serial (or ANDROID_SERIAL) the script refuses a port that `adb forward --list` maps to another serial
@@ -208,7 +211,23 @@ class Server:
     never taking a port another device holds; the logcat read again when the port is not known) and is sent once more,
     counted in `counters["forwardRestores"]`. A GET whose body arrives cut short (http.client.IncompleteRead, seen on a
     screenshot under a parallel build) is asked once more (`incompleteReadRetries`); a POST is never repeated for it.
-    The tour's summary carries the counters as `connection`."""
+    The tour's summary carries the counters as `connection`.
+
+    T394: the third closing sweep's second runs lost the forward in the middle of a /screenshot body: adb drops a device's
+    forwards when the emulator's transport closes (adb.log "connection terminated: read failed"), so the body is cut short,
+    the next connection is accepted and closed with no answer or refused, and the port answers again about 2 s later. Before
+    T394 a dropped connection took the logcat path silently and used up the one retry, and the send straight after the
+    forward was refused. Now every connection failure of a GET (refused or dropped) brings the forward back (`recover`:
+    --no-rebind after a refusal, else the logcat line), waits until GET /health answers (`wait_port`, at most PORT_WAIT_S,
+    forwarding again while refused) and sends again, up to RECOVERIES times per request. A POST is sent again only after a
+    refusal (it never reached the app), once; a POST whose connection dropped may have reached it and is never resent.
+    Counters: forwardRestores, logcatRereads, resent, recovered, unrecovered, portWaitMaxS, with an event per recovery."""
+
+    # T394: the bound of the wait after a forward is restored. In the rerun the port answered about 2 s after the refusal;
+    # the full sweep's run 2 saw two transport closes 9.5 s apart (06:21:10.8 and 06:21:20.2 in adb.log), so 15 s covers
+    # a second close during the wait and stays far under the tour's request timeouts (30 to 180 s).
+    PORT_WAIT_S = 15.0
+    RECOVERIES = 3
 
     def __init__(self, port, exe=None, serial=None):
         self.port = port
@@ -217,22 +236,24 @@ class Server:
         self.serial = serial
         self.token = None
         self.device_port = None
-        self.counters = {"forwardRestores": 0, "incompleteReadRetries": 0, "tokenRefreshes": 0}
+        self.counters = {"forwardRestores": 0, "incompleteReadRetries": 0, "tokenRefreshes": 0, "logcatRereads": 0,
+                         "resent": 0, "recovered": 0, "unrecovered": 0, "portWaitMaxS": 0.0}
         self.events = []  # the first few retries: what failed and what was done
+        self.port_wait_s = self.PORT_WAIT_S
 
     def note(self, what):
         if len(self.events) < 20:
             self.events.append(f"{time.strftime('%H:%M:%S')} {what}")
         print(f"[server] {what}", file=sys.stderr)
 
-    def restore_forward(self):
+    def restore_forward(self, quiet=False):
         """T185: forward the host port again to the app's device port; False when that is not possible (no adb, the port
         not known yet, or adb refused, such as another device holding the port), so the caller reads logcat again."""
         if not (self.exe and self.serial and self.device_port):
             return False
         code, out = android_debug.adb(self.exe, self.serial, "forward", "--no-rebind", f"tcp:{self.port}",
                                       f"tcp:{self.device_port}", timeout=30)
-        if code != 0:
+        if code != 0 and not quiet:
             self.note(f"adb forward tcp:{self.port} tcp:{self.device_port} failed: {out.strip()[:200]}")
         return code == 0
 
@@ -248,7 +269,8 @@ class Server:
         self.token = None
 
     def _open(self, path, method="GET", timeout=30.0):
-        attempt, reread, restored = 0, False, False
+        token_retry, cut_retry, recoveries = False, False, 0
+        short = path.split("?")[0]
         while True:
             if self.token is None:
                 self.fetch_token(min(timeout, 10.0))
@@ -256,31 +278,97 @@ class Server:
                                          headers={"X-Dystopo-Token": self.token})
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
-                    return r.read()
+                    body = r.read()
+                if recoveries:
+                    self.counters["recovered"] += 1
+                return body
             except urllib.error.HTTPError as e:
-                if e.code != 401 or attempt:
+                if e.code != 401 or token_retry:
                     raise
+                token_retry = True
                 self.counters["tokenRefreshes"] += 1
                 self.token = None  # the app was relaunched: fetch its new token and retry once
             except http.client.IncompleteRead as e:
-                if method != "GET" or reread:
+                if method != "GET" or cut_retry:
                     raise  # T185: a POST is never sent twice
-                reread = True
+                cut_retry = True
                 self.counters["incompleteReadRetries"] += 1
-                self.note(f"GET {path.split('?')[0]}: {len(e.partial)} bytes of the body arrived; asked again")
-                continue  # does not use up the retry below
+                self.note(f"GET {short}: {len(e.partial)} bytes of the body arrived; asked again")
             except (urllib.error.URLError, ConnectionError, http.client.RemoteDisconnected) as e:
-                if attempt or not self.serial:
+                if not self.serial:
                     raise
-                if refused(e):
+                # T394: a GET recovers up to RECOVERIES times; a POST only from a refusal (it never reached the app), once.
+                was_refused = refused(e)
+                if recoveries >= (self.RECOVERIES if method == "GET" else 1) or (method != "GET" and not was_refused):
+                    self.counters["unrecovered"] += 1
+                    self.note(f"{method} {short}: {self.failure(e)}; not sent again"
+                              f"{f' after {recoveries} recover' + ('y' if recoveries == 1 else 'ies') if recoveries else ' (a POST that may have reached the app)' if method != 'GET' else ''}")
+                    raise
+                recoveries += 1
+                self.recover(method, short, e)  # raises when the port does not answer within port_wait_s
+                self.counters["resent"] += 1
+                cut_retry = False  # the next body comes over a new forward
+
+    @staticmethod
+    def failure(e):
+        if refused(e):
+            return "connection refused"
+        reason = getattr(e, "reason", e)
+        return f"connection dropped ({type(reason).__name__})"
+
+    def recover(self, method, short, e):
+        """T394: brings the forward back after a failed connection and waits until the port answers. A refusal means adb
+        no longer listens on the host port (it drops a device's forwards when the emulator's transport closes): forwarded
+        again with --no-rebind. A connection accepted and closed with no answer means adb listens with nothing behind it
+        (the transport going away, or the app on a new device port, T57): the app's logcat line read again and forwarded
+        (rebinding). Either way GET /health is then polled until the port answers (`wait_port`), since in the third closing
+        sweep the port answered only about 2 s after a forward made while the transport came back."""
+        what = self.failure(e)
+        how = None
+        if refused(e) and self.restore_forward():
+            self.counters["forwardRestores"] += 1
+            how = f"forwarded tcp:{self.port} again"
+        else:
+            self.counters["logcatRereads"] += 1
+            self.token = None
+            try:
+                self.fetch_token(10.0)
+                how = f"read logcat and forwarded tcp:{self.port} to {self.device_port}"
+            except (RuntimeError, OSError, subprocess.SubprocessError) as err:
+                how = f"logcat read failed ({str(err)[:80]})"  # wait_port still forwards again while the port is refused
+        waited, answered, last = self.wait_port()
+        self.counters["portWaitMaxS"] = max(self.counters["portWaitMaxS"], waited)
+        if not answered:
+            self.counters["unrecovered"] += 1
+            msg = (f"{method} {short}: {what}; {how}; the port did not answer GET /health within {self.port_wait_s:g} s "
+                   f"({self.failure(last) if last is not None else 'no try'})")
+            self.note(msg)
+            raise urllib.error.URLError(msg)
+        self.note(f"{method} {short}: {what}; {how}; the port answered GET /health after {waited:.1f} s; sent again")
+
+    def wait_port(self):
+        """T394: GET /health on the host port until it answers (any HTTP status: a 401 drops the token, so the next send
+        reads it again), forwarding the port again (--no-rebind, quietly) while it is refused, for at most port_wait_s.
+        Returns (seconds waited, answered, the last failure)."""
+        t0 = time.time()
+        last = None
+        while True:
+            try:
+                req = urllib.request.Request(self.base + "/health", headers={"X-Dystopo-Token": self.token or ""})
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    r.read()
+                return round(time.time() - t0, 2), True, None
+            except urllib.error.HTTPError as err:
+                if err.code == 401:
+                    self.token = None
+                return round(time.time() - t0, 2), True, None
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as err:
+                last = err
+                if refused(err) and self.restore_forward(quiet=True):
                     self.counters["forwardRestores"] += 1
-                    if not restored and self.restore_forward():
-                        restored = True  # a forward to a port the app has since left still gets the logcat path below
-                        self.note(f"{method} {path.split('?')[0]}: connection refused; forwarded tcp:{self.port} again")
-                        continue
-                    self.note(f"{method} {path.split('?')[0]}: connection refused; reading logcat and forwarding again")
-                self.token = None  # T57: relaunched on a new port: read logcat again and re-forward
-            attempt += 1
+            if time.time() - t0 >= self.port_wait_s:
+                return round(time.time() - t0, 2), False, last
+            time.sleep(0.25)
 
     def get(self, path, timeout=30.0):
         return self._open(path, timeout=timeout)
