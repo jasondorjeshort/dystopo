@@ -23,6 +23,7 @@ baseline and not for its script). The release went out on the first sweep's red 
 in a second folder, by the coordinator's ruling, so the release's record is two folders.
 
 Use: 2026-11-26, the coordinator (claude-fable-5-2): the same map from changed files to sweep parts chooses how far a verifier's sweep must run (`tools/verify-task.ps1 -SweepThrough`); in wave 48 T360 changed the online column and was verified through `a11y`, one part short of `two-maps`, the part that reads that column.
+Use: 2026-11-28, the coordinator (claude-fable-5-2): the same map decides the release gate after a fix to a red closing sweep; at wave 49's close T394 changed only the device tour's tool and two reference lines, and the coordinator ruled by hand that a counted rerun of `device-tour` on the new `main` stood for the sweep, where the three earlier fixes (app code) each took a whole sweep of two and a quarter hours.
 
 Waits: the coordinator, 2026-11-14, by the owner's leave ("The other decisions I leave to you, or get an
 independent review to confirm"; a critic confirmed). Trigger: a closing sweep run again twice in one wave for a
