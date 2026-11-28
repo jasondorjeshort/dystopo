@@ -1,20 +1,20 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-28, at the commit that carries this file (wave 49: the closing sweep red in four parts; T392 merged, T391 building), by the main session in the second clone
+Updated: 2026-11-28, at the commit that carries this file (wave 49: the closing sweep red in four parts; T392 merged, T391 with its verifier), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
 - **Wave 49: the closing sweep is red** on 358a755a (`dystopo-wt/sweep-w49`, `out\sweep-20261127-w49`): `startup`, `two-maps`, `features` (`search-tiles`) and `features-sky` (`peaks-tiles`), each an assertion or a budget; everything else green. No release; the hold on `main` is lifted. The fifteen tasks and T389 are merged; T391 and T392 on the board are the fixes (the paragraph above them has the figures and the order).
-- **In flight (2026-11-28 02:35 UTC):** T391's implementer (Opus; resumed for its builds and runs; its fixes are written: an area kept as tiles gives the tiles-only coverage whatever the network, the refresh behind reads as running from the moment it is asked, the probe's failures are counted apart, and the two fixture steps pin their own server, since the sweep stops the debug build's server before `features`). T392 is merged (55d38f08): the launch stages, green in sweep order. A Haiku chore cleans up T392 and moves `tools-main` to the tip.
+- **In flight (2026-11-28 05:20 UTC):** T391's verifier (Sonnet; `task/T391` at 35b2a6ea, on the tip; it runs `check`, then `two-maps`, `features` and `features-sky` in one run in sweep order and the two feature parts once more, each on a fresh emulator). The implementer's report is the scratchpad's `w49-plan/report-T391.txt` [no-check: a scratchpad file]: three causes fixed (the refresh behind read as idle in the gap before it was announced; an area kept as tiles read `no-map` for a route offline; the one error was the reachability probe's own), and the steps now pin their own server. T392 is merged (55d38f08) and cleaned up.
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
 - **On the PC:** restarted after the power cut, so the live viewer on 8765 and every emulator are down; stale locks and AVDs of the two cut-off emulators are their agents' to clear. The main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. The reports and verdicts for the merge bodies are in the first session's scratchpad folder, `w49-plan/` (it survived).
 
 ## Next
 
-1. T391's report, then a verifier (Sonnet; `-SweepThrough` is not needed for a step's change inside a part: the three parts alone, the feature parts twice), then the merge sequence.
+1. The verifier's verdict, then the merge sequence for T391 and its cleanup chore (Haiku).
 2. Then a full closing sweep again under a hold (the `sweep` skill; `-Prev` `dystopo-wt/sweep-w48/out/sweep-20261126-w48`, the same eleven `-First` names), and green: the release (v0.1.45-alpha; the README's link and version), the hold lifted; the costs (the sixteen lines are in the scratchpad's `w49-plan/costs.txt` [no-check: a scratchpad file]; T391 and T392 to add), the record (`docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base.
 3. Follow-ups for the next wave: the kept folder's write through a temporary document (ADR 0072's first prediction); the download restarted in the background (finding of 2026-11-27).
 4. For the Close's record and offer: the a11y tool's append-at-the-end convention conflicts every time two branches add a screen (an idea: a file per task's screens); three verifiers handed back without a verdict while a long command ran and were resumed; the emulator guard stopped two emulators at 8 GB during `features` and start-up runs; the start-up budgets were judged by no task (the closing sweep's `startup` part reads them, alone).
