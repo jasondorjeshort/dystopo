@@ -45,6 +45,19 @@ fetcher's state is not the whole of it. The implementer points at the list's sou
 Not ruled out: that the difference is the fixture's alone (it copies a pack's tiles under an area's
 keys, which no download does in that order), and a real downloaded area never shows it.
 
+## T391's reading (2026-11-27, before its emulator runs)
+
+Where the fetcher's state came from: the fixture's steps drive the debug build, whose server is
+whatever the last run left set. In a whole sweep that is the sweep's device server
+(`http://10.0.2.2:<BasePort+2>`), which `tools/sweep.ps1` stops after the debug parts, so in
+`features` and `features-sky` the fetcher reads `offline` and the probe fails every 5 s; in the
+agents' own runs it was a live server or the direct sources. That is the variation the verifier
+lined up with the two answers. T391 pins the debug build's server for the fixture's run to one that
+never answers and puts back what it found (`tile_area_fixture`, `FIXTURE_SERVER`), and counts the
+probe's failures apart (`GET /online` `fetcher.probeFailures`). The read's area list
+(`TileService.heldAreas()`) is a 2 s memo of `Areas.lookupHoldings()`, itself rebuilt whenever the
+areas' list changes, so a read right after a seed can miss the area for up to 2 s; not shown yet.
+
 ## Next
 
 1. Reproduce off the sweep: seed the fixture, then read `GET /horizon` repeatedly with the pack off,

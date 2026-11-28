@@ -116,6 +116,15 @@ class BehindBatch(private val quietMs: Long = QUIET_MS, private val holdMs: Long
     var heldForRest = 0L
         private set
 
+    /**
+     * T391: refreshes [take] gave that the map has not finished yet (asked, then built and posted to the UI thread, then
+     * run): from [take] until [announced]. While it is above 0 a refresh is under way even though nothing waits or flies and
+     * the map's swap has not started, so `GET /online` `behind.refreshing` reads it (the closing sweep of wave 49 read the
+     * batch settled in that window and looked for the refreshed tiles before the map asked for them).
+     */
+    var announcing = 0
+        private set
+
     @Synchronized
     fun started() {
         inFlight++
@@ -156,7 +165,14 @@ class BehindBatch(private val quietMs: Long = QUIET_MS, private val holdMs: Long
         landed = 0
         heldNoted = false
         refreshes++
+        announcing++ // T391
         return n
+    }
+
+    /** T391: a refresh [take] gave has ended (done, skipped or failed) and its record is kept. */
+    @Synchronized
+    fun announced() {
+        announcing = (announcing - 1).coerceAtLeast(0)
     }
 
     /** The refresh of [n] tiles was skipped by the map (its style was loading): they are announced again at the next look. */
@@ -172,6 +188,7 @@ class BehindBatch(private val quietMs: Long = QUIET_MS, private val holdMs: Long
     fun json(): Map<String, Any?> = linkedMapOf(
         "started" to started, "inFlight" to inFlight, "landed" to landedTotal, "failed" to failed, "bytesLanded" to bytes,
         "waiting" to landed, "refreshes" to refreshes, "heldForRest" to heldForRest, "quietMs" to quietMs, "holdMs" to holdMs,
+        "announcing" to announcing, // T391
     )
 
     companion object {
@@ -231,7 +248,9 @@ object BehindRefresh {
             }
             // At rest: the camera still and the view it shows loaded (a refresh started while the first view loads held the
             // launch's fully-loaded figure back by about 2.6 s on the emulator).
-            if (!SeamlessDemRefresh.running) dem.take(now, app.map.animating || !app.map.fullyLoaded).takeIf { it > 0 }?.let { swap(app, it) }
+            val n = if (SeamlessDemRefresh.running) 0 else dem.take(now, app.map.animating || !app.map.fullyLoaded)
+            // T391: a refresh taken is always noted (which ends its `announcing`), a failure before the map's turn included.
+            if (n > 0) try { swap(app, n) } catch (e: Throwable) { note(now, n, mapOf("skipped" to "error: ${e.javaClass.simpleName}: ${e.message}")); throw e }
         } catch (e: Throwable) {
             android.util.Log.w("BehindRefresh", "refresh after fetches behind failed", e)
         } finally {
@@ -247,7 +266,9 @@ object BehindRefresh {
         val asked = System.currentTimeMillis()
         main.post {
             val style = app.map.map?.style
-            val started = if (style == null) mapOf("skipped" to "no map") else SeamlessDemRefresh.start(app, style, json) { done -> note(asked, n, done) }
+            // T391: a throw here is noted as a skip (the refresh ends; the next batch asks again), not the app's end.
+            val started = if (style == null) mapOf("skipped" to "no map") else runCatching { SeamlessDemRefresh.start(app, style, json) { done -> note(asked, n, done) } }
+                .getOrElse { e -> android.util.Log.w("BehindRefresh", "refresh failed to start", e); mapOf("skipped" to "error: ${e.javaClass.simpleName}: ${e.message}") }
             if (started["skipped"] != null) {
                 if (started["skipped"] == OsmSourceRefresh.STYLE_LOADING) dem.again(System.currentTimeMillis(), n)
                 note(asked, n, started)
@@ -256,12 +277,16 @@ object BehindRefresh {
         }
     }
 
-    private fun note(asked: Long, n: Int, result: Map<String, Any?>) = synchronized(recent) {
-        recent.addLast(linkedMapOf<String, Any?>("at" to asked, "tiles" to n) + result)
-        while (recent.size > KEEP) recent.removeFirst()
+    private fun note(asked: Long, n: Int, result: Map<String, Any?>) {
+        synchronized(recent) {
+            recent.addLast(linkedMapOf<String, Any?>("at" to asked, "tiles" to n) + result)
+            while (recent.size > KEEP) recent.removeFirst()
+        }
+        dem.announced() // T391: after the record, so a reader that sees `refreshing` false finds it
     }
 
-    fun json(): Map<String, Any?> = linkedMapOf("dem" to dem.json(), "refreshing" to SeamlessDemRefresh.running, "launchLoaded" to launchLoaded, "deferred" to deferred.size, "recent" to synchronized(recent) { recent.toList() })
+    /** T391: `refreshing` is also true from the batch's take until its record (the swap built and posted, not yet run). */
+    fun json(): Map<String, Any?> = linkedMapOf("dem" to dem.json(), "refreshing" to (SeamlessDemRefresh.running || dem.announcing > 0), "launchLoaded" to launchLoaded, "deferred" to deferred.size, "recent" to synchronized(recent) { recent.toList() })
 
     const val TICK_MS = 250L
     private const val KEEP = 12

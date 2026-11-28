@@ -55,4 +55,35 @@ class BehindBatchTest {
         assertEquals(1, b.take(1_000, false))
         assertEquals(1L, b.json()["refreshes"])
     }
+
+    /**
+     * T391 (the closing sweep of wave 49, `two-maps` T368:upgraded): between the take and the map's swap nothing waits and
+     * nothing flies, yet the refresh has not run; `announcing` says so until its record is kept.
+     */
+    @Test
+    fun aTakenRefreshIsAnnouncingUntilItEnds() {
+        val b = BehindBatch(quietMs = 400, holdMs = 8_000)
+        b.started(); b.landed(0, 10)
+        assertEquals(0, b.announcing)
+        assertEquals(1, b.take(500, false))
+        assertFalse(b.pending, "nothing waits or flies")
+        assertEquals(1, b.announcing, "but the refresh is under way")
+        assertEquals(1, b.json()["announcing"])
+        b.announced()
+        assertEquals(0, b.announcing)
+        b.announced()
+        assertEquals(0, b.announcing, "never below 0")
+    }
+
+    @Test
+    fun aSkippedRefreshEndsItsAnnouncingOnceAndTheNextTakeStartsAnother() {
+        val b = BehindBatch(quietMs = 400, holdMs = 8_000)
+        b.started(); b.landed(0, 10)
+        assertEquals(1, b.take(500, false))
+        b.again(600, 1) // the style was loading: announced again
+        b.announced() // its record (the skip) is kept
+        assertEquals(0, b.announcing)
+        assertEquals(1, b.take(1_100, false))
+        assertEquals(1, b.announcing)
+    }
 }

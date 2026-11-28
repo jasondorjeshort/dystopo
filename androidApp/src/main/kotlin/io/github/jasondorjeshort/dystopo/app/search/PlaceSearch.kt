@@ -521,6 +521,11 @@ object PlaceSearch {
      * at [zoom], which takes the online tiles' locks, so never on the UI thread then. T359 (ADR 0066 build task 5): the maps are
      * the lookup's holdings ([io.github.jasondorjeshort.dystopo.app.PackSet.holdings], in memory: the maps that are on, each
      * archive's box), and the source read here is the chip's, from the lookup ([OnlineView.resolve]).
+     *
+     * T391 (the closing sweep of wave 49): an area kept as tiles that covers the place ([areaAt]) makes it [MapCoverage.TILES_ONLY]
+     * whatever the network: the source word names an area only where it serves ahead of a map (with a server set and no map
+     * there, `HeldTiles.deeper` leaves it to the online path), so offline it read nothing and a route inside the area said
+     * "no-map", online "tiles-only" only through the network's own word.
      */
     fun coverage(app: DystopoApp, lat: Double, lon: Double, zoom: Double, source: String? = null): MapCoverage {
         val maps = app.tiles.packs.holdings().filter { it.kind == io.github.jasondorjeshort.dystopo.packs.Holdings.Kind.MAP && !it.off }
@@ -529,7 +534,8 @@ object PlaceSearch {
         val s = (source ?: runCatching { OnlineView.sourceAt(app, lat, lon, zoom) }.getOrNull())?.takeUnless { it == OnlineTiles.WORLD }
         // With no online tiles (or before the chip has read the view) the source says only that some map exists: ask its box.
         val pack = MapCoverage.inside(maps.mapNotNull { it.dem?.bounds }, lat, lon)
-        return MapCoverage.of(false, if (s == null || s == OnlineTiles.PACK) (if (pack) OnlineTiles.PACK else OnlineTiles.NONE) else s)
+        val word = if (s == null || s == OnlineTiles.PACK) (if (pack) OnlineTiles.PACK else OnlineTiles.NONE) else s
+        return MapCoverage.ofPlace(false, areaHolds = { runCatching { areaAt(app, lat, lon) != null }.getOrDefault(false) }, word)
     }
 
     /**
@@ -580,6 +586,15 @@ enum class MapCoverage(val code: String) {
             vectorCovers -> VECTOR
             source == OnlineTiles.NONE -> NO_MAP
             else -> TILES_ONLY
+        }
+
+        /**
+         * T391, pure, tested: [of], except that an area kept as tiles holding the place ([areaHolds], asked only where the
+         * source word says nothing is there) makes it [TILES_ONLY]: the area's tiles draw there with or without a network.
+         */
+        fun ofPlace(vectorCovers: Boolean, areaHolds: () -> Boolean, source: String): MapCoverage {
+            val c = of(vectorCovers, source)
+            return if (c == NO_MAP && areaHolds()) TILES_ONLY else c
         }
 
         /** Pure, tested: [lat], [lon] lies in one of [boxes] (edges included). */

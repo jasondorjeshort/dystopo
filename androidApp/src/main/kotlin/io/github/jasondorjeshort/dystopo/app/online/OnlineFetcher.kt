@@ -207,6 +207,12 @@ class OnlineFetcher(
     val fetchedBytes = AtomicLong()
     val notFound = AtomicLong()
     val errors = AtomicLong()
+    /**
+     * T391: the probe's own failures ([probe]), counted in [errors] too: the probe loop asks the server every few seconds
+     * while it is unreachable, whatever else the app reads, so a reader that wants to know whether its own work went to the
+     * network subtracts these (`GET /online` `fetcher.probeFailures`).
+     */
+    val probeFailures = AtomicLong()
     val negativeHits = AtomicLong()
     val backoffSkips = AtomicLong()
     val sharedFetches = AtomicLong()
@@ -594,6 +600,7 @@ class OnlineFetcher(
             reply.body.takeIf { reply.status in 200..299 }
         } catch (e: IOException) {
             // `/live/info` is instant on a working server: any failure (refused, timeout) means unreachable.
+            probeFailures.incrementAndGet() // T391
             noteUnreachable(s, "probe: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
@@ -671,7 +678,7 @@ class OnlineFetcher(
             "sources" to sourceList.map { it.json(now) }, // T74
             "versions" to p.versions.toSortedMap(),
             "requests" to requests.get(), "cacheHits" to cacheHits.get(), "fetches" to fetches.get(),
-            "fetchedBytes" to fetchedBytes.get(), "notFound" to notFound.get(), "errors" to errors.get(),
+            "fetchedBytes" to fetchedBytes.get(), "notFound" to notFound.get(), "errors" to errors.get(), "probeFailures" to probeFailures.get(), // T391
             "negativeCacheHits" to negativeHits.get(), "negativeRetried" to negativeRetried.get(), "backoffSkips" to backoffSkips.get(), "sharedFetches" to sharedFetches.get(),
             "emptyAnswersAsMissing" to emptyAsMissing.get(), "versionChecks" to versionChecks.get(), // T74
             "pinnedHits" to pinnedHits.get(), "pinnedKept" to pinnedKept.get(), "unheldDropped" to unheldDropped.get(), // T95
