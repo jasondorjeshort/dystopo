@@ -1,5 +1,5 @@
 ---
-verified: 2026-11-27
+verified: 2026-11-28
 source: moved verbatim from CLAUDE.md in T84 (text as of 059b2c3); observed in the tasks named in each paragraph
 ---
 
@@ -219,6 +219,10 @@ T392: once the first screen opens them, `updater`, `budget`, `sampler` and `pend
 most 5 s, `AppLaunch.FRAME_WAIT_MS`; `LaunchRunner.waitsForFirstFrame`), so their threads no longer run beside the
 activity's `start` and the first composition; `world` does not (at a first start the map's first tiles read its copy).
 `ContourCache.collectGarbage`, in `packs`, makes the contour cache on a thread of its own, not on the main thread.
+T393: so the first composition always runs before those stages, and a composable that reads what one of them sets must
+read it as Compose state: the update offer on the map (`update/UpdateOverlay.kt`, `offerShown`) reads the updater's
+start as `Updater.started`; with the plain `Updater.initialized()` it stopped there at the first composition and never
+showed a ready or refused update (`UpdateOfferTest`).
 
 - **The validator** (`LaunchCheck`, pure; `LaunchTest`): unique names; every need declared earlier in the list; every
   mark in one stage and none a boundary; gates monotone along needs; no `DISK` or `BINDER` stage on `MAIN` without an

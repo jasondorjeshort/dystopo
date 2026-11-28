@@ -4950,11 +4950,12 @@ def part_update(args):
         close_sheet(dev)
         banner, _ = dev.wait_for(r"refused", 6)
         map_png = dev.screencap("checksum-map")[0]
-        ok = "refused" in line and "checksum" in line and mock.downloaded_apk()
+        refused = "refused" in line and "checksum" in line and mock.downloaded_apk()
+        ok = refused and banner is not None  # T393: the map says so too, not only the Updates row
         if banner:
             dev.tap_text("^OK$", timeout=5)
         return {"ok": ok, "announced": ann, "line": line, "rowPng": png, "png": map_png, "mapMessage": bool(banner),
-                **({} if ok else {"error": f"not refused for the checksum: {line}"})}
+                **({} if ok else {"error": f"not refused for the checksum: {line}" if not refused else f"no refusal message on the map ({line})"})}
 
     def wrong_certificate():
         # T139: the tag follows the build as wrong-checksum's does (the fixed v0.1.10-alpha before); version.json's
@@ -4965,11 +4966,12 @@ def part_update(args):
         close_sheet(dev)
         banner, _ = dev.wait_for(r"refused", 6)
         map_png = dev.screencap("certificate-map")[0]
-        ok = "refused" in line and "certificate" in line and mock.downloaded_apk()
+        refused = "refused" in line and "certificate" in line and mock.downloaded_apk()
+        ok = refused and banner is not None  # T393: the map says so too, not only the Updates row
         if banner:
             dev.tap_text("^OK$", timeout=5)
         return {"ok": ok, "announced": ann, "line": line, "rowPng": png, "png": map_png, "mapMessage": bool(banner),
-                **({} if ok else {"error": f"not refused for the certificate: {line}"})}
+                **({} if ok else {"error": f"not refused for the certificate: {line}" if not refused else f"no refusal message on the map ({line})"})}
 
     def offer():
         # T139: derived from the build like the two refusals (the fixed v0.1.11-alpha before), so the offer line names

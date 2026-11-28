@@ -90,7 +90,7 @@ object Updater {
 
     private lateinit var app: Context
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "dystopo-update").apply { isDaemon = true } }
-    @Volatile private var started = false
+    @Volatile private var startCalled = false
     val checks = java.util.concurrent.atomic.AtomicLong()
 
     private fun prefs() = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -102,10 +102,11 @@ object Updater {
      * daily check runs only while the app is on screen: in the background its thread waits for the screen.
      */
     fun start(context: Context) {
-        if (started) return
-        started = true
+        if (startCalled) return
+        startCalled = true
         app = context.applicationContext
         acknowledgedTag = prefs().getString("acknowledgedTag", null)
+        markStarted()
         worker.submit { restore() }
         if (!BuildConfig.DEBUG_ENDPOINTS) {
             Thread({
@@ -122,7 +123,21 @@ object Updater {
         }
     }
 
+    /** Whether [start] has run: a plain read, for callers outside Compose (the routes, the installer's result, the row's own start). */
     fun initialized() = ::app.isInitialized
+
+    /**
+     * T393: whether [start] has run, as Compose state, for a composable that must follow the start ([UpdateOverlay]): since
+     * T392 the launch's `updater` stage runs after the first frame, so the map's first composition reads false and, with a
+     * plain read, nothing recomposed it when the start and then a ready or refused update came.
+     */
+    var started by mutableStateOf(false)
+        private set
+
+    /** What [start] does once the context is set; separate so a unit test can make the start without one. */
+    internal fun markStarted() {
+        started = true
+    }
 
     private fun due(): Boolean = checkRecord().due(System.currentTimeMillis(), ownCode)
 
