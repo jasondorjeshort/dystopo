@@ -52,6 +52,12 @@ ADR 0057 now holds for the 48 GB PC and for its other rules (order on the board,
 alongside, the RAM read after each merge).
 
 - Prediction, check at wave 49's close: free RAM stayed above 16 GB in every reading after a merge, and no emulator
-  was stopped by the guard for low RAM.
+  was stopped by the guard for low RAM. Outcome (2026-11-28, wave 49's close): held. The lowest free RAM any
+  verifier of the wave read was 68.1 GB; the guard stopped two emulators, both for their own private bytes passing
+  8 GB, none for low RAM.
 - Prediction, check at wave 49's close: a task's time from launch to merge is no longer than wave 48's on average,
-  and the wave's tasks per hour of the clock rise by at least half.
+  and the wave's tasks per hour of the clock rise by at least half. Outcome (2026-11-28, wave 49's close): not met
+  as measured. Between its first and last merge the wave's sixteen planned tasks merged at 0.63 an hour (23.9 h)
+  against wave 48's 0.45 (nineteen merges in 40.1 h), a rise of 40%; the span holds four and a half hours at the
+  usage hold and a power cut, and it leaves out the four fix tasks and three closing sweeps that followed. The time
+  from launch to merge was not collected per task, so the first half is not judged.

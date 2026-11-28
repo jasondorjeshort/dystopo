@@ -71,4 +71,6 @@ the owner preferred it to waiting.
 - Prediction, check when T379, T390 and T387 have merged and the owner has left a release with them in the background
   for a day: `dumpsys activity exit-info` lists no `excessive cpu` exit for that day, and the app's estimated drain
   in `dumpsys batterystats` is under 1 % of the battery.
-- Prediction, check at wave 49's close: no task of the wave added an ongoing notification.
+- Prediction, check at wave 49's close: no task of the wave added an ongoing notification. Outcome (2026-11-28,
+  wave 49's close): held. The wave's diff of the app adds no notification builder, channel or foreground start;
+  the work that may run without a screen runs under the recording's or the download's existing notification.
