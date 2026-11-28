@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-28, at the commit that carries this file (wave 49: the closing sweep red in four parts; T392 merged, T391 with its verifier), by the main session in the second clone
+Updated: 2026-11-28, at the commit that carries this file (wave 49: both fixes merged; the closing sweep runs again under a hold), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 49: the closing sweep is red** on 358a755a (`dystopo-wt/sweep-w49`, `out\sweep-20261127-w49`): `startup`, `two-maps`, `features` (`search-tiles`) and `features-sky` (`peaks-tiles`), each an assertion or a budget; everything else green. No release; the hold on `main` is lifted. The fifteen tasks and T389 are merged; T391 and T392 on the board are the fixes (the paragraph above them has the figures and the order).
-- **In flight (2026-11-28 05:20 UTC):** T391's verifier (Sonnet; `task/T391` at 35b2a6ea, on the tip; it runs `check`, then `two-maps`, `features` and `features-sky` in one run in sweep order and the two feature parts once more, each on a fresh emulator). The implementer's report is the scratchpad's `w49-plan/report-T391.txt` [no-check: a scratchpad file]: three causes fixed (the refresh behind read as idle in the gap before it was announced; an area kept as tiles read `no-map` for a route offline; the one error was the reachability probe's own), and the steps now pin their own server. T392 is merged (55d38f08) and cleaned up.
+- **Wave 49: the second closing sweep** runs on the commit that carries this file, under the hold `hold/main` this session set (lift: the sweep's summary read, or the release published). The first was red on 358a755a in four parts (`dystopo-wt/sweep-w49`, `out\sweep-20261127-w49`); T392 (55d38f08, the launch stages) and T391 (24a7d8fc, the three assertions) are the fixes, both merged, with the fifteen tasks and T389. No release yet.
+- **In flight (2026-11-28 07:03 UTC):** the sweep agent (Sonnet; worktree `dystopo-wt/sweep-w49b` [no-check: made by the agent], `out\sweep-20261128-w49b`, `-Prev` wave 48's folder, the eleven `-First` names; about two and a half hours, alone on the PC); a Haiku chore cleans up T391. If the hold is found with no sweep running, the sweep's folder says how far it got; a hold whose setter is gone is the owner's to delete.
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
 - **On the PC:** restarted after the power cut, so the live viewer on 8765 and every emulator are down; stale locks and AVDs of the two cut-off emulators are their agents' to clear. The main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. The reports and verdicts for the merge bodies are in the first session's scratchpad folder, `w49-plan/` (it survived).
 
 ## Next
 
-1. The verifier's verdict, then the merge sequence for T391 and its cleanup chore (Haiku).
-2. Then a full closing sweep again under a hold (the `sweep` skill; `-Prev` `dystopo-wt/sweep-w48/out/sweep-20261126-w48`, the same eleven `-First` names), and green: the release (v0.1.45-alpha; the README's link and version), the hold lifted; the costs (the sixteen lines are in the scratchpad's `w49-plan/costs.txt` [no-check: a scratchpad file]; T391 and T392 to add), the record (`docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base.
+1. The sweep's summary. Green: the release v0.1.45-alpha by the `release` skill (the README's link and version), then the hold lifted. Red: lift the hold, read the part's files, a fix task. One known risk: `features` step `sync` failed once at T391's verifier when the emulator did not reach the host's sync server (not retried by the sweep).
+2. Then the Close: the costs (seventeen lines in the scratchpad's `w49-plan/costs.txt` [no-check: a scratchpad file]; T391's to add), the record (`docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base.
 3. Follow-ups for the next wave: the kept folder's write through a temporary document (ADR 0072's first prediction); the download restarted in the background (finding of 2026-11-27).
 4. For the Close's record and offer: the a11y tool's append-at-the-end convention conflicts every time two branches add a screen (an idea: a file per task's screens); three verifiers handed back without a verdict while a long command ran and were resumed; the emulator guard stopped two emulators at 8 GB during `features` and start-up runs; the start-up budgets were judged by no task (the closing sweep's `startup` part reads them, alone).
 5. Triage's scan: the earliest dated ADR prediction is due 2026-12-01; ADR 0070's two and ADR 0071's second are checked at this wave's close.
@@ -29,7 +29,7 @@ Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), th
 
 ## Open findings
 
-- `docs/findings/2026-11-27-an-areas-elevation-source-is-sometimes-missing-from-a-terrain-read.md`: open; T391 takes it.
+- `docs/findings/2026-11-27-an-areas-elevation-source-is-sometimes-missing-from-a-terrain-read.md`: open; T391 read one path in three runs and wrote its Next (a task for the next wave).
 - `docs/findings/2026-11-27-a-download-restarted-in-the-background-waits-for-the-screen.md`: open (found by T387's verifier; a task for the next wave, and the row's "Continues by itself").
 - `docs/findings/2026-11-25-tile-cache-index-walk-loops-in-the-background.md`: open for its Next 2 alone, the owner's day in the background on a phone (T379, T390 and T387 built the rest); the layout finding and the GPS clock finding are resolved (T381, T385).
 - `docs/findings/2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md`, `2026-11-24-the-map-render-thread-never-rests-while-flights-are-drawn.md`: open.

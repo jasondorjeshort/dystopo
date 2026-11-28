@@ -6,6 +6,7 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ### 2026-11-28
 
+- T391: The closing sweep's three red assertions: a refresh that upgrades nothing, a route's reason inside a tiles-only area, a terrain read's error offline
 - T392: Four launch stages over their ceilings
 
 ### 2026-11-27
