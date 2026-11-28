@@ -111,13 +111,18 @@ object ContourCache {
      * the other's stdlib walk had just found: the launch crash of the sweeps' `a11y` part after the guard's reboot.
      */
     fun collectGarbage(app: DystopoApp, identities: Set<String>) {
-        // T379: once the index is whole (a held walk parks no thread here); then on a low-priority thread of its own.
-        get(app).whenReady("contour-cache-gc-wait") {
-            Thread({
-                val n = synchronized(gcLock) { collectGarbage(root(app), get(app), identities) }
-                staleFilesDeleted.addAndGet(n.toLong())
-            }, "contour-cache-gc").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
-        }
+        // T392: the cache is made ([get]: its directory listed, its index thread and T390's stop-save collector started, the
+        // first use of the coroutines' IO dispatcher) on this thread, not the caller's: the launch's `packs` stage calls this
+        // on the main thread, which T379 and T390 had made pay about 30 ms for it (before T379 the cache was made here too).
+        Thread({
+            // T379: once the index is whole (a held walk parks no thread here); then on a low-priority thread of its own.
+            get(app).whenReady("contour-cache-gc-wait") {
+                Thread({
+                    val n = synchronized(gcLock) { collectGarbage(root(app), get(app), identities) }
+                    staleFilesDeleted.addAndGet(n.toLong())
+                }, "contour-cache-gc").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+            }
+        }, "contour-cache-open").apply { isDaemon = true }.start()
     }
 
     fun resize(mb: Long) = cache?.resize(mb * MB)

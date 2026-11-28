@@ -157,4 +157,27 @@ class LaunchRunnerTest {
         assertEquals(null, r.span("deferred").failure)
         assertEquals(-1L, r.span("deferred").deferredAt)
     }
+
+    /** T392: the deferred stages opened by the screen wait for the first frame too, except `world`; a notified job's start does not. */
+    @Test fun theDeferredStagesButWorldWaitForTheFirstFrame() {
+        val l = io.github.jasondorjeshort.dystopo.launch.Launch
+        for (s in listOf(l.UPDATER, l.BUDGET, l.SAMPLER, l.PENDING)) {
+            assertTrue(LaunchRunner.waitsForFirstFrame(s, screenSeen = true), s.name)
+            assertEquals(false, LaunchRunner.waitsForFirstFrame(s, screenSeen = false), "${s.name} under a job alone")
+        }
+        assertEquals(false, LaunchRunner.waitsForFirstFrame(l.WORLD_COPY, screenSeen = true), "world")
+        assertEquals(false, LaunchRunner.waitsForFirstFrame(l.PACKS, screenSeen = true), "a stage that does not wait")
+    }
+
+    /** T392: the runner hands the stage itself to its wait, so the app can tell the stages apart. */
+    @Test fun theWaitIsGivenTheStage() {
+        val deferred = Stage("deferred", needs = listOf("settings"), runs = Runs.WORKER, gate = Gate.LATER, waits = Waits.SCREEN)
+        val seen = java.util.concurrent.atomic.AtomicReference<Stage?>()
+        val r = LaunchRunner(listOf(settings, deferred), { Thread.currentThread() === main }, { _, rr -> pool.execute(rr) },
+            awaitOpen = { seen.set(it) }, opened = { w -> w == Waits.NOTHING })
+        r.run(settings) {}
+        r.start(deferred) { "ok" }
+        assertTrue(r.span("deferred").done.await(5_000))
+        assertSame(deferred, seen.get())
+    }
 }

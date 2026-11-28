@@ -241,8 +241,36 @@ object StartupTrace {
 
     private fun firstFrame(a: Active) {
         a.window.firstFrame(SystemClock.elapsedRealtime())
+        synchronized(frameLock) {
+            frameSeen = true
+            frameLock.notifyAll()
+        }
         a.thread.interrupt()
         StartupRoutes.stallPoint("afterFirstFrame")
+    }
+
+    private val frameLock = Object()
+
+    /** T392: a traced window of this process has drawn its first frame (stays true). */
+    @Volatile var frameSeen = false
+        private set
+
+    /**
+     * T392: blocks a plain thread until a first frame of this process was drawn ([frameSeen]) or [timeoutMs] has passed (a
+     * start with no traced window: a debugger, no context); returns [frameSeen]. The launch's deferred stages wait here after
+     * the first screen, so their threads do not run beside the first composition (`launch/AppLaunch.kt`).
+     */
+    fun awaitFirstFrame(timeoutMs: Long): Boolean {
+        if (frameSeen) return true
+        val until = SystemClock.elapsedRealtime() + timeoutMs
+        synchronized(frameLock) {
+            while (!frameSeen) {
+                val left = until - SystemClock.elapsedRealtime()
+                if (left <= 0) break
+                frameLock.wait(left)
+            }
+        }
+        return frameSeen
     }
 
     /** `MapController`: the style's callback ran. */

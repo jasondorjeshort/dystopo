@@ -215,6 +215,10 @@ T387 (ADR 0071) adds `budget`, `sampler` and `pending` after `updater`, and a st
 and `pending` wait on their own threads for the first activity of the process, `sampler` for allowed work (on screen or
 a notified job), so a start without a screen does not run them (`docs/PLANNING.md` › A start without a screen;
 `LaunchGate` in `Launch.kt` is the rule, with its tests in `LaunchTest`). `updater` is a worker stage since.
+T392: once the first screen opens them, `updater`, `budget`, `sampler` and `pending` also wait for the first frame (at
+most 5 s, `AppLaunch.FRAME_WAIT_MS`; `LaunchRunner.waitsForFirstFrame`), so their threads no longer run beside the
+activity's `start` and the first composition; `world` does not (at a first start the map's first tiles read its copy).
+`ContourCache.collectGarbage`, in `packs`, makes the contour cache on a thread of its own, not on the main thread.
 
 - **The validator** (`LaunchCheck`, pure; `LaunchTest`): unique names; every need declared earlier in the list; every
   mark in one stage and none a boundary; gates monotone along needs; no `DISK` or `BINDER` stage on `MAIN` without an
