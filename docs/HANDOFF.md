@@ -1,21 +1,21 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-28, at the commit that carries this file (wave 49: the second closing sweep red in one part; T393 launched), by the main session in the second clone
+Updated: 2026-11-28, at the commit that carries this file (wave 49: three fixes merged; the closing sweep runs a third time under a hold), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 49: the second closing sweep is red in one part** on bd831177 (`dystopo-wt/sweep-w49b`, `out\sweep-20261128-w49b`): `update`, step `offer` (no update offer on the map); the first sweep's four parts are green in order and every other part too. No release; the hold on `main` is lifted. T391 (24a7d8fc) and T392 (55d38f08) are merged; T393 on the board is the fix (its Goal has the cause as read from the code: T392's frame wait and a plain read in `UpdateOverlay`).
-- **In flight (2026-11-28 09:35 UTC):** T393's implementer (Opus; worktree `dystopo-wt/T393` [no-check: made by the agent], AVD `dystopo35-T393`, console 5572, host 8696; alone on the PC with Gradle and an emulator).
+- **Wave 49: the third closing sweep** runs on the commit that carries this file, under the hold `hold/main` this session set (lift: the sweep's summary read, or the release published). The first was red in four parts on 358a755a, the second in one (`update`, on bd831177; `dystopo-wt/sweep-w49b`); T392 (55d38f08), T391 (24a7d8fc) and T393 (e9cd49ff, the update offer on the map) are the fixes, all merged, with the fifteen tasks and T389. No release yet.
+- **In flight (2026-11-28 10:44 UTC):** the sweep agent (Sonnet; worktree `dystopo-wt/sweep-w49c` [no-check: made by the agent], `out\sweep-20261128-w49c`, `-Prev` wave 48's folder, the eleven `-First` names; about two and a quarter hours, alone on the PC); a Haiku chore cleans up T393. If the hold is found with no sweep running, the sweep's folder says how far it got; a hold whose setter is gone is the owner's to delete.
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
 - **On the PC:** restarted after the power cut, so the live viewer on 8765 and every emulator are down; stale locks and AVDs of the two cut-off emulators are their agents' to clear. The main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. The reports and verdicts for the merge bodies are in the first session's scratchpad folder, `w49-plan/` (it survived).
 
 ## Next
 
-1. T393's report, then a verifier (Sonnet; `check`, `-Only update` and `-Only startup` alone), the merge sequence and its cleanup. Then a full closing sweep a third time under a hold (the `sweep` skill; `-Prev` `dystopo-wt/sweep-w48/out/sweep-20261126-w48`, the same eleven `-First` names), and green: the release v0.1.45-alpha (its notes' two blocks are drafted in the scratchpad's `w49-plan/notes-draft-blocks.md` [no-check: a scratchpad file]), the hold lifted.
-2. Then the Close: the costs (eighteen lines in the scratchpad's `w49-plan/costs.txt` [no-check: a scratchpad file]; T393's to add), the record (`docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base.
+1. The sweep's summary. Green: the release v0.1.45-alpha by the `release` skill (the README's link and version; its notes' two blocks are drafted in the scratchpad's `w49-plan/notes-draft-blocks.md` [no-check: a scratchpad file]), then the hold lifted. Red: lift the hold, read the part's files, a fix task, a full sweep again.
+2. Then the Close: the costs (the scratchpad's `w49-plan/costs.txt` [no-check: a scratchpad file], T375 to T393), the record (`docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base.
 3. Follow-ups for the next wave: the kept folder's write through a temporary document (ADR 0072's first prediction); the download restarted in the background (finding of 2026-11-27).
 4. For the Close's record and offer: the a11y tool's append-at-the-end convention conflicts every time two branches add a screen (an idea: a file per task's screens); three verifiers handed back without a verdict while a long command ran and were resumed; the emulator guard stopped two emulators at 8 GB during `features` and start-up runs; the start-up budgets were judged by no task (the closing sweep's `startup` part reads them, alone).
 5. Triage's scan: the earliest dated ADR prediction is due 2026-12-01; ADR 0070's two and ADR 0071's second are checked at this wave's close.

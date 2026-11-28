@@ -25,6 +25,10 @@ mechanism, the crossing scenario, or "none">.
    - **A sweep part:** when the Owns line holds `tools/sweep.ps1` or a new part's script, verify with
      `-SweepThrough <the new or changed part>` (the sweep from its first part through it, in sweep order, on one
      emulator), never the part alone: `startup` and `a11y` were green alone and red at their first full sweep.
+   - **A change to when something starts** (a launch stage deferred or moved, a start made lazy): the part that
+     times it is not enough. The brief names the sweep parts that use what now starts later, and the verifier runs
+     them (T392 deferred the updater's start, was verified through `startup` alone, and the next closing sweep was
+     red in `update`: T393).
    It makes the detached worktree `<worktrees>\Tnn-verify`, scans the commit messages and the report, runs `check
    --no-daemon` with the test counts, boots the emulator from the branch, runs the device tour and the parts, stops
    the emulator and reads the guard's figures. It stops at the first failed step and names it.
