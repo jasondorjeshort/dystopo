@@ -40,6 +40,17 @@ class PointRuleTest {
     }
 
     @Test
+    fun theComposedPyramidStartsNoDeeperThanTheCoarseLayer() {
+        // T395 (issue #35): no map, a z15 cell held: from z12 (it began at z15 and the coarse layer averaged a gigabyte).
+        assertEquals(12, PointRule.composedLow(15, null))
+        assertEquals(11, PointRule.composedLow(14, null))
+        assertEquals(12, PointRule.composedLow(15, 15)) // a map from z15
+        assertEquals(8, PointRule.composedLow(15, 8)) // a map from z8: as before
+        assertEquals(8, PointRule.composedLow(14, 8))
+        assertEquals(0, PointRule.composedLow(2, null))
+    }
+
+    @Test
     fun insideABoxInMetres() {
         val box = io.github.jasondorjeshort.dystopo.packs.PackBounds(-121.82, 46.80, -121.68, 46.90) // the fixture's fine map
         // 0.0025 deg north of the south edge: about 278 m, inside T357's 300 m band (the merged read blends there).

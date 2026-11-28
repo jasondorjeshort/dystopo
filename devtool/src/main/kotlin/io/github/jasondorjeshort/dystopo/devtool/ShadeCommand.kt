@@ -170,8 +170,19 @@ class ShadeCommand : AreaCommand("shade") {
         } else null
 
         val pointLatLon = point?.let { parseLatLon(it) }
+        var pointRead: Map<String, Any?>? = null
         val answer = pointLatLon?.let { (lat, lon) ->
+            // T395: what the point's read cost: the pack's tiles decoded, the largest window and the heap's peak during it.
+            val heap = java.lang.management.ManagementFactory.getMemoryPoolMXBeans().filter { it.type == java.lang.management.MemoryType.HEAP }
+            heap.forEach { it.resetPeakUsage() }
+            val decoded0 = pyramid?.tilesDecoded
             val t = timings.time("point.fetch") { Horizon.terrainAround(lat, lon, pointZoom, coarseZooms = pointCoarseZooms, read = ::read) }
+            pointRead = linkedMapOf(
+                "tilesDecoded" to decoded0?.let { pyramid!!.tilesDecoded - it },
+                "largestWindowCells" to t.layers.maxOf { it.window.width.toLong() * it.window.height },
+                "heapPeakMb" to round1(heap.sumOf { it.peakUsage.used } / 1048576.0),
+                "heapMaxMb" to round1(Runtime.getRuntime().maxMemory() / 1048576.0),
+            )
             timings.time("point.answer") { ShadeTiles.pointAnswer(t, lat, lon, epochMs, eye) }
         }
 
@@ -210,7 +221,7 @@ class ShadeCommand : AreaCommand("shade") {
             "steps" to result.steps, "stepsPerCell" to round1(result.steps.toDouble() / maxOf(1, cells)), "skipsPerCell" to round1(result.skips.toDouble() / maxOf(1, cells)),
             "marchMs" to round1(result.ms), "marchMsPer256Tile" to round1(result.ms * 65_536 / maxOf(1, cells)),
             "reference" to ref,
-            "point" to answer?.let { pointReport(it, epochMs, target, result, iso, clock, horizonFile) + ("coarseZooms" to pointCoarseZooms) },
+            "point" to answer?.let { pointReport(it, epochMs, target, result, iso, clock, horizonFile) + ("coarseZooms" to pointCoarseZooms) + ("read" to pointRead) },
             "output" to outFile.path,
             "timingsMs" to timings.ms,
             "provenance" to provenance.toList(),

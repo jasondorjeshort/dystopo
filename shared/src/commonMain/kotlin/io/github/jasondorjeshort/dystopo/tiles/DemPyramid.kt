@@ -290,14 +290,19 @@ class DemPyramid(
     /**
      * An elevation grid for the global pixel window ([x0], [y0], [width] x [height]) at zoom [z].
      * Cells nobody covers are NaN. Below [minZoom], each cell is the mean of the 2^k x 2^k cells of
-     * [minZoom] under it (NaN cells ignored), k = [minZoom] - [z].
+     * [minZoom] under it (NaN cells ignored), k = [minZoom] - [z], computed tile by tile ([downsample]):
+     * memory stays the window's own, but every [minZoom] tile under the window is looked up once, 4^k
+     * of them per tile of the window, so a caller far below [minZoom] pays that work (T395). A window
+     * of more than [Int.MAX_VALUE] cells is refused.
      */
     fun window(z: Int, x0: Int, y0: Int, width: Int, height: Int): ElevationGrid {
+        require(width >= 0 && height >= 0 && width.toLong() * height <= Int.MAX_VALUE) { "window ${width}x$height is too large" }
         val values = FloatArray(width * height)
-        if (!covers(z, x0, y0, width, height)) {
-            values.fill(Float.NaN)
-        } else if (z < minZoom) {
+        if (z < minZoom) {
+            // T395: no covers() first: the walk over the minZoom tiles is the downsample itself, NaN where none is.
             downsample(z, x0, y0, width, height, values)
+        } else if (!covers(z, x0, y0, width, height)) {
+            values.fill(Float.NaN)
         } else {
             values.fill(Float.NaN)
             // One lookup table per window: each tile goes through the LRU cache once, not once per pixel.
@@ -391,40 +396,94 @@ class DemPyramid(
         }
     }
 
-    /** Box-averages the window at [z] < [minZoom] from the [minZoom] window under it. */
-    private fun downsample(z: Int, x0: Int, y0: Int, width: Int, height: Int, values: FloatArray) {
+    /**
+     * The [minZoom] tiles under the window ([x0], [y0], [width] x [height]) at [z] < [minZoom], clipped to the world
+     * (Long arithmetic: `x0 shl k` overflows an Int from k = 8 on a large window), as (tx0, ty0, tx1, ty1) inclusive, or
+     * null when none.
+     */
+    private fun tilesUnder(z: Int, x0: Int, y0: Int, width: Int, height: Int): LongArray? {
+        if (width <= 0 || height <= 0) return null
         val k = minZoom - z
-        val f = 1 shl k
-        val fw = width shl k
-        val fine = window(minZoom, x0 shl k, y0 shl k, fw, height shl k).values
-        for (j in 0 until height) {
-            for (i in 0 until width) {
-                var sum = 0.0
-                var n = 0
-                for (dj in 0 until f) {
-                    val row = (j * f + dj) * fw + i * f
-                    for (di in 0 until f) {
-                        val v = fine[row + di]
-                        if (!v.isNaN()) {
-                            sum += v
-                            n++
-                        }
-                    }
-                }
-                values[j * width + i] = if (n == 0) Float.NaN else (sum / n).toFloat()
-            }
-        }
+        val ts = tileSize.toLong()
+        val last = (1L shl minZoom) - 1
+        val tx0 = maxOf(0L, floorDivL(x0.toLong() shl k, ts))
+        val ty0 = maxOf(0L, floorDivL(y0.toLong() shl k, ts))
+        val tx1 = minOf(last, floorDivL(((x0.toLong() + width) shl k) - 1, ts))
+        val ty1 = minOf(last, floorDivL(((y0.toLong() + height) shl k) - 1, ts))
+        return if (tx0 > tx1 || ty0 > ty1) null else longArrayOf(tx0, ty0, tx1, ty1)
     }
 
     /**
-     * True when some tile of the pack, at [z] or an ancestor zoom, overlaps the window: a cheap test
-     * (a few tile lookups) that saves the per-pixel ancestor search for windows outside the pack.
-     * Below [minZoom] the test runs on the [minZoom] window under it.
+     * Box-averages the window at [z] < [minZoom] from the [minZoom] cells under it (NaN cells ignored), one [minZoom]
+     * tile at a time (T395: never the whole [minZoom] window, which under a 30 km window four zooms down was a
+     * gigabyte, issue #35). Each tile is looked up once; a cell no tile has stays NaN. Where a cell's 2^k x 2^k block
+     * lies inside one tile (k up to the tile's own 8) the sum runs in the same row order as before, so the means are
+     * the same to the bit; deeper, a cell spans several tiles and their sums are added.
+     */
+    private fun downsample(z: Int, x0: Int, y0: Int, width: Int, height: Int, values: FloatArray) {
+        values.fill(Float.NaN)
+        val (tx0, ty0, tx1, ty1) = tilesUnder(z, x0, y0, width, height) ?: return
+        val k = minZoom - z
+        val f = 1L shl k
+        val ts = tileSize.toLong()
+        // A cell spanning several tiles gathers its sum across them; otherwise each cell is written by its one tile.
+        val across = f > ts || ts % f != 0L
+        val sums = if (across) DoubleArray(width * height) else null
+        val counts = if (across) IntArray(width * height) else null
+        for (ty in ty0..ty1) {
+            for (tx in tx0..tx1) {
+                val t = tile(minZoom, tx.toInt(), ty.toInt()) ?: continue
+                val px0 = tx * ts
+                val py0 = ty * ts
+                val i0 = maxOf(0L, floorDivL(px0, f) - x0).toInt()
+                val i1 = minOf(width - 1L, floorDivL(px0 + ts - 1, f) - x0).toInt()
+                val j0 = maxOf(0L, floorDivL(py0, f) - y0).toInt()
+                val j1 = minOf(height - 1L, floorDivL(py0 + ts - 1, f) - y0).toInt()
+                for (j in j0..j1) {
+                    val ly0 = (maxOf((y0 + j.toLong()) * f, py0) - py0).toInt()
+                    val ly1 = (minOf((y0 + j + 1L) * f, py0 + ts) - py0).toInt() // exclusive
+                    for (i in i0..i1) {
+                        val lx0 = (maxOf((x0 + i.toLong()) * f, px0) - px0).toInt()
+                        val lx1 = (minOf((x0 + i + 1L) * f, px0 + ts) - px0).toInt()
+                        var sum = 0.0
+                        var n = 0
+                        for (ly in ly0 until ly1) {
+                            val row = ly * tileSize
+                            for (lx in lx0 until lx1) {
+                                val v = t[row + lx]
+                                if (!v.isNaN()) {
+                                    sum += v
+                                    n++
+                                }
+                            }
+                        }
+                        val idx = j * width + i
+                        if (sums != null) {
+                            sums[idx] += sum
+                            counts!![idx] += n
+                        } else if (n > 0) {
+                            values[idx] = (sum / n).toFloat()
+                        }
+                    }
+                }
+            }
+        }
+        if (sums != null) for (idx in values.indices) if (counts!![idx] > 0) values[idx] = (sums[idx] / counts[idx]).toFloat()
+    }
+
+    /**
+     * True when some tile of the pack, at [z] or an ancestor zoom, may overlap the window: a cheap test (a few tile
+     * lookups) that saves the per-pixel ancestor search for windows outside the pack. Below [minZoom] the test looks
+     * up the [minZoom] tiles under the window when there are at most [COVERS_LOOKUPS] of them (a window tile three
+     * zooms down) and otherwise answers true unlooked (T395: one lookup per tile under a 30 km window four zooms down
+     * was thousands; [window] then finds out tile by tile, NaN where nothing is).
      */
     fun covers(z: Int, x0: Int, y0: Int, width: Int, height: Int): Boolean {
         if (z < minZoom) {
-            val k = minZoom - z
-            return covers(minZoom, x0 shl k, y0 shl k, width shl k, height shl k)
+            val (tx0, ty0, tx1, ty1) = tilesUnder(z, x0, y0, width, height) ?: return false
+            if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) > COVERS_LOOKUPS) return true
+            for (ty in ty0..ty1) for (tx in tx0..tx1) if (tile(minZoom, tx.toInt(), ty.toInt()) != null) return true
+            return false
         }
         var az = minOf(z, maxZoom)
         while (az >= minZoom) {
@@ -457,11 +516,15 @@ class DemPyramid(
         }
     }
 
-    private companion object {
-        /** Cache marker for a tile the pack does not have. */
-        val MISSING = FloatArray(0)
+    companion object {
+        /** T395: the most [minZoom] tiles [covers] looks up below [minZoom] before it answers true unlooked (8 x 8). */
+        const val COVERS_LOOKUPS = 64
 
-        fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -((-a + b - 1) / b)
-        fun floorMod(a: Int, b: Int): Int = a - floorDiv(a, b) * b
+        /** Cache marker for a tile the pack does not have. */
+        private val MISSING = FloatArray(0)
+
+        private fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -((-a + b - 1) / b)
+        private fun floorDivL(a: Long, b: Long): Long = if (a >= 0) a / b else -((-a + b - 1) / b)
+        private fun floorMod(a: Int, b: Int): Int = a - floorDiv(a, b) * b
     }
 }

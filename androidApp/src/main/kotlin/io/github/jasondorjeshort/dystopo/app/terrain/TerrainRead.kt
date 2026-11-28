@@ -440,7 +440,9 @@ object PointRead {
      * or a sight line over kilometres): the maps with T357's blend, and the held cells as one member per depth (each answers
      * the cells whose tile it holds at that depth, ranked by it, a shallower window the mean of its cells), so every cell takes
      * the deepest held there wherever the reader stands; up to the zoom read at ([lat], [lon]), null where nothing is held
-     * there. [Mode.BEHIND] fetches the point's tile behind as [at] does.
+     * there. [Mode.BEHIND] fetches the point's tile behind as [at] does. Its first zoom is [PointRule.composedLow] (T395):
+     * at least as shallow as the readers' coarse layer, so that layer is read from the sources at its own zoom (or one
+     * zoom down from it, the mean of four composed tiles), never by averaging the point's zoom over 30 km.
      */
     fun pyramidAt(lat: Double, lon: Double, mode: Mode, tag: String = "area"): DemPyramid? {
         val g = gen()
@@ -450,7 +452,7 @@ object PointRead {
         val top = h.zoom ?: return null
         return synchronized(g.composed) {
             g.composed.getOrPut("$top") {
-                val low = minOf(g.minZoom ?: top, top)
+                val low = PointRule.composedLow(top, g.minZoom)
                 val sources = g.maps + PointRule.heldDepths(g.maps.map { it.maxZoom }).map { d ->
                     ElevationSource(MergedTerrain.ONLINE, d, null) { w -> if (w.zoom < d - PointRule.MEAN_ZOOMS) null else heldPyramid(g, d).window(w.zoom, w.x0, w.y0, w.width, w.height) }
                 }
@@ -499,6 +501,18 @@ object PointRule {
      * have nothing.
      */
     fun heldDepths(mapDepths: List<Int>): IntRange = ((mapDepths.minOrNull() ?: 7) + 1).coerceAtMost(MAX_ZOOM)..MAX_ZOOM
+
+    /**
+     * T395 (issue #35): the composed pyramid's first zoom for a pyramid up to [top], with the maps' shallowest first zoom
+     * [mapsMinZoom] (null: no map). The area readers read a fine layer at most at `ShadeTiles.POINT_ZOOM` (14) and a coarse
+     * one [io.github.jasondorjeshort.dystopo.dem.Horizon.COARSE_ZOOMS] below it, so from `top - COARSE_ZOOMS` the coarse
+     * layer is read from the composed sources at its own zoom (top 14: z11) or the mean of four composed tiles one zoom
+     * deeper (top 15: z11 from z12, where a held z15 member still answers: it refuses below `d - MEAN_ZOOMS`). Before T395 it
+     * was the maps' first zoom alone, so with no map (or a map from z15) the pyramid began at the point's zoom and the coarse
+     * layer averaged a gigabyte of it. A map shallower than that keeps the pyramid starting at its first zoom, as before.
+     */
+    fun composedLow(top: Int, mapsMinZoom: Int?): Int =
+        minOf(mapsMinZoom ?: top, top - io.github.jasondorjeshort.dystopo.dem.Horizon.COARSE_ZOOMS).coerceIn(0, top)
 
     /** The shallowest zoom a held cell must be at to rank ahead of the maps at a point they read at [mapsZoom] (null: none there). */
     fun floor(mapsZoom: Int?): Int = mapsZoom?.plus(1) ?: 0
