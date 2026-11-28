@@ -4,7 +4,9 @@ count when the view's own delta is 0, with the cases that must not count (the on
 another zoom or source, an error status, an empty log). T170: a contour delta proven by the view's own pack-answered lines.
 T185: Server._open on a local HTTP server: a GET cut short is asked once more, a POST never; a refused port is forwarded
 again (a stand-in for adb that starts the listener) and the request sent once more, both counted. T251: the puck's look
-against its age.
+against its age. T394: the forward lost in the middle of a request (a body cut short, then a connection dropped or
+refused, the port answering seconds after the forward is made again): one answer after GET /health answers, a POST
+refused twice never sent a third time, and a port that never answers failing at the end of the wait.
 
     python -I tools/test_android_check.py
 """
@@ -173,13 +175,14 @@ try:
         raise AssertionError("a POST cut short must raise, not be sent again")
     except http.client.IncompleteRead:
         assert Handler.seen == [("POST", "/cut")], Handler.seen
-    assert s.counters == {"forwardRestores": 0, "incompleteReadRetries": 2, "tokenRefreshes": 0}, s.counters
+    assert {k: v for k, v in s.counters.items() if v} == {"incompleteReadRetries": 2}, s.counters
 finally:
     httpd.shutdown()
     httpd.server_close()
 
 # The forward gone: nothing listens on the port, so the connection is refused; restore_forward (adb's stand-in) brings
-# the listener back and the request goes through, counted. With no way to forward, the logcat path is taken (fetch_token).
+# the listener back, GET /health answers (T394) and the request goes through, counted. With no way to forward, the logcat
+# path is taken (fetch_token); a port that stays refused then fails at the end of the wait (T394), not at once.
 probe = socket.socket()
 probe.bind(("127.0.0.1", 0))
 free = probe.getsockname()[1]
@@ -197,21 +200,188 @@ s.restore_forward = restore
 Handler.cuts, Handler.seen = 0, []
 try:
     assert s._open("/screenshot?wait=1", "POST") == b"x" * 100 and s.counters["forwardRestores"] == 1, s.counters
-    assert Handler.seen == [("POST", "/screenshot?wait=1")] and "connection refused; forwarded" in s.events[0], s.events
+    assert Handler.seen == [("GET", "/health"), ("POST", "/screenshot?wait=1")], Handler.seen
+    assert "connection refused; forwarded" in s.events[0] and s.counters["recovered"] == 1, (s.events, s.counters)
 finally:
     for h in started:
         h.shutdown()
         h.server_close()
 s = server_on(free)
-s.restore_forward = lambda: False
+s.restore_forward = lambda **kw: False
+s.port_wait_s = 1.0
 fetched = []
 s.fetch_token = lambda timeout=10.0: fetched.append(timeout) or setattr(s, "token", "t2")
 try:
     s.get("/health")
     raise AssertionError("still refused after the logcat path must raise")
 except Exception as e:
-    assert ac.refused(e) and fetched and s.counters["forwardRestores"] == 1, (e, fetched, s.counters)
+    assert "did not answer GET /health within 1 s" in str(e) and fetched, (e, fetched)
+    assert s.counters["forwardRestores"] == 0 and s.counters["logcatRereads"] == 1 and s.counters["unrecovered"] == 1, s.counters
 assert ac.refused(ConnectionRefusedError()) and not ac.refused(ConnectionResetError())
+
+# T394: the forward lost in the middle of a request, in the orders the third closing sweep's second runs showed, against
+# a stand-in for adb's host forward on a fixed port. adb drops a device's forwards when the emulator's transport closes
+# (adb.log: "emulator-5640: connection terminated: read failed"), and the port answers again about 2 s later.
+import time
+import urllib.error
+import urllib.request
+
+
+class Forward:
+    """A fixed local port that listens (`up`) or not (`down`: a connection is refused). Each request other than /health
+    takes the next action of `script`, each /health request the next of `health` ('ok' when empty): 'ok' a whole answer,
+    'cut' a body announced as 100 bytes of which 10 arrive, 'drop' the connection closed with no answer (adb's listener
+    with no transport behind it); a trailing '!' takes the port down after the action (the transport gone)."""
+
+    def __init__(self):
+        p = socket.socket()
+        p.bind(("127.0.0.1", 0))
+        self.port = p.getsockname()[1]
+        p.close()
+        self.sock, self.script, self.health, self.seen = None, [], [], []
+
+    def up(self):
+        if self.sock is None:
+            self.sock = socket.socket()
+            self.sock.bind(("127.0.0.1", self.port))
+            self.sock.listen(8)
+            threading.Thread(target=self.serve, args=(self.sock,), daemon=True).start()
+        return True
+
+    def down(self):
+        sock, self.sock = self.sock, None
+        if sock is not None:
+            sock.close()
+
+    def up_after(self, seconds):
+        threading.Timer(seconds, self.up).start()
+        return True
+
+    def serve(self, sock):
+        while True:
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                return
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            method, path = data.split(b" ")[:2] if data.count(b" ") >= 2 else (b"?", b"?")
+            method, path = method.decode(), path.decode()
+            queue = self.health if path.startswith("/health") else self.script
+            action = queue.pop(0) if queue else "ok"
+            self.seen.append((method, path.split("?")[0], action))
+            gone = action.endswith("!")
+            action = action.rstrip("!")
+            try:
+                if action in ("ok", "cut"):
+                    conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n" + b"x" * (10 if action == "cut" else 100))
+            finally:
+                conn.close()
+            if gone:
+                self.down()
+                return
+
+    def requests(self, path):
+        return [a for m, p, a in self.seen if p == path]
+
+
+def forward_server(fwd, wait_s=15.0):
+    s = server_on(fwd.port)
+    if hasattr(s, "port_wait_s"):
+        s.port_wait_s = wait_s
+    return s
+
+
+sends = []
+real_urlopen = urllib.request.urlopen
+
+
+def counting_urlopen(req, *a, **kw):
+    sends.append((req.get_method(), req.full_url.split("?")[0].rsplit("/", 1)[-1]) if hasattr(req, "get_method") else ("GET", req))
+    return real_urlopen(req, *a, **kw)
+
+
+# 1. The rerun's order (tour2's background step): the screenshot's body cut short, the next try's connection accepted and
+# closed with no answer as the transport closed, the listener gone with it; the logcat read forwards the port again but
+# the port answers only 1.5 s later. Recovered: one answer, and the counters and events say what happened.
+fwd = Forward()
+fwd.up()
+fwd.script = ["cut", "drop!"]
+s = forward_server(fwd)
+logcat = []
+s.fetch_token = lambda timeout=10.0: logcat.append(timeout) or setattr(s, "token", "t") or fwd.up_after(4.0)
+s.restore_forward = lambda **kw: False  # adb refuses while the transport is away
+t0 = time.time()
+try:
+    body = s.get("/screenshot?wait=15000", timeout=30)
+    assert body == b"x" * 100, body
+    assert fwd.requests("/screenshot") == ["cut", "drop!", "ok"], fwd.seen
+    assert s.counters["incompleteReadRetries"] == 1 and s.counters["logcatRereads"] == 1 and s.counters["resent"] == 1, s.counters
+    assert s.counters["recovered"] == 1 and s.counters["unrecovered"] == 0 and 3.0 <= s.counters["portWaitMaxS"] <= 15, s.counters
+    assert any("dropped" in e and "logcat" in e and "answered GET /health after" in e for e in s.events), s.events
+finally:
+    fwd.down()
+
+# 2. The task's order: a body cut short and the port gone with it, so the next try is refused; adb forwards it again but
+# the port answers 5 s later (longer than the retries of the code before T394 took, whatever a refusal costs).
+fwd = Forward()
+fwd.up()
+fwd.script = ["cut!"]
+s = forward_server(fwd)
+restores = []
+s.restore_forward = lambda **kw: restores.append(1) or (len(restores) > 1 or fwd.up_after(5.0))
+s.fetch_token = lambda timeout=10.0: setattr(s, "token", "t")
+try:
+    assert s.get("/screenshot?wait=15000", timeout=30) == b"x" * 100
+    assert fwd.requests("/screenshot") == ["cut!", "ok"], fwd.seen  # one request answered, sent twice in all
+    assert s.counters["forwardRestores"] >= 1 and s.counters["recovered"] == 1 and s.counters["logcatRereads"] == 0, s.counters
+    assert 4.0 <= s.counters["portWaitMaxS"] <= 15, s.counters
+    assert any("connection refused; forwarded tcp:" in e and "answered GET /health after" in e for e in s.events), s.events
+finally:
+    fwd.down()
+
+# 3. A POST refused, forwarded again (the port answers /health) and refused again is not sent a third time.
+fwd = Forward()
+fwd.health = ["ok!"]  # answered, then the forward lost again
+s = forward_server(fwd)
+scheduled = []
+s.restore_forward = lambda **kw: scheduled.append(1) or (len(scheduled) > 1 or fwd.up_after(0.3))  # the port back once
+s.fetch_token = lambda timeout=10.0: setattr(s, "token", "t")
+sends.clear()
+urllib.request.urlopen = counting_urlopen
+try:
+    s._open("/camera?zoom=9", "POST")
+    raise AssertionError("a POST refused twice must raise")
+except AssertionError:
+    raise
+except Exception as e:
+    assert ac.refused(e), e
+    assert [m for m, p in sends if p == "camera"] == ["POST", "POST"], sends
+    assert s.counters["unrecovered"] == 1, s.counters
+finally:
+    urllib.request.urlopen = real_urlopen
+    fwd.down()
+
+# 4. A port that never answers again fails within the bound and says so.
+fwd = Forward()
+s = forward_server(fwd, wait_s=3.0)
+s.restore_forward = lambda **kw: True  # adb says yes, but nothing comes back
+s.fetch_token = lambda timeout=10.0: setattr(s, "token", "t")
+t0 = time.time()
+try:
+    s.get("/features")
+    raise AssertionError("a port that never answers must raise")
+except AssertionError:
+    raise
+except Exception as e:
+    took = time.time() - t0
+    assert "did not answer GET /health within 3 s" in str(e), e
+    assert took < 3.0 * 3 + 10, took  # the bound per recovery, each poll's refusal (about 2 s on Windows) and the adb stand-ins
+    assert s.counters["unrecovered"] == 1 and any("did not answer" in ev for ev in s.events), (s.counters, s.events)
 
 # T224: the tour file's rotation, the forbidden pairs of GET /layout, and the strip's plate against its rectangle.
 step = ac.parse_cards("@cards 46.7864,-121.7366;46.8024,-121.7289 scale=2.0 rotation=1")
