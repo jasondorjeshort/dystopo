@@ -5312,7 +5312,8 @@ DRAW_TILES_LINE = r"^A drawn area is kept as map tiles: place search works in it
 # set (the closing sweep of wave 49 found the sweep's device server, stopped after the debug parts, still set there) and
 # whatever the sweep's mode. Not "none": the fixture keeps the area's tiles under an online source's keys, as a download does.
 # Never a public source, and nothing is fetched (the seeding copies a pack's tiles).
-FIXTURE_SERVER = "http://10.0.2.2:9"
+# DYSTOPO_FIXTURE_SERVER overrides it for a run by hand (the two server states compared for the terrain read finding).
+FIXTURE_SERVER = os.environ.get("DYSTOPO_FIXTURE_SERVER") or "http://10.0.2.2:9"
 
 
 def _pin_server(srv, url, timeout=30):
