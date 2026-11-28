@@ -5498,6 +5498,10 @@ def search_tiles_step(dev, args):
                         "message": (route or {}).get("message")}
         if "tiles-only" not in json.dumps(route or {}):
             errors.append(f"a route inside the area does not answer tiles-only: {out['route']}")
+        # T391: the route card's line there, with the fixture's server unreachable (RouteSession.ROUTE_TILES_ONLY), reported.
+        n, nodes = dev.wait_for(r"^Routes need an offline map here; this area has map tiles only$", 10)
+        out["routeCard"] = next((t for t in dev.texts(nodes) if t.startswith("Routes need")), None)
+        out["routePng"] = dev.screencap("search-tiles-route")[0]
         srv.call("POST", "/route/clear")
         # The frames: the search box with its results, the area's row in Offline maps, and Draw an area.
         srv.call("POST", f"/search/ui?focus=1&q=Paradise")
