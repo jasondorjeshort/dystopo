@@ -1,25 +1,24 @@
 # Handoff
 
 Coordinator state. Subagents follow their brief, not this file. Format from the Hatchery base.
-Updated: 2026-11-27, at the commit that carries this file (wave 49: every task merged; the close is under way), by the main session in the second clone
+Updated: 2026-11-28, at the commit that carries this file (wave 49: the closing sweep red in four parts, two fix tasks launched), by the main session in the second clone
 Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), the `wave` skill, the open wave `## Wave 49` in
 `docs/TASKS.md` (its four opening paragraphs first), the last closed wave's record `docs/tasks/wave-48.md`.
 
 ## Now
 
-- **Wave 49: every task is merged** (fifteen, T375 to T388 and T390, plus T389), the last T378 (398de1a4); each has its Status line on the board and its log entry. The wave is still on the board: its Close has begun (the README's status paragraph is in; ADR 0072 records T380's folder layout).
-- **In flight (2026-11-27 21:28 UTC):** a Haiku cleanup chore (the branches, worktrees and AVDs of T378, T380 and T388; `tools-main` to the tip). Next the closing sweep, alone on the PC, in a new worktree `dystopo-wt/sweep-w49` under a hold on `main`, with `-Prev` `dystopo-wt/sweep-w48/out/sweep-20261126-w48` and `-First` kept-folder, coordinate-format, glance-searching, glance-position, glance-clock, area-detail, activity-covered, longpress, peaks-tiles, search-tiles, first-run (checked with `--check-first`).
+- **Wave 49: the closing sweep is red** on 358a755a (`dystopo-wt/sweep-w49`, `out\sweep-20261127-w49`): `startup`, `two-maps`, `features` (`search-tiles`) and `features-sky` (`peaks-tiles`), each an assertion or a budget; everything else green. No release; the hold on `main` is lifted. The fifteen tasks and T389 are merged; T391 and T392 on the board are the fixes (the paragraph above them has the figures and the order).
+- **In flight (2026-11-28 00:23 UTC):** T392's implementer (Opus; the launch stages; it has the PC, Gradle and an emulator) and T391's implementer (Opus; reading only until it hands back its causes, then resumed by its id for the builds once T392's timed runs are done). The ids are in the session's agent list, by the task's name.
 - **Cost:** the 7-day meter reset on 2026-11-27 04:00 UTC and read 1 at 04:04 UTC (the hold is 97; the next reset is 2026-12-04 04:00 UTC by this session's usage file). The wave reached the hold at 97 on 2026-11-26 23:25 UTC and waited for the reset, as the owner said it could.
 - **On the PC:** restarted after the power cut, so the live viewer on 8765 and every emulator are down; stale locks and AVDs of the two cut-off emulators are their agents' to clear. The main checkout is the phone session's and sits on the merged branch `task/gps-clock-log`; `dystopo-wt/sweep-w48` holds the next release's `-Prev`; `dystopo-wt/T365` holds the flight recordings. The reports and verdicts for the merge bodies are in the first session's scratchpad folder, `w49-plan/` (it survived).
 
 ## Next
 
-1. The closing sweep (the `sweep` skill): set the hold, launch a Sonnet agent, read the summary and the sheets. Watch two things there: in the default mode the app read "offline" with the sweep's live server as its server in several of T378's runs (not explained; wave 48's sweep was green in that mode), and the `startup` part judges the budgets no task of this wave judged.
-2. Green: the release (the `release` skill, v0.1.45-alpha; the README's link and version then), the hold lifted; then the costs (`python -I tools/agent-cost.py <Tnn>`), the record (a Haiku chore moves the wave to `docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base. Follow-ups for the next wave: the kept folder's write through a temporary document (ADR 0072's first prediction); the two findings of 2026-11-27.
-3. The device tour was not shown green on T384's and T389's heads (load, by the verifiers' reading): the closing sweep reads it; if it is red there, look at T379's later start of the cache walk first.
-4. Timed runs go alone: hold launches for T379's and T387's start-up runs when their implementers report them as not judged.
-5. For the Close's record and offer: the a11y tool's append-at-the-end convention conflicts every time two branches add a screen (an idea: a file per task's screens); three verifiers handed back without a verdict while a long command ran and were resumed; the emulator guard stopped two emulators at 8 GB during `features` and start-up runs; the start-up budgets were judged by no task (the closing sweep's `startup` part reads them, alone).
-6. Triage's scan: the earliest dated ADR prediction is due 2026-12-01; ADR 0070's two and ADR 0071's second are checked at this wave's close.
+1. T392's report, then a verifier (Sonnet; `-Only startup` alone on the PC); resume T391 when the PC is free; its report, a verifier, the merge sequence for each. A ceiling is raised only by the coordinator, with a line in the log.
+2. Then a full closing sweep again under a hold (the `sweep` skill; `-Prev` `dystopo-wt/sweep-w48/out/sweep-20261126-w48`, the same eleven `-First` names), and green: the release (v0.1.45-alpha; the README's link and version), the hold lifted; the costs (the sixteen lines are in the scratchpad's `w49-plan/costs.txt` [no-check: a scratchpad file]; T391 and T392 to add), the record (`docs/tasks/wave-49.md` [no-check: written at the close]), the brainstorm offer and the rest review, the update from the base.
+3. Follow-ups for the next wave: the kept folder's write through a temporary document (ADR 0072's first prediction); the download restarted in the background (finding of 2026-11-27).
+4. For the Close's record and offer: the a11y tool's append-at-the-end convention conflicts every time two branches add a screen (an idea: a file per task's screens); three verifiers handed back without a verdict while a long command ran and were resumed; the emulator guard stopped two emulators at 8 GB during `features` and start-up runs; the start-up budgets were judged by no task (the closing sweep's `startup` part reads them, alone).
+5. Triage's scan: the earliest dated ADR prediction is due 2026-12-01; ADR 0070's two and ADR 0071's second are checked at this wave's close.
 
 ## Waiting on user
 
@@ -30,7 +29,7 @@ Resume: this file, `docs/reference/machines.md` (its second-clone paragraph), th
 
 ## Open findings
 
-- `docs/findings/2026-11-27-an-areas-elevation-source-is-sometimes-missing-from-a-terrain-read.md`: open (from T378's fix rounds; not yet tried with a real download).
+- `docs/findings/2026-11-27-an-areas-elevation-source-is-sometimes-missing-from-a-terrain-read.md`: open; T391 takes it.
 - `docs/findings/2026-11-27-a-download-restarted-in-the-background-waits-for-the-screen.md`: open (found by T387's verifier; a task for the next wave, and the row's "Continues by itself").
 - `docs/findings/2026-11-25-tile-cache-index-walk-loops-in-the-background.md`: open for its Next 2 alone, the owner's day in the background on a phone (T379, T390 and T387 built the rest); the layout finding and the GPS clock finding are resolved (T381, T385).
 - `docs/findings/2026-11-26-the-error-of-a-guessed-flight-position-measured-from-two-recordings.md`, `2026-11-24-the-map-render-thread-never-rests-while-flights-are-drawn.md`: open.
