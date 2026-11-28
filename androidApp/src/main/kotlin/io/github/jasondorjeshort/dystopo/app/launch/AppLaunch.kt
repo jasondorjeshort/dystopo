@@ -57,14 +57,22 @@ object AppLaunch {
     /** T387: whether [w] is open now ([LaunchGate.opens] over `Foreground`). */
     fun opened(w: Waits): Boolean = LaunchGate.opens(w, Foreground.screenSeen, Foreground.workAllowed)
 
-    /** T387: blocks a deferred stage's own thread until [w] is open. */
+    /**
+     * T387: blocks a deferred stage's own thread until [w] is open. T392: when the screen opened it, then also until the
+     * first frame ([StartupTrace.awaitFirstFrame], at most [FRAME_WAIT_MS]): opened at `onStart`, the deferred stages' threads
+     * ran beside the activity's start and the first composition and slowed both. Nothing they do is seen before that frame.
+     */
     private fun awaitOpen(w: Waits) {
         when (w) {
             Waits.NOTHING -> Unit
             Waits.WORK -> if (!Foreground.screenSeen) Foreground.blockForWork()
             Waits.SCREEN -> Foreground.blockForFirstScreen()
         }
+        if (w != Waits.NOTHING && Foreground.screenSeen) StartupTrace.awaitFirstFrame(FRAME_WAIT_MS)
     }
+
+    /** T392: the longest a deferred stage waits for the first frame once the first screen opened it. */
+    const val FRAME_WAIT_MS = 5_000L
 
     /**
      * T387: [s]'s state now. The cache's index (observed; T379 ends the stage when the walk is held for the screen) reads
