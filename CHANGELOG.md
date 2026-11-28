@@ -4,6 +4,10 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+### 2026-11-28
+
+- T392: Four launch stages over their ceilings
+
 ### 2026-11-27
 
 - T378: Peak names inside a downloaded area: the Horizon view, the Panorama and the List

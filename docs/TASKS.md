@@ -179,6 +179,7 @@ After T379, in the same files.
 **Interacts with:** T391 (above).
 **Done when:** `./gradlew check` green; `tools\sweep.ps1 -Only startup` green three times running on the branch with nothing else running on the PC, each stage's median quoted beside wave 48's and this sweep's; the report names per stage the commit that added the time; no StrictMode kind newly allowed.
 **Checks:** none (timed runs, alone).
+**Status: merged.** Verifier MERGE on 2474b082 (merged as 55d38f08), no fix round: the sweep in order through `startup` green on the branch (`packs` 67 of 87 ms, `updater` 16 of 31, `start` 30 of 43, `composition` 1,100 of 1,599, the first frame 3,347 ms), `check` 6,900 tests; the implementer's eight runs alone green. Two causes in code (the contour cache opened on the main thread, T379 and T390; `updater` opened beside the first composition, T387), two readings with no code behind them (a full sweep's order reads 10 to 30% slower than a run alone). Follow-ups: the online and contour index walks still start at `onStart` and run during the first composition (a few lines in `Foreground.kt` would hold them for the first frame); an interrupted download's resume after the frame wait was read by its start time, not by a seeded download; whether the wait holds in a whole sweep's order is the next closing sweep's to show. Edits outside Owns: none beyond the stage body `ContourCache.kt`.
 
 ## Owner actions pending (as of 2026-10-27)
 
