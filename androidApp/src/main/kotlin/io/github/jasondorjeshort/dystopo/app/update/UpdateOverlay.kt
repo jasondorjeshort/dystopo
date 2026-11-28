@@ -92,9 +92,7 @@ fun UpdateOverlay() {
     val navigating = io.github.jasondorjeshort.dystopo.app.nav.NavSession.ui != null // Compose state: follows nav start and stop
     val waits = io.github.jasondorjeshort.dystopo.app.trips.Trips.editing != null || io.github.jasondorjeshort.dystopo.app.trips.Trips.listOpen ||
         (io.github.jasondorjeshort.dystopo.app.routing.RouteSession.phase != "idle" && !navigating)
-    val shown = !waits && Updater.initialized() && !SettingsUi.visible && Updater.state.let { s ->
-        s.phase == Updater.Phase.READY || s.phase == Updater.Phase.INSTALLING || (s.phase == Updater.Phase.REFUSED && s.tag != null && s.tag != Updater.acknowledgedTag)
-    }
+    val shown = offerShown(waits)
     // T106 (a T93 follow-up): the offer reports its top edge while it shows, so the recentre button rides above it
     // instead of sharing its corner (release builds; debug builds never check by themselves).
     DisposableEffect(Unit) { onDispose { MapInsets.updateCardTop = 0.dp; UpdateOverlayLayout.hide("notComposed") } }
@@ -172,6 +170,16 @@ fun UpdateOverlay() {
             }
         }
     }
+}
+
+/**
+ * Whether the offer shows (unless [waits] for a trip or a route card): a verified update ready or installing, or a refusal
+ * not yet acknowledged, with the settings sheet closed. T393: every input is Compose state, the updater's start included
+ * ([Updater.started]), so a composition that ran before the launch's `updater` stage (after the first frame since T392)
+ * recomposes when the start, and then the update, come.
+ */
+internal fun offerShown(waits: Boolean): Boolean = !waits && Updater.started && !SettingsUi.visible && Updater.state.let { s ->
+    s.phase == Updater.Phase.READY || s.phase == Updater.Phase.INSTALLING || (s.phase == Updater.Phase.REFUSED && s.tag != null && s.tag != Updater.acknowledgedTag)
 }
 
 /** T110: the least room below the navigation card in which the offer still shows while navigating. */
