@@ -58,17 +58,19 @@ object AppLaunch {
     fun opened(w: Waits): Boolean = LaunchGate.opens(w, Foreground.screenSeen, Foreground.workAllowed)
 
     /**
-     * T387: blocks a deferred stage's own thread until [w] is open. T392: when the screen opened it, then also until the
-     * first frame ([StartupTrace.awaitFirstFrame], at most [FRAME_WAIT_MS]): opened at `onStart`, the deferred stages' threads
-     * ran beside the activity's start and the first composition and slowed both. Nothing they do is seen before that frame.
+     * T387: blocks a deferred stage's own thread until its [Stage.waits] is open. T392: when the screen opened it, then also
+     * until the first frame ([StartupTrace.awaitFirstFrame], at most [FRAME_WAIT_MS]): opened at `onStart`, the deferred
+     * stages' threads ran beside the activity's start and the first composition and slowed both, and nothing they do is seen
+     * before that frame. Not `world`: at a first start its copy is the world overview the map's first tiles read.
      */
-    private fun awaitOpen(w: Waits) {
+    private fun awaitOpen(s: Stage) {
+        val w = s.waits
         when (w) {
             Waits.NOTHING -> Unit
             Waits.WORK -> if (!Foreground.screenSeen) Foreground.blockForWork()
             Waits.SCREEN -> Foreground.blockForFirstScreen()
         }
-        if (w != Waits.NOTHING && Foreground.screenSeen) StartupTrace.awaitFirstFrame(FRAME_WAIT_MS)
+        if (LaunchRunner.waitsForFirstFrame(s, Foreground.screenSeen)) StartupTrace.awaitFirstFrame(FRAME_WAIT_MS)
     }
 
     /** T392: the longest a deferred stage waits for the first frame once the first screen opened it. */

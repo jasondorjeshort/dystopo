@@ -39,7 +39,7 @@ class LaunchRunner(
     private val delayMs: (Stage) -> Long = { 0L },
     private val strict: Boolean = true,
     private val hooks: Hooks = Hooks(),
-    private val awaitOpen: (Waits) -> Unit = {},
+    private val awaitOpen: (Stage) -> Unit = {}, // T392: the stage, not only its [Stage.waits] (AppLaunch waits for the first frame too, but not for `world`)
     private val opened: (Waits) -> Boolean = { true },
 ) {
     /** The platform's side: the start trace's mark for a main-thread wait, a release build's main-thread read. */
@@ -153,7 +153,7 @@ class LaunchRunner(
             for (n in stage.needs) span(n).done.await(Long.MAX_VALUE)
             if (stage.waits != Waits.NOTHING && !opened(stage.waits)) { // T387: deferred until the screen (or allowed work)
                 s.deferredAt = nanos()
-                awaitOpen(stage.waits)
+                awaitOpen(stage)
                 s.openedAt = nanos()
             }
             s.readyAt = maxOf(t0, needsEnd(stage), s.openedAt)
@@ -293,5 +293,13 @@ class LaunchRunner(
     companion object {
         /** The bound on a main-thread wait for a stage (as `Tracking.WAIT_MS`). */
         const val MAIN_WAIT_MS = 30_000L
+
+        /**
+         * T392: whether [stage], deferred and opened by the first screen ([screenSeen]), waits for the first frame as well
+         * (`AppLaunch.awaitOpen`): every deferred stage but `world`, whose copy at a first start is the world overview the
+         * map's first tiles read. A stage opened by a notified job with no screen does not wait (there is no frame to come).
+         */
+        fun waitsForFirstFrame(stage: Stage, screenSeen: Boolean): Boolean =
+            stage.waits != Waits.NOTHING && screenSeen && stage.name != io.github.jasondorjeshort.dystopo.launch.Launch.WORLD_COPY.name
     }
 }
