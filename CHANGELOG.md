@@ -4,6 +4,8 @@ One line per merged task, newest first, grouped by release (the Phase 0 log in [
 
 ## Unreleased
 
+## v0.1.45-alpha (2026-11-28)
+
 ### 2026-11-28
 
 - T394: The device tour's second run loses its forward, and one retry does not recover
